@@ -4,6 +4,8 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-27
+
 ### Added
 
 - [Visible] [UI] **The dashboard shows when an update is ready.** Augur now checks every 5 minutes instead of every 6 hours. A pulsing Update button appears next to refresh; hover over it for the list of changes, or click it to install and restart.
