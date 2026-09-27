@@ -1,0 +1,20 @@
+# Security
+
+## Reporting a problem
+
+Please report security problems privately through GitHub's [private vulnerability reporting](https://github.com/neostryder/augur/security/advisories/new) rather than in a public issue. Include what you found, how to reproduce it, and which version you tested. You should hear back within a week.
+
+## What Augur holds
+
+- **API keys** you enter in the desktop app are stored in the operating system's keychain (Windows Credential Manager, the macOS Keychain, or the Secret Service on Linux). In the web app they are encrypted with a key that the browser keeps and cannot export.
+- **Sign-ins for Claude, ChatGPT and Grok** are never copied. The desktop app reads the login files those apps already keep on your computer and renews them the same way the apps do.
+- **The TypeSafe console session** lives in the desktop app's own browser profile, and is used only to read your billing page.
+- **Phone sync** is encrypted on your computer with a key that only your paired phone holds. The relay stores that ciphertext for up to 14 days and cannot read it.
+
+## The hosted relay
+
+The relay at augur.rpgm.tools forwards requests from the web app to a fixed list of usage and status endpoints. Its code stores and logs none of them, though Cloudflare, which runs it, keeps its own request logs. It passes your API key through to the provider in the request you make, the same as a direct call. If you would rather not use it, deploy your own copy from `apps/relay` and enter its address in settings.
+
+## Supported versions
+
+Only the latest release receives fixes. The desktop app updates itself unless you turn that off.

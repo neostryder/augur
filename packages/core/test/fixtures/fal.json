@@ -1,0 +1,164 @@
+{
+  "credits": {
+    "current_balance": 2.0,
+    "currency": "USD"
+  },
+  "usage_summary": [
+    {
+      "endpoint_id": "fixture-endpoint",
+      "unit": "redacted",
+      "quantity": 4,
+      "percent_discount": null,
+      "cost_subtotal": 3.0,
+      "cost_discount": 3.0,
+      "cost_total": 2.25,
+      "unit_price": 2.25,
+      "cost": 2.5,
+      "currency": "USD"
+    },
+    {
+      "endpoint_id": "fixture-endpoint",
+      "unit": "redacted",
+      "quantity": 12,
+      "percent_discount": null,
+      "cost_subtotal": 3.0,
+      "cost_discount": 3.0,
+      "cost_total": 2.25,
+      "unit_price": 2.25,
+      "cost": 2.5,
+      "currency": "USD"
+    },
+    {
+      "endpoint_id": "fixture-endpoint",
+      "unit": "redacted",
+      "quantity": 12,
+      "percent_discount": null,
+      "cost_subtotal": 3.0,
+      "cost_discount": 3.0,
+      "cost_total": 2.25,
+      "unit_price": 2.25,
+      "cost": 2.5,
+      "currency": "USD"
+    },
+    {
+      "endpoint_id": "fixture-endpoint",
+      "unit": "redacted",
+      "quantity": 36,
+      "percent_discount": null,
+      "cost_subtotal": 3.0,
+      "cost_discount": 3.0,
+      "cost_total": 2.25,
+      "unit_price": 2.25,
+      "cost": 2.5,
+      "currency": "USD"
+    },
+    {
+      "endpoint_id": "fixture-endpoint",
+      "unit": "redacted",
+      "quantity": 12,
+      "percent_discount": null,
+      "cost_subtotal": 3.0,
+      "cost_discount": 3.0,
+      "cost_total": 2.25,
+      "unit_price": 2.25,
+      "cost": 2.5,
+      "currency": "USD"
+    },
+    {
+      "endpoint_id": "fixture-endpoint",
+      "unit": "redacted",
+      "quantity": 12,
+      "percent_discount": null,
+      "cost_subtotal": 3.0,
+      "cost_discount": 3.0,
+      "cost_total": 2.25,
+      "unit_price": 2.25,
+      "cost": 2.5,
+      "currency": "USD"
+    },
+    {
+      "endpoint_id": "fixture-endpoint",
+      "unit": "redacted",
+      "quantity": 5,
+      "percent_discount": null,
+      "cost_subtotal": 3.0,
+      "cost_discount": 3.0,
+      "cost_total": 2.25,
+      "unit_price": 2.25,
+      "cost": 2.5,
+      "currency": "USD"
+    },
+    {
+      "endpoint_id": "fixture-endpoint",
+      "unit": "redacted",
+      "quantity": 12,
+      "percent_discount": null,
+      "cost_subtotal": 3.0,
+      "cost_discount": 3.0,
+      "cost_total": 2.25,
+      "unit_price": 2.25,
+      "cost": 2.5,
+      "currency": "USD"
+    },
+    {
+      "endpoint_id": "fixture-endpoint",
+      "unit": "redacted",
+      "quantity": 12,
+      "percent_discount": null,
+      "cost_subtotal": 3.0,
+      "cost_discount": 3.0,
+      "cost_total": 2.25,
+      "unit_price": 2.25,
+      "cost": 2.5,
+      "currency": "USD"
+    },
+    {
+      "endpoint_id": "fixture-endpoint",
+      "unit": "redacted",
+      "quantity": 30,
+      "percent_discount": null,
+      "cost_subtotal": 3.0,
+      "cost_discount": 3.0,
+      "cost_total": 2.25,
+      "unit_price": 2.25,
+      "cost": 2.5,
+      "currency": "USD"
+    },
+    {
+      "endpoint_id": "fixture-endpoint",
+      "unit": "redacted",
+      "quantity": 12,
+      "percent_discount": null,
+      "cost_subtotal": 3.0,
+      "cost_discount": 3.0,
+      "cost_total": 2.25,
+      "unit_price": 2.25,
+      "cost": 2.5,
+      "currency": "USD"
+    },
+    {
+      "endpoint_id": "fixture-endpoint",
+      "unit": "redacted",
+      "quantity": 32,
+      "percent_discount": null,
+      "cost_subtotal": 3.0,
+      "cost_discount": 3.0,
+      "cost_total": 2.25,
+      "unit_price": 2.25,
+      "cost": 2.5,
+      "currency": "USD"
+    },
+    {
+      "endpoint_id": "fixture-endpoint",
+      "unit": "redacted",
+      "quantity": 0.6355999999999999,
+      "percent_discount": null,
+      "cost_subtotal": 3.0,
+      "cost_discount": 3.0,
+      "cost_total": 2.25,
+      "unit_price": 2.25,
+      "cost": 2.5,
+      "currency": "USD"
+    }
+  ]
+}

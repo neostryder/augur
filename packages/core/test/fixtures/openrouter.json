@@ -1,0 +1,37 @@
+{
+  "credits": {
+    "total_credits": 25,
+    "total_usage": 12.34
+  },
+  "key": {
+    "is_management_key": false,
+    "is_provisioning_key": false,
+    "limit": null,
+    "limit_reset": null,
+    "limit_remaining": null,
+    "include_byok_in_limit": false,
+    "usage": 3.21,
+    "usage_daily": 0.4,
+    "usage_weekly": 1.75,
+    "usage_monthly": 3.21,
+    "byok_usage": 0,
+    "byok_usage_daily": 0,
+    "byok_usage_weekly": 0,
+    "byok_usage_monthly": 0,
+    "is_free_tier": false,
+    "expires_at": null,
+    "allowed_data_regions": [
+      "redacted"
+    ],
+    "free_model_daily_requests": {
+      "used": 0,
+      "limit": 1000,
+      "remaining": 1000
+    },
+    "rate_limit": {
+      "requests": -1,
+      "interval": "redacted",
+      "note": "redacted"
+    }
+  }
+}

@@ -1,0 +1,30 @@
+# Copy this file to wrangler.toml, set your own domain and KV namespace id, then run `pnpm --filter @augur/relay deploy`.
+name = "augur-relay"
+main = "src/index.ts"
+compatibility_date = "2026-09-26"
+workers_dev = false
+routes = [{ pattern = "relay.example.com", custom_domain = true }]
+
+# The same Worker serves the phone app. Only the relay paths run code; every other path is a static file from the web app build.
+[assets]
+directory = "../ui/dist"
+run_worker_first = ["/fetch", "/sync/*"]
+
+[vars]
+ALLOWED_ORIGINS = "https://relay.example.com"
+
+# Encrypted snapshots for desktop-to-phone sync. Create a namespace with `wrangler kv namespace create augur-sync` and paste its id.
+[[kv_namespaces]]
+binding = "SYNC"
+id = "your-kv-namespace-id"
+
+# Per-address limits: relayed requests and sync writes per minute.
+[[ratelimits]]
+name = "FETCH_LIMIT"
+namespace_id = "1001"
+simple = { limit = 30, period = 60 }
+
+[[ratelimits]]
+name = "SYNC_LIMIT"
+namespace_id = "1002"
+simple = { limit = 5, period = 60 }

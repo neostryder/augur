@@ -1,0 +1,24 @@
+{
+  "name": "@augur/host-tauri",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "dependencies": {
+    "@augur/core": "workspace:*",
+    "@tauri-apps/api": "2.12.0",
+    "@tauri-apps/plugin-autostart": "2.6.0",
+    "@tauri-apps/plugin-notification": "2.5.0",
+    "@tauri-apps/plugin-opener": "2.6.0",
+    "@tauri-apps/plugin-process": "2.4.0",
+    "@tauri-apps/plugin-updater": "2.13.0"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2"
+  }
+}

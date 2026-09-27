@@ -1,0 +1,12 @@
+node_modules/
+dist/
+target/
+*.log
+.env
+.env.*
+.DS_Store
+.claude/
+apps/desktop/src-tauri/gen/
+apps/ui/public/__seed.json
+CLAUDE.md
+apps/relay/wrangler.toml

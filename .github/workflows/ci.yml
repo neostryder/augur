@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  typescript:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @augur/core typecheck
+      - run: pnpm --filter @augur/core test
+      - run: pnpm --filter @augur/host-tauri exec tsc --noEmit
+      - run: pnpm --filter @augur/ui exec tsc --noEmit
+      - run: pnpm --filter @augur/ui build
+      - run: pnpm --filter @augur/relay typecheck
+
+  rust:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @augur/ui build
+      - run: cargo fmt --check
+        working-directory: apps/desktop/src-tauri
+      - run: cargo check --locked
+        working-directory: apps/desktop/src-tauri

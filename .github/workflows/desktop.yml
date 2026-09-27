@@ -1,0 +1,58 @@
+name: Desktop installers
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            args: '--bundles nsis,msi'
+          - platform: macos-latest
+            args: '--target universal-apple-darwin --bundles app,dmg'
+          - platform: ubuntu-24.04
+            args: '--bundles appimage,deb,rpm'
+    runs-on: ${{ matrix.platform }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - if: startsWith(matrix.platform, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - run: pnpm install --frozen-lockfile
+      - if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          version=$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then echo "Tag $GITHUB_REF_NAME does not match app version $version"; exit 1; fi
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_SIGNING_IDENTITY: '-'
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
+        with:
+          projectPath: apps/desktop
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || format('desktop-{0}', github.run_number) }}
+          releaseName: "Augur ${{ github.ref_type == 'tag' && github.ref_name || github.run_number }}"
+          # A tagged release is published so the in-app updater can find it; a manual run stays a draft.
+          releaseDraft: ${{ github.ref_type != 'tag' }}
+          releaseBody: 'What changed is in [CHANGELOG.md](https://github.com/neostryder/augur/blob/main/CHANGELOG.md). The installers are not code-signed yet, so the first launch needs one extra step on Windows and macOS; the [README](https://github.com/neostryder/augur#install) shows it for each platform.'
+          uploadUpdaterJson: true
+          args: ${{ matrix.args }}
