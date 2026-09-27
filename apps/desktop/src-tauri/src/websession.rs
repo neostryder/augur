@@ -15,6 +15,8 @@ use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tokio::sync::oneshot;
 
 const CACHE_FOR: Duration = Duration::from_secs(600);
+const WATCH_EVERY: Duration = Duration::from_secs(5);
+const WATCH_FOR: Duration = Duration::from_secs(900);
 const READ_TIMEOUT: Duration = Duration::from_secs(45);
 // The reader script navigates here with its findings; the navigation is intercepted and never loads.
 const REPORT_HOST: &str = "augur.invalid";
@@ -102,6 +104,28 @@ pub async fn web_session_sign_in(app: tauri::AppHandle, site: String) -> Result<
     .inner_size(520.0, 760.0)
     .build()
     .map_err(|e| e.to_string())?;
+    // Signing in can take a while, with a Cloudflare check first, so the page is read again every few
+    // seconds while the window is open. The first signed-in reading refreshes the providers that use it.
+    let watcher = app.clone();
+    let watched = site.clone();
+    tauri::async_runtime::spawn(async move {
+        let started = Instant::now();
+        while started.elapsed() < WATCH_FOR {
+            tokio::time::sleep(WATCH_EVERY).await;
+            if watcher.get_webview_window(&format!("signin-{watched}")).is_none() {
+                return;
+            }
+            let reading = read_site(&watcher, &watched).await;
+            if let Ok(Some(value)) = reading {
+                if value.get("signedIn") == Some(&Value::Bool(true)) {
+                    if let Some(popup) = watcher.get_webview_window("popup") {
+                        let _ = popup.emit("web-session-ready", ());
+                    }
+                    return;
+                }
+            }
+        }
+    });
     // Closing the sign-in window forgets the cached reading and refreshes, so new numbers show at once.
     let handle = app.clone();
     window.on_window_event(move |event| {
@@ -118,11 +142,13 @@ pub async fn web_session_sign_in(app: tauri::AppHandle, site: String) -> Result<
 }
 
 #[tauri::command]
-pub async fn web_session_read(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, WebSessions>,
-    site: String,
-) -> Result<Option<Value>, String> {
+pub async fn web_session_read(app: tauri::AppHandle, site: String) -> Result<Option<Value>, String> {
+    read_site(&app, &site).await
+}
+
+async fn read_site(app: &tauri::AppHandle, site: &str) -> Result<Option<Value>, String> {
+    let state = app.state::<WebSessions>();
+    let site = site.to_string();
     let spec = self::site(&site).ok_or("Unknown site")?;
     if let Some((at, value)) = state.cache.lock().map_err(|e| e.to_string())?.get(&site) {
         if at.elapsed() < CACHE_FOR {
@@ -145,8 +171,8 @@ pub async fn web_session_read(
     let handle = app.clone();
     let reporting_site = site.clone();
     let built = with_popup_args(
-        &app,
-        WebviewWindowBuilder::new(&app, &label, WebviewUrl::External(url)),
+        app,
+        WebviewWindowBuilder::new(app, &label, WebviewUrl::External(url)),
     )
     // Off screen rather than hidden: Cloudflare's check does not finish in a hidden webview.
     .position(-32000.0, -32000.0)

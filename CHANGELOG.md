@@ -14,6 +14,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 - [Visible] [Sync] **A refresh on the desktop now sends the new numbers to the phone right away, instead of waiting for the next 10-minute upload.**
 - [Visible] [Sync] **Phone sync no longer stops after a few days.** A week of history had grown past the relay's size limit, so history now keeps one reading per 5 minutes and uploads are compressed.
 - [Visible] [Providers] **Jev shows your credit balance on the first refresh after you sign in to the TypeSafe console.** When it cannot read the balance, the card now says why.
+- [Visible] [Providers] **You no longer need to refresh after signing in to TypeSafe.** While the sign-in window is open, Augur keeps looking and shows your balance a few seconds after you finish.
 
 ## [0.4.1] - 2026-09-27
 

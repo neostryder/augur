@@ -65,6 +65,9 @@ export interface Shell {
   /** Downloads and installs the newer release, then restarts the app. */
   installUpdate?(): Promise<void>;
 
-  /** Fires when the popup is shown, and when the tray menu asks for a refresh or for settings. */
-  on(event: 'popup-shown' | 'refresh-requested' | 'settings-requested', handler: () => void): () => void;
+  /**
+   * Fires when the popup is shown, when the tray menu asks for a refresh or for settings, and when a
+   * sign-in window first shows a signed-in account page.
+   */
+  on(event: 'popup-shown' | 'refresh-requested' | 'settings-requested' | 'web-session-ready', handler: () => void): () => void;
 }

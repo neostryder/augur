@@ -128,6 +128,7 @@ export class App {
     this.systemDark.addEventListener('change', () => { this.applyTheme(); void this.render(); void this.updateTray(); });
     this.wireEvents();
     this.shell.on('refresh-requested', () => void this.refresh(true));
+    this.shell.on('web-session-ready', () => void this.refresh(true, this.config.providers.filter((pc) => this.pluginMap().get(pc.id)?.fields.some((f) => f.kind === 'signin')).map((pc) => pc.id)));
     this.shell.on('settings-requested', () => { this.view = 'settings'; void this.render(); });
     if (this.shell.kind === 'desktop') this.resizeWatch.observe(this.root);
     this.shell.on('popup-shown', () => {
@@ -254,19 +255,21 @@ export class App {
     return { ...this.config, providers: this.config.providers.map((p) => ({ ...p, enabled: p.enabled && canRead(p.id) })) };
   }
 
-  /** force refreshes every provider now; otherwise each waits out its own interval. */
-  async refresh(force = false): Promise<void> {
+  /** force refreshes every provider now, or only those listed in `only`; otherwise each waits out its own interval. */
+  async refresh(force = false, only?: string[]): Promise<void> {
     if (this.busy) return;
     this.busy = true;
     document.body.classList.add('busy');
     try {
       this.lastRun = Date.now();
-      const runConfig = this.runConfig();
-      this.snapshot = await core.collect(this.shell.host, runConfig, this.snapshot, force);
+      const full = this.runConfig();
+      const runConfig = only ? { ...full, providers: full.providers.map((p) => ({ ...p, enabled: p.enabled && only.includes(p.id) })) } : full;
+      const got = await core.collect(this.shell.host, runConfig, this.snapshot, force);
+      this.snapshot = only ? { ...got, providers: { ...this.snapshot?.providers, ...got.providers } } : got;
       this.history = core.appendHistory(this.history, this.snapshot);
       if (this.shell.kind === 'pwa' && this.sync?.channel) {
-        await this.pullFromDesktop(runConfig);
-        const fromDesktop = this.config.providers.some((p) => p.enabled && !runConfig.providers.find((r) => r.id === p.id)?.enabled);
+        await this.pullFromDesktop(full);
+        const fromDesktop = this.config.providers.some((p) => p.enabled && !full.providers.find((r) => r.id === p.id)?.enabled);
         if (force && fromDesktop) void this.waitForDesktop();
       }
       const { alerts, firedState } = core.evaluateAlerts(this.snapshot, this.history, this.config, this.alertState);
