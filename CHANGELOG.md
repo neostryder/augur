@@ -4,6 +4,8 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-27
+
 ### Added
 
 - [Visible] [Providers] **Providers can refresh every 15 seconds.** 15 minutes is still the default.
