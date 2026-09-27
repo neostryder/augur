@@ -54,7 +54,7 @@ Click the icon to open the panel. The ring on the icon shows your most-used limi
 
 Each meter shows how much is used, when it resets, and a thin mark on the bar for where even pace would put you. Click a meter to see the last seven days, with dashed lines at each reset. Drag a card by its handle to change the order, and collapse cards you only check now and then. The panel switches to two columns when one column would not fit on the screen, or you can pick one or two columns in settings.
 
-Augur checks for a new version every six hours and installs it while the panel is closed, then restarts. You can turn that off in settings and install from there instead.
+Augur checks for a new version every 5 minutes. When one is ready, an Update button appears next to refresh: hover over it to see what changed, or click it to install and restart. Augur also installs it on its own while the panel is closed, unless you turn that off in settings.
 
 Settings also cover the theme (system, light or dark), which meters each card shows, card colors, how often each provider refreshes (from every 15 seconds to once a week), and alerts. Providers refresh every 15 minutes by default and Jev once a week, a provider whose last read failed tries again after 5 minutes, and the refresh button reads every provider at once.
 

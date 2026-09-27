@@ -8,6 +8,7 @@ import { appendHistory } from '../src/history.js';
 import { evaluateAlerts } from '../src/alerts.js';
 import { collect, dueProviders, refreshInterval, DEFAULT_REFRESH_SECONDS, RETRY_SECONDS } from '../src/engine.js';
 import { defaultConfig, migrateConfig } from '../src/config.js';
+import { compareVersions, releaseChanges } from '../src/changelog.js';
 
 const fixture = async (name: string) => JSON.parse(await readFile(new URL(`./fixtures/${name}.json`, import.meta.url), 'utf8'));
 const at = new Date('2026-09-26T12:00:00Z');
@@ -200,5 +201,24 @@ describe('engine, pace, history and alerts', () => {
     expect(config.providers.some(p => p.id === 'unknown')).toBe(false);
     expect(config.providers.find(p => p.id === 'claude')?.enabled).toBe(false);
     expect(config.providers).toHaveLength(7);
+  });
+});
+
+describe('changelog', () => {
+  const log = ['# Changelog', '', '## [Unreleased]', '', '- [Visible] [UI] **Not out yet.**', '',
+    '## [0.6.0] - 2026-09-28', '', '### Added', '', '- [Visible] [UI] **An update button.** It installs at once.', '- [Internal] [Docs] **Tooling only.**',
+    '## [0.5.1] - 2026-09-27', '', '### Changed', '', '- [Visible] [Providers] Plain entry with no bold lead.',
+    '## [0.5.0] - 2026-09-27', '', '- [Visible] [Sync] **Already installed.**'].join('\n');
+  it('lists visible changes newer than the installed version, newest first', () => {
+    expect(releaseChanges(log, '0.5.0', '0.6.0')).toEqual([
+      { version: '0.6.0', changes: ['An update button.'] },
+      { version: '0.5.1', changes: ['Plain entry with no bold lead.'] },
+    ]);
+    expect(releaseChanges(log, '0.6.0', '0.6.0')).toEqual([]);
+  });
+  it('compares versions by number', () => {
+    expect(compareVersions('0.10.0', '0.9.9')).toBe(1);
+    expect(compareVersions('v0.5.1', '0.5.1')).toBe(0);
+    expect(compareVersions('0.5.0', '0.5.1')).toBe(-1);
   });
 });

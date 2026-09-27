@@ -1,8 +1,8 @@
 import Sortable from 'sortablejs';
-import type { AppConfig, ProviderPlugin, Shell, Snapshot, UpdateInfo } from '@augur/core';
+import { releaseChanges, type AppConfig, type ProviderPlugin, type ReleaseChanges, type Shell, type Snapshot, type UpdateInfo } from '@augur/core';
 import * as core from './core';
 import type { HistoryRow } from './core';
-import { renderDashboard, tightest, type DashboardModel } from './views/dashboard';
+import { renderDashboard, tightest, updateTip, type DashboardModel } from './views/dashboard';
 import { CUSTOM_EXAMPLE, renderSettings, type SettingsModel } from './views/settings';
 import { renderTrayIcon } from './trayicon';
 import { span, until } from './util';
@@ -29,12 +29,15 @@ const TICK_MS = 15_000;
 const ASK_CHECK_MS = 60_000;
 const PULL_MS = 5 * 60_000;
 const UPDATE_FIRST_CHECK_MS = 20_000;
-const UPDATE_INTERVAL_MS = 6 * 3600_000;
+const UPDATE_INTERVAL_MS = 5 * 60_000;
+const CHANGELOG_URL = (version: string) => `https://raw.githubusercontent.com/neostryder/augur/v${version}/CHANGELOG.md`;
 
 export interface UpdateState {
   version: string | null;
   status: 'idle' | 'checking' | 'current' | 'available' | 'installing' | 'error';
   available: UpdateInfo | null;
+  /** What the available update brings, newest release first; null until the changelog has loaded. */
+  changes: ReleaseChanges[] | null;
 }
 
 export class App {
@@ -58,7 +61,7 @@ export class App {
   /** When the snapshot the phone last pulled was made on the desktop. */
   private desktopAt: string | null = null;
   private desktopWait: 'waiting' | 'timeout' | null = null;
-  private update: UpdateState = { version: null, status: 'idle', available: null };
+  private update: UpdateState = { version: null, status: 'idle', available: null, changes: null };
   private openProvider: string | null = null;
   private customDraft = '[]';
   private customError = '';
@@ -390,7 +393,7 @@ export class App {
   private dashboardModel(): DashboardModel {
     return {
       config: this.config, snapshot: this.snapshot, history: this.history, plugins: this.pluginMap(), busy: this.busy,
-      twoColumns: this.twoColumns, expanded: this.expanded, dark: this.isDark(), shellKind: this.shell.kind, desktopWait: this.desktopWait,
+      twoColumns: this.twoColumns, expanded: this.expanded, dark: this.isDark(), shellKind: this.shell.kind, desktopWait: this.desktopWait, update: this.update,
     };
   }
 
@@ -643,16 +646,28 @@ export class App {
 
   private async checkForUpdate(auto: boolean): Promise<void> {
     if (!this.shell.checkUpdate || this.update.status === 'checking' || this.update.status === 'installing') return;
+    const before = this.update.available?.version;
     this.update.status = 'checking';
     if (this.view === 'settings') await this.render();
     try {
       this.update.available = await this.shell.checkUpdate();
       this.update.status = this.update.available ? 'available' : 'current';
     } catch {
-      this.update.status = 'error';
+      // A failed check keeps showing an update already found, so the button does not disappear.
+      this.update.status = this.update.available ? 'available' : 'error';
     }
-    if (this.view === 'settings') await this.render();
+    const found = this.update.available?.version;
+    if (found && found !== before) this.update.changes = await this.loadChanges(found);
+    if (!found) this.update.changes = null;
+    await this.render();
     if (auto) await this.autoInstall();
+  }
+
+  private async loadChanges(to: string): Promise<ReleaseChanges[] | null> {
+    const from = this.update.version;
+    if (!from) return null;
+    const res = await this.shell.host.http({ url: CHANGELOG_URL(to), method: 'GET', timeoutMs: 15000 }).catch(() => null);
+    return res?.status === 200 ? releaseChanges(res.body, from, to) : null;
   }
 
   private async autoInstall(): Promise<void> {
@@ -662,12 +677,13 @@ export class App {
   private async installUpdate(): Promise<void> {
     if (!this.shell.installUpdate || this.update.status === 'installing') return;
     this.update.status = 'installing';
-    if (this.view === 'settings') await this.render();
+    this.tip.style.opacity = '0';
+    await this.render();
     try {
       await this.shell.installUpdate();
     } catch {
       this.update.status = 'error';
-      if (this.view === 'settings') await this.render();
+      await this.render();
     }
   }
 
@@ -719,6 +735,17 @@ export class App {
     const sparkEl = target.closest?.('svg[data-spark]') as SVGElement | null;
     const chartEl = target.closest?.('svg[data-chart]') as SVGElement | null;
     const tip = this.tip;
+    const updateEl = target.closest?.('[data-update]') as HTMLElement | null;
+    if (updateEl) {
+      tip.innerHTML = updateTip(this.update);
+      tip.classList.add('rich');
+      const r = updateEl.getBoundingClientRect();
+      tip.style.left = Math.max(6, Math.min(r.right - tip.offsetWidth, innerWidth - tip.offsetWidth - 6)) + 'px';
+      tip.style.top = r.bottom + 6 + 'px';
+      tip.style.opacity = '1';
+      return;
+    }
+    tip.classList.remove('rich');
     if (!sparkEl && !chartEl) { tip.style.opacity = '0'; this.root.querySelectorAll('.xhair').forEach((l) => l.setAttribute('opacity', '0')); return; }
     let label = '';
     if (sparkEl) {

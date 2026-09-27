@@ -1,4 +1,5 @@
 import type { AppConfig, Meter, ProviderPlugin, ProviderSnapshot, Snapshot } from '@augur/core';
+import type { UpdateState } from '../app';
 import { pace, series, type HistoryRow } from '../core';
 import { ICON, ago, esc, money, sevOf, until, when } from '../util';
 import { chart } from './chart';
@@ -15,6 +16,8 @@ export interface DashboardModel {
   shellKind: 'desktop' | 'pwa';
   /** Phone only: whether a refresh is waiting on the paired desktop, or waited and got nothing. */
   desktopWait?: 'waiting' | 'timeout' | null;
+  /** Set only by the desktop shell; the phone app never checks for updates. */
+  update?: UpdateState;
 }
 
 const WINDOWED = (m: Meter) => m.windowKind !== 'credits' && m.usedPct != null;
@@ -144,6 +147,24 @@ function notesLine(p: ProviderSnapshot): string {
   return out.map(esc).join(' &middot; ');
 }
 
+/** Only the desktop shell can check for updates, so the phone never shows this. Hovering lists the changes from updateTip, and a click installs with no confirmation step. */
+function updateButton(model: DashboardModel): string {
+  const u = model.update, v = u?.available?.version;
+  if (!u || !v || u.status === 'current') return '';
+  if (u.status === 'installing') return `<button class="update-pill installing" disabled aria-label="Installing Augur ${esc(v)}">${ICON.update}<span>Installing</span></button>`;
+  return `<button class="update-pill" data-action="update-install" data-update aria-label="Install Augur ${esc(v)} and restart">${ICON.update}<span>Update to ${esc(v)}</span></button>`;
+}
+
+/** The tooltip for the update button: what to expect on click, then each newer release's changes. */
+export function updateTip(u: UpdateState): string {
+  const v = u.available?.version ?? '';
+  const head = u.status === 'error'
+    ? `Installing ${esc(v)} did not finish. Click to try again, or download it from the Augur releases page on GitHub.`
+    : `Click to install ${esc(v)}. Augur restarts when it finishes.`;
+  if (!u.changes) return `<b>${head}</b><p>Augur could not load the changes for this version. They are listed in CHANGELOG.md on the Augur GitHub page.</p>`;
+  return `<b>${head}</b>` + u.changes.map((r) => `<div class="ver">${esc(r.version)}</div><ul>${r.changes.map((c) => `<li>${esc(c)}</li>`).join('')}</ul>`).join('');
+}
+
 function subLine(model: DashboardModel): string {
   if (model.desktopWait === 'waiting') return 'Asking your desktop to refresh Claude, Codex, Grok and Jev';
   if (model.desktopWait === 'timeout') return 'Your desktop sent nothing new in 4 minutes. It may be asleep, or Augur may be closed there.';
@@ -156,7 +177,7 @@ export function renderDashboard(model: DashboardModel): string {
   let html = `<header class="top"><div><h1>Usage</h1><div class="sub">${subLine(model)}</div></div><span class="grow"></span>
     <button class="icon" data-action="theme" title="${themeName}, click to change" aria-label="${themeName}, click to change">${themeIcon}</button>
     <button class="icon" data-action="settings" title="Open settings" aria-label="Open settings">${ICON.gear}</button>
-    <button class="icon refresh" data-action="refresh" title="Refresh now" aria-label="Refresh now">${ICON.refresh}</button></header>`;
+    ${updateButton(model)}<button class="icon refresh" data-action="refresh" title="Refresh now" aria-label="Refresh now">${ICON.refresh}</button></header>`;
 
   const enabled = model.config.providers.filter((p) => p.enabled);
   if (!enabled.length) {

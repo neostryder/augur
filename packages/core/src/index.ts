@@ -8,3 +8,4 @@ export * from './history.js';
 export * from './alerts.js';
 export * from './config.js';
 export * from './providers/index.js';
+export * from './changelog.js';
