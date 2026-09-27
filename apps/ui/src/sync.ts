@@ -1,7 +1,39 @@
 // Desktop-to-phone sync. The desktop encrypts its snapshot with AES-GCM under a key that only
 // it and the paired phone know, then stores the ciphertext on the relay. The relay cannot read it.
-import type { Host, Shell, Snapshot } from '@augur/core';
+import type { AlertConfig, AppConfig, GenericProviderDef, Host, LayoutConfig, ProviderSettings, Shell, Snapshot } from '@augur/core';
 import type { HistoryRow } from './core';
+
+/** The desktop settings a newly paired phone starts from. No secrets: keys never leave the desktop. */
+export interface SharedConfig {
+  providers: Array<{ id: string; enabled: boolean; settings: ProviderSettings }>;
+  custom: GenericProviderDef[];
+  layout: LayoutConfig;
+  alerts: Omit<AlertConfig, 'enabled'>;
+}
+
+export interface SyncPayload {
+  snapshot: Snapshot;
+  history: HistoryRow[];
+  config?: SharedConfig;
+}
+
+export function sharedConfig(config: AppConfig): SharedConfig {
+  const { enabled: _enabled, ...alerts } = config.alerts;
+  return { providers: config.providers.map(({ id, enabled, settings }) => ({ id, enabled, settings })), custom: config.custom, layout: config.layout, alerts };
+}
+
+/**
+ * Starts a newly paired phone from the desktop's settings: provider order, which ones show, colors,
+ * hidden meters, theme and alert levels. The phone's own alert switch stays off until turned on there,
+ * since notifications need the phone's permission.
+ */
+export function applySharedConfig(config: AppConfig, shared: SharedConfig): AppConfig {
+  const byId = new Map(config.providers.map((p) => [p.id, p]));
+  const custom = [...shared.custom, ...config.custom.filter((d) => !shared.custom.some((s) => s.id === d.id))];
+  const ordered = shared.providers.map((s) => ({ ...(byId.get(s.id) ?? { id: s.id, settings: {} }), enabled: s.enabled, settings: { ...s.settings } }));
+  const rest = config.providers.filter((p) => !shared.providers.some((s) => s.id === p.id));
+  return { ...config, custom, providers: [...ordered, ...rest], layout: structuredClone(shared.layout), alerts: { ...structuredClone(shared.alerts), enabled: config.alerts.enabled } };
+}
 
 export interface SyncLink {
   relay: string;
@@ -35,11 +67,11 @@ export async function createPairing(shell: Shell, relay: string, pwaUrl: string)
   return { link, pairUrl };
 }
 
-export async function pushSnapshot(host: Host, link: SyncLink, snapshot: Snapshot, history: HistoryRow[]): Promise<void> {
+export async function pushSnapshot(host: Host, link: SyncLink, snapshot: Snapshot, history: HistoryRow[], config?: SharedConfig): Promise<void> {
   const [keyText, writeSecret] = await Promise.all([host.secret(KEY_SECRET), host.secret(WRITE_SECRET)]);
   if (!keyText || !writeSecret) return;
   const cut = Date.now() - 7 * 86400e3;
-  const payload = JSON.stringify({ snapshot, history: history.filter((r) => new Date(r.t).getTime() >= cut) });
+  const payload = JSON.stringify({ snapshot, history: history.filter((r) => new Date(r.t).getTime() >= cut), config } satisfies SyncPayload);
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const data = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await aesKey(unb64(keyText)), new TextEncoder().encode(payload)));
   const res = await host.http({
@@ -59,7 +91,7 @@ export async function acceptPairingFromUrl(shell: Shell): Promise<SyncLink | nul
   return { relay: decodeURIComponent(m[1]!), channel: m[2]! };
 }
 
-export async function pullSnapshot(host: Host, link: SyncLink): Promise<{ snapshot: Snapshot; history: HistoryRow[] } | null> {
+export async function pullSnapshot(host: Host, link: SyncLink): Promise<SyncPayload | null> {
   const keyText = await host.secret(KEY_SECRET);
   if (!keyText) return null;
   const r = await fetch(`${link.relay}/sync/${link.channel}`, { cache: 'no-store' });

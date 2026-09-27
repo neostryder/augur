@@ -159,7 +159,7 @@ export interface ProviderConfig {
   enabled: boolean;
   /** Non-secret settings. Secret values live in the keychain, keyed `<providerId>.<fieldKey>`. */
   settings: ProviderSettings;
-  /** How often this provider refreshes, in seconds. Unset uses the provider's own default, then the app-wide interval. */
+  /** How often this provider refreshes, in seconds. Unset uses the provider's own default, then DEFAULT_REFRESH_SECONDS. */
   refreshSeconds?: number | null;
 }
 

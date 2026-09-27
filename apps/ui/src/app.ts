@@ -8,7 +8,7 @@ import { renderTrayIcon } from './trayicon';
 import { span, until } from './util';
 import qrcode from 'qrcode-generator';
 import { HOSTED } from './hosted';
-import { acceptPairingFromUrl, createPairing, mergeSynced, pullSnapshot, pushSnapshot } from './sync';
+import { acceptPairingFromUrl, applySharedConfig, createPairing, mergeSynced, pullSnapshot, pushSnapshot, sharedConfig } from './sync';
 import { relayUrl, setRelayUrl } from './shells/browser';
 
 type SyncConfig = NonNullable<AppConfig['sync']>;
@@ -90,6 +90,8 @@ export class App {
         this.sync = { relay: link.relay, channel: link.channel, pwaUrl: location.origin + location.pathname };
         if (!relayUrl()) setRelayUrl(link.relay);
         this.justPaired = true;
+        // Pairing replaces the setup screen: the phone takes its providers and settings from the desktop.
+        this.firstRun = false;
         await this.shell.saveConfig(this.config);
       }
     }
@@ -172,11 +174,18 @@ export class App {
     if (due || pull) await this.refresh();
   }
 
-  /** The phone cannot read command-line logins, so it skips those providers and takes them from the paired desktop instead. */
+  /**
+   * The phone reads a provider itself only when it can: never a command-line login, and a key-based
+   * provider only once its key is saved on the phone. The paired desktop supplies the rest.
+   */
   private runConfig(): AppConfig {
     if (this.shell.kind !== 'pwa') return this.config;
     const map = this.pluginMap();
-    return { ...this.config, providers: this.config.providers.map((p) => ({ ...p, enabled: p.enabled && !map.get(p.id)?.needsLocalLogin })) };
+    const canRead = (id: string) => {
+      const p = map.get(id);
+      return !!p && !p.needsLocalLogin && (!this.sync?.channel || this.secretsFor(p).every((n) => this.secrets.has(n)));
+    };
+    return { ...this.config, providers: this.config.providers.map((p) => ({ ...p, enabled: p.enabled && canRead(p.id) })) };
   }
 
   /** force refreshes every provider now; otherwise each waits out its own interval. */
@@ -198,7 +207,7 @@ export class App {
         this.shell.saveSnapshot(this.snapshot), this.shell.saveHistory(this.history), this.shell.saveAlertState(this.alertState),
       ]);
       if (this.shell.kind === 'desktop' && this.sync?.channel && Date.now() - this.lastPush >= SYNC_PUSH_MS) {
-        const pushed = await pushSnapshot(this.shell.host, this.sync, this.snapshot, this.history).then(() => true, () => false);
+        const pushed = await pushSnapshot(this.shell.host, this.sync, this.snapshot, this.history, sharedConfig(this.config)).then(() => true, () => false);
         if (pushed) this.lastPush = Date.now();
       }
       if (this.shell.exportSnapshot && this.config.exportPath) {
@@ -227,7 +236,14 @@ export class App {
     }
     this.history = [...mine.values()].sort((a, b) => a.t.localeCompare(b.t));
     if (this.justPaired) {
-      for (const id of synced) { const pc = this.config.providers.find((p) => p.id === id); if (pc) pc.enabled = true; }
+      if (pulled.config) {
+        this.config = applySharedConfig(this.config, pulled.config);
+        this.syncProviderList();
+        this.customDraft = JSON.stringify(this.config.custom ?? [], null, 2);
+        this.applyTheme();
+      } else {
+        for (const id of synced) { const pc = this.config.providers.find((p) => p.id === id); if (pc) pc.enabled = true; }
+      }
       this.justPaired = false;
       await this.shell.saveConfig(this.config);
     }

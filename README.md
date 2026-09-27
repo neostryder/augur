@@ -27,7 +27,7 @@ Augur shows how much of your AI plans and credits you have used, in one place: a
 | fal | Credit balance, spend this month, top endpoints | An admin API key |
 | Jev (TypeSafe) | Credit balance, spend and requests over the last 7 days, response time | An API key, plus a one-time sign-in to the TypeSafe console for the balance |
 
-Claude, ChatGPT and Grok only report plan limits to their own signed-in apps, so those three work in the desktop app. The phone app can show them too once you pair it with your desktop (see below).
+Claude, ChatGPT and Grok only report plan limits to their own signed-in apps, so the desktop app reads those three. An API key for Anthropic, OpenAI or xAI shows API billing, not plan limits, so it cannot stand in for the sign-in. The phone app shows them once you pair it with your desktop (see below).
 
 You can add any other provider whose usage endpoint returns JSON, without writing code. See [Custom providers](#custom-providers).
 
@@ -72,7 +72,9 @@ Each alert fires once per window and waits for the next reset before it can fire
 
 The web app works in any modern mobile browser. Open [augur.rpgm.tools](https://augur.rpgm.tools) on the phone and add it to your home screen (on iPhone, Share and then Add to Home Screen; on Android, the install prompt). On a phone it can track the providers that use API keys directly: the keys are encrypted on the phone and requests go through a relay that forwards them without storing anything.
 
-To see Claude, ChatGPT or Grok on your phone, choose Pair a phone in the desktop app's settings and scan the QR code with the phone. The desktop encrypts each update with a key only it and your phone hold, and the relay stores only that ciphertext.
+To use it with your desktop, choose Pair a phone in the desktop app's settings and scan the QR code with the phone. The phone then shows everything the desktop tracks, set up the way you have it there, and needs no keys of its own. Its numbers are at most 10 minutes behind the desktop's. Turn on alerts in the phone's own settings if you want them there too.
+
+The desktop encrypts each update with a key only it and your phone hold, and the relay stores only that ciphertext.
 
 ## Custom providers
 
