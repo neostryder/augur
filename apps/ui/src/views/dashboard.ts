@@ -145,7 +145,7 @@ function notesLine(p: ProviderSnapshot): string {
 }
 
 function subLine(model: DashboardModel): string {
-  if (model.desktopWait === 'waiting') return 'Asking your desktop to refresh Claude, ChatGPT, Grok and Jev';
+  if (model.desktopWait === 'waiting') return 'Asking your desktop to refresh Claude, Codex, Grok and Jev';
   if (model.desktopWait === 'timeout') return 'Your desktop sent nothing new in 4 minutes. It may be asleep, or Augur may be closed there.';
   return model.snapshot ? `Updated ${ago(model.snapshot.generatedAt)}` : 'Not refreshed yet';
 }

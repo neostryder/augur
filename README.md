@@ -5,7 +5,7 @@ Augur shows how much of your AI plans and credits you have used, in one place: a
 <table align="center">
   <tr>
     <td align="center" valign="top" width="50%">
-      <img src="docs/images/dashboard.jpg" alt="The Augur panel with Claude, ChatGPT, Grok, MiniMax, OpenRouter, fal and Jev cards" width="300"><br>
+      <img src="docs/images/dashboard.jpg" alt="The Augur panel with Claude, Codex, Grok, MiniMax, OpenRouter, fal and Jev cards" width="300"><br>
       <sub>The panel shows your most-used limit at the top and a card for each provider below it.</sub>
     </td>
     <td align="center" valign="top" width="50%">
@@ -20,14 +20,14 @@ Augur shows how much of your AI plans and credits you have used, in one place: a
 | Provider | What you see | What it needs |
 | --- | --- | --- |
 | Claude | Current session, weekly limit, weekly limit per model | The Claude Code app signed in on this computer |
-| ChatGPT and Codex | Weekly plan limit, limit resets available | The Codex CLI signed in on this computer |
+| Codex | Weekly plan limit, limit resets available | The Codex CLI signed in on this computer |
 | Grok | Weekly SuperGrok limit | The Grok CLI signed in on this computer |
 | MiniMax | Coding plan: 5-hour and weekly text limits, video counts | An API key |
 | OpenRouter | Credits left, spend by the key today, this week and this month | An API key |
 | fal | Credit balance, spend this month, top endpoints | An admin API key |
 | Jev (TypeSafe) | Credit balance, spend and requests over the last 7 days, response time | An API key, plus a one-time sign-in to the TypeSafe console for the balance |
 
-Claude, ChatGPT and Grok only report plan limits to their own signed-in apps, so the desktop app reads those three. An API key for Anthropic, OpenAI or xAI shows API billing, not plan limits, so it cannot stand in for the sign-in. The phone app shows them once you pair it with your desktop (see below).
+Claude, Codex and Grok only report plan limits to their own signed-in apps, so the desktop app reads those three. An API key for Anthropic, OpenAI or xAI shows API billing, not plan limits, so it cannot stand in for the sign-in. The phone app shows them once you pair it with your desktop (see below).
 
 You can add any other provider whose usage endpoint returns JSON, without writing code. See [Custom providers](#custom-providers).
 
@@ -72,7 +72,7 @@ Each alert fires once per window and waits for the next reset before it can fire
 
 The web app works in any modern mobile browser. Open [augur.rpgm.tools](https://augur.rpgm.tools) on the phone and add it to your home screen: on iPhone, tap Share in Safari (on newer iPhones it is in the menu at the bottom) and then Add to Home Screen; on Android, use the install prompt. On its own it can track the providers that use API keys: the keys are encrypted on the phone and requests go through a relay that forwards them without storing anything.
 
-To use it with your desktop, choose Pair a phone in the desktop app's settings. Then open Augur on the phone, go to settings and tap Scan pairing code. On an iPhone, scan from inside the home-screen app rather than with the Camera app: the camera opens links in Safari, which keeps its storage apart from the home-screen app. The phone then shows everything the desktop tracks, set up the way you have it there, and receives the desktop's API keys, so there is nothing to type. It refreshes key-based providers itself. Claude, ChatGPT, Grok and Jev's balance come from the desktop, which sends new numbers every 10 minutes. Tapping refresh on the phone asks the desktop to read them again, and the new numbers arrive within about two minutes while the desktop app is running. Turn on alerts in the phone's own settings if you want them there too.
+To use it with your desktop, choose Pair a phone in the desktop app's settings. Then open Augur on the phone, go to settings and tap Scan pairing code. On an iPhone, scan from inside the home-screen app rather than with the Camera app: the camera opens links in Safari, which keeps its storage apart from the home-screen app. The phone then shows everything the desktop tracks, set up the way you have it there, and receives the desktop's API keys, so there is nothing to type. It refreshes key-based providers itself. Claude, Codex, Grok and Jev's balance come from the desktop, which sends new numbers every 10 minutes. Tapping refresh on the phone asks the desktop to read them again, and the new numbers arrive within about two minutes while the desktop app is running. Turn on alerts in the phone's own settings if you want them there too.
 
 The desktop encrypts each update, keys included, with a key only it and your phone hold, and the relay stores only that ciphertext. To keep your API keys on the desktop, turn off Send API keys to the phone in the desktop's settings.
 

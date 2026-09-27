@@ -28,7 +28,7 @@ async function tokens(host: Host, force = false): Promise<Record<string, any>> {
 }
 
 export const codex: ProviderPlugin = {
-  id: 'codex', color: { light: '#1baf7a', dark: '#199e70' }, name: 'ChatGPT / Codex', needsLocalLogin: true,
+  id: 'codex', color: { light: '#1baf7a', dark: '#199e70' }, name: 'Codex', needsLocalLogin: true,
   links: { usage: 'https://chatgpt.com/codex/settings/usage', status: 'https://status.openai.com/', statusApi: 'https://status.openai.com/api/v2/status.json' }, fields: [],
   detect: async host => !!(await host.readHomeFile?.(path(host))),
   async fetch(host) {

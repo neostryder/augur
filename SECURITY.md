@@ -7,7 +7,7 @@ Please report security problems privately through GitHub's [private vulnerabilit
 ## What Augur holds
 
 - **API keys** you enter in the desktop app are stored in the operating system's keychain (Windows Credential Manager, the macOS Keychain, or the Secret Service on Linux). In the web app they are encrypted with a key that the browser keeps and cannot export.
-- **Sign-ins for Claude, ChatGPT and Grok** are never copied. The desktop app reads the login files those apps already keep on your computer and renews them the same way the apps do.
+- **Sign-ins for Claude, Codex and Grok** are never copied. The desktop app reads the login files those apps already keep on your computer and renews them the same way the apps do.
 - **The TypeSafe console session** lives in the desktop app's own browser profile, and is used only to read your billing page.
 - **Phone sync** is encrypted on your computer with a key that only your paired phone holds. Unless you turn off Send API keys to the phone, it also carries the API keys for providers the phone can read itself, so the phone can refresh them. The relay stores that ciphertext for up to 14 days and cannot read it. The phone's refresh button also leaves the time of the tap on the relay for an hour, so the desktop knows to read your providers again. Nothing else goes with it.
 

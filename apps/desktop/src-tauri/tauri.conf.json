@@ -48,7 +48,7 @@
     "copyright": "Copyright (c) 2026 neostryder. MIT License.",
     "category": "Utility",
     "shortDescription": "AI plan usage and credit balances in your tray",
-    "longDescription": "Augur shows how much of your AI plans and credits you have used, for Claude, ChatGPT and Codex, Grok, MiniMax, OpenRouter, fal and Jev, and warns before a limit runs out.",
+    "longDescription": "Augur shows how much of your AI plans and credits you have used, for Claude, Codex, Grok, MiniMax, OpenRouter, fal and Jev, and warns before a limit runs out.",
     "homepage": "https://github.com/neostryder/augur",
     "license": "MIT",
     "linux": {

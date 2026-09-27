@@ -185,7 +185,7 @@ function phoneSection(m: SettingsModel): string {
     const paired = !!m.sync?.channel;
     return `<h2 class="sec">Desktop sync</h2><div class="card">
       <div class="row"><label class="name">${paired ? 'Paired with your desktop' : 'Not paired'}<span class="desc">${paired
-        ? "Your desktop sends its readings, settings and API keys here. Claude, ChatGPT and Grok always come from the desktop, since only the apps signed in on the computer can see those plan limits."
+        ? "Your desktop sends its readings, settings and API keys here. Claude, Codex and Grok always come from the desktop, since only the apps signed in on the computer can see those plan limits."
         : "Scan the code from Pair a phone in the desktop app's settings. This phone then shows everything the desktop tracks and gets its API keys, so there is nothing to type here."}</span></label>
       ${paired ? '<button class="btn small" data-action="sync-unpair">Unpair</button>' : ''}</div>
       <div class="actions" style="justify-content:flex-start;margin-top:4px"><button class="btn ${paired ? '' : 'primary'}" data-action="sync-scan">Scan pairing code</button></div>
