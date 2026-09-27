@@ -40,23 +40,28 @@ fn site(id: &str) -> Option<Site> {
     }
 }
 
-// Runs on each page load in the reader window. A Cloudflare check page navigates on its own,
-// so it reports nothing; a sign-in page reports signedIn false; the billing page reports its numbers.
+// Runs on each page load in the reader window. A Cloudflare check that passes on its own loads the
+// billing page, where the script runs again. When the numbers are missing, `reason` says what was on
+// screen instead: a Cloudflare check that did not pass, a sign-in page, or a billing page without a balance.
 const TYPESAFE_SCRIPT: &str = r#"
 (() => {
   if (window.top !== window) return;
   const report = (payload) => { location.href = 'https://augur.invalid/report?data=' + encodeURIComponent(JSON.stringify(payload)); };
+  const challenged = () => /just a moment|attention required/i.test(document.title)
+    || !!document.querySelector('#challenge-form, #challenge-running, #challenge-stage, .cf-turnstile, iframe[src*="challenges.cloudflare.com"]');
+  const signInPage = () => !!document.querySelector('input[type=password], input[type=email]') || /sign[-_]?in|log[-_]?in|auth/i.test(location.pathname);
   const run = async () => {
-    if (/just a moment/i.test(document.title)) return;
-    if (location.hostname !== 'console.typesafe.ai') { report({ signedIn: false }); return; }
-    let text = '';
+    if (location.hostname !== 'console.typesafe.ai') { report({ signedIn: false, reason: 'signin' }); return; }
+    let text = '', challenge = false;
     const deadline = Date.now() + 25000;
     while (Date.now() < deadline) {
+      challenge = challenged();
       text = document.body ? document.body.innerText : '';
-      if (/Credit Balance/i.test(text)) break;
+      if (!challenge && /Credit Balance/i.test(text)) break;
       await new Promise((r) => setTimeout(r, 500));
     }
-    if (!/Credit Balance/i.test(text)) { report({ signedIn: false }); return; }
+    if (challenge) { report({ signedIn: false, reason: 'challenge' }); return; }
+    if (!/Credit Balance/i.test(text)) { report({ signedIn: false, reason: signInPage() ? 'signin' : 'nobalance' }); return; }
     const dollars = (label) => {
       const m = text.match(new RegExp(label + '\\s*\\$([\\d,]+(?:\\.\\d+)?)', 'i'));
       return m ? Number(m[1].replace(/,/g, '')) : null;
@@ -181,11 +186,14 @@ pub async fn web_session_read(
     let Some(value) = result else {
         return Err(spec.timeout_message.into());
     };
-    state
-        .cache
-        .lock()
-        .map_err(|e| e.to_string())?
-        .insert(site, (Instant::now(), value.clone()));
+    // Only a signed-in reading is kept, so the next refresh after signing in reads the page again.
+    if value.get("signedIn") == Some(&Value::Bool(true)) {
+        state
+            .cache
+            .lock()
+            .map_err(|e| e.to_string())?
+            .insert(site, (Instant::now(), value.clone()));
+    }
     Ok(Some(value))
 }
 

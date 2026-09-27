@@ -52,6 +52,15 @@ async function sha256Hex(text: string): Promise<string> {
   return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+// Version 2 gzips the JSON before encrypting it: a week of history is about 1 MB as JSON and a small fraction of that compressed.
+async function gzip(text: string): Promise<Uint8Array<ArrayBuffer>> {
+  const stream = new Blob([text]).stream().pipeThrough(new CompressionStream('gzip'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+async function gunzip(bytes: ArrayBuffer): Promise<string> {
+  return new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+}
+
 async function aesKey(raw: Uint8Array<ArrayBuffer>): Promise<CryptoKey> {
   return crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']);
 }
@@ -95,13 +104,17 @@ export async function pushSnapshot(host: Host, link: SyncLink, snapshot: Snapsho
   const cut = Date.now() - 7 * 86400e3;
   const payload = JSON.stringify({ snapshot, history: history.filter((r) => new Date(r.t).getTime() >= cut), config, secrets } satisfies SyncPayload);
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const data = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await aesKey(unb64(keyText)), new TextEncoder().encode(payload)));
+  const data = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await aesKey(unb64(keyText)), await gzip(payload)));
   const res = await host.http({
     url: `${link.relay}/sync/${link.channel}`, method: 'PUT',
     headers: { 'content-type': 'application/json', 'x-sync-secret': writeSecret },
-    body: JSON.stringify({ v: 1, iv: b64(iv), data: b64(data) }),
+    body: JSON.stringify({ v: 2, iv: b64(iv), data: b64(data) }),
   });
-  if (res.status !== 200) throw new Error(`Sync upload failed (${res.status})`);
+  if (res.status !== 200) throw new SyncUploadError(res.status);
+}
+
+export class SyncUploadError extends Error {
+  constructor(readonly status: number) { super(`Sync upload failed (${status})`); }
 }
 
 /** Phone side: reads a `#pair=` fragment once, stores it, and clears it from the address bar. */
@@ -124,9 +137,26 @@ export async function pullSnapshot(host: Host, link: SyncLink): Promise<SyncPayl
   const r = await fetch(`${link.relay}/sync/${link.channel}`, { cache: 'no-store' });
   if (r.status === 404) return null;
   if (!r.ok) throw new Error(`Sync download failed (${r.status})`);
-  const box = (await r.json()) as { iv: string; data: string };
+  const box = (await r.json()) as { v?: number; iv: string; data: string };
   const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(box.iv) }, await aesKey(unb64(keyText)), unb64(box.data));
-  return JSON.parse(new TextDecoder().decode(plain));
+  return JSON.parse(box.v === 2 ? await gunzip(plain) : new TextDecoder().decode(plain));
+}
+
+/** Phone side: asks the paired desktop to read every provider now. Returns the relay's time of the request. */
+export async function askDesktop(link: SyncLink): Promise<number | null> {
+  const r = await fetch(`${link.relay}/sync/${link.channel}/ask`, { method: 'POST', cache: 'no-store' });
+  if (!r.ok) return null;
+  const { at } = (await r.json()) as { at?: number };
+  return typeof at === 'number' ? at : null;
+}
+
+/** Desktop side: the time of the phone's latest refresh request, 0 when there is none, or null when the relay did not answer. */
+export async function readAsk(host: Host, link: SyncLink): Promise<number | null> {
+  const res = await host.http({ url: `${link.relay}/sync/${link.channel}/ask`, method: 'GET' });
+  if (res.status === 404) return 0;
+  if (res.status !== 200) return null;
+  const at = (JSON.parse(res.body) as { at?: number }).at;
+  return typeof at === 'number' ? at : null;
 }
 
 /**

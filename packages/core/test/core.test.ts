@@ -171,6 +171,21 @@ describe('engine, pace, history and alerts', () => {
     expect(pace.willExhaustBeforeReset).toBe(true);
     expect(calculatePace(meter, [], 'sample', new Date('2026-09-26T13:00:00Z')).burnRatio).toBeNull();
   });
+  it('folds readings closer than a history row apart', () => {
+    const at = (s: number) => ({ ...snapshot, generatedAt: new Date(Date.parse('2026-09-26T00:00:00Z') + s * 1000).toISOString() });
+    let rows: ReturnType<typeof appendHistory> = [];
+    for (let s = 0; s <= 900; s += 15) rows = appendHistory(rows, at(s), 86400);
+    expect(rows.length).toBeGreaterThanOrEqual(3);
+    expect(rows.length).toBeLessThanOrEqual(5);
+    expect(rows.at(-1)?.t).toBe(at(900).generatedAt);
+    const failed = { ...at(915), providers: { sample: { ...snapshot.providers.sample!, ok: false } } };
+    expect(appendHistory(rows, failed, 86400).at(-1)?.sample).toEqual(rows.at(-1)?.sample);
+  });
+  it('accepts a 15 second refresh interval and nothing shorter', () => {
+    const migrated = (sec: number) => migrateConfig({ ...defaultConfig(), providers: [{ id: 'claude', enabled: true, refreshSeconds: sec, settings: {} }] }).providers.find(p => p.id === 'claude')?.refreshSeconds;
+    expect(migrated(15)).toBe(15);
+    expect(migrated(5)).toBeNull();
+  });
   it('records money and meters, trims rows, and deduplicates alerts', () => {
     const rows = appendHistory([{ t: '2026-09-01T00:00:00Z' }], snapshot, 86400);
     expect(rows).toHaveLength(1);

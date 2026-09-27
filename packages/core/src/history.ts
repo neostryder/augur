@@ -2,7 +2,10 @@ import type { Snapshot } from './types.js';
 
 export type HistoryRow = { t: string } & Record<string, string | Record<string, number>>;
 
-export function appendHistory(rows: HistoryRow[], snapshot: Snapshot, keepSeconds = 7 * 86400): HistoryRow[] {
+/** Rows closer together than this are folded into one, so a short refresh interval cannot swell the history. */
+export const HISTORY_ROW_SECONDS = 300;
+
+export function appendHistory(rows: HistoryRow[], snapshot: Snapshot, keepSeconds = 7 * 86400, rowSeconds = HISTORY_ROW_SECONDS): HistoryRow[] {
   const next: HistoryRow = { t: snapshot.generatedAt };
   for (const [id, provider] of Object.entries(snapshot.providers)) {
     if (!provider.ok) continue;
@@ -11,8 +14,14 @@ export function appendHistory(rows: HistoryRow[], snapshot: Snapshot, keepSecond
     for (const money of provider.money) if (money.amount !== null) values[`$${money.id}`] = money.amount;
     next[id] = values;
   }
-  const cutoff = Date.parse(snapshot.generatedAt) - keepSeconds * 1000;
-  return [...rows, next].filter(row => Date.parse(row.t) >= cutoff);
+  const now = Date.parse(snapshot.generatedAt);
+  const cutoff = now - keepSeconds * 1000;
+  // The newest row keeps moving forward with each reading until it is a full row apart from the one before it.
+  // A provider missing from this reading keeps its value from the row being replaced.
+  const last = rows.at(-1), before = rows.at(-2);
+  const fold = !!last && !!before && now - Date.parse(before.t) < rowSeconds * 1000;
+  const kept = fold ? rows.slice(0, -1) : rows;
+  return [...kept, fold ? { ...last, ...next } : next].filter(row => Date.parse(row.t) >= cutoff);
 }
 
 export function meterSeries(rows: HistoryRow[], providerId: string, meterId: string): Array<{ t: string; value: number }> {

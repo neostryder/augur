@@ -50,7 +50,11 @@ export const jev: ProviderPlugin = {
         return { requests: t.requests + (num(row.requests) ?? 0), tokens: t.tokens + (num(row.inputTokens) ?? 0) + (num(row.outputTokens) ?? 0) };
       }, { requests: 0, tokens: 0 });
       if (typeof session.refill === 'string') notes.refill = session.refill;
-    } else if (session?.signedIn === false) notes.signInNeeded = true;
+    } else if (session?.signedIn === false) {
+      if (session.reason === 'challenge') notes.cloudflareCheck = true;
+      else if (session.reason === 'nobalance') notes.balanceMissing = true;
+      else notes.signInNeeded = true;
+    }
     return { plan: null, detail: `${model} answered in ${latencyMs} ms`, meters: [], money, notes };
   }
 };

@@ -11,6 +11,8 @@ export interface CollectOptions {
 
 /** How often a provider is read when neither it nor the user sets an interval. */
 export const DEFAULT_REFRESH_SECONDS = 900;
+/** The shortest interval a provider can be set to. The app checks which providers are due this often. */
+export const MIN_REFRESH_SECONDS = 15;
 /** A provider whose last read failed tries again after this long, or its own interval if shorter. */
 export const RETRY_SECONDS = 300;
 

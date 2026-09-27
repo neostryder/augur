@@ -13,6 +13,8 @@ export interface DashboardModel {
   expanded: string | null;
   dark: boolean;
   shellKind: 'desktop' | 'pwa';
+  /** Phone only: whether a refresh is waiting on the paired desktop, or waited and got nothing. */
+  desktopWait?: 'waiting' | 'timeout' | null;
 }
 
 const WINDOWED = (m: Meter) => m.windowKind !== 'credits' && m.usedPct != null;
@@ -136,14 +138,22 @@ function notesLine(p: ProviderSnapshot): string {
   if (n.lastWeek) out.push(`${Number(n.lastWeek.requests).toLocaleString()} requests, ${(Number(n.lastWeek.tokens) / 1e6).toFixed(1)}M tokens in 7 days`);
   if (typeof n.refill === 'string') out.push(n.refill);
   if (n.signInNeeded) out.push('Sign in to the TypeSafe console in settings to see your balance');
+  if (n.cloudflareCheck) out.push('Open the TypeSafe console in settings and pass the Cloudflare check to show your balance');
+  if (n.balanceMissing) out.push('The TypeSafe billing page opened but showed no credit balance');
   if (typeof n.latencyMs === 'number') out.push(`Answered in ${Math.round(n.latencyMs)} ms${n.model ? `, ${n.model}` : ''}`);
   return out.map(esc).join(' &middot; ');
+}
+
+function subLine(model: DashboardModel): string {
+  if (model.desktopWait === 'waiting') return 'Asking your desktop to refresh Claude, ChatGPT, Grok and Jev';
+  if (model.desktopWait === 'timeout') return 'Your desktop sent nothing new in 4 minutes. It may be asleep, or Augur may be closed there.';
+  return model.snapshot ? `Updated ${ago(model.snapshot.generatedAt)}` : 'Not refreshed yet';
 }
 
 export function renderDashboard(model: DashboardModel): string {
   const themeIcon = model.config.layout.theme === 'light' ? ICON.sun : model.config.layout.theme === 'dark' ? ICON.moon : ICON.auto;
   const themeName = model.config.layout.theme === 'system' ? 'System theme' : model.config.layout.theme === 'light' ? 'Light theme' : 'Dark theme';
-  let html = `<header class="top"><div><h1>Usage</h1><div class="sub">${model.snapshot ? `Updated ${ago(model.snapshot.generatedAt)}` : 'Not refreshed yet'}</div></div><span class="grow"></span>
+  let html = `<header class="top"><div><h1>Usage</h1><div class="sub">${subLine(model)}</div></div><span class="grow"></span>
     <button class="icon" data-action="theme" title="${themeName}, click to change" aria-label="${themeName}, click to change">${themeIcon}</button>
     <button class="icon" data-action="settings" title="Open settings" aria-label="Open settings">${ICON.gear}</button>
     <button class="icon refresh" data-action="refresh" title="Refresh now" aria-label="Refresh now">${ICON.refresh}</button></header>`;

@@ -1,6 +1,7 @@
 import type { AppConfig, GenericProviderDef, ProviderConfig } from './types.js';
 import { builtinProviders } from './providers/index.js';
 import { obj } from './util.js';
+import { MIN_REFRESH_SECONDS } from './engine.js';
 
 /** Super is the Windows key on Windows and Command on macOS. */
 export const DEFAULT_HOTKEY = 'Ctrl+Super+U';
@@ -22,7 +23,7 @@ export function migrateConfig(value: unknown): AppConfig {
   for (const row of rows) {
     const item = obj(row);
     if (typeof item.id !== 'string' || !known.has(item.id) || providers.some(provider => provider.id === item.id)) continue;
-    const refreshSeconds = typeof item.refreshSeconds === 'number' && item.refreshSeconds >= 60 ? item.refreshSeconds : null;
+    const refreshSeconds = typeof item.refreshSeconds === 'number' && item.refreshSeconds >= MIN_REFRESH_SECONDS ? item.refreshSeconds : null;
     providers.push({ id: item.id, enabled: item.enabled !== false, refreshSeconds, settings: Object.fromEntries(Object.entries(obj(item.settings)).filter(([, setting]) => typeof setting === 'string' || typeof setting === 'boolean')) });
   }
   // A provider added after the config was first saved starts off, so it never shows a missing-key error unasked.

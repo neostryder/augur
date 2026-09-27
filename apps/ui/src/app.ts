@@ -8,7 +8,7 @@ import { renderTrayIcon } from './trayicon';
 import { span, until } from './util';
 import qrcode from 'qrcode-generator';
 import { HOSTED } from './hosted';
-import { acceptPairing, acceptPairingFromUrl, applySharedConfig, createPairing, mergeSynced, pairingUrl, parsePairing, pullSnapshot, pushSnapshot, sharedConfig } from './sync';
+import { acceptPairing, acceptPairingFromUrl, applySharedConfig, askDesktop, createPairing, mergeSynced, pairingUrl, parsePairing, pullSnapshot, pushSnapshot, readAsk, sharedConfig, SyncUploadError } from './sync';
 import { scanQr } from './scan';
 import { relayUrl, setRelayUrl } from './shells/browser';
 
@@ -19,7 +19,14 @@ const TWO_COL = 780;
 
 // Each push is one KV write on the relay, so a paired phone gets a new copy at most every 10 minutes (144 writes a day).
 const SYNC_PUSH_MS = 10 * 60_000;
-const TICK_MS = 60_000;
+// A refresh by hand uploads at once, up to once a minute, which matches the relay's own limit.
+const FORCED_PUSH_MS = 60_000;
+// After the phone asks for new numbers, it checks for the desktop's upload this often, for this long.
+const DESKTOP_POLL_MS = 15_000;
+const DESKTOP_WAIT_MS = 4 * 60_000;
+// Matches the shortest refresh interval a provider can have.
+const TICK_MS = 15_000;
+const ASK_CHECK_MS = 60_000;
 const PULL_MS = 5 * 60_000;
 const UPDATE_FIRST_CHECK_MS = 20_000;
 const UPDATE_INTERVAL_MS = 6 * 3600_000;
@@ -44,6 +51,13 @@ export class App {
   private autostart: boolean | null = null;
   private failedRefresh = new Set<string>();
   private lastPush = 0;
+  private pushRetry: ReturnType<typeof setTimeout> | undefined;
+  /** Relay time of the phone's latest refresh request that the desktop has seen; null until the first check. */
+  private askSeen: number | null = null;
+  private lastAskCheck = 0;
+  /** When the snapshot the phone last pulled was made on the desktop. */
+  private desktopAt: string | null = null;
+  private desktopWait: 'waiting' | 'timeout' | null = null;
   private update: UpdateState = { version: null, status: 'idle', available: null };
   private openProvider: string | null = null;
   private customDraft = '[]';
@@ -125,6 +139,7 @@ export class App {
     await this.render();
     await this.updateTray();
     if (!this.firstRun) { this.schedule(); void this.refresh(); }
+    if (this.shell.kind === 'desktop') void this.checkAsk(false);
   }
 
   /** Keeps one ProviderConfig per known plugin, preserving the user's order. */
@@ -165,10 +180,62 @@ export class App {
   }
 
   private async tick(): Promise<void> {
+    if (this.shell.kind === 'desktop' && Date.now() - this.lastAskCheck >= ASK_CHECK_MS && await this.checkAsk(true)) return;
     const due = core.dueProviders(this.runConfig(), this.snapshot).length > 0;
     // A paired phone also pulls the desktop's numbers on its own schedule.
     const pull = this.shell.kind === 'pwa' && !!this.sync?.channel && Date.now() - this.lastRun >= PULL_MS;
     if (due || pull) await this.refresh();
+  }
+
+  /**
+   * Desktop side: whether the phone has asked for new numbers since the last check. With act set,
+   * a new request starts a full refresh, which uploads at once. The first check only records where things stand.
+   */
+  private async checkAsk(act: boolean): Promise<boolean> {
+    if (!this.sync?.channel) return false;
+    this.lastAskCheck = Date.now();
+    const at = await readAsk(this.shell.host, this.sync).catch(() => null);
+    if (at == null) return false;
+    const fresh = act && this.askSeen != null && at > this.askSeen;
+    // refresh() returns early while busy, so a request that lands mid-refresh stays unseen until the next check.
+    if (fresh && this.busy) return false;
+    this.askSeen = at;
+    if (fresh) await this.refresh(true);
+    return fresh;
+  }
+
+  /** Uploads the current snapshot for the phone. If the relay says it is too soon, it tries again once the gap has passed. */
+  private async push(): Promise<void> {
+    if (!this.sync?.channel || !this.snapshot) return;
+    clearTimeout(this.pushRetry);
+    this.pushRetry = undefined;
+    try {
+      await pushSnapshot(this.shell.host, this.sync, this.snapshot, this.history, sharedConfig(this.config), await this.phoneSecrets());
+      this.lastPush = Date.now();
+    } catch (err) {
+      if (err instanceof SyncUploadError && err.status === 429) this.pushRetry = setTimeout(() => void this.push(), FORCED_PUSH_MS);
+    }
+  }
+
+  /**
+   * Phone side: the phone cannot read the providers that need a sign-in on the desktop, so a refresh
+   * asks the desktop to read them and watches the relay until its new upload arrives.
+   */
+  private async waitForDesktop(): Promise<void> {
+    if (!this.sync?.channel || this.desktopWait === 'waiting') return;
+    const before = this.desktopAt;
+    const asked = await askDesktop(this.sync).catch(() => null);
+    if (asked == null) return;
+    this.desktopWait = 'waiting';
+    await this.render();
+    const deadline = Date.now() + DESKTOP_WAIT_MS;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, DESKTOP_POLL_MS));
+      await this.refresh();
+      if (this.desktopAt !== before) { this.desktopWait = null; await this.render(); return; }
+    }
+    this.desktopWait = 'timeout';
+    await this.render();
   }
 
   /**
@@ -197,7 +264,11 @@ export class App {
       const runConfig = this.runConfig();
       this.snapshot = await core.collect(this.shell.host, runConfig, this.snapshot, force);
       this.history = core.appendHistory(this.history, this.snapshot);
-      if (this.shell.kind === 'pwa' && this.sync?.channel) await this.pullFromDesktop(runConfig);
+      if (this.shell.kind === 'pwa' && this.sync?.channel) {
+        await this.pullFromDesktop(runConfig);
+        const fromDesktop = this.config.providers.some((p) => p.enabled && !runConfig.providers.find((r) => r.id === p.id)?.enabled);
+        if (force && fromDesktop) void this.waitForDesktop();
+      }
       const { alerts, firedState } = core.evaluateAlerts(this.snapshot, this.history, this.config, this.alertState);
       this.alertState = firedState;
       if (this.config.alerts.enabled) for (const a of alerts) await this.shell.notify(a.title, a.body).catch(() => undefined);
@@ -205,9 +276,10 @@ export class App {
       await Promise.all([
         this.shell.saveSnapshot(this.snapshot), this.shell.saveHistory(this.history), this.shell.saveAlertState(this.alertState),
       ]);
-      if (this.shell.kind === 'desktop' && this.sync?.channel && Date.now() - this.lastPush >= SYNC_PUSH_MS) {
-        const pushed = await pushSnapshot(this.shell.host, this.sync, this.snapshot, this.history, sharedConfig(this.config), await this.phoneSecrets()).then(() => true, () => false);
-        if (pushed) this.lastPush = Date.now();
+      if (this.shell.kind === 'desktop' && this.sync?.channel) {
+        const since = Date.now() - this.lastPush;
+        if (since >= (force ? FORCED_PUSH_MS : SYNC_PUSH_MS)) await this.push();
+        else if (force) { clearTimeout(this.pushRetry); this.pushRetry = setTimeout(() => void this.push(), FORCED_PUSH_MS - since); }
       }
       if (this.shell.exportSnapshot && this.config.exportPath) {
         const out = { ...this.snapshot, summary: summaryLine(this.snapshot, this.config) };
@@ -276,6 +348,8 @@ export class App {
   private async pullFromDesktop(runConfig: AppConfig): Promise<void> {
     const pulled = await pullSnapshot(this.shell.host, this.sync!).catch(() => null);
     if (!pulled || !this.snapshot) return;
+    if (this.desktopAt !== pulled.snapshot.generatedAt && this.desktopWait === 'timeout') this.desktopWait = null;
+    this.desktopAt = pulled.snapshot.generatedAt;
     await this.storeSyncedSecrets(pulled.secrets);
     const own = new Set(runConfig.providers.filter((p) => p.enabled).map((p) => p.id));
     this.snapshot = mergeSynced(this.snapshot, pulled.snapshot, own);
@@ -313,7 +387,7 @@ export class App {
   private dashboardModel(): DashboardModel {
     return {
       config: this.config, snapshot: this.snapshot, history: this.history, plugins: this.pluginMap(), busy: this.busy,
-      twoColumns: this.twoColumns, expanded: this.expanded, dark: this.isDark(), shellKind: this.shell.kind,
+      twoColumns: this.twoColumns, expanded: this.expanded, dark: this.isDark(), shellKind: this.shell.kind, desktopWait: this.desktopWait,
     };
   }
 

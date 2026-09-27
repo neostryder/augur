@@ -145,7 +145,7 @@ export function renderSettings(m: SettingsModel): string {
   return html + '</div>';
 }
 
-const REFRESH_CHOICES: Array<[number, string]> = [[300, '5 minutes'], [900, '15 minutes'], [3600, '1 hour'], [21600, '6 hours'], [86400, '1 day'], [604800, '1 week']];
+const REFRESH_CHOICES: Array<[number, string]> = [[15, '15 seconds'], [300, '5 minutes'], [900, '15 minutes'], [3600, '1 hour'], [21600, '6 hours'], [86400, '1 day'], [604800, '1 week']];
 
 function refreshRow(m: SettingsModel, pid: string, plugin: ProviderPlugin): string {
   const pc = m.config.providers.find((p) => p.id === pid);

@@ -46,16 +46,40 @@ async function limited(limit: RateLimit | undefined, request: Request): Promise<
 // secret, so anyone can read ciphertext they cannot decrypt, but only the desktop can replace it.
 const SYNC_MAX = 512 * 1024;
 const SYNC_TTL_S = 14 * 86400;
-const SYNC_MIN_GAP_S = 240;
+// A refresh by hand uploads at once, so the gap only stops a runaway client; scheduled uploads space themselves 10 minutes apart.
+const SYNC_MIN_GAP_S = 60;
+// The phone's refresh button leaves a request here that the desktop checks every minute.
+const ASK_MIN_GAP_S = 60;
+const ASK_TTL_S = 3600;
 
 async function sha256Hex(text: string): Promise<string> {
   const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
   return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-async function sync(request: Request, env: Env, channel: string, ch: Record<string, string>): Promise<Response> {
+// A refresh request carries no data, only the relay's own time, so knowing the channel id is enough to leave one.
+async function ask(request: Request, env: Env, channel: string, ch: Record<string, string>): Promise<Response> {
+  const key = `ask:${channel}`;
+  if (request.method === 'GET') {
+    const at = Number(await env.SYNC!.get(key));
+    return at ? reply(200, { at }, { ...ch, 'cache-control': 'no-store' }) : reply(404, { error: 'No request' }, ch);
+  }
+  if (request.method === 'POST') {
+    if (await limited(env.SYNC_LIMIT, request)) return reply(429, { error: 'Too many requests' }, ch);
+    const prior = Number(await env.SYNC!.get(key));
+    if (prior && Date.now() - prior < ASK_MIN_GAP_S * 1000) return reply(200, { at: prior }, ch);
+    const at = Date.now();
+    await env.SYNC!.put(key, String(at), { expirationTtl: ASK_TTL_S });
+    return reply(200, { at }, ch);
+  }
+  return reply(405, { error: 'Method not allowed' }, ch);
+}
+
+async function sync(request: Request, env: Env, channel: string, ch: Record<string, string>, sub?: string): Promise<Response> {
   if (!env.SYNC) return reply(501, { error: 'Sync is not set up on this relay' }, ch);
   if (!/^[0-9a-f]{64}$/.test(channel)) return reply(400, { error: 'Bad channel' }, ch);
+  if (sub === 'ask') return ask(request, env, channel, ch);
+  if (sub) return reply(404, { error: 'Not found' }, ch);
   if (request.method === 'GET') {
     const v = await env.SYNC.get(channel);
     return v ? new Response(v, { headers: { 'content-type': 'application/json', 'cache-control': 'no-store', ...ch } }) : reply(404, { error: 'Nothing synced yet' }, ch);
@@ -100,8 +124,8 @@ export default {
     const url = new URL(request.url);
     // The desktop app has no browser origin, so sync writes are allowed without one; the
     // write secret is what protects them.
-    const syncMatch = url.pathname.match(/^\/sync\/([^/]+)$/);
-    if (syncMatch) return sync(request, env, syncMatch[1]!, ch);
+    const syncMatch = url.pathname.match(/^\/sync\/([^/]+)(?:\/([^/]+))?$/);
+    if (syncMatch) return sync(request, env, syncMatch[1]!, ch, syncMatch[2]);
     if (url.pathname !== '/fetch' || request.method !== 'POST') return reply(404, { error: 'Not found' }, ch);
     if (!ch['access-control-allow-origin']) return reply(403, { error: 'Origin not allowed' }, ch);
 
