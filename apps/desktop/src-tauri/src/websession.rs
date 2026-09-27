@@ -112,7 +112,10 @@ pub async fn web_session_sign_in(app: tauri::AppHandle, site: String) -> Result<
         let started = Instant::now();
         while started.elapsed() < WATCH_FOR {
             tokio::time::sleep(WATCH_EVERY).await;
-            if watcher.get_webview_window(&format!("signin-{watched}")).is_none() {
+            if watcher
+                .get_webview_window(&format!("signin-{watched}"))
+                .is_none()
+            {
                 return;
             }
             let reading = read_site(&watcher, &watched).await;
@@ -142,7 +145,10 @@ pub async fn web_session_sign_in(app: tauri::AppHandle, site: String) -> Result<
 }
 
 #[tauri::command]
-pub async fn web_session_read(app: tauri::AppHandle, site: String) -> Result<Option<Value>, String> {
+pub async fn web_session_read(
+    app: tauri::AppHandle,
+    site: String,
+) -> Result<Option<Value>, String> {
     read_site(&app, &site).await
 }
 
