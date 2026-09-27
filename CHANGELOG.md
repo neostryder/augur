@@ -4,6 +4,8 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-27
+
 ### Changed
 
 - [Visible] [Providers] **The Codex card is now called Codex instead of ChatGPT / Codex.** It shows the Codex CLI's weekly limit, which ChatGPT on the web does not count against.
