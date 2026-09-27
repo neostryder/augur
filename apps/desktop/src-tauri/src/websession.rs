@@ -52,6 +52,8 @@ const TYPESAFE_SCRIPT: &str = r#"
   const challenged = () => /just a moment|attention required/i.test(document.title)
     || !!document.querySelector('#challenge-form, #challenge-running, #challenge-stage, .cf-turnstile, iframe[src*="challenges.cloudflare.com"]');
   const signInPage = () => !!document.querySelector('input[type=password], input[type=email]') || /sign[-_]?in|log[-_]?in|auth/i.test(location.pathname);
+  // The billing page has labeled the balance "Credit Balance" and, since 2026-09-27, "Available credits".
+  const BALANCE = 'Available credits|Credit Balance';
   const run = async () => {
     if (location.hostname !== 'console.typesafe.ai') { report({ signedIn: false, reason: 'signin' }); return; }
     let text = '', challenge = false;
@@ -59,19 +61,19 @@ const TYPESAFE_SCRIPT: &str = r#"
     while (Date.now() < deadline) {
       challenge = challenged();
       text = document.body ? document.body.innerText : '';
-      if (!challenge && /Credit Balance/i.test(text)) break;
+      if (!challenge && new RegExp(BALANCE, 'i').test(text)) break;
       await new Promise((r) => setTimeout(r, 500));
     }
     if (challenge) { report({ signedIn: false, reason: 'challenge' }); return; }
-    if (!/Credit Balance/i.test(text)) { report({ signedIn: false, reason: signInPage() ? 'signin' : 'nobalance' }); return; }
+    if (!new RegExp(BALANCE, 'i').test(text)) { report({ signedIn: false, reason: signInPage() ? 'signin' : 'nobalance' }); return; }
     const dollars = (label) => {
-      const m = text.match(new RegExp(label + '\\s*\\$([\\d,]+(?:\\.\\d+)?)', 'i'));
+      const m = text.match(new RegExp('(?:' + label + ')\\s*\\$([\\d,]+(?:\\.\\d+)?)', 'i'));
       return m ? Number(m[1].replace(/,/g, '')) : null;
     };
     let usage = null;
     try { const r = await fetch('/api/usage?granularity=day'); if (r.ok) usage = await r.json(); } catch (e) {}
     const refill = (text.match(/Refills to \$[\d.,]+ when below \$[\d.,]+/i) || [null])[0];
-    report({ signedIn: true, balance: dollars('Credit Balance'), spend7d: dollars('Spend'), refill, usage });
+    report({ signedIn: true, balance: dollars(BALANCE), spend7d: dollars('Spend'), refill, usage });
   };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run); else run();
 })();
