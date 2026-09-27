@@ -52,7 +52,7 @@ export const jev: ProviderPlugin = {
       if (typeof session.refill === 'string') notes.refill = session.refill;
     } else if (session?.signedIn === false) {
       if (session.reason === 'challenge') notes.cloudflareCheck = true;
-      else if (session.reason === 'nobalance') notes.balanceMissing = true;
+      else if (session.reason === 'nobalance') { notes.balanceMissing = true; if (session.diag) notes.consoleDiag = session.diag; }
       else notes.signInNeeded = true;
     }
     return { plan: null, detail: `${model} answered in ${latencyMs} ms`, meters: [], money, notes };

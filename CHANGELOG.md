@@ -6,7 +6,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Fixed
 
-- [Visible] [Providers] **Jev shows your TypeSafe balance again.** The TypeSafe billing page now labels it Available credits instead of Credit Balance, and Augur reads either label.
+- [Visible] [Providers] **Jev shows your TypeSafe balance again.** TypeSafe renamed Credit Balance to Available credits. Augur now finds the balance by the words around it, so a renamed label no longer hides it.
 
 ## [0.6.0] - 2026-09-27
 
