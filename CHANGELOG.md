@@ -12,6 +12,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Changed
 
+- [Visible] [UI] **A settings icon you can tell apart.** The settings button now shows sliders, so it no longer looks like the sun on the theme button next to it.
 - [Visible] [Sync] **Pairing sets up the phone.** Scanning the pairing code opens the phone straight to your numbers, with the desktop's providers, order, colors, hidden meters, theme and alert levels. Providers without a key on the phone show the desktop's readings instead of an error.
 
 ## [0.2.0] - 2026-09-27
