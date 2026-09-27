@@ -1,6 +1,7 @@
 import type { AppConfig, ProviderPlugin, Snapshot } from '@augur/core';
 import type { UpdateState } from '../app';
 import { ICON, esc } from '../util';
+import { DEFAULT_REFRESH_SECONDS } from '../core';
 
 export interface SettingsModel {
   config: AppConfig;
@@ -104,9 +105,7 @@ export function renderSettings(m: SettingsModel): string {
 
   html += `<h2 class="sec">Appearance</h2><div class="card">
     <div class="row"><label class="name">Theme</label>${seg('theme', c.layout.theme, [['system', 'System'], ['light', 'Light'], ['dark', 'Dark']])}</div>
-    <div class="row"><label class="name">Columns<span class="desc">Auto uses two columns only when one column would run past the bottom of the screen.</span></label>${seg('columns', String(c.layout.columns), [['auto', 'Auto'], ['1', 'One'], ['2', 'Two']])}</div>
-    <div class="row"><label class="name" for="refresh">Refresh every</label><select id="refresh" data-refresh style="width:auto">${[60, 180, 300, 600, 900].map((s) =>
-      `<option value="${s}" ${c.refreshSeconds === s ? 'selected' : ''}>${s / 60} min</option>`).join('')}</select></div></div>`;
+    <div class="row"><label class="name">Columns<span class="desc">Auto uses two columns only when one column would run past the bottom of the screen.</span></label>${seg('columns', String(c.layout.columns), [['auto', 'Auto'], ['1', 'One'], ['2', 'Two']])}</div></div>`;
 
   html += `<h2 class="sec">Alerts</h2><div class="card">
     <div class="row"><label class="name">Notifications<span class="desc">Each alert fires once per window, then waits for the next reset.</span></label>${toggle('alerts', a.enabled, 'Notifications')}</div>
@@ -138,17 +137,17 @@ export function renderSettings(m: SettingsModel): string {
   return html + '</div>';
 }
 
-const REFRESH_CHOICES: Array<[number, string]> = [[900, '15 minutes'], [3600, '1 hour'], [21600, '6 hours'], [86400, '1 day'], [604800, '1 week']];
+const REFRESH_CHOICES: Array<[number, string]> = [[300, '5 minutes'], [900, '15 minutes'], [3600, '1 hour'], [21600, '6 hours'], [86400, '1 day'], [604800, '1 week']];
 
 function refreshRow(m: SettingsModel, pid: string, plugin: ProviderPlugin): string {
   const pc = m.config.providers.find((p) => p.id === pid);
   const name = (sec: number) => REFRESH_CHOICES.find(([s]) => s === sec)?.[1] ?? `${Math.round(sec / 60)} min`;
-  const fallback = plugin.refreshSeconds ? `Default (${name(plugin.refreshSeconds)})` : `Same as the app (${name(m.config.refreshSeconds)})`;
+  const fallback = `Default (${name(plugin.refreshSeconds ?? DEFAULT_REFRESH_SECONDS)})`;
   const current = pc?.refreshSeconds ?? null;
   const options = [`<option value="" ${current == null ? 'selected' : ''}>${esc(fallback)}</option>`,
     ...REFRESH_CHOICES.map(([sec, label]) => `<option value="${sec}" ${current === sec ? 'selected' : ''}>${esc(label)}</option>`)].join('');
   return `<div class="field"><label for="r-${esc(pid)}">Refresh every</label><select id="r-${esc(pid)}" data-provider-refresh="${esc(pid)}">${options}</select>
-      <span class="help">Reads this provider less often than the rest. The refresh button always reads every provider.</span></div>`;
+      <span class="help">How often Augur reads this provider on its own. The refresh button reads every provider at once.</span></div>`;
 }
 
 function updateRows(m: SettingsModel): string {

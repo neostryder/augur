@@ -1,6 +1,6 @@
 # Augur
 
-Augur shows how much of your AI plans and credits you have used, in one place: a tray icon on Windows, a menu-bar icon on macOS, and a web app you can add to a phone's home screen. It reads the same numbers each provider's own usage page shows, refreshes them every few minutes, and warns you when a limit is running out faster than its window resets.
+Augur shows how much of your AI plans and credits you have used, in one place: a tray icon on Windows, a menu-bar icon on macOS, and a web app you can add to a phone's home screen. It reads the same numbers each provider's own usage page shows, refreshes each one on its own schedule, and warns you when a limit is running out faster than its window resets.
 
 <p align="center">
   <img src="docs/images/dashboard.jpg" alt="The Augur panel with Claude, ChatGPT, Grok, MiniMax, OpenRouter, fal and Jev cards" width="320">
@@ -43,7 +43,7 @@ Each meter shows how much is used, when it resets, and a thin mark on the bar fo
 
 Augur checks for a new version every six hours and installs it while the panel is closed, then restarts. You can turn that off in settings and install from there instead.
 
-Settings also cover the theme (system, light or dark), which meters each card shows, card colors, the refresh interval, and alerts. Each provider can also refresh less often than the rest; Jev reads its balance once a week by default, and the refresh button always reads every provider.
+Settings also cover the theme (system, light or dark), which meters each card shows, card colors, how often each provider refreshes, and alerts. Providers refresh every 15 minutes by default and Jev once a week, a provider whose last read failed tries again after 5 minutes, and the refresh button reads every provider at once.
 
 ## Alerts
 

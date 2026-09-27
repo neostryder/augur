@@ -4,7 +4,7 @@ import { obj } from './util.js';
 
 export function defaultConfig(): AppConfig {
   return { schema: 1, providers: builtinProviders.map(provider => ({ id: provider.id, enabled: true, settings: {} })), custom: [],
-    refreshSeconds: 180, layout: { theme: 'system', columns: 'auto', hiddenMeters: {}, collapsed: [] },
+    layout: { theme: 'system', columns: 'auto', hiddenMeters: {}, collapsed: [] },
     alerts: { enabled: false, pctThresholds: [50, 75, 90], paceRatio: { session: 0.8, weekly: 0.8, other: null }, balanceBelow: {} }, exportPath: null };
 }
 
@@ -25,9 +25,8 @@ export function migrateConfig(value: unknown): AppConfig {
   // A provider added after the config was first saved starts off, so it never shows a missing-key error unasked.
   for (const provider of defaults.providers) if (!providers.some(row => row.id === provider.id)) providers.push({ ...provider, enabled: rows.length === 0 });
   const layout = obj(source.layout), alerts = obj(source.alerts), pace = obj(alerts.paceRatio);
-  const number = (n: unknown, fallback: number) => typeof n === 'number' && Number.isFinite(n) ? n : fallback;
   const ratio = (n: unknown, fallback: number | null) => n === null ? null : typeof n === 'number' && Number.isFinite(n) ? n : fallback;
-  return { schema: 1, providers, custom, refreshSeconds: Math.max(30, number(source.refreshSeconds, defaults.refreshSeconds)),
+  return { schema: 1, providers, custom,
     layout: { theme: ['system', 'light', 'dark'].includes(layout.theme) ? layout.theme : 'system',
       columns: ['auto', 1, 2].includes(layout.columns) ? layout.columns : 'auto',
       hiddenMeters: obj(layout.hiddenMeters), collapsed: Array.isArray(layout.collapsed) ? layout.collapsed.filter((id: unknown) => typeof id === 'string') : [] },

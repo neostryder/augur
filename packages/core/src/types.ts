@@ -53,6 +53,8 @@ export interface ProviderSnapshot extends ProviderResult {
   /** True when the last fetch failed and the data is carried over from an earlier one. */
   stale: boolean;
   fetchedAt: string | null;
+  /** When the last read was tried, successful or not. */
+  attemptedAt?: string | null;
   error: string | null;
   links?: ProviderLinks;
   status?: ProviderStatus | null;
@@ -187,7 +189,6 @@ export interface AppConfig {
   /** Array order is display order. */
   providers: ProviderConfig[];
   custom: GenericProviderDef[];
-  refreshSeconds: number;
   layout: LayoutConfig;
   alerts: AlertConfig;
   /** Where the desktop app writes the latest snapshot for other tools to read, relative to home. */

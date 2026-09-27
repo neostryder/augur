@@ -6,7 +6,7 @@ import { genericProvider, readPath, evaluate } from '../src/generic.js';
 import { calculatePace } from '../src/pace.js';
 import { appendHistory } from '../src/history.js';
 import { evaluateAlerts } from '../src/alerts.js';
-import { collect } from '../src/engine.js';
+import { collect, dueProviders, refreshInterval, DEFAULT_REFRESH_SECONDS, RETRY_SECONDS } from '../src/engine.js';
 import { defaultConfig, migrateConfig } from '../src/config.js';
 
 const fixture = async (name: string) => JSON.parse(await readFile(new URL(`./fixtures/${name}.json`, import.meta.url), 'utf8'));
@@ -132,8 +132,9 @@ describe('engine, pace, history and alerts', () => {
     meters: [meter], money: [{ id: 'balance', label: 'Balance', amount: 3, currency: 'USD' }] } } };
   it('carries forward prior good data on a provider failure', async () => {
     const plugin: ProviderPlugin = { id: 'sample', name: 'Sample', links: {}, needsLocalLogin: false, fields: [], fetch: async () => { throw new Error('Missing key'); } };
-    const result = await collect(fakeHost(() => ({})), { ...defaultConfig(), providers: [{ id: 'sample', enabled: true, settings: {} }] }, snapshot, [plugin]);
+    const result = await collect(fakeHost(() => ({})), { ...defaultConfig(), providers: [{ id: 'sample', enabled: true, settings: {} }] }, snapshot, [plugin], { force: true });
     expect(result.providers.sample?.stale).toBe(true);
+    expect(result.providers.sample?.attemptedAt).toBe(at.toISOString());
     expect(result.providers.sample?.meters[0]?.usedPct).toBe(60);
     expect(result.providers.sample?.error).toBe('Missing key');
   });
@@ -151,6 +152,18 @@ describe('engine, pace, history and alerts', () => {
     const old = { ...snapshot, providers: { sample: { ...snapshot.providers.sample!, fetchedAt: new Date(at.getTime() - 7200_000).toISOString() } } };
     await collect(fakeHost(() => ({})), { ...config, providers: [{ ...config.providers[0]!, refreshSeconds: 1800 }] }, old, [plugin]);
     expect(calls).toBe(2);
+  });
+  it('reads unset providers on the default interval and retries failures sooner', () => {
+    const config = { ...defaultConfig(), providers: [{ id: 'sample', enabled: true, settings: {} }] };
+    const plugin: ProviderPlugin = { id: 'sample', name: 'Sample', links: {}, needsLocalLogin: false, fields: [], fetch: async () => ({ plan: null, meters: [], money: [] }) };
+    const ago = (s: number) => new Date(at.getTime() - s * 1000).toISOString();
+    const withLast = (last: Partial<Snapshot['providers'][string]>) => ({ ...snapshot, providers: { sample: { ...snapshot.providers.sample!, ...last } } });
+    expect(refreshInterval(config, plugin)).toBe(DEFAULT_REFRESH_SECONDS);
+    expect(dueProviders(config, null, [plugin], at.getTime())).toEqual(['sample']);
+    expect(dueProviders(config, withLast({ fetchedAt: ago(DEFAULT_REFRESH_SECONDS - 60) }), [plugin], at.getTime())).toEqual([]);
+    expect(dueProviders(config, withLast({ fetchedAt: ago(DEFAULT_REFRESH_SECONDS) }), [plugin], at.getTime())).toEqual(['sample']);
+    expect(dueProviders(config, withLast({ ok: false, attemptedAt: ago(RETRY_SECONDS - 60) }), [plugin], at.getTime())).toEqual([]);
+    expect(dueProviders(config, withLast({ ok: false, attemptedAt: ago(RETRY_SECONDS) }), [plugin], at.getTime())).toEqual(['sample']);
   });
   it('calculates pace and handles window edges', () => {
     const pace = calculatePace(meter, [], 'sample', at);

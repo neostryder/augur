@@ -1,6 +1,6 @@
 // The one place the UI touches the core package, so a renamed export is a one-line fix.
 import {
-  appendHistory as coreAppend, builtinProviders, calculatePace, collect as coreCollect, defaultConfig as coreDefault,
+  appendHistory as coreAppend, builtinProviders, calculatePace, collect as coreCollect, defaultConfig as coreDefault, dueProviders as coreDue,
   evaluateAlerts as coreAlerts, genericProvider, migrateConfig as coreMigrate,
 } from '@augur/core';
 import type { AppConfig, HistoryRow as CoreRow, Host, Meter, PaceResult, ProviderPlugin, Snapshot } from '@augur/core';
@@ -24,6 +24,13 @@ export const migrateConfig = (raw: unknown): AppConfig => coreMigrate(raw);
 export function collect(host: Host, config: AppConfig, prev: Snapshot | null, force = false): Promise<Snapshot> {
   return coreCollect(host, config, prev, plugins(config), { force });
 }
+
+/** The enabled providers whose own interval has passed. */
+export function dueProviders(config: AppConfig, prev: Snapshot | null): string[] {
+  return coreDue(config, prev, plugins(config));
+}
+
+export { DEFAULT_REFRESH_SECONDS } from '@augur/core';
 
 export function appendHistory(rows: HistoryRow[], snap: Snapshot): HistoryRow[] {
   return coreAppend(rows, snap, HISTORY_KEEP_S);

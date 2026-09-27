@@ -18,6 +18,8 @@ const TWO_COL = 780;
 
 // Each push is one KV write on the relay, so a paired phone gets a new copy at most every 10 minutes (144 writes a day).
 const SYNC_PUSH_MS = 10 * 60_000;
+const TICK_MS = 60_000;
+const PULL_MS = 5 * 60_000;
 const UPDATE_FIRST_CHECK_MS = 20_000;
 const UPDATE_INTERVAL_MS = 6 * 3600_000;
 
@@ -47,6 +49,7 @@ export class App {
   private customError = '';
   private savedFlash: string | null = null;
   private timer: ReturnType<typeof setInterval> | undefined;
+  private lastRun = 0;
   private sortables: Sortable[] = [];
   private systemDark = matchMedia('(prefers-color-scheme: dark)');
   private pairQr: string | null = null;
@@ -158,7 +161,22 @@ export class App {
 
   private schedule(): void {
     clearInterval(this.timer);
-    this.timer = setInterval(() => void this.refresh(), Math.max(60, this.config.refreshSeconds) * 1000);
+    // Each provider has its own interval, so the timer only checks once a minute whether one is due.
+    this.timer = setInterval(() => void this.tick(), TICK_MS);
+  }
+
+  private async tick(): Promise<void> {
+    const due = core.dueProviders(this.runConfig(), this.snapshot).length > 0;
+    // A paired phone also pulls the desktop's numbers on its own schedule.
+    const pull = this.shell.kind === 'pwa' && !!this.sync?.channel && Date.now() - this.lastRun >= PULL_MS;
+    if (due || pull) await this.refresh();
+  }
+
+  /** The phone cannot read command-line logins, so it skips those providers and takes them from the paired desktop instead. */
+  private runConfig(): AppConfig {
+    if (this.shell.kind !== 'pwa') return this.config;
+    const map = this.pluginMap();
+    return { ...this.config, providers: this.config.providers.map((p) => ({ ...p, enabled: p.enabled && !map.get(p.id)?.needsLocalLogin })) };
   }
 
   /** force refreshes every provider now; otherwise each waits out its own interval. */
@@ -167,12 +185,8 @@ export class App {
     this.busy = true;
     document.body.classList.add('busy');
     try {
-      const map = this.pluginMap();
-      // The phone cannot read command-line logins, so it skips those providers and takes
-      // them from the paired desktop instead.
-      const runConfig = this.shell.kind === 'pwa'
-        ? { ...this.config, providers: this.config.providers.map((p) => ({ ...p, enabled: p.enabled && !map.get(p.id)?.needsLocalLogin })) }
-        : this.config;
+      this.lastRun = Date.now();
+      const runConfig = this.runConfig();
       this.snapshot = await core.collect(this.shell.host, runConfig, this.snapshot, force);
       this.history = core.appendHistory(this.history, this.snapshot);
       if (this.shell.kind === 'pwa' && this.sync?.channel) await this.pullFromDesktop(runConfig);
@@ -524,7 +538,6 @@ export class App {
       await this.saveConfig(); return;
     }
     if (t.matches('[data-color]')) { await this.saveConfig(); await this.render(); return; }
-    if (t.matches('[data-refresh]')) { this.config.refreshSeconds = Number(t.value); this.schedule(); await this.saveConfig(); return; }
     if (d.sync) {
       const v = t.value.trim();
       if (d.sync === 'relay') {

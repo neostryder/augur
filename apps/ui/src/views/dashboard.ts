@@ -160,7 +160,7 @@ export function renderDashboard(model: DashboardModel): string {
       ${sev ? `<span class="grow"></span><span class="sev ${sev}">${sev === 'crit' ? ICON.crit : ICON.warn}</span>` : ''}</div>`;
   }
   html += `<div class="cards${model.twoColumns ? ' two' : ''}" id="cards">${enabled.map((p) => cardHtml(model, p.id)).join('')}</div>`;
-  html += `<footer class="bottom"><span>Refreshes every ${Math.round(model.config.refreshSeconds / 60)} min</span>
+  html += `<footer class="bottom"><span></span>
     <span>${model.shellKind === 'desktop' ? '<button data-action="open-export">Open data file</button>' : ''}</span></footer>`;
   return html;
 }
