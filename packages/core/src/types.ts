@@ -193,10 +193,13 @@ export interface AppConfig {
   alerts: AlertConfig;
   /** Where the desktop app writes the latest snapshot for other tools to read, relative to home. */
   exportPath?: string | null;
+  /** Desktop global shortcut that opens and closes the panel, such as Ctrl+Super+U. Null turns it off. */
+  hotkey?: string | null;
   /** Install new desktop releases without asking. Defaults to on. */
   autoUpdate?: boolean;
   /** Desktop-to-phone sync channel. The encryption key and write secret live in the keychain. */
-  sync?: { relay: string; channel: string; pwaUrl: string } | null;
+  /** shareKeys: send key-based providers' API keys to the paired phone, inside the encrypted sync. Defaults to on. */
+  sync?: { relay: string; channel: string; pwaUrl: string; shareKeys?: boolean } | null;
   /**
    * Fallback for secrets missing from the keychain: read them from a Bitwarden Secrets Manager
    * project with the `bws` CLI, mapped from `<providerId>.<fieldKey>` to the secret's key there.

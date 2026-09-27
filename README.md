@@ -45,7 +45,7 @@ To see your TypeSafe balance, open Jev in settings and choose Sign in. Augur kee
 
 ## Using it
 
-Click the icon to open the panel. The ring on the icon shows your most-used limit, and its color turns amber at 75% and red at 90%. Hover over it for one line per provider without opening the panel.
+Click the icon to open the panel. The ring on the icon shows your most-used limit, and its color turns amber at 75% and red at 90%. Hover over it for one line per provider without opening the panel. Ctrl+Super+U opens and closes the panel from any app (Super is the Windows key, or Command on a Mac), and settings can change or turn off that shortcut.
 
 <p align="center">
   <img src="docs/images/tray-tooltip.jpg" alt="The tray tooltip listing each provider's usage on one line" width="185"><br>
@@ -70,11 +70,11 @@ Each alert fires once per window and waits for the next reset before it can fire
 
 ## Phone app
 
-The web app works in any modern mobile browser. Open [augur.rpgm.tools](https://augur.rpgm.tools) on the phone and add it to your home screen (on iPhone, Share and then Add to Home Screen; on Android, the install prompt). On a phone it can track the providers that use API keys directly: the keys are encrypted on the phone and requests go through a relay that forwards them without storing anything.
+The web app works in any modern mobile browser. Open [augur.rpgm.tools](https://augur.rpgm.tools) on the phone and add it to your home screen: on iPhone, tap Share in Safari (on newer iPhones it is in the menu at the bottom) and then Add to Home Screen; on Android, use the install prompt. On its own it can track the providers that use API keys: the keys are encrypted on the phone and requests go through a relay that forwards them without storing anything.
 
-To use it with your desktop, choose Pair a phone in the desktop app's settings and scan the QR code with the phone. The phone then shows everything the desktop tracks, set up the way you have it there, and needs no keys of its own. Its numbers are at most 10 minutes behind the desktop's. Turn on alerts in the phone's own settings if you want them there too.
+To use it with your desktop, choose Pair a phone in the desktop app's settings. Then open Augur on the phone, go to settings and tap Scan pairing code. On an iPhone, scan from inside the home-screen app rather than with the Camera app: the camera opens links in Safari, which keeps its storage apart from the home-screen app. The phone then shows everything the desktop tracks, set up the way you have it there, and receives the desktop's API keys, so there is nothing to type. It refreshes key-based providers itself, while Claude, ChatGPT, Grok and Jev's balance come from the desktop and are at most 10 minutes behind it. Turn on alerts in the phone's own settings if you want them there too.
 
-The desktop encrypts each update with a key only it and your phone hold, and the relay stores only that ciphertext.
+The desktop encrypts each update, keys included, with a key only it and your phone hold, and the relay stores only that ciphertext. To keep your API keys on the desktop, turn off Send API keys to the phone in the desktop's settings.
 
 ## Custom providers
 

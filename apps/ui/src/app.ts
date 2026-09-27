@@ -8,7 +8,8 @@ import { renderTrayIcon } from './trayicon';
 import { span, until } from './util';
 import qrcode from 'qrcode-generator';
 import { HOSTED } from './hosted';
-import { acceptPairingFromUrl, applySharedConfig, createPairing, mergeSynced, pullSnapshot, pushSnapshot, sharedConfig } from './sync';
+import { acceptPairing, acceptPairingFromUrl, applySharedConfig, createPairing, mergeSynced, pairingUrl, parsePairing, pullSnapshot, pushSnapshot, sharedConfig } from './sync';
+import { scanQr } from './scan';
 import { relayUrl, setRelayUrl } from './shells/browser';
 
 type SyncConfig = NonNullable<AppConfig['sync']>;
@@ -55,6 +56,8 @@ export class App {
   private pairQr: string | null = null;
   private pairUrl: string | null = null;
   private justPaired = false;
+  private scanError = '';
+  private hotkeyError = '';
 
   private get sync(): SyncConfig | null {
     return this.config.sync ?? null;
@@ -86,20 +89,14 @@ export class App {
     this.firstRun = !saved;
     if (this.shell.kind === 'pwa') {
       const link = await acceptPairingFromUrl(this.shell);
-      if (link) {
-        this.sync = { relay: link.relay, channel: link.channel, pwaUrl: location.origin + location.pathname };
-        if (!relayUrl()) setRelayUrl(link.relay);
-        this.justPaired = true;
-        // Pairing replaces the setup screen: the phone takes its providers and settings from the desktop.
-        this.firstRun = false;
-        await this.shell.saveConfig(this.config);
-      }
+      if (link) await this.pairWith(link, false);
     }
     [this.snapshot, this.history, this.alertState] = await Promise.all([
       this.shell.loadSnapshot(), this.shell.loadHistory() as Promise<HistoryRow[]>, this.shell.loadAlertState(),
     ]);
     this.customDraft = JSON.stringify(this.config.custom ?? [], null, 2);
     this.autostart = this.shell.getAutostart ? await this.shell.getAutostart().catch(() => null) : null;
+    await this.applyHotkey();
     if (this.shell.checkUpdate) {
       this.update.version = await this.shell.appVersion?.().catch(() => null) ?? null;
       setTimeout(() => void this.checkForUpdate(true), UPDATE_FIRST_CHECK_MS);
@@ -183,7 +180,9 @@ export class App {
     const map = this.pluginMap();
     const canRead = (id: string) => {
       const p = map.get(id);
-      return !!p && !p.needsLocalLogin && (!this.sync?.channel || this.secretsFor(p).every((n) => this.secrets.has(n)));
+      if (!p || p.needsLocalLogin) return false;
+      if (!this.sync?.channel) return true;
+      return this.phoneCanRead(p) && this.secretsFor(p).every((n) => this.secrets.has(n));
     };
     return { ...this.config, providers: this.config.providers.map((p) => ({ ...p, enabled: p.enabled && canRead(p.id) })) };
   }
@@ -207,7 +206,7 @@ export class App {
         this.shell.saveSnapshot(this.snapshot), this.shell.saveHistory(this.history), this.shell.saveAlertState(this.alertState),
       ]);
       if (this.shell.kind === 'desktop' && this.sync?.channel && Date.now() - this.lastPush >= SYNC_PUSH_MS) {
-        const pushed = await pushSnapshot(this.shell.host, this.sync, this.snapshot, this.history, sharedConfig(this.config)).then(() => true, () => false);
+        const pushed = await pushSnapshot(this.shell.host, this.sync, this.snapshot, this.history, sharedConfig(this.config), await this.phoneSecrets()).then(() => true, () => false);
         if (pushed) this.lastPush = Date.now();
       }
       if (this.shell.exportSnapshot && this.config.exportPath) {
@@ -222,9 +221,62 @@ export class App {
     await this.updateTray();
   }
 
+  private async applyHotkey(): Promise<void> {
+    if (!this.shell.setHotkey) return;
+    this.hotkeyError = '';
+    await this.shell.setHotkey(this.config.hotkey ?? null).catch(() => { this.hotkeyError = "Augur could not use that shortcut. Your system or another app may already use it, so try a different one."; });
+  }
+
+  /** Pairing replaces the setup screen: the phone takes its providers, settings and keys from the desktop. */
+  private async pairWith(link: { relay: string; channel: string }, refreshNow = true): Promise<void> {
+    this.sync = { relay: link.relay, channel: link.channel, pwaUrl: location.origin + location.pathname };
+    if (!relayUrl()) setRelayUrl(link.relay);
+    this.justPaired = true;
+    this.scanError = '';
+    if (this.firstRun) { this.firstRun = false; this.view = 'dashboard'; }
+    await this.shell.saveConfig(this.config);
+    if (refreshNow) { this.schedule(); await this.refresh(true); }
+  }
+
+  /**
+   * The API keys a paired phone needs to read key-based providers itself. A provider that also
+   * needs a sign-in on this computer stays with the desktop, so it is left out.
+   */
+  private async phoneSecrets(): Promise<Record<string, string> | undefined> {
+    if (this.sync?.shareKeys === false) return undefined;
+    const out: Record<string, string> = {};
+    for (const p of core.plugins(this.config)) {
+      if (!this.phoneCanRead(p)) continue;
+      for (const f of p.fields.filter((x) => x.kind === 'secret')) {
+        const v = await this.shell.host.secret(`${p.id}.${f.key}`).catch(() => null);
+        if (v) out[`${p.id}.${f.key}`] = v;
+      }
+    }
+    return out;
+  }
+
+  /** Whether the phone can produce a provider's full reading from an API key alone. */
+  private phoneCanRead(p: ProviderPlugin): boolean {
+    return !p.needsLocalLogin && !p.fields.some((f) => f.kind === 'signin');
+  }
+
+  /** Saves keys the desktop sent that the phone does not have yet, or has an older copy of. */
+  private async storeSyncedSecrets(secrets: Record<string, string> | undefined): Promise<void> {
+    if (!secrets) return;
+    const known = new Set(core.plugins(this.config).flatMap((p) => p.fields.filter((f) => f.kind === 'secret').map((f) => `${p.id}.${f.key}`)));
+    let changed = false;
+    for (const [name, value] of Object.entries(secrets)) {
+      if (!known.has(name) || typeof value !== 'string' || !value) continue;
+      const mine = await this.shell.host.secret(name).catch(() => null);
+      if (mine !== value) { await this.shell.setSecret(name, value); changed = true; }
+    }
+    if (changed) await this.refreshSecrets();
+  }
+
   private async pullFromDesktop(runConfig: AppConfig): Promise<void> {
     const pulled = await pullSnapshot(this.shell.host, this.sync!).catch(() => null);
     if (!pulled || !this.snapshot) return;
+    await this.storeSyncedSecrets(pulled.secrets);
     const own = new Set(runConfig.providers.filter((p) => p.enabled).map((p) => p.id));
     this.snapshot = mergeSynced(this.snapshot, pulled.snapshot, own);
     const synced = Object.keys(pulled.snapshot.providers).filter((id) => !own.has(id));
@@ -271,6 +323,7 @@ export class App {
       autostart: this.autostart, update: this.update, openProvider: this.openProvider, customDraft: this.customDraft, customError: this.customError,
       firstRun: this.firstRun, savedFlash: this.savedFlash,
       sync: this.sync, relay: this.relay(), pwaUrl: this.pwaUrl(), pairQr: this.pairQr, pairUrl: this.pairUrl,
+      scanError: this.scanError, iosInstallHint: iosInstallHint(), hotkeyError: this.hotkeyError, canHotkey: !!this.shell.setHotkey,
     };
   }
 
@@ -446,7 +499,7 @@ export class App {
       case 'sync-pair': {
         const pwaUrl = this.pwaUrl();
         const { link, pairUrl } = await createPairing(this.shell, this.relay(), pwaUrl);
-        this.sync = { ...link, pwaUrl };
+        this.sync = { ...link, pwaUrl, shareKeys: this.sync?.shareKeys };
         this.lastPush = 0;
         await this.saveConfig();
         this.showPairCode(pairUrl);
@@ -455,7 +508,15 @@ export class App {
       }
       case 'sync-show': {
         const key = await this.shell.host.secret('sync.key');
-        if (key && this.sync) this.showPairCode(`${this.sync.pwaUrl.replace(/#.*$/, '')}#pair=${encodeURIComponent(this.sync.relay)}|${this.sync.channel}|${key}`);
+        if (key && this.sync) this.showPairCode(pairingUrl(this.sync.pwaUrl, this.sync, key));
+        break;
+      }
+      case 'sync-scan': {
+        const text = await scanQr().catch((err: Error) => { this.scanError = err.message; return null; });
+        const link = text ? parsePairing(text) : null;
+        if (text && !link) this.scanError = 'That code is not an Augur pairing code. Open Pair a phone in the desktop app and scan the code it shows.';
+        if (link) await this.pairWith(await acceptPairing(this.shell, link));
+        await this.render();
         break;
       }
       case 'sync-unpair':
@@ -542,6 +603,7 @@ export class App {
       else if (kind === 'setting') this.provider(pid!).settings[key!] = t.checked;
       else if (kind === 'alerts') this.config.alerts.enabled = t.checked;
       else if (kind === 'autostart') { await this.shell.setAutostart?.(t.checked); this.autostart = t.checked; return; }
+      else if (kind === 'sharekeys') { if (this.sync) this.sync = { ...this.sync, shareKeys: t.checked }; this.lastPush = 0; await this.saveConfig(); void this.refresh(); return; }
       else if (kind === 'autoupdate') { this.config.autoUpdate = t.checked; await this.saveConfig(); if (t.checked) void this.autoInstall(); return; }
       await this.saveConfig(); if (kind === 'enabled' && !this.firstRun) void this.refresh(); await this.render(); return;
     }
@@ -558,12 +620,13 @@ export class App {
       const v = t.value.trim();
       if (d.sync === 'relay') {
         if (this.shell.kind === 'pwa') setRelayUrl(v);
-        this.sync = { relay: v, channel: this.sync?.channel ?? '', pwaUrl: this.sync?.pwaUrl ?? '' };
+        this.sync = { ...this.sync, relay: v, channel: this.sync?.channel ?? '', pwaUrl: this.sync?.pwaUrl ?? '' };
       } else {
-        this.sync = { relay: this.sync?.relay ?? '', channel: this.sync?.channel ?? '', pwaUrl: v };
+        this.sync = { ...this.sync, relay: this.sync?.relay ?? '', channel: this.sync?.channel ?? '', pwaUrl: v };
       }
       await this.saveConfig(); await this.render(); return;
     }
+    if (t.matches('[data-hotkey]')) { this.config.hotkey = t.value.trim() || null; await this.applyHotkey(); await this.saveConfig(); await this.render(); return; }
     if (t.matches('[data-export]')) { this.config.exportPath = t.value.trim() || null; await this.saveConfig(); return; }
     if (d.alert) {
       const a = this.config.alerts;
@@ -665,4 +728,11 @@ export function summaryLine(snap: Snapshot, config: AppConfig): string {
     parts.push(`${p.name.split(' /')[0]} ${bits.join(', ')}${p.stale && p.fetchedAt ? ` [stale, updated ${span(Date.now() - new Date(p.fetchedAt).getTime())} ago]` : ''}`);
   }
   return parts.join(' | ');
+}
+
+/** iPhone and iPad Safari have no install prompt, so the phone section explains Add to Home Screen. */
+function iosInstallHint(): boolean {
+  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const standalone = (navigator as Navigator & { standalone?: boolean }).standalone === true || matchMedia('(display-mode: standalone)').matches;
+  return ios && !standalone;
 }

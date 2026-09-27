@@ -196,3 +196,11 @@ input[type=color] { width: 26px; height: 22px; border: 0; padding: 0; background
   body.pwa .metersel { gap: 10px 16px; }
   body.pwa .metersel input[type=checkbox] { width: 20px; height: 20px; }
 }
+
+/* camera view for scanning a pairing code */
+.scanner { position: fixed; inset: 0; z-index: 100; background: #000; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px;
+  padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom)); color: #fff; }
+.scanner video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.scanner .frame { position: relative; width: min(70vw, 280px); aspect-ratio: 1; border: 3px solid #fff; border-radius: 18px; box-shadow: 0 0 0 9999px rgba(0,0,0,0.45); }
+.scanner p { position: relative; margin: 0; text-align: center; font-size: calc(14px * var(--fs)); }
+.scanner button.btn { position: relative; background: #fff; color: #000; border-color: #fff; }

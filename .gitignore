@@ -10,3 +10,4 @@ apps/desktop/src-tauri/gen/
 apps/ui/public/__seed.json
 CLAUDE.md
 apps/relay/wrangler.toml
+.wrangler/

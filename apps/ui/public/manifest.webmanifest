@@ -1,6 +1,6 @@
 {
   "name": "Augur",
-  "short_name": "Usage",
+  "short_name": "Augur",
   "description": "Plan usage and credit balances for your AI providers in one place.",
   "start_url": "./",
   "scope": "./",

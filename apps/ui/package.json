@@ -12,6 +12,7 @@
   "dependencies": {
     "@augur/core": "workspace:*",
     "@augur/host-tauri": "workspace:*",
+    "jsqr": "1.4.0",
     "qrcode-generator": "^2.0.4",
     "sortablejs": "^1.15.7"
   },

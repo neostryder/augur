@@ -54,6 +54,8 @@ export interface Shell {
   hidePopup?(): Promise<void>;
   getAutostart?(): Promise<boolean>;
   setAutostart?(on: boolean): Promise<void>;
+  /** Desktop only: the global shortcut that opens and closes the panel. Null turns it off; rejects if it cannot be registered. */
+  setHotkey?(accelerator: string | null): Promise<void>;
   /** Opens a window to sign in to a site that webSession reads. */
   openSignIn?(site: string): Promise<void>;
   /** The running app's version. */

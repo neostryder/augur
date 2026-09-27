@@ -15,6 +15,8 @@ export interface SyncPayload {
   snapshot: Snapshot;
   history: HistoryRow[];
   config?: SharedConfig;
+  /** API keys for providers the phone can read itself, keyed `<providerId>.<fieldKey>`. */
+  secrets?: Record<string, string>;
 }
 
 export function sharedConfig(config: AppConfig): SharedConfig {
@@ -62,16 +64,36 @@ export async function createPairing(shell: Shell, relay: string, pwaUrl: string)
   await shell.setSecret(KEY_SECRET, b64(key));
   await shell.setSecret(WRITE_SECRET, writeSecret);
   const link = { relay: relay.replace(/\/$/, ''), channel };
-  // The key rides in the URL fragment, which browsers never send to a server.
-  const pairUrl = `${pwaUrl.replace(/#.*$/, '')}#pair=${encodeURIComponent(link.relay)}|${channel}|${b64(key)}`;
-  return { link, pairUrl };
+  return { link, pairUrl: pairingUrl(pwaUrl, link, b64(key)) };
 }
 
-export async function pushSnapshot(host: Host, link: SyncLink, snapshot: Snapshot, history: HistoryRow[], config?: SharedConfig): Promise<void> {
+/**
+ * The key rides in the URL fragment, which browsers never send to a server. Every character is
+ * URL-safe, so a camera app that re-encodes the link still hands over the same text.
+ */
+export function pairingUrl(pwaUrl: string, link: SyncLink, key: string): string {
+  return `${pwaUrl.replace(/#.*$/, '')}#pair?r=${encodeURIComponent(link.relay)}&c=${link.channel}&k=${key}`;
+}
+
+/** Reads a pairing link in the current form or the older `|`-separated one, raw or percent-encoded. */
+export function parsePairing(text: string): (SyncLink & { key: string }) | null {
+  const hash = text.slice(text.indexOf('#') + 1);
+  if (hash.startsWith('pair?')) {
+    const q = new URLSearchParams(hash.slice(5));
+    const relay = q.get('r'), channel = q.get('c'), key = q.get('k');
+    return relay && channel && /^[0-9a-f]{64}$/.test(channel) && key && /^[A-Za-z0-9_-]+$/.test(key) ? { relay, channel, key } : null;
+  }
+  let plain = hash;
+  try { plain = decodeURIComponent(hash); } catch { /* keep as is */ }
+  const m = plain.match(/^pair=([^|]+)\|([0-9a-f]{64})\|([A-Za-z0-9_-]+)$/);
+  return m ? { relay: m[1]!, channel: m[2]!, key: m[3]! } : null;
+}
+
+export async function pushSnapshot(host: Host, link: SyncLink, snapshot: Snapshot, history: HistoryRow[], config?: SharedConfig, secrets?: Record<string, string>): Promise<void> {
   const [keyText, writeSecret] = await Promise.all([host.secret(KEY_SECRET), host.secret(WRITE_SECRET)]);
   if (!keyText || !writeSecret) return;
   const cut = Date.now() - 7 * 86400e3;
-  const payload = JSON.stringify({ snapshot, history: history.filter((r) => new Date(r.t).getTime() >= cut), config } satisfies SyncPayload);
+  const payload = JSON.stringify({ snapshot, history: history.filter((r) => new Date(r.t).getTime() >= cut), config, secrets } satisfies SyncPayload);
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const data = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await aesKey(unb64(keyText)), new TextEncoder().encode(payload)));
   const res = await host.http({
@@ -84,11 +106,16 @@ export async function pushSnapshot(host: Host, link: SyncLink, snapshot: Snapsho
 
 /** Phone side: reads a `#pair=` fragment once, stores it, and clears it from the address bar. */
 export async function acceptPairingFromUrl(shell: Shell): Promise<SyncLink | null> {
-  const m = location.hash.match(/^#pair=([^|]+)\|([0-9a-f]{64})\|([A-Za-z0-9_-]+)$/);
-  if (!m) return null;
+  if (!location.hash.startsWith('#pair')) return null;
+  const link = parsePairing(location.hash);
   history.replaceState(null, '', location.pathname + location.search);
-  await shell.setSecret(KEY_SECRET, m[3]!);
-  return { relay: decodeURIComponent(m[1]!), channel: m[2]! };
+  return link ? acceptPairing(shell, link) : null;
+}
+
+/** Stores the pairing key from a link the phone opened or scanned. */
+export async function acceptPairing(shell: Shell, link: SyncLink & { key: string }): Promise<SyncLink> {
+  await shell.setSecret(KEY_SECRET, link.key);
+  return { relay: link.relay, channel: link.channel };
 }
 
 export async function pullSnapshot(host: Host, link: SyncLink): Promise<SyncPayload | null> {
@@ -102,11 +129,16 @@ export async function pullSnapshot(host: Host, link: SyncLink): Promise<SyncPayl
   return JSON.parse(new TextDecoder().decode(plain));
 }
 
-/** Merges the desktop's providers into the phone's own snapshot; the phone's own fetches win. */
+/**
+ * Merges the desktop's providers into the phone's own snapshot. The phone's own reading wins while
+ * it is good; when the phone's own read failed, a good reading from the desktop is shown instead.
+ */
 export function mergeSynced(own: Snapshot, synced: Snapshot, ownIds: Set<string>): Snapshot {
   const providers = { ...own.providers };
   for (const [id, p] of Object.entries(synced.providers)) {
-    if (!ownIds.has(id)) providers[id] = { ...p, notes: { ...(p.notes ?? {}), fromDesktop: true } };
+    const mine = providers[id];
+    const useDesktop = !ownIds.has(id) || (!!mine && !mine.ok && p.ok);
+    if (useDesktop) providers[id] = { ...p, notes: { ...(p.notes ?? {}), fromDesktop: true } };
   }
   return { ...own, providers };
 }

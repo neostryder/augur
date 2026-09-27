@@ -240,6 +240,25 @@ fn toggle_popup(app: &tauri::AppHandle) {
     let _ = show_popup(app);
 }
 
+/// Registers the shortcut that opens and closes the panel from anywhere, replacing any earlier one.
+/// None or an empty string turns it off.
+#[tauri::command]
+fn set_hotkey(app: tauri::AppHandle, accelerator: Option<String>) -> Result<(), String> {
+    use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+    let shortcuts = app.global_shortcut();
+    shortcuts.unregister_all().map_err(|e| e.to_string())?;
+    let Some(accelerator) = accelerator.filter(|a| !a.trim().is_empty()) else {
+        return Ok(());
+    };
+    shortcuts
+        .on_shortcut(accelerator.trim(), |app, _shortcut, event| {
+            if event.state == ShortcutState::Pressed {
+                toggle_popup(app);
+            }
+        })
+        .map_err(|e| e.to_string())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(AppState::default())
@@ -255,7 +274,9 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
+            set_hotkey,
             commands::http_request,
             commands::read_home_file,
             commands::write_home_file_atomic,

@@ -15,12 +15,17 @@ export interface SettingsModel {
   customError: string;
   firstRun: boolean;
   savedFlash: string | null;
-  sync: { relay: string; channel: string; pwaUrl: string } | null;
+  sync: NonNullable<AppConfig['sync']> | null;
   relay: string;
   pwaUrl: string;
   update: UpdateState;
   pairQr: string | null;
   pairUrl: string | null;
+  scanError: string;
+  hotkeyError: string;
+  canHotkey: boolean;
+  /** iPhone or iPad Safari, not yet on the home screen: it has no install prompt of its own. */
+  iosInstallHint: boolean;
 }
 
 const seg = (name: string, value: string, options: Array<[string, string]>) =>
@@ -96,6 +101,7 @@ export function renderSettings(m: SettingsModel): string {
     <div><h1>${m.firstRun ? 'Set up Augur' : 'Settings'}</h1>${m.firstRun ? '<div class="sub">Turn on what you want to track. You can change this any time.</div>' : ''}</div>
     <span class="grow"></span>${m.savedFlash ? `<span class="saved">${esc(m.savedFlash)}</span>` : ''}</header>`;
 
+  if (m.firstRun && m.shellKind === 'pwa') html += phoneSection(m);
   html += `<h2 class="sec">Providers</h2><div id="provider-list">${c.providers.map((p) => providerCard(m, p.id)).join('')}</div>`;
 
   if (m.firstRun) {
@@ -131,6 +137,8 @@ export function renderSettings(m: SettingsModel): string {
     html += `<h2 class="sec">This computer</h2><div class="card">
       ${updateRows(m)}
       ${m.autostart != null ? `<div class="row"><label class="name">Start at login</label>${toggle('autostart', m.autostart, 'Start at login')}</div>` : ''}
+      ${m.canHotkey ? `<div class="field"><label for="hotkey">Keyboard shortcut</label><input type="text" id="hotkey" data-hotkey value="${esc(c.hotkey ?? '')}" placeholder="Ctrl+Super+U" spellcheck="false" autocomplete="off">
+      <span class="help">Opens and closes the panel from anywhere. Super is the Windows key, or Command on a Mac. Leave blank to turn it off.</span>${m.hotkeyError ? `<span class="bad-json">${esc(m.hotkeyError)}</span>` : ''}</div>` : ''}
       <div class="field"><label for="export">Also save the latest numbers to this file</label><input type="text" id="export" data-export value="${esc(c.exportPath ?? '')}" placeholder=".augur/usage.json">
       <span class="help">After each refresh, Augur writes the latest numbers to this file in your home folder, so scripts and coding assistants can read them. Leave blank to turn this off.</span></div></div>`;
   }
@@ -174,11 +182,16 @@ function phoneSection(m: SettingsModel): string {
       ? 'Sends requests to providers that do not allow browser apps, and brings updates from your desktop. It keeps nothing it passes along.'
       : "Carries updates to your phone, locked with a key only your devices have. You can run your own relay from the project's source."}</span></div>`;
   if (m.shellKind === 'pwa') {
-    return `<h2 class="sec">Desktop sync</h2><div class="card">${relayField}
-      <div class="row"><label class="name">${m.sync?.channel ? 'Paired with your desktop' : 'Not paired'}<span class="desc">${m.sync?.channel
-        ? 'Claude, ChatGPT and Grok come from your desktop app, which refreshes them.'
-        : 'To see Claude, ChatGPT or Grok here, open settings in the desktop app, choose Pair a phone, and scan the code with this phone.'}</span></label>
-      ${m.sync?.channel ? '<button class="btn small" data-action="sync-unpair">Unpair</button>' : ''}</div></div>`;
+    const paired = !!m.sync?.channel;
+    return `<h2 class="sec">Desktop sync</h2><div class="card">
+      <div class="row"><label class="name">${paired ? 'Paired with your desktop' : 'Not paired'}<span class="desc">${paired
+        ? "Your desktop sends its readings, settings and API keys here. Claude, ChatGPT and Grok always come from the desktop, since only the apps signed in on the computer can see those plan limits."
+        : "Scan the code from Pair a phone in the desktop app's settings. This phone then shows everything the desktop tracks and gets its API keys, so there is nothing to type here."}</span></label>
+      ${paired ? '<button class="btn small" data-action="sync-unpair">Unpair</button>' : ''}</div>
+      <div class="actions" style="justify-content:flex-start;margin-top:4px"><button class="btn ${paired ? '' : 'primary'}" data-action="sync-scan">Scan pairing code</button></div>
+      ${m.scanError ? `<span class="bad-json">${esc(m.scanError)}</span>` : ''}
+      ${m.iosInstallHint ? `<div class="field"><span class="help">To add Augur to your home screen, tap Share in Safari (on newer iPhones it is in the menu at the bottom), then Add to Home Screen. The home-screen app keeps its own storage, so open it and scan the pairing code from there.</span></div>` : ''}
+      ${relayField}</div>`;
   }
   const paired = !!m.sync?.channel;
   return `<h2 class="sec">Phone</h2><div class="card">${relayField}
@@ -189,6 +202,7 @@ function phoneSection(m: SettingsModel): string {
       : 'Shows a code to scan with your phone. Needs both addresses above.'}</span></label>
       ${paired ? '<button class="btn small" data-action="sync-show">Show code</button><button class="btn small" data-action="sync-unpair">Unpair</button>'
         : `<button class="btn small primary" data-action="sync-pair" ${m.relay && m.pwaUrl ? '' : 'disabled'}>Pair a phone</button>`}</div>
+    ${paired ? `<div class="row"><label class="name">Send API keys to the phone<span class="desc">Lets the phone refresh key-based providers on its own. The keys travel inside the same encrypted sync, which only your paired phone can read.</span></label>${toggle('sharekeys', m.sync?.shareKeys !== false, "Send API keys to the phone")}</div>` : ''}
     ${m.pairQr ? `<div class="field" style="align-items:center">${m.pairQr}<span class="help">Scan it with the phone's camera, or open the <a href="#" data-open="${esc(m.pairUrl ?? '')}">pairing link</a> on the phone. Anyone with the link can read your usage, so keep it to yourself.</span></div>` : ''}
   </div>`;
 }

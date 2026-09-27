@@ -2,6 +2,9 @@ import type { AppConfig, GenericProviderDef, ProviderConfig } from './types.js';
 import { builtinProviders } from './providers/index.js';
 import { obj } from './util.js';
 
+/** Super is the Windows key on Windows and Command on macOS. */
+export const DEFAULT_HOTKEY = 'Ctrl+Super+U';
+
 export function defaultConfig(): AppConfig {
   return { schema: 1, providers: builtinProviders.map(provider => ({ id: provider.id, enabled: true, settings: {} })), custom: [],
     layout: { theme: 'system', columns: 'auto', hiddenMeters: {}, collapsed: [] },
@@ -34,13 +37,14 @@ export function migrateConfig(value: unknown): AppConfig {
       paceRatio: { session: ratio(pace.session, defaults.alerts.paceRatio.session), weekly: ratio(pace.weekly, defaults.alerts.paceRatio.weekly), other: ratio(pace.other, defaults.alerts.paceRatio.other) },
       balanceBelow: Object.fromEntries(Object.entries(obj(alerts.balanceBelow)).filter(([, n]) => typeof n === 'number' && Number.isFinite(n))) },
     exportPath: typeof source.exportPath === 'string' ? source.exportPath : null,
+    hotkey: source.hotkey === null || source.hotkey === '' ? null : typeof source.hotkey === 'string' ? source.hotkey : DEFAULT_HOTKEY,
     autoUpdate: source.autoUpdate !== false,
     sync: syncConfig(source.sync), secretSources: secretSources(source.secretSources) };
 }
 
 function syncConfig(value: unknown): AppConfig['sync'] {
   const s = obj(value);
-  return typeof s.relay === 'string' ? { relay: s.relay, channel: typeof s.channel === 'string' ? s.channel : '', pwaUrl: typeof s.pwaUrl === 'string' ? s.pwaUrl : '' } : null;
+  return typeof s.relay === 'string' ? { relay: s.relay, channel: typeof s.channel === 'string' ? s.channel : '', pwaUrl: typeof s.pwaUrl === 'string' ? s.pwaUrl : '', shareKeys: s.shareKeys !== false } : null;
 }
 
 function secretSources(value: unknown): AppConfig['secretSources'] {

@@ -106,6 +106,7 @@ export function createTauriShell(): Shell {
     hidePopup: () => invoke<void>('hide_popup'),
     getAutostart: () => isEnabled(),
     setAutostart: (on: boolean) => on ? enable() : disable(),
+    setHotkey: (accelerator: string | null) => invoke<void>('set_hotkey', { accelerator }),
     appVersion: () => getVersion(),
     openSignIn: (site: string) => invoke<void>('web_session_sign_in', { site }),
     checkUpdate: async (): Promise<UpdateInfo | null> => {
