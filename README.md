@@ -2,10 +2,18 @@
 
 Augur shows how much of your AI plans and credits you have used, in one place: a tray icon on Windows, a menu-bar icon on macOS, and a web app you can add to a phone's home screen. It reads the same numbers each provider's own usage page shows, refreshes each one on its own schedule, and warns you when a limit is running out faster than its window resets.
 
-<p align="center">
-  <img src="docs/images/dashboard.jpg" alt="The Augur panel with Claude, ChatGPT, Grok, MiniMax, OpenRouter, fal and Jev cards" width="320">
-  <img src="docs/images/settings.jpg" alt="Augur settings: providers, appearance, alerts, custom providers, phone sync" width="320">
-</p>
+<table align="center">
+  <tr>
+    <td align="center" valign="top" width="50%">
+      <img src="docs/images/dashboard.jpg" alt="The Augur panel with Claude, ChatGPT, Grok, MiniMax, OpenRouter, fal and Jev cards" width="300"><br>
+      <sub>The panel shows your most-used limit at the top and a card for each provider below it.</sub>
+    </td>
+    <td align="center" valign="top" width="50%">
+      <img src="docs/images/settings.jpg" alt="Augur settings: providers, appearance, alerts, custom providers, phone sync and updates" width="300"><br>
+      <sub>In settings you choose what each card shows, how often it refreshes, and when Augur warns you.</sub>
+    </td>
+  </tr>
+</table>
 
 ## What it tracks
 
@@ -37,7 +45,12 @@ To see your TypeSafe balance, open Jev in settings and choose Sign in. Augur kee
 
 ## Using it
 
-Click the icon to open the panel. The ring on the icon shows your most-used limit, and its color turns amber at 75% and red at 90%.
+Click the icon to open the panel. The ring on the icon shows your most-used limit, and its color turns amber at 75% and red at 90%. Hover over it for one line per provider without opening the panel.
+
+<p align="center">
+  <img src="docs/images/tray-tooltip.jpg" alt="The tray tooltip listing each provider's usage on one line" width="185"><br>
+  <sub>Hovering over the tray icon shows every provider at a glance.</sub>
+</p>
 
 Each meter shows how much is used, when it resets, and a thin mark on the bar for where even pace would put you. Click a meter to see the last seven days, with dashed lines at each reset. Drag a card by its handle to change the order, and collapse cards you only check now and then. The panel switches to two columns when one column would not fit on the screen, or you can pick one or two columns in settings.
 
