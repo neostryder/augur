@@ -1,5 +1,5 @@
 import Sortable from 'sortablejs';
-import { releaseChanges, type AppConfig, type ProviderPlugin, type ReleaseChanges, type Shell, type Snapshot, type UpdateInfo } from '@augur/core';
+import { buildPolicyFile, emptyPolicy, importPolicy, policyPathFor, releaseChanges, type AppConfig, type ProviderPlugin, type ReleaseChanges, type Shell, type Snapshot, type UpdateInfo } from '@augur/core';
 import * as core from './core';
 import type { HistoryRow } from './core';
 import { renderDashboard, tightest, updateTip, type DashboardModel } from './views/dashboard';
@@ -103,6 +103,7 @@ export class App {
     const saved = await this.shell.loadConfig();
     this.config = core.migrateConfig(saved ?? core.defaultConfig());
     this.syncProviderList();
+    await this.importRulesOnce();
     this.firstRun = !saved;
     if (this.shell.kind === 'pwa') {
       const link = await acceptPairingFromUrl(this.shell);
@@ -471,8 +472,27 @@ export class App {
     }).catch(() => undefined);
   }
 
+  /** While no rules exist yet, a policy-import.json beside the export is imported once, with every model left unconfirmed. */
+  private async importRulesOnce(): Promise<void> {
+    const policy = this.config.policy ??= emptyPolicy();
+    const read = this.shell.host.readHomeFile;
+    if (Object.keys(policy.providers).length || !read || !this.config.exportPath) return;
+    const text = await read(policyPathFor(this.config.exportPath, 'policy-import.json')).catch(() => null);
+    if (!text) return;
+    try { importPolicy(policy, JSON.parse(text)); } catch { return; }
+    await this.saveConfig(false);
+  }
+
+  /** policy.json changes only when a rule does, so it is written with the config, never on a usage refresh. */
+  private async writePolicy(): Promise<void> {
+    if (!this.shell.exportSnapshot || !this.config.exportPath || !this.config.policy) return;
+    const file = buildPolicyFile(this.config.policy, core.policyProviders(this.config));
+    await this.shell.exportSnapshot(policyPathFor(this.config.exportPath), JSON.stringify(file, null, 2)).catch(() => undefined);
+  }
+
   private async saveConfig(flash = true): Promise<void> {
     await this.shell.saveConfig(this.config);
+    await this.writePolicy();
     if (flash) {
       this.savedFlash = 'Saved';
       setTimeout(() => { this.savedFlash = null; if (this.view === 'settings') void this.render(); }, 1500);

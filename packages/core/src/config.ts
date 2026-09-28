@@ -2,6 +2,7 @@ import type { AppConfig, GenericProviderDef, ProviderConfig } from './types.js';
 import { builtinProviders } from './providers/index.js';
 import { obj } from './util.js';
 import { MIN_REFRESH_SECONDS } from './engine.js';
+import { emptyPolicy, migratePolicy } from './policy.js';
 
 /** Super is the Windows key on Windows and Command on macOS. */
 export const DEFAULT_HOTKEY = 'Ctrl+Super+U';
@@ -9,7 +10,7 @@ export const DEFAULT_HOTKEY = 'Ctrl+Super+U';
 export function defaultConfig(): AppConfig {
   return { schema: 1, providers: builtinProviders.map(provider => ({ id: provider.id, enabled: true, settings: {} })), custom: [],
     layout: { theme: 'system', columns: 'auto', hiddenMeters: {}, collapsed: [] },
-    alerts: { enabled: false, pctThresholds: [50, 75, 90], paceRatio: { session: 0.8, weekly: 0.8, other: null }, balanceBelow: {} }, exportPath: null };
+    alerts: { enabled: false, pctThresholds: [50, 75, 90], paceRatio: { session: 0.8, weekly: 0.8, other: null }, balanceBelow: {} }, exportPath: null, policy: emptyPolicy() };
 }
 
 export function migrateConfig(value: unknown): AppConfig {
@@ -40,7 +41,8 @@ export function migrateConfig(value: unknown): AppConfig {
     exportPath: typeof source.exportPath === 'string' ? source.exportPath : null,
     hotkey: source.hotkey === null || source.hotkey === '' ? null : typeof source.hotkey === 'string' ? source.hotkey : DEFAULT_HOTKEY,
     autoUpdate: source.autoUpdate !== false,
-    sync: syncConfig(source.sync), secretSources: secretSources(source.secretSources) };
+    sync: syncConfig(source.sync), secretSources: secretSources(source.secretSources),
+    policy: migratePolicy(source.policy) };
 }
 
 function syncConfig(value: unknown): AppConfig['sync'] {

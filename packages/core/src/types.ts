@@ -1,5 +1,7 @@
 // Shared contract between the provider plugins, the desktop shell, the PWA and the UI.
 
+import type { PolicyConfig } from './policy.js';
+
 export type WindowKind = 'session' | 'daily' | 'weekly' | 'monthly' | 'credits' | 'other';
 
 export interface Meter {
@@ -205,6 +207,8 @@ export interface AppConfig {
    * project with the `bws` CLI, mapped from `<providerId>.<fieldKey>` to the secret's key there.
    */
   secretSources?: { bws?: { projectId: string; map: Record<string, string> } } | null;
+  /** Usage rules per provider and model, written to policy.json beside the export. */
+  policy?: PolicyConfig;
 }
 
 // ------------------------------------------------------------------ declarative providers

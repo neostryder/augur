@@ -52,14 +52,19 @@ async fn allowed_home_path(app: &tauri::AppHandle, path: &str) -> Result<PathBuf
         ".claude/.credentials.json" | ".codex/auth.json" | ".grok/auth.json"
     );
     let config = load_json(app.clone(), "config".into()).await?;
-    // Besides the three login files, only the exact export file named in settings, and only a .json file.
+    // Besides the three login files, only the exact export file named in settings (a .json file),
+    // and the rules file and rules import file in the same folder.
     let export_file = config
         .as_deref()
         .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
         .and_then(|value| value.get("exportPath")?.as_str().map(str::to_owned))
         .and_then(|export| relative_path(&export).ok())
         .filter(|export| export.extension().is_some_and(|ext| ext == "json"));
-    if !is_credential && export_file.as_deref() != Some(relative.as_path()) {
+    let beside_export = |name: &str| export_file.as_deref().map(|export| export.with_file_name(name));
+    let allowed = export_file.as_deref() == Some(relative.as_path())
+        || beside_export("policy.json").as_deref() == Some(relative.as_path())
+        || beside_export("policy-import.json").as_deref() == Some(relative.as_path());
+    if !is_credential && !allowed {
         return Err("Home file path is not allowed".into());
     }
     let home = home_dir()?;

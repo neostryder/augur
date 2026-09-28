@@ -1,7 +1,7 @@
 // The one place the UI touches the core package, so a renamed export is a one-line fix.
 import {
   appendHistory as coreAppend, builtinProviders, calculatePace, collect as coreCollect, defaultConfig as coreDefault, dueProviders as coreDue,
-  evaluateAlerts as coreAlerts, genericProvider, migrateConfig as coreMigrate,
+  evaluateAlerts as coreAlerts, genericProvider, migrateConfig as coreMigrate, RULES_ONLY_PROVIDERS,
 } from '@augur/core';
 import type { AppConfig, HistoryRow as CoreRow, Host, Meter, PaceResult, ProviderPlugin, Snapshot } from '@augur/core';
 
@@ -16,6 +16,12 @@ export function plugins(config: AppConfig): ProviderPlugin[] {
     try { return [genericProvider(def)]; } catch { return []; }
   });
   return [...builtinProviders, ...custom];
+}
+
+/** Every provider the rules page lists: the ones Augur reads usage for, then the rules-only ones. */
+export function policyProviders(config: AppConfig): Array<{ id: string; name: string; metered: boolean }> {
+  const metered = plugins(config).map((p) => ({ id: p.id, name: p.name, metered: true }));
+  return [...metered, ...RULES_ONLY_PROVIDERS.filter((r) => !metered.some((m) => m.id === r.id)).map(({ id, name }) => ({ id, name, metered: false }))];
 }
 
 export const defaultConfig = (): AppConfig => coreDefault();
