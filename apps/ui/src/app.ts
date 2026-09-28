@@ -1,9 +1,10 @@
 import Sortable from 'sortablejs';
-import { buildPolicyFile, emptyPolicy, importPolicy, policyPathFor, releaseChanges, type AppConfig, type ProviderPlugin, type ReleaseChanges, type Shell, type Snapshot, type UpdateInfo } from '@augur/core';
+import { addModels, buildPolicyFile, emptyPolicy, importPolicy, policyPathFor, releaseChanges, setField, setFieldMany, undoChange, type AppConfig, type ProviderPlugin, type ReleaseChanges, type Shell, type Snapshot, type UpdateInfo } from '@augur/core';
 import * as core from './core';
 import type { HistoryRow } from './core';
 import { renderDashboard, tightest, updateTip, type DashboardModel } from './views/dashboard';
 import { CUSTOM_EXAMPLE, renderSettings, type SettingsModel } from './views/settings';
+import { renderRules, type RulesFilter, type RulesModel } from './views/rules';
 import { renderTrayIcon } from './trayicon';
 import { span, until } from './util';
 import qrcode from 'qrcode-generator';
@@ -45,7 +46,7 @@ export class App {
   private snapshot: Snapshot | null = null;
   private history: HistoryRow[] = [];
   private alertState: Record<string, unknown> = {};
-  private view: 'dashboard' | 'settings' = 'dashboard';
+  private view: 'dashboard' | 'settings' | 'rules' = 'dashboard';
   private firstRun = false;
   private busy = false;
   private expanded: string | null = null;
@@ -75,6 +76,8 @@ export class App {
   private justPaired = false;
   private scanError = '';
   private hotkeyError = '';
+  private rules: { sel: RulesModel['sel']; query: string; filter: RulesFilter; open: Set<string>; picked: Set<string>; showHistory: boolean; addError: string } =
+    { sel: null, query: '', filter: 'all', open: new Set(), picked: new Set(), showHistory: false, addError: '' };
 
   private get sync(): SyncConfig | null {
     return this.config.sync ?? null;
@@ -408,15 +411,28 @@ export class App {
     };
   }
 
+  private rulesModel(): RulesModel {
+    return { config: this.config, providers: core.policyProviders(this.config), plugins: this.pluginMap(), snapshot: this.snapshot,
+      dark: document.documentElement.dataset.theme === 'dark', ...this.rules };
+  }
+
   private async render(): Promise<void> {
-    const focusId = (document.activeElement as HTMLElement | null)?.id;
+    const active = document.activeElement as HTMLInputElement | null, focusId = active?.id, caret = active?.selectionStart ?? null;
     if (this.view === 'dashboard') {
       await this.chooseColumns();
+    } else if (this.view === 'rules') {
+      // The desktop popup opens at its two-column width so the list and the open model's rules sit side by side.
+      this.twoColumns = this.shell.kind === 'desktop';
+      this.root.innerHTML = renderRules(this.rulesModel());
     } else {
       this.twoColumns = false;
       this.root.innerHTML = renderSettings(this.settingsModel());
     }
-    if (focusId) document.getElementById(focusId)?.focus();
+    if (focusId) {
+      const el = document.getElementById(focusId) as HTMLInputElement | null;
+      el?.focus();
+      if (el && caret !== null && el.type === 'search') el.setSelectionRange(caret, caret);
+    }
     this.bindSortables();
     await this.sizePopup();
   }
@@ -507,6 +523,7 @@ export class App {
     this.root.addEventListener('input', (e) => {
       const t = e.target as HTMLElement;
       if (t.matches('[data-custom]')) this.customDraft = (t as HTMLTextAreaElement).value;
+      if (t.matches('[data-rules-query]')) { this.rules.query = (t as HTMLInputElement).value; void this.render(); }
       if (t.matches('[data-color]')) {
         const pid = t.dataset.color!;
         this.provider(pid).settings.color = (t as HTMLInputElement).value;
@@ -521,7 +538,10 @@ export class App {
       }
     });
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') { if (this.view === 'settings' && !this.firstRun) { this.view = 'dashboard'; void this.render(); } else void this.shell.hidePopup?.(); }
+      if (e.key === 'Escape') {
+        if (this.view === 'rules') { if (this.rules.showHistory) this.rules.showHistory = false; else if (this.rules.sel) this.rules.sel = null; else this.view = 'dashboard'; void this.render(); }
+        else if (this.view === 'settings' && !this.firstRun) { this.view = 'dashboard'; void this.render(); } else void this.shell.hidePopup?.();
+      }
       if (e.key === 'F5') { e.preventDefault(); void this.refresh(true); }
     });
     this.root.addEventListener('mousemove', (e) => this.onHover(e));
@@ -538,8 +558,9 @@ export class App {
   }
 
   private async onClick(e: MouseEvent): Promise<void> {
-    const t = (e.target as HTMLElement).closest<HTMLElement>('[data-action],[data-open],[data-collapse],[data-meter],[data-secret-save],[data-secret-del],[data-set],[data-open-provider],[data-color-reset],[data-signin]');
+    const t = (e.target as HTMLElement).closest<HTMLElement>('[data-action],[data-open],[data-collapse],[data-meter],[data-secret-save],[data-secret-del],[data-set],[data-open-provider],[data-color-reset],[data-signin],[data-rsel],[data-rprov],[data-rfilter],[data-status],[data-bulk],[data-undo],[data-add-model],[data-pause-clear]');
     if (!t) return;
+    if (this.view === 'rules' && await this.onRulesClick(t)) return;
     if (t.dataset.open) { e.preventDefault(); await this.shell.openUrl(t.dataset.open); return; }
     if (t.dataset.signin) { await this.shell.openSignIn?.(t.dataset.signin); return; }
     if (t.dataset.collapse) {
@@ -581,6 +602,8 @@ export class App {
       case 'update-check': await this.checkForUpdate(false); break;
       case 'update-install': await this.installUpdate(); break;
       case 'settings': this.view = 'settings'; await this.render(); break;
+      case 'rules': this.view = 'rules'; this.rules.showHistory = false; if (t.dataset.value) this.rules.filter = t.dataset.value as RulesFilter; await this.render(); break;
+      case 'rules-history': this.rules.showHistory = !this.rules.showHistory; await this.render(); break;
       case 'back': this.view = 'dashboard'; await this.render(); break;
       case 'theme': {
         const order: AppConfig['layout']['theme'][] = ['system', 'light', 'dark'];
@@ -707,9 +730,80 @@ export class App {
     }
   }
 
+  private get device(): string { return this.shell.kind === 'desktop' ? 'desktop' : 'phone'; }
+
+  private async saveRules(): Promise<void> { await this.saveConfig(false); await this.render(); }
+
+  /** Handles a click on the rules page. Returns false when the click belongs to the shared handler. */
+  private async onRulesClick(t: HTMLElement): Promise<boolean> {
+    const d = t.dataset, policy = this.config.policy ??= emptyPolicy();
+    if (d.rsel !== undefined) { this.rules.sel = d.rsel ? { provider: d.rsel, model: d.rmodel || null } : null; this.rules.addError = ''; await this.render(); return true; }
+    if (d.rprov) { const o = this.rules.open; if (o.has(d.rprov)) o.delete(d.rprov); else o.add(d.rprov); await this.render(); return true; }
+    if (d.rfilter) { this.rules.filter = d.rfilter as RulesFilter; await this.render(); return true; }
+    if (d.status) { setField(policy, d.status, d.value, this.device); await this.saveRules(); return true; }
+    if (d.pauseClear) { setField(policy, d.pauseClear, undefined, this.device); await this.saveRules(); return true; }
+    if (d.undo) { const c = policy.history[Number(d.undo)]; if (c) undoChange(policy, c, this.device); await this.saveRules(); return true; }
+    if (d.addModel) {
+      const input = document.getElementById('r-add') as HTMLInputElement | null, id = input?.value.trim() ?? '';
+      if (!/^[A-Za-z0-9][\w.:/-]*$/.test(id)) { this.rules.addError = 'Enter the model id as the provider writes it, with no spaces.'; await this.render(); return true; }
+      const label = `${d.addModel}/${id}`;
+      if (!addModels(policy, d.addModel, [{ label, id }], 'manual').length) { this.rules.addError = `${label} is already listed.`; await this.render(); return true; }
+      this.rules.addError = ''; this.rules.open.add(d.addModel); this.rules.sel = { provider: d.addModel, model: label };
+      await this.saveRules(); return true;
+    }
+    if (d.bulk) {
+      const picked = [...this.rules.picked].map((k) => k.split('|') as [string, string]);
+      if (d.bulk === 'clear') this.rules.picked.clear();
+      else if (d.bulk === 'activity') {
+        const act = (document.getElementById('r-bulk-act') as HTMLSelectElement).value, level = (document.getElementById('r-bulk-level') as HTMLSelectElement).value;
+        for (const [pid, label] of picked) setFieldMany(policy, pid, [label], `activities.${act}`, level === '' ? undefined : level === 'none' ? null : level, this.device);
+      } else for (const [pid, label] of picked) setFieldMany(policy, pid, [label], 'status', d.bulk, this.device);
+      await this.saveRules(); return true;
+    }
+    return false;
+  }
+
+  /** Handles an edit on the rules page. Returns false for inputs the shared handler owns. */
+  private async onRulesChange(t: HTMLInputElement): Promise<boolean> {
+    const d = t.dataset, policy = this.config.policy ??= emptyPolicy();
+    if (d.pick) { if (t.checked) this.rules.picked.add(d.pick); else this.rules.picked.delete(d.pick); await this.render(); return true; }
+    if (d.pickAll) {
+      const shown = [...document.querySelectorAll<HTMLInputElement>('[data-pick]')].map((x) => x.dataset.pick!).filter((k) => k.startsWith(`${d.pickAll}|`));
+      for (const k of shown) if (t.checked) this.rules.picked.add(k); else this.rules.picked.delete(k);
+      await this.render(); return true;
+    }
+    if (d.bulkTier !== undefined) {
+      if (t.value) for (const k of this.rules.picked) { const [pid, label] = k.split('|') as [string, string]; setFieldMany(policy, pid, [label], 'dataTier', t.value, this.device); }
+      await this.saveRules(); return true;
+    }
+    if (d.pauseUntil || d.pauseMeter) {
+      const path = (d.pauseUntil ?? d.pauseMeter)!, pid = path.split('|')[0]!;
+      const meter = d.pauseMeter ? this.snapshot?.providers[pid]?.meters.find((x) => x.id === t.value) : undefined;
+      const until = d.pauseMeter ? meter?.resetsAt : t.value ? new Date(t.value).toISOString() : null;
+      if (until) setField(policy, path, { until, weights: null, ...(meter ? { meter: meter.id } : {}) }, this.device);
+      await this.saveRules(); return true;
+    }
+    if (!d.rule) return false;
+    const kind = d.kind ?? 'text', v = t.value;
+    if (kind.startsWith('dh:')) {
+      // Data handling is one field, so changing one of its values gives the model its own copy of all four.
+      const [pid = '', model = ''] = d.rule.split('|'), key = kind.slice(3);
+      const p = policy.providers[pid], own = model ? p?.models[model]?.rule.dataHandling : p?.defaults.dataHandling;
+      const base = { ...(own ?? (model ? p?.defaults.dataHandling : undefined) ?? {}) } as Record<string, unknown>;
+      base[key] = key === 'retainsPrompts' || key === 'trainsOnPrompts' ? (v === 'yes' ? true : v === 'no' ? false : null) : v.trim() || null;
+      setField(policy, d.rule, base, this.device);
+    } else {
+      const value = v === '' ? undefined : kind === 'bool' ? v === 'yes' : kind === 'act' && v === 'none' ? null : kind === 'num' ? Number(v) : kind === 'text' ? v.trim() || undefined : v;
+      if (kind === 'num' && typeof value === 'number' && !Number.isFinite(value)) return true;
+      setField(policy, d.rule, value, this.device);
+    }
+    await this.saveRules(); return true;
+  }
+
   private async onChange(e: Event): Promise<void> {
     const t = e.target as HTMLInputElement;
     const d = t.dataset;
+    if (this.view === 'rules' && await this.onRulesChange(t)) return;
     if (d.toggle) {
       const [kind, pid, key] = d.toggle.split(':');
       if (kind === 'enabled') this.provider(pid!).enabled = t.checked;

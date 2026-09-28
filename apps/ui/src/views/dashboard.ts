@@ -3,6 +3,7 @@ import type { UpdateState } from '../app';
 import { pace, series, type HistoryRow } from '../core';
 import { ICON, ago, esc, money, sevOf, until, when } from '../util';
 import { chart } from './chart';
+import { pendingCount } from './rules';
 
 export interface DashboardModel {
   config: AppConfig;
@@ -41,6 +42,12 @@ export function tightest(model: DashboardModel): { p: ProviderSnapshot; m: Meter
     }
   }
   return best;
+}
+
+/** Shown while any model waits for its rules to be confirmed, since routers skip it until then. */
+function reviewButton(model: DashboardModel): string {
+  const n = pendingCount(model.config);
+  return n ? `<button class="review-pill" data-action="rules" data-value="needs" title="Models waiting for rules">${n} to review</button>` : '';
 }
 
 function spark(rows: HistoryRow[], pid: string, m: Meter): string {
@@ -176,6 +183,7 @@ export function renderDashboard(model: DashboardModel): string {
   const themeName = model.config.layout.theme === 'system' ? 'System theme' : model.config.layout.theme === 'light' ? 'Light theme' : 'Dark theme';
   let html = `<header class="top"><div><h1>Usage</h1><div class="sub">${subLine(model)}</div></div><span class="grow"></span>
     <button class="icon" data-action="theme" title="${themeName}, click to change" aria-label="${themeName}, click to change">${themeIcon}</button>
+    ${reviewButton(model)}<button class="icon" data-action="rules" title="Model rules" aria-label="Model rules">${ICON.rules}</button>
     <button class="icon" data-action="settings" title="Open settings" aria-label="Open settings">${ICON.gear}</button>
     ${updateButton(model)}<button class="icon refresh" data-action="refresh" title="Refresh now" aria-label="Refresh now">${ICON.refresh}</button></header>`;
 

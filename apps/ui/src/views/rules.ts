@@ -1,0 +1,257 @@
+import {
+  ACTIVITIES, ACTIVITY_LABELS, COST_TIERS, DATA_TIERS, DATA_TIER_LABELS, OUTPUT_MODES, WEIGHT_LABELS, WEIGHT_LEVELS,
+  fieldPath, pauseActive, resolveModel, resolveThresholds,
+  type AppConfig, type ModelEntry, type PolicyChange, type ProviderPlugin, type Rule, type Snapshot,
+} from '@augur/core';
+import { ICON, esc } from '../util';
+
+export type RulesFilter = 'all' | 'needs' | 'imported' | 'confirmed' | 'hidden';
+
+export interface RulesModel {
+  config: AppConfig;
+  providers: Array<{ id: string; name: string; metered: boolean }>;
+  plugins: Map<string, ProviderPlugin>;
+  snapshot: Snapshot | null;
+  dark: boolean;
+  /** The provider defaults (model null) or model whose rules are open. */
+  sel: { provider: string; model: string | null } | null;
+  query: string;
+  filter: RulesFilter;
+  open: Set<string>;
+  /** Bulk selection, as `<provider>|<model label>`. */
+  picked: Set<string>;
+  showHistory: boolean;
+  addError: string;
+}
+
+const OUTPUT_LABELS: Record<string, string> = { write_files: 'Writes files', patch_only: 'Returns a patch', text_only: 'Text only' };
+const COST_LABELS: Record<string, string> = { cheap: 'Cheap', moderate: 'Moderate', expensive: 'Expensive' };
+const STATUS_LABELS: Record<ModelEntry['status'], string> = { confirmed: 'Confirmed', imported: 'Imported', unreviewed: 'Needs rules', hidden: 'Hidden' };
+const FILTERS: Array<[RulesFilter, string]> = [['all', 'All'], ['needs', 'Needs review'], ['confirmed', 'Confirmed'], ['hidden', 'Hidden']];
+
+const opt = (value: string, label: string, current: string) => `<option value="${esc(value)}" ${value === current ? 'selected' : ''}>${esc(label)}</option>`;
+
+function colorOf(m: RulesModel, pid: string): string {
+  const custom = (m.config.providers.find((p) => p.id === pid)?.settings?.color as string | undefined) || '';
+  const c = m.plugins.get(pid)?.color;
+  return custom || (c ? (m.dark ? c.dark : c.light) : 'var(--muted)');
+}
+
+const policyOf = (m: RulesModel) => m.config.policy ?? { providers: {}, stamps: {}, history: [] };
+
+function matches(m: RulesModel, label: string, model: ModelEntry): boolean {
+  if (m.filter === 'needs' && model.status !== 'unreviewed' && model.status !== 'imported') return false;
+  if (m.filter === 'imported' && model.status !== 'imported') return false;
+  if (m.filter === 'confirmed' && model.status !== 'confirmed') return false;
+  if (m.filter === 'hidden' ? model.status !== 'hidden' : m.filter === 'all' && model.status === 'hidden') return false;
+  const q = m.query.trim().toLowerCase();
+  return !q || [label, model.id, model.name ?? ''].some((s) => s.toLowerCase().includes(q));
+}
+
+/** Models waiting for a decision: new ones from a live list, and imported ones not yet confirmed. */
+export function pendingCount(config: AppConfig): number {
+  return Object.values(config.policy?.providers ?? {}).reduce((n, p) => n + Object.values(p.models).filter((x) => x.status === 'unreviewed' || x.status === 'imported').length, 0);
+}
+
+function summary(provider: string, defaults: Rule, model: ModelEntry): string {
+  const r = resolveModel(provider, defaults, model);
+  const acts = ACTIVITIES.filter((a) => r.activities[a]).sort((a, b) => WEIGHT_LEVELS.indexOf(r.activities[b]!) - WEIGHT_LEVELS.indexOf(r.activities[a]!));
+  const names = acts.slice(0, 2).map((a) => ACTIVITY_LABELS[a]).join(', ');
+  const acts_ = acts.length ? names + (acts.length > 2 ? ` +${acts.length - 2}` : '') : 'No activities allowed';
+  return `${acts_}, ${DATA_TIER_LABELS[r.dataTier]}${r.askFirst ? ', Ask first' : ''}`;
+}
+
+function modelRow(m: RulesModel, pid: string, defaults: Rule, label: string, model: ModelEntry): string {
+  const key = `${pid}|${label}`, on = m.sel?.provider === pid && m.sel.model === label;
+  const paused = pauseActive(model.rule.pause ?? defaults.pause);
+  const chip = model.status === 'confirmed' ? '' : `<span class="chip ${model.status === 'unreviewed' ? 'stale' : ''}">${esc(STATUS_LABELS[model.status])}</span>`;
+  return `<div class="rrow ${on ? 'on' : ''}">
+    <input type="checkbox" data-pick="${esc(key)}" ${m.picked.has(key) ? 'checked' : ''} aria-label="Select ${esc(model.name ?? label)}">
+    <button class="rpick" data-rsel="${esc(pid)}" data-rmodel="${esc(label)}">
+      <span class="rname">${esc(model.name ?? model.id)} ${chip}${paused ? '<span class="chip">Paused</span>' : ''}</span>
+      <span class="rsum">${esc(label)}, ${esc(summary(pid, defaults, model))}</span></button></div>`;
+}
+
+function providerBlock(m: RulesModel, meta: RulesModel['providers'][number]): string {
+  const p = policyOf(m).providers[meta.id] ?? { defaults: {}, models: {} };
+  const rows = Object.entries(p.models).filter(([label, model]) => matches(m, label, model)).sort(([a], [b]) => a.localeCompare(b));
+  const total = Object.values(p.models).filter((x) => x.status !== 'hidden').length;
+  const pending = Object.values(p.models).filter((x) => x.status === 'unreviewed' || x.status === 'imported').length;
+  const searching = m.query.trim() !== '' || m.filter !== 'all';
+  if (searching && !rows.length) return '';
+  const open = m.open.has(meta.id) || searching;
+  const allPicked = rows.length > 0 && rows.every(([label]) => m.picked.has(`${meta.id}|${label}`));
+  const defaultsOn = m.sel?.provider === meta.id && m.sel.model === null;
+  return `<section class="card rprov">
+    <div class="phead">
+      <span class="dot" style="background:${esc(colorOf(m, meta.id))}"></span>
+      <span class="pname">${esc(meta.name)}${meta.metered ? '' : '<span class="chip">No usage data</span>'}${pending ? `<span class="chip stale">${pending} to review</span>` : ''}</span>
+      <span class="age">${total} ${total === 1 ? 'model' : 'models'}</span>
+      <button class="link" data-rprov="${esc(meta.id)}" aria-expanded="${open}" aria-label="${open ? 'Hide' : 'Show'} ${esc(meta.name)} models" style="transform:rotate(${open ? 0 : -90}deg)">${ICON.chevron}</button></div>
+    ${open ? `<div class="rlist-body">
+      <div class="rrow ${defaultsOn ? 'on' : ''}">${rows.length ? `<input type="checkbox" data-pick-all="${esc(meta.id)}" ${allPicked ? 'checked' : ''} aria-label="Select all ${esc(meta.name)} models shown">` : '<span class="rspacer"></span>'}
+        <button class="rpick" data-rsel="${esc(meta.id)}" data-rmodel=""><span class="rname">Provider defaults</span><span class="rsum">Every model below uses these unless it sets its own</span></button></div>
+      ${rows.map(([label, model]) => modelRow(m, meta.id, p.defaults, label, model)).join('')}
+      ${!rows.length ? '<div class="rempty">No models yet. Open the provider defaults to add one.</div>' : ''}
+    </div>` : ''}</section>`;
+}
+
+// ------------------------------------------------------------------ detail
+
+function control(id: string, path: string, kind: string, options: string[]): string {
+  return `<select id="${esc(id)}" data-rule="${esc(path)}" data-kind="${esc(kind)}">${options.join('')}</select>`;
+}
+
+function row(label: string, id: string, input: string, help = ''): string {
+  return `<div class="row"><label class="name" for="${esc(id)}">${esc(label)}${help ? `<span class="desc">${esc(help)}</span>` : ''}</label>${input}</div>`;
+}
+
+function enumSelect(pid: string, model: string | null, field: string, values: readonly string[], labels: Record<string, string>, own: unknown, inherited: unknown, unset: string): string {
+  const id = `r-${field}`, cur = own === undefined ? '' : String(own);
+  const first = model === null ? opt('', unset, cur) : opt('', `Default (${inherited === undefined ? unset : labels[String(inherited)] ?? String(inherited)})`, cur);
+  return control(id, fieldPath(pid, model, field), 'enum', [first, ...values.map((v) => opt(v, labels[v] ?? v, cur))]);
+}
+
+function boolSelect(pid: string, model: string | null, field: string, own: boolean | undefined, inherited: boolean | undefined): string {
+  const cur = own === undefined ? '' : own ? 'yes' : 'no', yn = (b: boolean | undefined) => (b ? 'Yes' : 'No');
+  const first = model === null ? opt('', 'No', cur) : opt('', `Default (${yn(inherited)})`, cur);
+  return control(`r-${field}`, fieldPath(pid, model, field), 'bool', [first, opt('yes', 'Yes', cur), opt('no', 'No', cur)]);
+}
+
+function activityRows(pid: string, model: string | null, rule: Rule, defaults: Rule): string {
+  return ACTIVITIES.map((a) => {
+    const own = rule.activities?.[a], inherited = defaults.activities?.[a], cur = own === undefined ? '' : own === null ? 'none' : own;
+    const first = model === null ? opt('', 'Not allowed', cur) : opt('', `Default (${inherited ? WEIGHT_LABELS[inherited] : 'Not allowed'})`, cur);
+    const options = [first, ...(model === null ? [] : [opt('none', 'Not allowed', cur)]), ...WEIGHT_LEVELS.map((w) => opt(w, WEIGHT_LABELS[w], cur))];
+    return row(ACTIVITY_LABELS[a], `r-act-${a}`, control(`r-act-${a}`, fieldPath(pid, model, `activities.${a}`), 'act', options));
+  }).join('');
+}
+
+function handlingRows(pid: string, model: string | null, own: Rule['dataHandling'], inherited: Rule['dataHandling']): string {
+  const path = fieldPath(pid, model, 'dataHandling'), d = own ?? {}, from = model !== null && own === undefined ? inherited ?? {} : d;
+  const text = (key: 'hostCountry' | 'pinnedHost', label: string, placeholder: string) => row(label, `r-dh-${key}`,
+    `<input type="text" id="r-dh-${key}" data-rule="${esc(path)}" data-kind="dh:${key}" value="${esc(from[key] ?? '')}" placeholder="${esc(placeholder)}" style="max-width:150px">`);
+  const tri = (key: 'retainsPrompts' | 'trainsOnPrompts', label: string) => {
+    const v = from[key], cur = v === true ? 'yes' : v === false ? 'no' : '';
+    return row(label, `r-dh-${key}`, `<select id="r-dh-${key}" data-rule="${esc(path)}" data-kind="dh:${key}">${opt('', 'Unknown', cur)}${opt('yes', 'Yes', cur)}${opt('no', 'No', cur)}</select>`);
+  };
+  return (model !== null && own === undefined ? '<div class="rnote">Showing the provider values. Changing one gives this model its own.</div>' : '')
+    + text('hostCountry', 'Host country', 'US') + tri('retainsPrompts', 'Keeps prompts') + tri('trainsOnPrompts', 'Trains on prompts') + text('pinnedHost', 'Pinned host', 'None');
+}
+
+function pauseRows(m: RulesModel, pid: string, model: string | null, own: Rule['pause'], inherited: Rule['pause']): string {
+  const path = fieldPath(pid, model, 'pause'), meters = (m.snapshot?.providers[pid]?.meters ?? []).filter((x) => x.resetsAt);
+  const shown = own ?? (model !== null ? inherited : null), active = pauseActive(shown);
+  const local = (iso: string) => { const d = new Date(iso); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
+  let html = '';
+  if (shown && active) {
+    const until = new Date(shown.until).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    html += `<div class="rnote">Paused until ${esc(until)}${shown.meter ? ` (the ${esc(meters.find((x) => x.id === shown.meter)?.label ?? shown.meter)} reset)` : ''}${own === undefined ? ', set on the provider' : ''}.${shown.reason ? ` ${esc(shown.reason)}` : ''}</div>`;
+    if (own) html += `<div class="actions" style="margin-top:4px"><button class="btn small" data-pause-clear="${esc(path)}">Resume now</button></div>`;
+    return html;
+  }
+  html += row('Pause until', 'r-pause-until', `<input type="datetime-local" id="r-pause-until" data-pause-until="${esc(path)}" min="${esc(local(new Date().toISOString()))}">`,
+    'Routers skip this model until then.');
+  if (meters.length) html += row('Or until a reset', 'r-pause-meter', `<select id="r-pause-meter" data-pause-meter="${esc(path)}">${opt('', 'Choose a meter', '')}${meters.map((x) => opt(x.id, x.label, '')).join('')}</select>`);
+  return html;
+}
+
+function thresholdRows(m: RulesModel, pid: string): string {
+  const own = policyOf(m).providers[pid]?.thresholds ?? {}, t = resolveThresholds(policyOf(m).providers[pid]);
+  const num = (key: 'warnPct' | 'denyPct' | 'minBalance', label: string, help: string, step: string) => row(label, `r-t-${key}`,
+    `<input type="number" id="r-t-${key}" data-rule="${esc(fieldPath(pid, null, `thresholds.${key}`))}" data-kind="num" step="${step}" min="0" ${key === 'minBalance' ? '' : 'max="100"'} value="${esc(own[key] ?? '')}" placeholder="${esc(t[key] ?? 'None')}">`, help);
+  return num('warnPct', 'Warn at', 'Percent used on any meter. 90 if left empty.', '1')
+    + num('denyPct', 'Stop at', 'Routers skip the provider past this. 98 if left empty.', '1')
+    + num('minBalance', 'Minimum balance', 'For pay-as-you-go credit, in dollars. None if left empty.', '0.05');
+}
+
+function detail(m: RulesModel): string {
+  if (!m.sel) return `<div class="rempty big">Choose a provider's defaults or a model to see its rules.</div>`;
+  const { provider: pid, model } = m.sel, meta = m.providers.find((p) => p.id === pid);
+  const p = policyOf(m).providers[pid] ?? { defaults: {}, models: {} }, entry = model ? p.models[model] : undefined;
+  if (!meta || (model && !entry)) return `<div class="rempty big">That model is no longer listed.</div>`;
+  const rule = entry ? entry.rule : p.defaults, d = p.defaults, isModel = model !== null;
+  const title = entry ? entry.name ?? entry.id : `${meta.name} defaults`;
+
+  let html = `<div class="rhead"><button class="icon rback" data-rsel="" title="Back to the list" aria-label="Back to the list">${ICON.back}</button>
+    <div><h2>${esc(title)}</h2><div class="sub">${esc(isModel ? `${model}, ${entry!.id}` : `Used by every ${meta.name} model that leaves a field unset`)}</div></div></div>`;
+
+  if (entry) {
+    const path = fieldPath(pid, model, 'status');
+    const blurb: Record<ModelEntry['status'], string> = {
+      unreviewed: 'New model. Routers skip it until its rules are confirmed.',
+      imported: 'Imported rules. Routers skip it until they are confirmed.',
+      confirmed: 'Routers use these rules.',
+      hidden: 'Hidden. Routers never see it, and it is left out of policy.json.',
+    };
+    html += `<div class="card rstatus"><span class="grow">${esc(blurb[entry.status])}</span>
+      ${entry.status === 'confirmed' || entry.status === 'hidden' ? '' : `<button class="btn small primary" data-status="${esc(path)}" data-value="confirmed">Confirm rules</button>`}
+      <button class="btn small" data-status="${esc(path)}" data-value="${entry.status === 'hidden' ? 'unreviewed' : 'hidden'}">${entry.status === 'hidden' ? 'Show model' : 'Hide model'}</button></div>`;
+  }
+
+  html += `<h3 class="rsec">Allowed activities</h3><div class="card">${activityRows(pid, model, rule, d)}</div>`;
+  html += `<h3 class="rsec">Data</h3><div class="card">
+    ${row('Most sensitive data', 'r-dataTier', enumSelect(pid, model, 'dataTier', DATA_TIERS, DATA_TIER_LABELS, rule.dataTier, d.dataTier, 'Public'),
+      'Internal is your own code and plans. Sensitive covers customer, business and personal data. Regulated covers student records.')}
+    ${handlingRows(pid, model, rule.dataHandling, d.dataHandling)}</div>`;
+  html += `<h3 class="rsec">How agents use it</h3><div class="card">
+    ${row('Ask first', 'r-askFirst', boolSelect(pid, model, 'askFirst', rule.askFirst, d.askFirst), 'Used only when named for the task, never picked by a router.')}
+    ${row('Output', 'r-output', enumSelect(pid, model, 'output', OUTPUT_MODES, OUTPUT_LABELS, rule.output, d.output, 'Text only'))}
+    ${row('Runs in a sandbox', 'r-sandbox', boolSelect(pid, model, 'sandbox', rule.sandbox, d.sandbox))}
+    ${row('Cost', 'r-cost', enumSelect(pid, model, 'cost', COST_TIERS, COST_LABELS, rule.cost, d.cost, 'Moderate'), 'Expensive models drop out first when usage runs high.')}
+    ${row('Reasoning effort', 'r-effort', `<input type="text" id="r-effort" data-rule="${esc(fieldPath(pid, model, 'effort'))}" data-kind="text" value="${esc(rule.effort ?? '')}" placeholder="${esc(isModel ? d.effort ?? 'Default' : 'Default')}" style="max-width:150px">`)}
+  </div>`;
+  html += `<h3 class="rsec">Pause</h3><div class="card">${pauseRows(m, pid, model, rule.pause, d.pause)}</div>`;
+  if (!isModel && meta.metered) html += `<h3 class="rsec">Usage limits</h3><div class="card">${thresholdRows(m, pid)}</div>`;
+  html += `<h3 class="rsec">Notes for agents</h3><div class="card"><div class="field"><textarea id="r-notes" data-rule="${esc(fieldPath(pid, model, 'notes'))}" data-kind="text" rows="3" style="min-height:64px" placeholder="${esc(isModel && d.notes ? d.notes : 'Guidance no field covers, such as when to avoid it.')}">${esc(rule.notes ?? '')}</textarea></div></div>`;
+  if (!isModel) html += `<h3 class="rsec">Add a model</h3><div class="card"><div class="row"><input type="text" id="r-add" placeholder="Model id, such as gpt-6-sol" spellcheck="false"><button class="btn small" data-add-model="${esc(pid)}">Add</button></div>
+    ${m.addError ? `<div class="bad-json">${esc(m.addError)}</div>` : '<div class="help rnote">A model added here starts with no rules of its own and needs confirming.</div>'}</div>`;
+  return html;
+}
+
+// ------------------------------------------------------------------ history
+
+function describe(m: RulesModel, c: PolicyChange): string {
+  const [pid = '', model = '', field = ''] = c.path.split('|');
+  const who = model || `${m.providers.find((p) => p.id === pid)?.name ?? pid} defaults`;
+  const name = field.startsWith('activities.') ? ACTIVITY_LABELS[field.slice(11) as keyof typeof ACTIVITY_LABELS] ?? field
+    : field.startsWith('thresholds.') ? field.slice(11) : field;
+  const show = (v: unknown) => v === null || v === undefined ? 'unset' : typeof v === 'object' ? 'changed' : String(v).replace(/_/g, ' ');
+  return `<b>${esc(who)}</b> ${esc(name)}: ${esc(show(c.from))} to ${esc(show(c.to))}`;
+}
+
+function historyView(m: RulesModel): string {
+  const list = policyOf(m).history.map((c, i) => ({ c, i })).reverse().slice(0, 200);
+  return `<div class="card">${list.length ? list.map(({ c, i }) => `<div class="row rhist"><span class="name">${describe(m, c)}<span class="desc">${esc(new Date(c.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))} on the ${esc(c.device)}</span></span>
+    <button class="btn small" data-undo="${i}">Undo</button></div>`).join('') : '<div class="rempty">No changes yet.</div>'}</div>`;
+}
+
+// ------------------------------------------------------------------ page
+
+export function renderRules(m: RulesModel): string {
+  const pending = pendingCount(m.config);
+  let html = `<div class="rules-page ${m.sel ? 'has-sel' : ''}"><header class="top">
+    <button class="icon" data-action="${m.showHistory ? 'rules-history' : 'back'}" title="${m.showHistory ? 'Back to the rules' : 'Back to usage'}" aria-label="${m.showHistory ? 'Back to the rules' : 'Back to usage'}">${ICON.back}</button>
+    <div><h1>${m.showHistory ? 'Rule changes' : 'Model rules'}</h1><div class="sub">${m.showHistory ? 'Newest first. Undo writes the old value back as a new change.' : 'What agents may use each model for'}</div></div><span class="grow"></span>
+    ${m.showHistory ? '' : `<button class="btn small" data-action="rules-history">History</button>`}</header>`;
+  if (m.showHistory) return html + historyView(m) + '</div>';
+
+  if (pending) html += `<div class="card rbanner"><span class="grow">${pending} ${pending === 1 ? 'model needs' : 'models need'} review. Routers skip them until their rules are confirmed.</span>
+    ${m.filter === 'needs' ? '' : '<button class="btn small" data-rfilter="needs">Show them</button>'}</div>`;
+  html += `<div class="rtools"><input type="search" id="r-query" data-rules-query value="${esc(m.query)}" placeholder="Search models" spellcheck="false">
+    <div class="seg" role="radiogroup" aria-label="Filter">${FILTERS.map(([v, label]) =>
+      `<button role="radio" aria-checked="${v === m.filter}" class="${v === m.filter ? 'on' : ''}" data-rfilter="${v}">${esc(label)}</button>`).join('')}</div></div>`;
+
+  const blocks = m.providers.map((p) => providerBlock(m, p)).join('');
+  html += `<div class="rules ${m.sel ? 'has-sel' : ''}"><div class="rlist">${blocks || '<div class="rempty big">No models match.</div>'}</div><div class="rdetail">${detail(m)}</div></div>`;
+
+  if (m.picked.size) html += `<div class="rbulk"><span><b>${m.picked.size}</b> selected</span>
+    <button class="btn small primary" data-bulk="confirmed">Confirm</button>
+    <button class="btn small" data-bulk="hidden">Hide</button>
+    <select id="r-bulk-tier" data-bulk-tier aria-label="Set most sensitive data">${opt('', 'Set data tier', '')}${DATA_TIERS.map((t) => opt(t, DATA_TIER_LABELS[t], '')).join('')}</select>
+    <select id="r-bulk-act" aria-label="Activity">${ACTIVITIES.map((a) => opt(a, ACTIVITY_LABELS[a], '')).join('')}</select>
+    <select id="r-bulk-level" aria-label="Weight">${opt('', 'Default', 'normal')}${opt('none', 'Not allowed', 'normal')}${WEIGHT_LEVELS.map((w) => opt(w, WEIGHT_LABELS[w], 'normal')).join('')}</select>
+    <button class="btn small" data-bulk="activity">Apply</button>
+    <button class="btn small" data-bulk="clear">Clear</button></div>`;
+  return html + '</div>';
+}

@@ -109,6 +109,7 @@ export function renderSettings(m: SettingsModel): string {
     return html;
   }
 
+  html += `<h2 class="sec">Model rules</h2><div class="card"><div class="row"><label class="name">What agents may use each model for<span class="desc">Saved to policy.json beside the usage file, for agents to read.</span></label><button class="btn small" data-action="rules">Open</button></div></div>`;
   html += `<h2 class="sec">Appearance</h2><div class="card">
     <div class="row"><label class="name">Theme</label>${seg('theme', c.layout.theme, [['system', 'System'], ['light', 'Light'], ['dark', 'Dark']])}</div>
     <div class="row"><label class="name">Columns<span class="desc">Auto uses two columns only when one column would run past the bottom of the screen.</span></label>${seg('columns', String(c.layout.columns), [['auto', 'Auto'], ['1', 'One'], ['2', 'Two']])}</div></div>`;
