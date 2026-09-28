@@ -26,5 +26,12 @@ export const minimax: ProviderPlugin = {
         resetsAt: epoch(m.weekly_end_time, 1), windowSeconds: weeklySeconds, windowKind: 'weekly', detail: detail(m.current_weekly_total_count, m.current_weekly_usage_count) });
     }
     return { meters, money: [], plan: 'Coding plan' };
+  },
+  async listModels(host) {
+    const key = await host.secret('minimax.apiKey');
+    if (!key) return [];
+    const data = obj(await json(host, { url: 'https://api.minimax.io/v1/models', headers: { Authorization: `Bearer ${key}` } }));
+    const rows = Array.isArray(data.data) ? data.data : Array.isArray(data.models) ? data.models : [];
+    return rows.map(obj).map(m => String(m.id ?? m.model ?? m.name ?? '')).filter(Boolean).map(id => ({ id }));
   }
 };

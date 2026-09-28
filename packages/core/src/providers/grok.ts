@@ -1,8 +1,13 @@
 import type { ProviderPlugin, Meter } from '../types.js';
 import { json, obj, num, round, iso, windowKind } from '../util.js';
 
+/** `grok models` prints one model per line, after a * or a -. */
+export function parseGrokModels(text: string): Array<{ id: string }> {
+  return [...text.matchAll(/^\s*[*-]\s+([A-Za-z0-9][\w.-]*)/gm)].map(m => ({ id: m[1]! }));
+}
+
 export const grok: ProviderPlugin = {
-  id: 'grok', color: { light: '#4a3aa7', dark: '#9085e9' }, name: 'Grok', needsLocalLogin: true,
+  id: 'grok', color: { light: '#4a3aa7', dark: '#9085e9' }, name: 'Grok', needsLocalLogin: true, labelPrefix: 'xai',
   links: { usage: 'https://grok.com/?_s=usage', status: 'https://status.x.ai/' }, fields: [],
   detect: async host => !!(await host.readHomeFile?.('.grok/auth.json')),
   async fetch(host) {
@@ -32,5 +37,11 @@ export const grok: ProviderPlugin = {
     const cap = num(obj(c.onDemandCap).val);
     if (cap) money.push({ id: 'ondemand', label: 'On-demand used', amount: round((num(obj(c.onDemandUsed).val) ?? 0) / 100, 2), currency: 'USD', total: round(cap / 100, 2) } as typeof money[number]);
     return { meters, money, plan: 'SuperGrok' };
+  },
+  async listModels(host) {
+    if (!host.run) return [];
+    const out = await host.run('grok', ['models'], 60000);
+    if (out.code !== 0) throw new Error('The Grok CLI could not list its models.');
+    return parseGrokModels(out.stdout);
   }
 };

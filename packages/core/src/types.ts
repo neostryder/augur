@@ -150,6 +150,12 @@ export interface ProviderPlugin {
   fetch(host: Host, settings: ProviderSettings): Promise<ProviderResult>;
   /** Default refresh interval in seconds, for providers that should be read less often than the app-wide interval. */
   refreshSeconds?: number;
+  /** The models this account can use, for the rules page. */
+  listModels?(host: Host, settings: ProviderSettings): Promise<Array<{ id: string; name?: string }>>;
+  /** `auto` adds each new listed model for review; `catalog` keeps the list to pick from, for marketplaces with hundreds of models. Defaults to auto. */
+  modelListMode?: 'auto' | 'catalog';
+  /** First part of a model's route label, such as xai for Grok. Defaults to the provider id. */
+  labelPrefix?: string;
 }
 
 export type ProviderSettings = Record<string, string | boolean | undefined>;

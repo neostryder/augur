@@ -7,6 +7,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 ### Added
 
 - [Visible] [UI] **A Model rules page sets what agents may use each model for.** Each provider and model lists its allowed activities, how often to pick it for each one, the most sensitive data it may see, whether it runs only when named, and an optional pause. Augur saves the rules to policy.json beside the usage file whenever one changes. A new model stays blocked until its rules are confirmed, and the dashboard shows how many are waiting. Every change is listed in History and can be undone.
+- [Visible] [Providers] **Model rules lists each provider's current models.** Once a day Claude, Codex, Grok and MiniMax add their newest models for review, and OpenRouter and fal keep theirs as a searchable list to add from. Only the newest version of each model is listed. A newer version starts with the older one's rules, and confirming it hides the older one.
 
 ## [0.6.1] - 2026-09-27
 

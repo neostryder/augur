@@ -2,6 +2,7 @@
 // each implement this; the UI never talks to Tauri or the browser directly.
 
 import type { AppConfig, Host, Snapshot } from './types.js';
+import type { ModelCatalog } from './models.js';
 
 export interface TrayUpdate {
   /** PNG of the tray icon at the requested size, base64 without a data: prefix. */
@@ -36,6 +37,9 @@ export interface Shell {
   saveHistory(rows: Record<string, unknown>[]): Promise<void>;
   loadAlertState(): Promise<Record<string, unknown>>;
   saveAlertState(state: Record<string, unknown>): Promise<void>;
+  /** The last model list read from each provider. */
+  loadModelCatalog?(): Promise<ModelCatalog | null>;
+  saveModelCatalog?(catalog: ModelCatalog): Promise<void>;
   /** Writes the snapshot where other local tools can read it. Desktop only. */
   exportSnapshot?(homeRelativePath: string, json: string): Promise<void>;
 

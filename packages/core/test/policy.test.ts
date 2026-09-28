@@ -51,6 +51,7 @@ describe('policy', () => {
     policy.providers.copilot = { defaults: { activities: { write_code: 'normal' } }, models: {} };
     expect(addModels(policy, 'copilot', [{ label: 'copilot/gpt-6-sol', id: 'gpt-6-sol' }], 'live', t0)).toEqual(['copilot/gpt-6-sol']);
     expect(addModels(policy, 'copilot', [{ label: 'copilot/gpt-6-sol', id: 'gpt-6-sol' }], 'live', t0)).toEqual([]);
+    expect(addModels(policy, 'copilot', [{ label: 'copilot/other-name', id: 'gpt-6-sol' }], 'manual', t0)).toEqual([]);
     const file = buildPolicyFile(policy, meta, t0);
     expect(file.unreviewed).toEqual(['copilot/gpt-6-sol']);
     expect(file.providers.copilot!.models['copilot/gpt-6-sol']!.status).toBe('unreviewed');

@@ -39,19 +39,22 @@ async function refresh(host: Host): Promise<string> {
   return target.accessToken;
 }
 
+/** Renews the Claude Code login once on a 401 and tries the call again. */
+async function withLogin(host: Host, call: (token: string) => Promise<unknown>): Promise<Record<string, any>> {
+  const oauth = obj((await read(host)).data.claudeAiOauth);
+  let token = num(oauth.expiresAt) !== null && Number(oauth.expiresAt) > (host.now?.() ?? new Date()).getTime() + 300000 ? oauth.accessToken : await refresh(host);
+  try { return obj(await call(token)); }
+  catch (error) { if (!(error instanceof HttpError) || error.status !== 401) throw error; token = await refresh(host); return obj(await call(token)); }
+}
+
+const headers = (token: string) => ({ Authorization: `Bearer ${token}`, 'anthropic-beta': 'oauth-2025-04-20', 'User-Agent': 'claude-code/2.1' });
+
 export const claude: ProviderPlugin = {
   id: 'claude', color: { light: '#eb6834', dark: '#d95926' }, name: 'Claude', needsLocalLogin: true,
   links: { usage: 'https://claude.ai/settings/usage', status: 'https://status.claude.com/', statusApi: 'https://status.claude.com/api/v2/status.json' }, fields: [],
   detect: async host => { try { await read(host); return true; } catch { return false; } },
   async fetch(host) {
-    const credentials = await read(host);
-    const oauth = obj(credentials.data.claudeAiOauth);
-    let token = num(oauth.expiresAt) !== null && Number(oauth.expiresAt) > (host.now?.() ?? new Date()).getTime() + 300000 ? oauth.accessToken : await refresh(host);
-    const call = (key: string) => json(host, { url: 'https://api.anthropic.com/api/oauth/usage', headers: {
-      Authorization: `Bearer ${key}`, 'anthropic-beta': 'oauth-2025-04-20', 'User-Agent': 'claude-code/2.1' } });
-    let data: Record<string, any>;
-    try { data = obj(await call(token)); }
-    catch (error) { if (!(error instanceof HttpError) || error.status !== 401) throw error; token = await refresh(host); data = obj(await call(token)); }
+    const data = await withLogin(host, token => json(host, { url: 'https://api.anthropic.com/api/oauth/usage', headers: headers(token) }));
     const meters: Meter[] = [];
     for (const row of Array.isArray(data.limits) ? data.limits : []) {
       const limit = obj(row), kind = String(limit.kind ?? ''), scope = obj(obj(limit.scope).model).display_name;
@@ -73,5 +76,9 @@ export const claude: ProviderPlugin = {
     const latest = await read(host);
     return { plan: obj(latest.data.claudeAiOauth).subscriptionType ?? null, meters, money,
       notes: { extra_usage_enabled: !!extra.is_enabled, spend_percent: spend.percent ?? null } };
+  },
+  async listModels(host) {
+    const data = await withLogin(host, token => json(host, { url: 'https://api.anthropic.com/v1/models?limit=100', headers: { ...headers(token), 'anthropic-version': '2023-06-01' } }));
+    return (Array.isArray(data.data) ? data.data : []).map(obj).filter(m => typeof m.id === 'string').map(m => ({ id: m.id, name: typeof m.display_name === 'string' ? m.display_name : undefined }));
   }
 };

@@ -1,9 +1,9 @@
 import {
   ACTIVITIES, ACTIVITY_LABELS, COST_TIERS, DATA_TIERS, DATA_TIER_LABELS, OUTPUT_MODES, WEIGHT_LABELS, WEIGHT_LEVELS,
-  fieldPath, pauseActive, resolveModel, resolveThresholds,
-  type AppConfig, type ModelEntry, type PolicyChange, type ProviderPlugin, type Rule, type Snapshot,
+  fieldPath, latestOnly, pauseActive, resolveModel, resolveThresholds,
+  type AppConfig, type ModelCatalog, type ModelEntry, type PolicyChange, type ProviderPlugin, type Rule, type Snapshot,
 } from '@augur/core';
-import { ICON, esc } from '../util';
+import { ICON, ago, esc } from '../util';
 
 export type RulesFilter = 'all' | 'needs' | 'imported' | 'confirmed' | 'hidden';
 
@@ -22,6 +22,11 @@ export interface RulesModel {
   picked: Set<string>;
   showHistory: boolean;
   addError: string;
+  catalog: ModelCatalog;
+  /** Providers whose model list is being read right now. */
+  listing: Set<string>;
+  /** Only the desktop reads model lists. */
+  canList: boolean;
 }
 
 const OUTPUT_LABELS: Record<string, string> = { write_files: 'Writes files', patch_only: 'Returns a patch', text_only: 'Text only' };
@@ -184,7 +189,11 @@ function detail(m: RulesModel): string {
       confirmed: 'Routers use these rules.',
       hidden: 'Hidden. Routers never see it, and it is left out of policy.json.',
     };
-    html += `<div class="card rstatus"><span class="grow">${esc(blurb[entry.status])}</span>
+    const older = entry.supersedes ? p.models[entry.supersedes] : undefined;
+    const text = older && entry.status !== 'confirmed' && entry.status !== 'hidden'
+      ? `A newer version of ${older.name ?? older.id}, set up with the same rules. Routers skip it until you confirm the rules, and then ${older.name ?? older.id} is hidden.`
+      : blurb[entry.status];
+    html += `<div class="card rstatus"><span class="grow">${esc(text)}</span>
       ${entry.status === 'confirmed' || entry.status === 'hidden' ? '' : `<button class="btn small primary" data-status="${esc(path)}" data-value="confirmed">Confirm rules</button>`}
       <button class="btn small" data-status="${esc(path)}" data-value="${entry.status === 'hidden' ? 'unreviewed' : 'hidden'}">${entry.status === 'hidden' ? 'Show model' : 'Hide model'}</button></div>`;
   }
@@ -204,7 +213,29 @@ function detail(m: RulesModel): string {
   html += `<h3 class="rsec">Pause</h3><div class="card">${pauseRows(m, pid, model, rule.pause, d.pause)}</div>`;
   if (!isModel && meta.metered) html += `<h3 class="rsec">Usage limits</h3><div class="card">${thresholdRows(m, pid)}</div>`;
   html += `<h3 class="rsec">Notes for agents</h3><div class="card"><div class="field"><textarea id="r-notes" data-rule="${esc(fieldPath(pid, model, 'notes'))}" data-kind="text" rows="3" style="min-height:64px" placeholder="${esc(isModel && d.notes ? d.notes : 'Guidance no field covers, such as when to avoid it.')}">${esc(rule.notes ?? '')}</textarea></div></div>`;
-  if (!isModel) html += `<h3 class="rsec">Add a model</h3><div class="card"><div class="row"><input type="text" id="r-add" placeholder="Model id, such as gpt-6-sol" spellcheck="false"><button class="btn small" data-add-model="${esc(pid)}">Add</button></div>
+  if (!isModel) html += modelListSection(m, pid, p.listMode, Object.values(p.models).map((x) => x.id));
+  return html;
+}
+
+function modelListSection(m: RulesModel, pid: string, own: 'auto' | 'catalog' | undefined, have: string[]): string {
+  const plugin = m.plugins.get(pid), entry = m.catalog[pid];
+  let html = '';
+  if (plugin?.listModels) {
+    const labels = { auto: 'Add new models for review', catalog: 'Keep as a list to pick from' };
+    const fallback = plugin.modelListMode ?? 'auto';
+    const status = m.listing.has(pid) ? 'Checking now.'
+      : entry ? `Checked ${ago(entry.fetchedAt)}. ${latestOnly(entry.models).length} current models.${entry.error ? ` The last check failed: ${entry.error}` : ''}`
+      : 'Not checked yet.';
+    html += `<h3 class="rsec">Model list</h3><div class="card">
+      ${row('New models', 'r-listMode', control('r-listMode', fieldPath(pid, null, 'listMode'), 'enum', [opt('', `Default (${labels[fallback]})`, own ?? ''), opt('auto', labels.auto, own ?? ''), opt('catalog', labels.catalog, own ?? '')]),
+        'Only the newest version of each model is listed.')}
+      <div class="row"><span class="name rnote">${esc(status)}</span>${m.canList ? `<button class="btn small" data-list-now="${esc(pid)}" ${m.listing.has(pid) ? 'disabled' : ''}>Check now</button>` : '<span class="desc">The desktop app checks the list.</span>'}</div></div>`;
+  }
+  const choices = entry ? latestOnly(entry.models).filter((x) => !have.includes(x.id)) : [];
+  html += `<h3 class="rsec">Add a model</h3><div class="card"><div class="row">
+    <input type="text" id="r-add" list="r-catalog" placeholder="${esc(choices.length ? `Search ${choices.length} models, or type an id` : 'Model id, such as gpt-6-sol')}" spellcheck="false" autocomplete="off">
+    <button class="btn small" data-add-model="${esc(pid)}">Add</button></div>
+    ${choices.length ? `<datalist id="r-catalog">${choices.map((x) => `<option value="${esc(x.id)}">${esc(x.name ?? '')}</option>`).join('')}</datalist>` : ''}
     ${m.addError ? `<div class="bad-json">${esc(m.addError)}</div>` : '<div class="help rnote">A model added here starts with no rules of its own and needs confirming.</div>'}</div>`;
   return html;
 }

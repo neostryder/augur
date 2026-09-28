@@ -68,9 +68,17 @@ export interface ModelEntry {
   status: ModelStatus;
   rule: Rule;
   firstSeen: string;
+  /** The older version this model replaces. Confirming this model hides that one. */
+  supersedes?: string;
 }
 
-export interface ProviderPolicy { defaults: Rule; thresholds?: Partial<Thresholds>; models: Record<string, ModelEntry> }
+export interface ProviderPolicy {
+  defaults: Rule;
+  thresholds?: Partial<Thresholds>;
+  /** Whether new models in the provider's list are added for review (`auto`) or kept to pick from (`catalog`). Unset uses the provider's own default. */
+  listMode?: 'auto' | 'catalog';
+  models: Record<string, ModelEntry>;
+}
 
 export interface PolicyChange { at: string; device: string; path: string; from: unknown; to: unknown }
 
@@ -129,6 +137,7 @@ function getAt(policy: PolicyConfig, path: string): unknown {
   const p = policy.providers[provider];
   if (!p) return undefined;
   if (field.startsWith('thresholds.')) return (p.thresholds as Record<string, unknown> | undefined)?.[field.slice(11)];
+  if (field === 'listMode') return p.listMode;
   if (field === 'status') return model ? p.models[model]?.status : undefined;
   const rule = model ? p.models[model]?.rule : p.defaults;
   return rule ? readField(rule, field) : undefined;
@@ -143,6 +152,7 @@ function setAt(policy: PolicyConfig, path: string, value: unknown): void {
     p.thresholds = t as Partial<Thresholds>;
     return;
   }
+  if (field === 'listMode') { if (value === 'auto' || value === 'catalog') p.listMode = value; else delete p.listMode; return; }
   const entry = model ? p.models[model] : undefined;
   if (model && !entry) return;
   if (field === 'status') { if (entry && MODEL_STATUSES.includes(value as ModelStatus)) entry.status = value as ModelStatus; return; }
@@ -170,11 +180,11 @@ export function undoChange(policy: PolicyConfig, change: PolicyChange, device: s
   setField(policy, change.path, change.from ?? undefined, device, now);
 }
 
-/** Adds models seen in a provider's live list. New ones start unreviewed and block until they have rules. Returns the labels added. */
+/** Adds models by hand or from a list, skipping any label or model id already there. New ones start unreviewed and block until they have rules. Returns the labels added. */
 export function addModels(policy: PolicyConfig, provider: string, models: Array<{ label: string; id: string; name?: string }>, source: 'live' | 'manual', now = new Date()): string[] {
   const p = providerPolicy(policy, provider), added: string[] = [];
   for (const m of models) {
-    if (p.models[m.label]) continue;
+    if (p.models[m.label] || Object.values(p.models).some(e => e.id === m.id)) continue;
     p.models[m.label] = { id: m.id, name: m.name, source, status: 'unreviewed', rule: {}, firstSeen: now.toISOString() };
     added.push(m.label);
   }
@@ -189,7 +199,7 @@ export function mergePolicy(local: PolicyConfig, remote: PolicyConfig): PolicyCo
   const out: PolicyConfig = structuredClone(local);
   for (const [id, rp] of Object.entries(remote.providers)) {
     const lp = providerPolicy(out, id);
-    for (const [label, model] of Object.entries(rp.models)) lp.models[label] ??= structuredClone({ ...model, rule: {} });
+    for (const [label, model] of Object.entries(rp.models)) lp.models[label] ??= structuredClone(model);
   }
   for (const [path, at] of Object.entries(remote.stamps)) {
     const mine = out.stamps[path];
@@ -325,12 +335,14 @@ export function migratePolicy(value: unknown): PolicyConfig {
       const e = obj(m);
       if (typeof e.id !== 'string' || !label.includes('/')) continue;
       models[label] = { id: e.id, name: typeof e.name === 'string' ? e.name : undefined, source: oneOf(['live', 'manual', 'import'] as const, e.source) ?? 'manual',
-        status: oneOf(MODEL_STATUSES, e.status) ?? 'unreviewed', rule: migrateRule(e.rule), firstSeen: typeof e.firstSeen === 'string' ? e.firstSeen : new Date(0).toISOString() };
+        status: oneOf(MODEL_STATUSES, e.status) ?? 'unreviewed', rule: migrateRule(e.rule), firstSeen: typeof e.firstSeen === 'string' ? e.firstSeen : new Date(0).toISOString(),
+        ...(typeof e.supersedes === 'string' ? { supersedes: e.supersedes } : {}) };
     }
     const t = obj(p.thresholds), thresholds: Partial<Thresholds> = {};
     for (const k of ['warnPct', 'denyPct'] as const) if (typeof t[k] === 'number' && t[k] >= 0 && t[k] <= 100) thresholds[k] = t[k];
     if (t.minBalance === null || (typeof t.minBalance === 'number' && Number.isFinite(t.minBalance))) thresholds.minBalance = t.minBalance;
-    policy.providers[id] = { defaults: migrateRule(p.defaults), models, ...(Object.keys(thresholds).length ? { thresholds } : {}) };
+    policy.providers[id] = { defaults: migrateRule(p.defaults), models, ...(Object.keys(thresholds).length ? { thresholds } : {}),
+      ...(p.listMode === 'auto' || p.listMode === 'catalog' ? { listMode: p.listMode } : {}) };
   }
   for (const [path, at] of Object.entries(obj(s.stamps))) if (typeof at === 'string' && path.split(SEP).length === 3) policy.stamps[path] = at;
   if (Array.isArray(s.history)) for (const c of s.history) {

@@ -2,9 +2,9 @@
 // encrypted with a non-extractable AES key that never leaves IndexedDB. Provider calls go
 // through a stateless relay when one is configured, because most usage APIs do not allow
 // cross-origin browser requests.
-import type { AppConfig, HttpRequest, HttpResponse, Shell, Snapshot } from '@augur/core';
+import type { AppConfig, HttpRequest, HttpResponse, ModelCatalog, Shell, Snapshot } from '@augur/core';
 
-const LS = { config: 'augur.config', snapshot: 'augur.snapshot', history: 'augur.history', alerts: 'augur.alerts', relay: 'augur.relay' };
+const LS = { config: 'augur.config', snapshot: 'augur.snapshot', history: 'augur.history', alerts: 'augur.alerts', relay: 'augur.relay', models: 'augur.models' };
 
 function readLS<T>(key: string): T | null {
   try { const v = localStorage.getItem(key); return v ? (JSON.parse(v) as T) : null; } catch { return null; }
@@ -115,6 +115,8 @@ export function createBrowserShell(): Shell {
     async saveHistory(rows) { writeLS(LS.history, rows); },
     async loadAlertState() { return readLS<Record<string, unknown>>(LS.alerts) ?? {}; },
     async saveAlertState(s) { writeLS(LS.alerts, s); },
+    async loadModelCatalog() { return readLS<ModelCatalog>(LS.models); },
+    async saveModelCatalog(c) { writeLS(LS.models, c); },
     async notify(title, body) {
       if (!('Notification' in window)) return;
       if (Notification.permission === 'default') await Notification.requestPermission();

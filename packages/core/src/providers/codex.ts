@@ -58,5 +58,13 @@ export const codex: ProviderPlugin = {
     const money = credits.has_credits && num(credits.balance) !== null ? [{ id: 'credits', label: 'Workspace credits', amount: round(num(credits.balance), 2), currency: 'USD' }] : [];
     const models = Object.fromEntries(Object.entries(obj(data.model_usage)).map(([key, value]) => [key, obj(value).available]));
     return { meters, money, plan: data.plan_type ?? null, notes: { resets_available: resets.available_count ?? null, limit_reached: obj(data.rate_limit).limit_reached ?? null, models } };
+  },
+  // The Codex CLI caches its model list in models_cache.json, and marks models it no longer offers with visibility hide.
+  async listModels(host) {
+    const home = host.env?.('CODEX_HOME'), text = await host.readHomeFile?.(home ? `${home}/models_cache.json` : '.codex/models_cache.json');
+    if (!text) return [];
+    const rows = obj(JSON.parse(text)).models;
+    return (Array.isArray(rows) ? rows : []).map(obj).filter(m => typeof m.slug === 'string' && m.visibility === 'list')
+      .map(m => ({ id: m.slug, name: typeof m.display_name === 'string' ? m.display_name : undefined }));
   }
 };

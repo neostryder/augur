@@ -1,5 +1,5 @@
 import Sortable from 'sortablejs';
-import { addModels, buildPolicyFile, emptyPolicy, importPolicy, policyPathFor, releaseChanges, setField, setFieldMany, undoChange, type AppConfig, type ProviderPlugin, type ReleaseChanges, type Shell, type Snapshot, type UpdateInfo } from '@augur/core';
+import { addModels, buildPolicyFile, emptyPolicy, importPolicy, listDue, policyPathFor, releaseChanges, setField, setFieldMany, setModelStatus, syncModelList, undoChange, type AppConfig, type ModelCatalog, type ModelEntry, type ProviderPlugin, type ReleaseChanges, type Shell, type Snapshot, type UpdateInfo } from '@augur/core';
 import * as core from './core';
 import type { HistoryRow } from './core';
 import { renderDashboard, tightest, updateTip, type DashboardModel } from './views/dashboard';
@@ -41,6 +41,8 @@ export interface UpdateState {
   changes: ReleaseChanges[] | null;
 }
 
+type ModelEntryStatus = ModelEntry['status'];
+
 export class App {
   private config!: AppConfig;
   private snapshot: Snapshot | null = null;
@@ -76,6 +78,8 @@ export class App {
   private justPaired = false;
   private scanError = '';
   private hotkeyError = '';
+  private catalog: ModelCatalog = {};
+  private listing = new Set<string>();
   private rules: { sel: RulesModel['sel']; query: string; filter: RulesFilter; open: Set<string>; picked: Set<string>; showHistory: boolean; addError: string } =
     { sel: null, query: '', filter: 'all', open: new Set(), picked: new Set(), showHistory: false, addError: '' };
 
@@ -115,6 +119,7 @@ export class App {
     [this.snapshot, this.history, this.alertState] = await Promise.all([
       this.shell.loadSnapshot(), this.shell.loadHistory() as Promise<HistoryRow[]>, this.shell.loadAlertState(),
     ]);
+    this.catalog = (await this.shell.loadModelCatalog?.().catch(() => null)) ?? {};
     this.customDraft = JSON.stringify(this.config.custom ?? [], null, 2);
     this.autostart = this.shell.getAutostart ? await this.shell.getAutostart().catch(() => null) : null;
     await this.applyHotkey();
@@ -291,6 +296,7 @@ export class App {
         if (since >= (force ? FORCED_PUSH_MS : SYNC_PUSH_MS)) await this.push();
         else if (force) { clearTimeout(this.pushRetry); this.pushRetry = setTimeout(() => void this.push(), FORCED_PUSH_MS - since); }
       }
+      void this.refreshModelLists();
       if (this.shell.exportSnapshot && this.config.exportPath) {
         const out = { ...this.snapshot, summary: summaryLine(this.snapshot, this.config) };
         await this.shell.exportSnapshot(this.config.exportPath, JSON.stringify(out, null, 2)).catch(() => undefined);
@@ -413,7 +419,7 @@ export class App {
 
   private rulesModel(): RulesModel {
     return { config: this.config, providers: core.policyProviders(this.config), plugins: this.pluginMap(), snapshot: this.snapshot,
-      dark: document.documentElement.dataset.theme === 'dark', ...this.rules };
+      dark: document.documentElement.dataset.theme === 'dark', catalog: this.catalog, listing: this.listing, canList: this.shell.kind === 'desktop', ...this.rules };
   }
 
   private async render(): Promise<void> {
@@ -499,6 +505,40 @@ export class App {
     await this.saveConfig(false);
   }
 
+  /**
+   * Reads each provider's model list once a day, or one provider's list now when `only` names it. The desktop reads the lists,
+   * since several need a login on this computer, and the phone gets the resulting models with the rules.
+   */
+  private async refreshModelLists(only?: string): Promise<void> {
+    if (this.shell.kind !== 'desktop') return;
+    const policy = this.config.policy ??= emptyPolicy(), added: string[] = [];
+    for (const plugin of core.plugins(this.config)) {
+      const pc = this.config.providers.find((p) => p.id === plugin.id);
+      if (!plugin.listModels || !pc?.enabled || this.listing.has(plugin.id)) continue;
+      if (only ? only !== plugin.id : !listDue(this.catalog[plugin.id])) continue;
+      this.listing.add(plugin.id);
+      if (this.view === 'rules') await this.render();
+      const fetchedAt = new Date().toISOString();
+      try {
+        const models = await plugin.listModels(this.shell.host, pc.settings);
+        this.catalog[plugin.id] = { fetchedAt, models, error: null };
+        const mode = policy.providers[plugin.id]?.listMode ?? plugin.modelListMode ?? 'auto';
+        if (mode === 'auto') added.push(...syncModelList(policy, plugin.id, plugin.labelPrefix ?? plugin.id, models));
+      } catch (error) {
+        this.catalog[plugin.id] = { fetchedAt, models: this.catalog[plugin.id]?.models ?? [], error: error instanceof Error ? error.message : String(error) };
+      } finally {
+        this.listing.delete(plugin.id);
+      }
+    }
+    await this.shell.saveModelCatalog?.(this.catalog).catch(() => undefined);
+    if (added.length) {
+      await this.saveConfig(false);
+      if (this.config.alerts.enabled) await this.shell.notify(`${added.length} new ${added.length === 1 ? 'model' : 'models'} to review`,
+        'Routers skip a new model until its rules are confirmed. Open Model rules to set them.').catch(() => undefined);
+    }
+    if (this.view === 'rules' || added.length) await this.render();
+  }
+
   /** policy.json changes only when a rule does, so it is written with the config, never on a usage refresh. */
   private async writePolicy(): Promise<void> {
     if (!this.shell.exportSnapshot || !this.config.exportPath || !this.config.policy) return;
@@ -558,7 +598,7 @@ export class App {
   }
 
   private async onClick(e: MouseEvent): Promise<void> {
-    const t = (e.target as HTMLElement).closest<HTMLElement>('[data-action],[data-open],[data-collapse],[data-meter],[data-secret-save],[data-secret-del],[data-set],[data-open-provider],[data-color-reset],[data-signin],[data-rsel],[data-rprov],[data-rfilter],[data-status],[data-bulk],[data-undo],[data-add-model],[data-pause-clear]');
+    const t = (e.target as HTMLElement).closest<HTMLElement>('[data-action],[data-open],[data-collapse],[data-meter],[data-secret-save],[data-secret-del],[data-set],[data-open-provider],[data-color-reset],[data-signin],[data-rsel],[data-rprov],[data-rfilter],[data-status],[data-bulk],[data-undo],[data-add-model],[data-pause-clear],[data-list-now]');
     if (!t) return;
     if (this.view === 'rules' && await this.onRulesClick(t)) return;
     if (t.dataset.open) { e.preventDefault(); await this.shell.openUrl(t.dataset.open); return; }
@@ -740,14 +780,16 @@ export class App {
     if (d.rsel !== undefined) { this.rules.sel = d.rsel ? { provider: d.rsel, model: d.rmodel || null } : null; this.rules.addError = ''; await this.render(); return true; }
     if (d.rprov) { const o = this.rules.open; if (o.has(d.rprov)) o.delete(d.rprov); else o.add(d.rprov); await this.render(); return true; }
     if (d.rfilter) { this.rules.filter = d.rfilter as RulesFilter; await this.render(); return true; }
-    if (d.status) { setField(policy, d.status, d.value, this.device); await this.saveRules(); return true; }
+    if (d.status) { const [pid = '', label = ''] = d.status.split('|'); setModelStatus(policy, pid, label, d.value as ModelEntryStatus, this.device); await this.saveRules(); return true; }
+    if (d.listNow) { void this.refreshModelLists(d.listNow); return true; }
     if (d.pauseClear) { setField(policy, d.pauseClear, undefined, this.device); await this.saveRules(); return true; }
     if (d.undo) { const c = policy.history[Number(d.undo)]; if (c) undoChange(policy, c, this.device); await this.saveRules(); return true; }
     if (d.addModel) {
       const input = document.getElementById('r-add') as HTMLInputElement | null, id = input?.value.trim() ?? '';
       if (!/^[A-Za-z0-9][\w.:/-]*$/.test(id)) { this.rules.addError = 'Enter the model id as the provider writes it, with no spaces.'; await this.render(); return true; }
-      const label = `${d.addModel}/${id}`;
-      if (!addModels(policy, d.addModel, [{ label, id }], 'manual').length) { this.rules.addError = `${label} is already listed.`; await this.render(); return true; }
+      const prefix = this.pluginMap().get(d.addModel)?.labelPrefix ?? d.addModel, label = `${prefix}/${id}`;
+      const name = this.catalog[d.addModel]?.models.find((x) => x.id === id)?.name;
+      if (!addModels(policy, d.addModel, [{ label, id, name }], 'manual').length) { this.rules.addError = `${id} is already listed.`; await this.render(); return true; }
       this.rules.addError = ''; this.rules.open.add(d.addModel); this.rules.sel = { provider: d.addModel, model: label };
       await this.saveRules(); return true;
     }
@@ -757,7 +799,7 @@ export class App {
       else if (d.bulk === 'activity') {
         const act = (document.getElementById('r-bulk-act') as HTMLSelectElement).value, level = (document.getElementById('r-bulk-level') as HTMLSelectElement).value;
         for (const [pid, label] of picked) setFieldMany(policy, pid, [label], `activities.${act}`, level === '' ? undefined : level === 'none' ? null : level, this.device);
-      } else for (const [pid, label] of picked) setFieldMany(policy, pid, [label], 'status', d.bulk, this.device);
+      } else for (const [pid, label] of picked) setModelStatus(policy, pid, label, d.bulk as ModelEntryStatus, this.device);
       await this.saveRules(); return true;
     }
     return false;

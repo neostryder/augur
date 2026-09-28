@@ -6,7 +6,7 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 import { check, type Update } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { getVersion } from '@tauri-apps/api/app';
-import type { AppConfig, Host, HttpRequest, HttpResponse, Platform, Snapshot } from '@augur/core';
+import type { AppConfig, Host, HttpRequest, HttpResponse, ModelCatalog, Platform, Snapshot } from '@augur/core';
 import type { Shell, TrayUpdate, UpdateInfo } from '@augur/core';
 
 let pendingUpdate: Update | null = null;
@@ -87,6 +87,8 @@ export function createTauriShell(): Shell {
       text: rows.map(row => JSON.stringify(row)).join('\n') + (rows.length ? '\n' : ''),
     }),
     loadAlertState: async () => parseJson<Record<string, unknown>>(await load('alert-state')) ?? {},
+    loadModelCatalog: async () => parseJson<ModelCatalog>(await load('model-catalog')),
+    saveModelCatalog: (catalog: ModelCatalog) => save('model-catalog', catalog),
     saveAlertState: (state: Record<string, unknown>) => save('alert-state', state),
     exportSnapshot: (homeRelativePath: string, json: string) => invoke<void>('write_home_file_atomic', { path: homeRelativePath, text: json }),
     notify: async (title: string, body: string) => {

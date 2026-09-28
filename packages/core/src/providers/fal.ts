@@ -5,6 +5,7 @@ export const fal: ProviderPlugin = {
   id: 'fal', color: { light: '#eda100', dark: '#c98500' }, name: 'fal', needsLocalLogin: false,
   links: { usage: 'https://fal.ai/dashboard/usage-billing', status: 'https://status.fal.ai/' },
   fields: [{ key: 'adminKey', label: 'Admin key', kind: 'secret', required: true }],
+  modelListMode: 'catalog',
   async fetch(host) {
     const key = await host.secret('fal.adminKey');
     if (!key) throw new Error('No admin key yet. Add one in settings.');
@@ -24,5 +25,23 @@ export const fal: ProviderPlugin = {
       notes.top_endpoints = rows.sort((a, b) => (num(b.cost) ?? 0) - (num(a.cost) ?? 0)).slice(0, 5).map(row => ({ endpoint: row.endpoint_id, cost: row.cost }));
     } catch { notes.usage_error = 'Monthly usage unavailable'; }
     return { plan: data.tier ?? 'Pay as you go', meters: [], money, notes };
+  },
+  async listModels(host) {
+    const key = await host.secret('fal.adminKey'), models: Array<{ id: string; name?: string }> = [];
+    let cursor = '';
+    for (let page = 0; page < 40; page++) {
+      if (page) await new Promise(resolve => setTimeout(resolve, 400));
+      let data: Record<string, any>;
+      try { data = obj(await json(host, { url: `https://api.fal.ai/v1/models?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, headers: key ? { Authorization: `Key ${key}` } : {} })); }
+      // Without a key, fal rate-limits the list after a few pages. The pages that arrived are kept.
+      catch (error) { if (error instanceof HttpError && error.status === 429 && models.length) break; throw error; }
+      for (const m of (Array.isArray(data.models) ? data.models : []).map(obj)) {
+        const meta = obj(m.metadata);
+        if (typeof m.endpoint_id === 'string' && (meta.status ?? 'active') === 'active') models.push({ id: m.endpoint_id, name: typeof meta.display_name === 'string' ? meta.display_name : undefined });
+      }
+      if (!data.has_more || typeof data.next_cursor !== 'string') break;
+      cursor = data.next_cursor;
+    }
+    return models;
   }
 };

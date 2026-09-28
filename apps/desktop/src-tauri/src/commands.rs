@@ -50,9 +50,9 @@ async fn allowed_home_path(app: &tauri::AppHandle, path: &str) -> Result<PathBuf
     let is_credential = matches!(
         path,
         ".claude/.credentials.json" | ".codex/auth.json" | ".grok/auth.json"
-    );
+    ) || path == ".codex/models_cache.json";
     let config = load_json(app.clone(), "config".into()).await?;
-    // Besides the three login files, only the exact export file named in settings (a .json file),
+    // Besides the three login files and the Codex model list, only the exact export file named in settings (a .json file),
     // and the rules file and rules import file in the same folder.
     let export_file = config
         .as_deref()
@@ -395,6 +395,7 @@ fn json_path(app: &tauri::AppHandle, kind: &str) -> Result<PathBuf, String> {
         "config" => "config.json",
         "snapshot" => "snapshot.json",
         "alert-state" => "alert-state.json",
+        "model-catalog" => "model-catalog.json",
         _ => return Err("Unknown JSON kind".into()),
     };
     app.path()
