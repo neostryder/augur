@@ -79,6 +79,6 @@ export const claude: ProviderPlugin = {
   },
   async listModels(host) {
     const data = await withLogin(host, token => json(host, { url: 'https://api.anthropic.com/v1/models?limit=100', headers: { ...headers(token), 'anthropic-version': '2023-06-01' } }));
-    return (Array.isArray(data.data) ? data.data : []).map(obj).filter(m => typeof m.id === 'string').map(m => ({ id: m.id, name: typeof m.display_name === 'string' ? m.display_name : undefined }));
+    return (Array.isArray(data.data) ? data.data : []).map(obj).filter(m => typeof m.id === 'string').map(m => ({ id: m.id, name: typeof m.display_name === 'string' ? m.display_name : undefined, created: typeof m.created_at === 'string' ? m.created_at : undefined }));
   }
 };

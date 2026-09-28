@@ -3,7 +3,8 @@
 import type { ModelEntry, PolicyConfig } from './policy.js';
 import { fieldPath, setField } from './policy.js';
 
-export interface ListedModel { id: string; name?: string }
+/** `created` is when the provider released or first listed the model, where it says. */
+export interface ListedModel { id: string; name?: string; created?: string }
 export type ListMode = 'auto' | 'catalog';
 
 /** Each provider's last model list, kept apart from the config since a marketplace list runs to over a thousand entries. */
@@ -12,19 +13,23 @@ export type ModelCatalog = Record<string, { fetchedAt: string; models: ListedMod
 /** How often a provider's model list is read again. */
 export const MODEL_LIST_SECONDS = 86400;
 
-const VERSION = /^v?\d+(\.\d+)*$/;
-const DATE = /^\d{8}$/;
+/** A number, optionally after a few letters: 6, v4.1, m2.7, qwen3. The letters, except a lone v, stay part of the family name. */
+const VERSION = /^([a-z]{0,5}?)(\d+(?:\.\d+)*)$/;
+// Date stamps in ids, which are not versions: 20251101, 2025-07-28, 0731 and 02-23 style month and day.
+const DATES = [/(^|[-_:@])20\d{2}[-_]?[01]\d[-_]?[0-3]\d(?=$|[-_:@])/g, /(^|[-_:@])[01]\d[-_][0-3]\d(?=$|[-_:@])/g, /(^|[-_:@])[01]\d[0-3]\d(?=$|[-_:@])/g];
 
 /**
- * Splits a model id into its family and version, so gpt-6-sol and gpt-5.6-sol are one family at versions 6 and 5.6.
- * Numeric parts are the version, eight-digit dates are ignored, and every other part names the family.
+ * Splits a model id into its family and version, so gpt-6-sol and gpt-5.6-sol are one family at versions 6 and 5.6,
+ * and MiniMax-M3 and MiniMax-M2.7 are one family at versions 3 and 2.7. Eight-digit dates are ignored.
  */
 export function modelFamily(id: string): { family: string; version: number[] } {
   const family: string[] = [], version: number[] = [];
-  for (const part of id.toLowerCase().split(/[-_/:\s]+/).filter(Boolean)) {
-    if (DATE.test(part)) continue;
-    if (VERSION.test(part)) version.push(...part.replace(/^v/, '').split('.').map(Number));
-    else family.push(part);
+  const undated = DATES.reduce((text, date) => text.replace(date, '$1'), id.toLowerCase());
+  for (const part of undated.split(/[-_/:@\s]+/).filter(Boolean)) {
+    const v = VERSION.exec(part);
+    if (!v) { family.push(part); continue; }
+    if (v[1] && v[1] !== 'v') family.push(v[1]);
+    version.push(...v[2]!.split('.').map(Number));
   }
   return { family: family.join('-'), version };
 }
@@ -37,15 +42,27 @@ export function compareModelVersions(a: number[], b: number[]): number {
   return 0;
 }
 
-/** Keeps the newest version in each family. Of two ids at the same version, the shorter one wins, so an alias beats its dated snapshot. */
+const DAY = 86400e3;
+
+/**
+ * Orders two models of one family, newest first. Release dates decide when both have one and they are more than a day apart,
+ * since version numbers are not always decimal (Grok 4.20 came out before Grok 4.7). Otherwise the version decides,
+ * and of two ids at the same version the shorter wins, so an alias beats its dated snapshot.
+ */
+function newer(a: ListedModel, b: ListedModel): number {
+  const ta = a.created ? Date.parse(a.created) : NaN, tb = b.created ? Date.parse(b.created) : NaN;
+  if (Number.isFinite(ta) && Number.isFinite(tb) && Math.abs(ta - tb) > DAY) return ta - tb;
+  return compareModelVersions(modelFamily(a.id).version, modelFamily(b.id).version) || b.id.length - a.id.length;
+}
+
+/** Keeps the newest model in each family. */
 export function latestOnly(models: ListedModel[]): ListedModel[] {
-  const best = new Map<string, { m: ListedModel; v: number[] }>();
+  const best = new Map<string, ListedModel>();
   for (const m of models) {
-    const { family, version } = modelFamily(m.id), cur = best.get(family);
-    const c = cur ? compareModelVersions(version, cur.v) : 1;
-    if (!cur || c > 0 || (c === 0 && m.id.length < cur.m.id.length)) best.set(family, { m, v: version });
+    const family = modelFamily(m.id).family, cur = best.get(family);
+    if (!cur || newer(m, cur) > 0) best.set(family, m);
   }
-  return models.filter(m => best.get(modelFamily(m.id).family)?.m === m);
+  return models.filter(m => best.get(modelFamily(m.id).family) === m);
 }
 
 /**

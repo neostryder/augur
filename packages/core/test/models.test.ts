@@ -14,6 +14,9 @@ describe('model families', () => {
     expect(modelFamily('gpt-5.6-sol')).toEqual({ family: 'gpt-sol', version: [5, 6] });
     expect(modelFamily('deepseek/deepseek-v4.1-flash')).toEqual({ family: 'deepseek-deepseek-flash', version: [4, 1] });
     expect(modelFamily('grok-4.7-build-fast').family).toBe('grok-build-fast');
+    expect(modelFamily('MiniMax-M2.7-highspeed')).toEqual({ family: 'minimax-m-highspeed', version: [2, 7] });
+    expect(modelFamily('qwen/qwen3-coder')).toEqual({ family: 'qwen-qwen-coder', version: [3] });
+    expect(modelFamily('meta-llama/llama-3.3-70b-instruct').family).toBe('meta-llama-llama-70b-instruct');
   });
 
   it('keeps only the newest version of each model', () => {
@@ -22,6 +25,12 @@ describe('model families', () => {
     const codexList = ['gpt-6-sol', 'gpt-6-astra', 'gpt-6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5'];
     expect(ids(latestOnly(codexList.map(id => ({ id }))))).toEqual(['gpt-6-sol', 'gpt-6-astra', 'gpt-6-luna', 'gpt-5.6-terra', 'gpt-5.5']);
     expect(ids(latestOnly([{ id: 'claude-x-4-5-20251001' }, { id: 'claude-x-4-5' }]))).toEqual(['claude-x-4-5']);
+    expect(ids(latestOnly([{ id: 'deepseek/deepseek-v4-flash-0731' }, { id: 'deepseek/deepseek-v4.1-flash' }]))).toEqual(['deepseek/deepseek-v4.1-flash']);
+    expect(ids(latestOnly([{ id: 'qwen/qwen3.7-plus' }, { id: 'qwen/qwen-plus-2025-07-28' }, { id: 'qwen/qwen3.5-plus-02-15' }]))).toEqual(['qwen/qwen3.7-plus']);
+    expect(ids(latestOnly([{ id: 'x-ai/grok-4.20', created: '2026-02-17T00:00:00Z' }, { id: 'x-ai/grok-4.7', created: '2026-09-01T00:00:00Z' }]))).toEqual(['x-ai/grok-4.7']);
+    expect(ids(latestOnly([{ id: 'x-ai/grok-4.20' }, { id: 'x-ai/grok-4.7' }]))).toEqual(['x-ai/grok-4.20']);
+    const minimaxList = ['MiniMax-M3', 'MiniMax-M2.7', 'MiniMax-M2.7-highspeed', 'MiniMax-M2.5', 'MiniMax-M2.5-highspeed', 'MiniMax-M2'];
+    expect(ids(latestOnly(minimaxList.map(id => ({ id }))))).toEqual(['MiniMax-M3', 'MiniMax-M2.7-highspeed']);
   });
 });
 
@@ -92,17 +101,17 @@ describe('provider model lists', () => {
 
   it('reads the Claude model list with the Claude Code login', async () => {
     const files = { '.claude/.credentials.json': JSON.stringify({ claudeAiOauth: { accessToken: 'test-only', expiresAt: t0.getTime() + 9999999 } }) };
-    expect(await claude.listModels!(host({ '/v1/models': { data: [{ id: 'claude-opus-5-5', display_name: 'Claude Opus 5.5' }] } }, files), {})).toEqual([{ id: 'claude-opus-5-5', name: 'Claude Opus 5.5' }]);
+    expect(await claude.listModels!(host({ '/v1/models': { data: [{ id: 'claude-opus-5-5', display_name: 'Claude Opus 5.5' }] } }, files), {})).toEqual([{ id: 'claude-opus-5-5', name: 'Claude Opus 5.5', created: undefined }]);
   });
 
   it('reads the OpenRouter list and pages through fal', async () => {
     expect(await openrouter.listModels!(host({ 'openrouter.ai/api/v1/models': { data: [{ id: 'deepseek/deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash' }] } }), {}))
-      .toEqual([{ id: 'deepseek/deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash' }]);
+      .toEqual([{ id: 'deepseek/deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash', created: undefined }]);
     let page = 0;
     const paged: Host = { ...host({}), http: async () => ({ status: 200, headers: {}, body: JSON.stringify(page++ === 0
       ? { models: [{ endpoint_id: 'fal-ai/a', metadata: { display_name: 'A', status: 'active' } }, { endpoint_id: 'fal-ai/old', metadata: { status: 'deprecated' } }], has_more: true, next_cursor: 'c2' }
       : { models: [{ endpoint_id: 'fal-ai/b', metadata: {} }], has_more: false }) }) };
-    expect(await fal.listModels!(paged, {})).toEqual([{ id: 'fal-ai/a', name: 'A' }, { id: 'fal-ai/b', name: undefined }]);
+    expect(await fal.listModels!(paged, {})).toEqual([{ id: 'fal-ai/a', name: 'A', created: undefined }, { id: 'fal-ai/b', name: undefined, created: undefined }]);
     expect(openrouter.modelListMode).toBe('catalog');
   });
 });

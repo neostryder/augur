@@ -27,7 +27,7 @@ export const fal: ProviderPlugin = {
     return { plan: data.tier ?? 'Pay as you go', meters: [], money, notes };
   },
   async listModels(host) {
-    const key = await host.secret('fal.adminKey'), models: Array<{ id: string; name?: string }> = [];
+    const key = await host.secret('fal.adminKey'), models: Array<{ id: string; name?: string; created?: string }> = [];
     let cursor = '';
     for (let page = 0; page < 40; page++) {
       if (page) await new Promise(resolve => setTimeout(resolve, 400));
@@ -37,7 +37,7 @@ export const fal: ProviderPlugin = {
       catch (error) { if (error instanceof HttpError && error.status === 429 && models.length) break; throw error; }
       for (const m of (Array.isArray(data.models) ? data.models : []).map(obj)) {
         const meta = obj(m.metadata);
-        if (typeof m.endpoint_id === 'string' && (meta.status ?? 'active') === 'active') models.push({ id: m.endpoint_id, name: typeof meta.display_name === 'string' ? meta.display_name : undefined });
+        if (typeof m.endpoint_id === 'string' && (meta.status ?? 'active') === 'active') models.push({ id: m.endpoint_id, name: typeof meta.display_name === 'string' ? meta.display_name : undefined, created: typeof meta.date === 'string' ? meta.date : undefined });
       }
       if (!data.has_more || typeof data.next_cursor !== 'string') break;
       cursor = data.next_cursor;
