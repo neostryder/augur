@@ -1,5 +1,5 @@
 import Sortable from 'sortablejs';
-import { addModels, buildPolicyFile, emptyPolicy, importPolicy, listDue, policyFromFile, policyPathFor, releaseChanges, setField, setFieldMany, setModelStatus, syncModelList, undoChange, type AppConfig, type ModelCatalog, type ModelEntry, type ProviderPlugin, type ReleaseChanges, type Shell, type Snapshot, type UpdateInfo } from '@augur/core';
+import { ACTIVITY_LABELS, DATA_TIER_LABELS, WEIGHT_LABELS, addModels, buildPolicyFile, emptyPolicy, importPolicy, listDue, policyFromFile, policyPathFor, releaseChanges, setField, setFieldMany, setModelStatus, syncModelList, undoChange, type AppConfig, type DataTier, type ModelCatalog, type ModelEntry, type ProviderPlugin, type ReleaseChanges, type Shell, type Snapshot, type UpdateInfo } from '@augur/core';
 import * as core from './core';
 import type { HistoryRow } from './core';
 import { renderDashboard, tightest, updateTip, type DashboardModel } from './views/dashboard';
@@ -80,8 +80,8 @@ export class App {
   private hotkeyError = '';
   private catalog: ModelCatalog = {};
   private listing = new Set<string>();
-  private rules: { sel: RulesModel['sel']; query: string; filter: RulesFilter; open: Set<string>; picked: Set<string>; showHistory: boolean; addError: string } =
-    { sel: null, query: '', filter: 'all', open: new Set(), picked: new Set(), showHistory: false, addError: '' };
+  private rules: { sel: RulesModel['sel']; query: string; filter: RulesFilter; open: Set<string>; picked: Set<string>; showHistory: boolean; addError: string; note: string; bulkTier: string } =
+    { sel: null, query: '', filter: 'all', open: new Set(), picked: new Set(), showHistory: false, addError: '', note: '', bulkTier: '' };
 
   private get sync(): SyncConfig | null {
     return this.config.sync ?? null;
@@ -805,11 +805,17 @@ export class App {
     }
     if (d.bulk) {
       const picked = [...this.rules.picked].map((k) => k.split('|') as [string, string]);
-      if (d.bulk === 'clear') this.rules.picked.clear();
+      const n = picked.length, count = `${n} ${n === 1 ? 'model' : 'models'}`;
+      if (d.bulk === 'clear') { this.rules.picked.clear(); this.rules.note = ''; this.rules.bulkTier = ''; }
       else if (d.bulk === 'activity') {
         const act = (document.getElementById('r-bulk-act') as HTMLSelectElement).value, level = (document.getElementById('r-bulk-level') as HTMLSelectElement).value;
         for (const [pid, label] of picked) setFieldMany(policy, pid, [label], `activities.${act}`, level === '' ? undefined : level === 'none' ? null : level, this.device);
-      } else for (const [pid, label] of picked) setModelStatus(policy, pid, label, d.bulk as ModelEntryStatus, this.device);
+        const shown = level === '' ? 'the provider default' : level === 'none' ? 'not allowed' : WEIGHT_LABELS[level as keyof typeof WEIGHT_LABELS];
+        this.rules.note = `${ACTIVITY_LABELS[act as keyof typeof ACTIVITY_LABELS]} set to ${shown} on ${count}.`;
+      } else {
+        for (const [pid, label] of picked) setModelStatus(policy, pid, label, d.bulk as ModelEntryStatus, this.device);
+        this.rules.note = `${d.bulk === 'confirmed' ? 'Confirmed' : 'Hid'} ${count}.`;
+      }
       await this.saveRules(); return true;
     }
     return false;
@@ -818,14 +824,20 @@ export class App {
   /** Handles an edit on the rules page. Returns false for inputs the shared handler owns. */
   private async onRulesChange(t: HTMLInputElement): Promise<boolean> {
     const d = t.dataset, policy = this.config.policy ??= emptyPolicy();
-    if (d.pick) { if (t.checked) this.rules.picked.add(d.pick); else this.rules.picked.delete(d.pick); await this.render(); return true; }
+    if (d.pick) { if (t.checked) this.rules.picked.add(d.pick); else this.rules.picked.delete(d.pick); this.rules.note = ''; this.rules.bulkTier = ''; await this.render(); return true; }
     if (d.pickAll) {
       const shown = [...document.querySelectorAll<HTMLInputElement>('[data-pick]')].map((x) => x.dataset.pick!).filter((k) => k.startsWith(`${d.pickAll}|`));
       for (const k of shown) if (t.checked) this.rules.picked.add(k); else this.rules.picked.delete(k);
+      this.rules.note = ''; this.rules.bulkTier = '';
       await this.render(); return true;
     }
     if (d.bulkTier !== undefined) {
-      if (t.value) for (const k of this.rules.picked) { const [pid, label] = k.split('|') as [string, string]; setFieldMany(policy, pid, [label], 'dataTier', t.value, this.device); }
+      if (t.value) {
+        for (const k of this.rules.picked) { const [pid, label] = k.split('|') as [string, string]; setFieldMany(policy, pid, [label], 'dataTier', t.value, this.device); }
+        const n = this.rules.picked.size;
+        this.rules.bulkTier = t.value;
+        this.rules.note = `Most sensitive data set to ${DATA_TIER_LABELS[t.value as DataTier]} on ${n} ${n === 1 ? 'model' : 'models'}.`;
+      }
       await this.saveRules(); return true;
     }
     if (d.pauseUntil || d.pauseMeter) {

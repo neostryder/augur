@@ -182,10 +182,10 @@ export function renderDashboard(model: DashboardModel): string {
   const themeIcon = model.config.layout.theme === 'light' ? ICON.sun : model.config.layout.theme === 'dark' ? ICON.moon : ICON.auto;
   const themeName = model.config.layout.theme === 'system' ? 'System theme' : model.config.layout.theme === 'light' ? 'Light theme' : 'Dark theme';
   let html = `<header class="top"><div><h1>Usage</h1><div class="sub">${subLine(model)}</div></div><span class="grow"></span>
-    <button class="icon" data-action="theme" title="${themeName}, click to change" aria-label="${themeName}, click to change">${themeIcon}</button>
-    ${reviewButton(model)}<button class="icon" data-action="rules" title="Model rules" aria-label="Model rules">${ICON.rules}</button>
+    ${updateButton(model)}${reviewButton(model)}<button class="icon" data-action="theme" title="${themeName}, click to change" aria-label="${themeName}, click to change">${themeIcon}</button>
+    <button class="icon" data-action="rules" title="Model rules" aria-label="Model rules">${ICON.rules}</button>
     <button class="icon" data-action="settings" title="Open settings" aria-label="Open settings">${ICON.gear}</button>
-    ${updateButton(model)}<button class="icon refresh" data-action="refresh" title="Refresh now" aria-label="Refresh now">${ICON.refresh}</button></header>`;
+    <button class="icon refresh" data-action="refresh" title="Refresh now" aria-label="Refresh now">${ICON.refresh}</button></header>`;
 
   const enabled = model.config.providers.filter((p) => p.enabled);
   if (!enabled.length) {

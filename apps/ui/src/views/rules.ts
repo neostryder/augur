@@ -22,6 +22,10 @@ export interface RulesModel {
   picked: Set<string>;
   showHistory: boolean;
   addError: string;
+  /** What the last bulk action did, shown in the bulk bar until the selection changes. */
+  note: string;
+  /** The data tier last applied from the bulk bar. */
+  bulkTier: string;
   catalog: ModelCatalog;
   /** Providers whose model list is being read right now. */
   listing: Set<string>;
@@ -279,10 +283,11 @@ export function renderRules(m: RulesModel): string {
   if (m.picked.size) html += `<div class="rbulk"><span><b>${m.picked.size}</b> selected</span>
     <button class="btn small primary" data-bulk="confirmed">Confirm</button>
     <button class="btn small" data-bulk="hidden">Hide</button>
-    <select id="r-bulk-tier" data-bulk-tier aria-label="Set most sensitive data">${opt('', 'Set data tier', '')}${DATA_TIERS.map((t) => opt(t, DATA_TIER_LABELS[t], '')).join('')}</select>
+    <select id="r-bulk-tier" data-bulk-tier aria-label="Set most sensitive data on the selected models">${opt('', 'Set data tier', m.bulkTier)}${DATA_TIERS.map((t) => opt(t, DATA_TIER_LABELS[t], m.bulkTier)).join('')}</select>
     <select id="r-bulk-act" aria-label="Activity">${ACTIVITIES.map((a) => opt(a, ACTIVITY_LABELS[a], '')).join('')}</select>
     <select id="r-bulk-level" aria-label="Weight">${opt('', 'Default', 'normal')}${opt('none', 'Not allowed', 'normal')}${WEIGHT_LEVELS.map((w) => opt(w, WEIGHT_LABELS[w], 'normal')).join('')}</select>
     <button class="btn small" data-bulk="activity">Apply</button>
-    <button class="btn small" data-bulk="clear">Clear</button></div>`;
+    <button class="btn small" data-bulk="clear">Clear</button>
+    ${m.note ? `<span class="rnote" role="status">${esc(m.note)}</span>` : ''}</div>`;
   return html + '</div>';
 }

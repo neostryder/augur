@@ -4,6 +4,14 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+### Changed
+
+- [Visible] [UI] **The update and models-to-review buttons sit to the left of the theme button.** They are the header's alerts, so they now come first and stay apart from the controls.
+
+### Fixed
+
+- [Visible] [UI] **Bulk actions on the Model rules page say what they did.** Setting a data tier, an activity weight, or confirming or hiding models now shows a line in the selection bar naming the change and how many models it reached, and the data tier menu keeps the value you chose. Before, the menu snapped back to its label with no sign that the change had been saved.
+
 ## [0.7.0] - 2026-09-29
 
 ### Added
