@@ -111,10 +111,16 @@ describe('policy', () => {
     const file = buildPolicyFile(policy, meta.concat([{ id: 'grok', name: 'Grok', metered: true }, { id: 'minimax', name: 'MiniMax', metered: true }]), t2);
     const adopted = policyFromFile(JSON.parse(JSON.stringify(file)), t2);
     const again = buildPolicyFile(adopted, meta.concat([{ id: 'grok', name: 'Grok', metered: true }, { id: 'minimax', name: 'MiniMax', metered: true }]), t2);
-    expect(again.providers.codex!.models['codex/sol']).toMatchObject({ status: 'confirmed', pause: { until: '2026-10-04T18:49:55.000Z', weights: null }, dataTier: 'sensitive', cost: 'expensive' });
+    expect(again.providers.codex!.models['codex/sol']).toMatchObject({ status: 'confirmed', pause: { until: '2026-10-04T18:49:55.000Z', weights: null }, dataTier: 'sensitive', cost: 'high' });
     expect(again.providers.codex!.models['codex/luna']!.status).toBe('imported');
     expect(again.providers.minimax!.thresholds.denyPct).toBe(95);
     expect(again.providers.codex!.models['codex/sol']!.activities).toEqual(file.providers.codex!.models['codex/sol']!.activities);
+  });
+
+  it('reads the old top cost step as high and accepts the six-step scale', () => {
+    const p = migratePolicy({ providers: { codex: { defaults: { cost: 'expensive' }, models: { 'codex/a': { id: 'a', rule: { cost: 'very_high' } }, 'codex/b': { id: 'b', rule: { cost: 'free' } }, 'codex/c': { id: 'c', rule: { cost: 'pricey' } } } } } });
+    expect(p.providers.codex!.defaults.cost).toBe('high');
+    expect([p.providers.codex!.models['codex/a']!.rule.cost, p.providers.codex!.models['codex/b']!.rule.cost, p.providers.codex!.models['codex/c']!.rule.cost]).toEqual(['very_high', 'free', undefined]);
   });
 
   it('keeps a model inheriting from its provider after its policy.json is adopted', () => {

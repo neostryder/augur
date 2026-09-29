@@ -16,6 +16,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 - [Internal] [Security] **Text about students is checked on this computer before anything is classified, and never drops below regulated.** Only a backend on this network sees it, and with none the task is regulated without asking.
 - [Internal] [Platform] **Laya defaults to this computer.** Other machines come from settings, the server binds to loopback unless told otherwise, and a new adapter goes live only when it beats the current one by a margin on at least 50 held-out rows. Failed and cancelled jobs no longer count as poor fits.
 - [Internal] [Platform] **CI runs every package on Windows with the job host built, plus the Laya tests.**
+- [Visible] [UI] **Cost has six steps: free, very cheap, cheap, moderate, high and very high.** The old expensive step now reads as high, and the models that used it keep their place until you change them. When usage runs short, the higher steps drop out first.
 - [Visible] [UI] **The update and models-to-review buttons sit to the left of the theme button.** They are the header's alerts, so they now come first and stay apart from the controls.
 
 ### Fixed

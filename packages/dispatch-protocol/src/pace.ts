@@ -41,7 +41,7 @@ export const PACE = {
   lowBalanceUsd: 1,
 } as const;
 
-export const COST_EXPONENT: Record<string, number> = { cheap: 0.2, moderate: 0.6, expensive: 1 };
+export const COST_EXPONENT: Record<string, number> = { free: 0, very_cheap: 0.1, cheap: 0.2, moderate: 0.6, high: 1, very_high: 1.5, expensive: 1 };
 
 export interface Headroom { headroom: number; why: string; metered: boolean }
 

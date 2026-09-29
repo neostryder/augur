@@ -40,7 +40,7 @@ export interface RulesModel {
 }
 
 const OUTPUT_LABELS: Record<string, string> = { write_files: 'Writes files', patch_only: 'Returns a patch', text_only: 'Text only' };
-const COST_LABELS: Record<string, string> = { cheap: 'Cheap', moderate: 'Moderate', expensive: 'Expensive' };
+const COST_LABELS: Record<string, string> = { free: 'Free', very_cheap: 'Very cheap', cheap: 'Cheap', moderate: 'Moderate', high: 'High', very_high: 'Very high' };
 const STATUS_LABELS: Record<ModelEntry['status'], string> = { confirmed: 'Confirmed', imported: 'Imported', unreviewed: 'Needs rules', hidden: 'Hidden' };
 const FILTERS: Array<[RulesFilter, string]> = [['all', 'All'], ['needs', 'Needs review'], ['confirmed', 'Confirmed'], ['hidden', 'Hidden']];
 
@@ -226,7 +226,7 @@ function detail(m: RulesModel): string {
     ${row('Ask first', 'r-askFirst', boolSelect(pid, model, 'askFirst', rule.askFirst, d.askFirst), 'Used only when named for the task, never picked by a router.')}
     ${row('Output', 'r-output', enumSelect(pid, model, 'output', OUTPUT_MODES, OUTPUT_LABELS, rule.output, d.output, 'Text only'))}
     ${row('Runs in a sandbox', 'r-sandbox', boolSelect(pid, model, 'sandbox', rule.sandbox, d.sandbox))}
-    ${row('Cost', 'r-cost', enumSelect(pid, model, 'cost', COST_TIERS, COST_LABELS, rule.cost, d.cost, 'Moderate'), 'Expensive models drop out first when usage runs high.')}
+    ${row('Cost', 'r-cost', enumSelect(pid, model, 'cost', COST_TIERS, COST_LABELS, rule.cost, d.cost, 'Moderate'), 'Higher-cost models drop out first when usage runs high.')}
     ${row('Reasoning effort', 'r-effort', `<input type="text" id="r-effort" data-rule="${esc(fieldPath(pid, model, 'effort'))}" data-kind="text" value="${esc(rule.effort ?? '')}" placeholder="${esc(isModel ? d.effort ?? 'Default' : 'Default')}" style="max-width:150px">`)}
   </div>`;
   html += `<h3 class="rsec">Pause</h3><div class="card">${pauseRows(m, pid, model, rule.pause, d.pause)}</div>`;

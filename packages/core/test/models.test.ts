@@ -37,7 +37,7 @@ describe('model families', () => {
 describe('syncing a model list into the rules', () => {
   it('adds new models for review and skips ones already listed by id', () => {
     const policy = emptyPolicy();
-    policy.providers.codex = { defaults: {}, models: { 'codex/sol': { id: 'gpt-6-sol', source: 'import', status: 'confirmed', rule: { cost: 'expensive' }, firstSeen: '' } } };
+    policy.providers.codex = { defaults: {}, models: { 'codex/sol': { id: 'gpt-6-sol', source: 'import', status: 'confirmed', rule: { cost: 'high' }, firstSeen: '' } } };
     const added = syncModelList(policy, 'codex', 'codex', [{ id: 'gpt-6-sol' }, { id: 'gpt-6-luna', name: 'GPT-6-Luna' }, { id: 'gpt-5.6-luna' }], t0);
     expect(added).toEqual(['codex/gpt-6-luna']);
     expect(policy.providers.codex.models['codex/gpt-6-luna']).toMatchObject({ status: 'unreviewed', source: 'live', name: 'GPT-6-Luna', rule: {} });

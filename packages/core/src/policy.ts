@@ -26,7 +26,7 @@ export const DATA_TIER_LABELS: Record<DataTier, string> = { public: 'Public', in
 
 export const OUTPUT_MODES = ['write_files', 'patch_only', 'text_only'] as const;
 export type OutputMode = typeof OUTPUT_MODES[number];
-export const COST_TIERS = ['cheap', 'moderate', 'expensive'] as const;
+export const COST_TIERS = ['free', 'very_cheap', 'cheap', 'moderate', 'high', 'very_high'] as const;
 export type CostTier = typeof COST_TIERS[number];
 export const MODEL_STATUSES = ['confirmed', 'imported', 'unreviewed', 'hidden'] as const;
 export type ModelStatus = typeof MODEL_STATUSES[number];
@@ -342,7 +342,9 @@ function migrateRule(value: unknown): Rule {
   if (oneOf(OUTPUT_MODES, s.output)) rule.output = s.output;
   if (typeof s.sandbox === 'boolean') rule.sandbox = s.sandbox;
   if (s.effort === null || typeof s.effort === 'string') rule.effort = s.effort;
-  if (oneOf(COST_TIERS, s.cost)) rule.cost = s.cost;
+  // Rules saved before the six-step scale called the top step expensive.
+  const cost = s.cost === 'expensive' ? 'high' : s.cost;
+  if (oneOf(COST_TIERS, cost)) rule.cost = cost;
   if (s.pause === null) rule.pause = null;
   else if (typeof obj(s.pause).until === 'string') {
     const p = obj(s.pause), weights = p.weights === null ? null : migrateRule({ activities: p.weights }).activities;
