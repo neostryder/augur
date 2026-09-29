@@ -206,7 +206,7 @@ export interface AppConfig {
   /** Install new desktop releases without asking. Defaults to on. */
   autoUpdate?: boolean;
   /** Desktop-to-phone sync channel. The encryption key and write secret live in the keychain. */
-  /** shareKeys: send key-based providers' API keys to the paired phone, inside the encrypted sync. Defaults to on. */
+  /** shareKeys: send key-based providers' API keys to the paired phone, inside the encrypted sync. Defaults to off. */
   sync?: { relay: string; channel: string; pwaUrl: string; shareKeys?: boolean } | null;
   /**
    * Fallback for secrets missing from the keychain: read them from a Bitwarden Secrets Manager

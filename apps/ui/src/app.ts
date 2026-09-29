@@ -333,7 +333,7 @@ export class App {
    * needs a sign-in on this computer stays with the desktop, so it is left out.
    */
   private async phoneSecrets(): Promise<Record<string, string> | undefined> {
-    if (this.sync?.shareKeys === false) return undefined;
+    if (this.sync?.shareKeys !== true) return undefined;
     const out: Record<string, string> = {};
     for (const p of core.plugins(this.config)) {
       if (!this.phoneCanRead(p)) continue;
@@ -465,6 +465,20 @@ export class App {
     else await this.shell.setPopupHeight?.(h).catch(() => undefined);
   }
 
+  /** The keyboard way to reorder a card: swaps it with the visible card above or below, keeping cards not on screen where they are. */
+  private async moveCard(card: HTMLElement, step: -1 | 1): Promise<void> {
+    const list = card.parentElement, pid = card.dataset.pid;
+    if (!list || !pid) return;
+    const order = [...list.querySelectorAll<HTMLElement>('.card')].map((c) => c.dataset.pid!), at = order.indexOf(pid), to = at + step;
+    if (at < 0 || to < 0 || to >= order.length) return;
+    [order[at], order[to]] = [order[to]!, order[at]!];
+    const pos = new Map(order.map((id, i) => [id, i]));
+    this.config.providers.sort((a, b) => (pos.get(a.id) ?? 1e3 + this.config.providers.indexOf(a)) - (pos.get(b.id) ?? 1e3 + this.config.providers.indexOf(b)));
+    await this.saveConfig();
+    await this.render();
+    document.getElementById(`handle-${pid}`)?.focus();
+  }
+
   private bindSortables(): void {
     this.sortables.forEach((s) => s.destroy());
     this.sortables = [];
@@ -590,6 +604,7 @@ export class App {
     this.root.addEventListener('keydown', (e) => {
       const t = e.target as HTMLElement;
       if ((e.key === 'Enter' || e.key === ' ') && t.matches('[data-meter]')) { e.preventDefault(); this.toggleMeter(t.dataset.meter!); }
+      if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown') && t.matches('.handle')) { e.preventDefault(); void this.moveCard(t.closest<HTMLElement>('.card')!, e.key === 'ArrowUp' ? -1 : 1); }
       if (e.key === 'Enter' && t.matches('input[type=password]')) {
         (t.parentElement?.querySelector('[data-secret-save]') as HTMLButtonElement | null)?.click();
       }

@@ -203,8 +203,8 @@ function phoneSection(m: SettingsModel): string {
       : 'Shows a code to scan with your phone. Needs both addresses above.'}</span></label>
       ${paired ? '<button class="btn small" data-action="sync-show">Show code</button><button class="btn small" data-action="sync-unpair">Unpair</button>'
         : `<button class="btn small primary" data-action="sync-pair" ${m.relay && m.pwaUrl ? '' : 'disabled'}>Pair a phone</button>`}</div>
-    ${paired ? `<div class="row"><label class="name">Send API keys to the phone<span class="desc">Lets the phone refresh key-based providers on its own. The keys travel inside the same encrypted sync, which only your paired phone can read.</span></label>${toggle('sharekeys', m.sync?.shareKeys !== false, "Send API keys to the phone")}</div>` : ''}
-    ${m.pairQr ? `<div class="field" style="align-items:center">${m.pairQr}<span class="help">Scan it with the phone's camera, or open the <a href="#" data-open="${esc(m.pairUrl ?? '')}">pairing link</a> on the phone. Anyone with the link can read your usage, so keep it to yourself.</span></div>` : ''}
+    ${paired ? `<div class="row"><label class="name">Send API keys to the phone<span class="desc">Lets the phone refresh key-based providers on its own by sending your API keys inside the encrypted sync. Off by default.</span></label>${toggle('sharekeys', m.sync?.shareKeys === true, "Send API keys to the phone")}</div>` : ''}
+    ${m.pairQr ? `<div class="field" style="align-items:center">${m.pairQr}<span class="help">Scan it with the phone's camera, or open the <a href="#" data-open="${esc(m.pairUrl ?? '')}">pairing link</a> on the phone. Anyone with the link can read everything the phone syncs, including your provider API keys if sending keys is on, so keep it private.</span></div>` : ''}
   </div>`;
 }
 

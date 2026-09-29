@@ -10,10 +10,19 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Changed
 
+- [Visible] [Sync] **Pairing a phone sends your API keys only if you turn that on.** The setting used to be on by default. The warning under the pairing code now says the link can read everything the phone syncs, keys included.
+- [Visible] [UI] **A provider card can be moved with the keyboard.** Focus its handle and press Alt with the Up or Down arrow. The card's link and collapse buttons are now 24 px.
+- [Internal] [Security] **The dispatch service starts stricter.** It checks picks and named-model claims by default, reads a prompt file only from inside the job's folder or a listed root, sends an API key only over https or to localhost, and will not start a job on Windows without the job host. A rule that limits a model to text is refused for an adapter that cannot hold a read-only tier. `augur run` needs --activity and --data, and defaults to read tools and text output.
+- [Internal] [Security] **Text about students is checked on this computer before anything is classified, and never drops below regulated.** Only a backend on this network sees it, and with none the task is regulated without asking.
+- [Internal] [Platform] **Laya defaults to this computer.** Other machines come from settings, the server binds to loopback unless told otherwise, and a new adapter goes live only when it beats the current one by a margin on at least 50 held-out rows. Failed and cancelled jobs no longer count as poor fits.
+- [Internal] [Platform] **CI runs every package on Windows with the job host built, plus the Laya tests.**
 - [Visible] [UI] **The update and models-to-review buttons sit to the left of the theme button.** They are the header's alerts, so they now come first and stay apart from the controls.
 
 ### Fixed
 
+- [Visible] [UI] **A failed write of policy.json shows on the Model rules page.** It used to say Saved while agents kept the older file. The banner has a Try again button.
+- [Internal] [Platform] **Adopting an existing policy.json keeps each model inheriting from its provider.** A later change to a provider default reaches those models.
+- [Internal] [Security] **The prompt is removed from the stored job plan before the harness starts,** so a failed launch leaves none on disk. Copies made for patch-only jobs leave out `.env` files and key files.
 - [Visible] [UI] **Bulk actions on the Model rules page say what they did.** Setting a data tier, an activity weight, or confirming or hiding models now shows a line in the selection bar naming the change and how many models it reached, and the data tier menu keeps the value you chose. Before, the menu snapped back to its label with no sign that the change had been saved.
 
 ## [0.7.0] - 2026-09-29

@@ -23,15 +23,18 @@ The web app alone runs with `pnpm --filter @augur/ui dev`, and the relay with `p
 | `apps/desktop` | The Tauri shell: tray, popup window, keychain, updater |
 | `apps/relay` | The Cloudflare Worker that serves the web app and relays its requests |
 
+The dispatch service and its command line live in packages/augurd, packages/dispatch-protocol and packages/dispatch-cli, the classifier in packages/decision, and the local Laya model and its trainer in packages/laya. The dispatch service is Windows-only, and its tests run on Windows in CI after building the job host with Go (pnpm --filter @augur/augurd build:jobhost).
+
 A new provider with a JSON usage endpoint usually needs no code: describe it as a custom provider (see the README). One that needs a sign-in refresh or a command-line login goes in `packages/core/src/providers`, with a fixture and a test in `packages/core/test`. Fixtures use made-up numbers.
 
 ## Before opening a pull request
 
 ```bash
-pnpm --filter @augur/core test
-pnpm --filter @augur/ui typecheck
-pnpm --filter @augur/relay typecheck
+pnpm -r typecheck
+pnpm -r test
 cd apps/desktop/src-tauri && cargo fmt --check && cargo check
 ```
+
+Run pnpm -r typecheck and pnpm -r test for the TypeScript packages, and python -m unittest discover -s packages/laya/tests for Laya.
 
 Add a line for your change under `[Unreleased]` in `CHANGELOG.md`, starting with `[Visible]` if a user would notice it or `[Internal]` if not, then the kind of change (Providers, UI, Alerts, Sync, Platform, Security or Docs).

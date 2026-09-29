@@ -21,11 +21,13 @@ The dispatch service, `augurd`, is a separate program from the desktop app and r
 
 The service listens on a named pipe. Windows lets any local account open that pipe for reading but not for writing, and every request also has to carry a token kept in a file in your profile, so another account cannot send it commands. Nothing the service holds goes to the relay or the phone.
 
+On Windows a job starts only through the job host, jobhost.exe, which puts the job and every process it starts in one Job Object, so cancelling or timing out the job ends them all. Without the host the service will not start jobs. A prompt file has to be inside the job's working folder or a folder in promptRoots; the CLI reads its own prompt file and sends the text. An API route sends its key over https only, or over http to localhost.
+
 Hermes, Copilot and short OpenCode prompts travel as command-line arguments, and Grok and long OpenCode prompts go through a file, so a prompt can be visible in the process list or on disk while its job runs. The service deletes those files when the job ends and blanks the prompt in its own record of the job.
 
 The key for an API connector comes from the environment variable its route names and is never written to the job's files. Sandboxed harnesses work on a copy of the working folder and hand back a patch, so your folder stays as it is until you run `augur apply`.
 
-When a caller says a person named a model, the service looks for that model in the messages it was told a person sent. It keeps the model names those messages mentioned and drops their text. A program running under your own account could still fake that list, so an unconfirmed claim is only recorded unless `verifyNamed` is set to refuse it.
+When a caller says a person named a model, the service checks that model against the messages it was told a person sent. It keeps the model names from those messages and drops their text. A program running as you could fake that list, so an unconfirmed claim is refused by default. Set verifyNamed to record to accept and note it, or off to accept it silently.
 
 A job that skips the pick or usage check says so in its record.
 

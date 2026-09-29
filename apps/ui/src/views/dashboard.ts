@@ -125,7 +125,7 @@ function cardHtml(model: DashboardModel, pid: string): string {
     body = `<div class="notes">Waiting for the first refresh.</div>`;
   }
   return `<section class="card${collapsed ? ' collapsed' : ''}" data-pid="${esc(pid)}">
-    <h2><span class="handle" title="Drag to reorder" aria-label="Drag to reorder">${ICON.grip}</span>
+    <h2><span class="handle" id="handle-${esc(pid)}" role="button" tabindex="0" title="Drag to reorder, or press Alt with the Up or Down arrow" aria-label="Reorder ${esc(name)}. Press Alt with the Up or Down arrow to move it.">${ICON.grip}</span>
       <span class="dot" style="background:${esc(colorOf(model, pid))}"></span>${esc(name)}
       ${p?.plan ? `<span class="chip">${esc(p.plan)}</span>` : ''}${p ? statusBadge(p) : ''}<span class="grow"></span>
       ${p?.stale ? '<span class="chip stale" title="The last refresh failed">Stale</span>' : ''}<span class="age">${p?.fetchedAt ? `${p.stale ? 'updated ' : ''}${ago(p.fetchedAt)}` : ''}</span>

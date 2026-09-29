@@ -133,7 +133,7 @@ A key saved in settings takes priority over the same key in the project.
 
 ## Privacy
 
-Augur has no accounts and no database of its own. The desktop app talks to each provider directly. The relay the phone app uses passes each request, including the API key in it, to a fixed list of usage and status endpoints; its code stores and logs none of it, though Cloudflare, which runs it, keeps its own request logs. Sync data on the relay is encrypted on your computer with a key only your paired phone has, so the relay holds ciphertext it cannot read, and it expires after 14 days. See [SECURITY.md](SECURITY.md) for what is stored where and how to report a problem.
+Augur has no accounts and no server that holds your data. The desktop app talks to each provider directly and keeps its settings and usage history on your computer. If you run the dispatch service (Windows only), it also keeps a job history in a SQLite file in your profile: each job's route, model, state, timing, usage and folder, and the prompt only if you turn that on. Job folders are deleted after 30 days by default, and the records stay until you delete the service's data folder. The relay the phone app uses passes each request, including the API key in it, to a fixed list of usage and status endpoints. Its code stores and logs none of it, though Cloudflare, which runs it, keeps its own request logs. Sync data on the relay is encrypted on your computer with a key only your paired phone has, so the relay holds ciphertext it cannot read, and it expires after 14 days. See SECURITY.md for what is stored where and how to report a problem.
 
 ## License
 

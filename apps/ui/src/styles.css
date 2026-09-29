@@ -64,7 +64,7 @@ button.icon svg { width: 16px; height: 16px; }
 .chip { font-size: calc(11px * var(--fs)); font-weight: 500; color: var(--ink-2); border: 1px solid var(--line); border-radius: 999px; padding: 0 7px; line-height: 17px; white-space: nowrap; }
 .chip.stale { color: var(--ink); border-color: var(--warn); background: color-mix(in srgb, var(--warn) 18%, transparent); }
 .age { color: var(--muted); font-weight: 400; font-size: calc(11px * var(--fs)); white-space: nowrap; }
-a.ext, button.link { color: var(--muted); display: grid; place-items: center; width: 20px; height: 20px; border-radius: 5px; border: 0; background: none; cursor: pointer; padding: 0; }
+a.ext, button.link { color: var(--muted); display: grid; place-items: center; width: 24px; height: 24px; border-radius: 5px; border: 0; background: none; cursor: pointer; padding: 0; }
 a.ext:hover, button.link:hover { color: var(--ink); background: var(--hover); }
 a.ext svg, button.link svg { width: 13px; height: 13px; }
 .status { display: inline-flex; align-items: center; gap: 3px; font-size: calc(11px * var(--fs)); font-weight: 500; color: var(--ink-2); }

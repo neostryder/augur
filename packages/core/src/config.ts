@@ -47,7 +47,7 @@ export function migrateConfig(value: unknown): AppConfig {
 
 function syncConfig(value: unknown): AppConfig['sync'] {
   const s = obj(value);
-  return typeof s.relay === 'string' ? { relay: s.relay, channel: typeof s.channel === 'string' ? s.channel : '', pwaUrl: typeof s.pwaUrl === 'string' ? s.pwaUrl : '', shareKeys: s.shareKeys !== false } : null;
+  return typeof s.relay === 'string' ? { relay: s.relay, channel: typeof s.channel === 'string' ? s.channel : '', pwaUrl: typeof s.pwaUrl === 'string' ? s.pwaUrl : '', shareKeys: s.shareKeys === true } : null;
 }
 
 function secretSources(value: unknown): AppConfig['secretSources'] {
