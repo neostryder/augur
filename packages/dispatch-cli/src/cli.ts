@@ -1,6 +1,6 @@
 // The `augur` command: the canonical caller of the dispatch service. Every command takes --json. Exit codes come from the protocol package.
-import { spawn } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES } from '@augur/core';
@@ -12,10 +12,10 @@ import { ServiceError, call, dataDir } from '@augur/augurd';
 export interface Io { out(text: string): void; err(text: string): void; stdin(): string; env: NodeJS.ProcessEnv; cwd: string; /** A person is at the terminal: input and output are both attached to it. */ interactive?: boolean }
 
 const HELP = `augur run <route> --prompt-file <file|-> | --prompt <text> [options]
-  --activity <a>     one of: ${ACTIVITIES.join(', ')} (default write_code)
-  --data <tier>      ${DATA_TIERS.join(' | ')} (default internal)
-  --tools <t>        ${TOOL_TIERS.join(' | ')} (default write)
-  --output <o>       ${OUTPUT_MODES.join(' | ')} (default write_files)
+  --activity <a>     required. One of: ${ACTIVITIES.join(', ')}
+  --data <tier>      required. ${DATA_TIERS.join(' | ')}
+  --tools <t>        ${TOOL_TIERS.join(' | ')} (default read)
+  --output <o>       ${OUTPUT_MODES.join(' | ')} (default text_only)
   --cwd <dir>        working directory (default: current)
   --expect-file <f>  file the job must leave in the working directory
   --timeout <s>      wall time limit in seconds
@@ -33,12 +33,12 @@ augur pick (--task <description> | --activity <a> --data <tier>) [--named <model
 augur pressure
 augur note-prompt --session <id>     tell the service a person sent the message on standard input; it keeps only the models named
 augur routes
-augur service status | start | stop
+augur service status | start | stop [--if-idle]     --if-idle stops the service only when no job is running, so an upgrade never cuts one off
 Every command takes --json. Exit codes: 0 completed, 1 usage, 2 rejected, 3 needs approval, 4 failed, 5 artifact check failed, 6 cancelled, 7 lost, 124 wait timed out.`;
 
 interface Parsed { cmd: string[]; flags: Map<string, string | true> }
 function parse(argv: string[]): Parsed {
-  const cmd: string[] = [], flags = new Map<string, string | true>(), boolean = new Set(['json', 'wait', 'named', 'follow', 'stderr', 'help']);
+  const cmd: string[] = [], flags = new Map<string, string | true>(), boolean = new Set(['json', 'wait', 'named', 'follow', 'stderr', 'help', 'if-idle']);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] as string;
     if (a === '-') { cmd.push(a); continue; }
@@ -107,7 +107,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
         say(Object.entries(r.factors).map(([m, f]) => `${m.padEnd(22)} factor ${f.toFixed(2)}`).join('\n') + `\nscarcity ${r.scarcity}`, r); return 0;
       }
       case 'routes': { const r = await call('routes', undefined, opts); say(r.map(x => `${x.name.padEnd(14)} ${x.model.padEnd(16)} ${x.adapter}`).join('\n') || 'No routes.', r); return 0; }
-      case 'service': return await service(rest[0], io, opts, json);
+      case 'service': return await service(rest[0], io, opts, json, p.flags.has('if-idle'));
       default: io.err(`Unknown command ${cmd}.\n${HELP}\n`); return EXIT_CODES.usage;
     }
   } catch (e) {
@@ -199,7 +199,7 @@ async function logs(id: string, stream: 'stdout' | 'stderr', follow: boolean, io
   }
 }
 
-async function service(action: string | undefined, io: Io, opts: Opts, json: boolean): Promise<number> {
+async function service(action: string | undefined, io: Io, opts: Opts, json: boolean, ifIdle = false): Promise<number> {
   const say = (text: string, data: unknown) => io.out(json ? JSON.stringify(data) + '\n' : text + '\n');
   if (action === 'status') {
     try { const r = await call('ping', undefined, { ...opts, timeoutMs: 2000 }); say(`augurd is running (pid ${r.pid}).`, { running: true, ...r }); return 0; }
@@ -207,8 +207,11 @@ async function service(action: string | undefined, io: Io, opts: Opts, json: boo
   }
   if (action === 'start') {
     try { await call('ping', undefined, { ...opts, timeoutMs: 2000 }); say('augurd is already running.', { running: true }); return 0; } catch { /* start it */ }
-    const pkg = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'augurd');
-    const child = spawn(process.execPath, ['--import', 'tsx', join(pkg, 'src', 'main.ts')], { cwd: pkg, detached: true, windowsHide: true, stdio: 'ignore', env: io.env });
+    // A packaged install has augurd.mjs beside this file; a source checkout runs the service from its package.
+    const here = dirname(fileURLToPath(import.meta.url)), bundled = join(here, 'augurd.mjs'), pkg = join(here, '..', '..', 'augurd');
+    const child = existsSync(bundled)
+      ? spawn(process.execPath, [bundled], { cwd: here, detached: true, windowsHide: true, stdio: 'ignore', env: io.env })
+      : spawn(process.execPath, ['--import', 'tsx', join(pkg, 'src', 'main.ts')], { cwd: pkg, detached: true, windowsHide: true, stdio: 'ignore', env: io.env });
     child.unref();
     for (let i = 0; i < 60; i++) { await sleep(250); try { const r = await call('ping', undefined, { ...opts, timeoutMs: 1000 }); say(`augurd started (pid ${r.pid}).`, { running: true, ...r }); return 0; } catch { /* not up yet */ } }
     io.err('augurd did not come up. See service.log in its data folder.\n'); return EXIT_CODES.failed;
@@ -216,7 +219,11 @@ async function service(action: string | undefined, io: Io, opts: Opts, json: boo
   if (action === 'stop') {
     try {
       const r = await call('ping', undefined, { ...opts, timeoutMs: 2000 });
-      if (process.platform === 'win32') spawn('taskkill', ['/PID', String(r.pid), '/F'], { windowsHide: true, stdio: 'ignore' }); else process.kill(r.pid);
+      if (ifIdle) {
+        const busy = (await call('list', { limit: 500 }, opts)).filter(j => !isTerminal(j.state));
+        if (busy.length) { say(`${busy.length} job${busy.length === 1 ? ' is' : 's are'} still running. The service was left running.`, { stopping: false, running: busy.length }); return EXIT_CODES.failed; }
+      }
+      if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(r.pid), '/F'], { windowsHide: true, stdio: 'ignore' }); else process.kill(r.pid);
       say('Stopping augurd. Running jobs keep going.', { stopping: true }); return 0;
     } catch { say('augurd is not running.', { running: false }); return 0; }
   }

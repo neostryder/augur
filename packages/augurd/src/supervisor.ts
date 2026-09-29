@@ -3,7 +3,6 @@ import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { closeSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, readSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES } from '@augur/core';
 import type { PolicyFile } from '@augur/core';
 import { classifyTask, fitScores } from '@augur/decision';
@@ -15,6 +14,7 @@ import type { ServiceConfig } from './config.js';
 import { buildEnv } from './env.js';
 import type { Store } from './store.js';
 import type { DecisionLog } from './decisions.js';
+import { scriptPath } from './paths.js';
 
 export interface SupervisorDeps {
   store: Store; config: ServiceConfig; dir: string; adapters: Map<string, Adapter>;
@@ -48,7 +48,7 @@ export class Supervisor {
   private readonly runner: string;
   constructor(private d: SupervisorDeps) {
     this.now = d.now ?? Date.now;
-    this.runner = d.runnerPath ?? fileURLToPath(new URL('./runner.ts', import.meta.url));
+    this.runner = d.runnerPath ?? scriptPath(import.meta.url, 'runner');
     mkdirSync(join(d.dir, 'jobs'), { recursive: true });
   }
 

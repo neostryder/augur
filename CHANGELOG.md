@@ -6,6 +6,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Added
 
+- [Visible] [Platform] **The Windows installer carries the dispatch service and the `augur` command.** They go in a `service` folder beside the app. An upgrade or uninstall stops the service first, and waits if a job is running so the job is not cut off. `augur service stop --if-idle` makes the same check by hand.
 - [Visible] [UI] **A model can be paused with different weights instead of stopped.** On the Model rules page, the pause card asks what happens while it lasts: skip the model, or use replacement weights for any activity. Setting the weights of a cheaper model higher during a pause favours it until the pause ends, and the model list marks such a pause as changed weights rather than paused.
 
 ### Changed
@@ -21,6 +22,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Fixed
 
+- [Internal] [Platform] **`augur service stop` waits until the service is gone.** It used to return while the service was still answering.
 - [Visible] [UI] **A failed write of policy.json shows on the Model rules page.** It used to say Saved while agents kept the older file. The banner has a Try again button.
 - [Internal] [Platform] **Adopting an existing policy.json keeps each model inheriting from its provider.** A later change to a provider default reaches those models.
 - [Internal] [Security] **The prompt is removed from the stored job plan before the harness starts,** so a failed launch leaves none on disk. Copies made for patch-only jobs leave out `.env` files and key files.

@@ -49,7 +49,7 @@ export async function startService(opts: ServiceOptions = {}) {
   };
 }
 
-if (process.argv[1] && /main\.(ts|js)$/.test(process.argv[1].replace(/\\/g, '/'))) {
+if (process.argv[1] && /(main|augurd)\.(ts|js|mjs)$/.test(process.argv[1].replace(/\\/g, '/'))) {
   startService().then(svc => {
     const quit = () => { void svc.stop().then(() => process.exit(0)); };
     process.on('SIGINT', quit); process.on('SIGTERM', quit);

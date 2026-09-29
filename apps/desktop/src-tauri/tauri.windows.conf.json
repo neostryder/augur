@@ -1,0 +1,11 @@
+{
+  "bundle": {
+    "resources": { "../../../dist/service/": "service/" },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "installerHooks": "windows/hooks.nsh"
+      }
+    }
+  }
+}

@@ -1,0 +1,36 @@
+// Builds the dispatch service for a packaged install: plain JavaScript files, a copy of the Node runtime and the job host, in dist/service.
+// Nothing in there needs tsx, node_modules or a source checkout. Run with `pnpm build:service`.
+import { execFileSync } from 'node:child_process';
+import { copyFileSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { build } from 'esbuild';
+
+const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const out = join(root, 'dist', 'service');
+rmSync(out, { recursive: true, force: true });
+mkdirSync(out, { recursive: true });
+
+const entries = {
+  augurd: join(root, 'packages/augurd/src/main.ts'),
+  runner: join(root, 'packages/augurd/src/runner.ts'),
+  'api-call': join(root, 'packages/augurd/src/adapters/api-call.ts'),
+  augur: join(root, 'packages/dispatch-cli/src/main.ts'),
+};
+await build({
+  entryPoints: entries, outdir: out, outExtension: { '.js': '.mjs' }, bundle: true, platform: 'node', format: 'esm', target: 'node24',
+  // A bundled file that uses require() (a CommonJS dependency) needs one; nothing here does today, but a later dependency might.
+  banner: { js: "import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);" },
+  legalComments: 'none', logLevel: 'warning',
+});
+
+if (process.platform === 'win32') {
+  const host = join(root, 'packages/augurd/native/bin/jobhost.exe');
+  if (!existsSync(host)) execFileSync('pnpm', ['--filter', '@augur/augurd', 'build:jobhost'], { cwd: root, stdio: 'inherit', windowsHide: true, shell: true });
+  copyFileSync(host, join(out, 'jobhost.exe'));
+  // The runtime is copied under its own name so an installer can tell the service's processes from anyone else's node.
+  copyFileSync(process.execPath, join(out, 'augur-node.exe'));
+  writeFileSync(join(out, 'augur.cmd'), '@"%~dp0augur-node.exe" "%~dp0augur.mjs" %*\r\n');
+}
+const size = (f) => (statSync(join(out, f)).size / 1024).toFixed(0) + ' KB';
+console.log(`built dist/service: ${Object.keys(entries).map(n => `${n}.mjs ${size(n + '.mjs')}`).join(', ')}`);

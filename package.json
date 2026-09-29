@@ -3,10 +3,16 @@
   "private": true,
   "type": "module",
   "packageManager": "pnpm@12.6.0",
-  "engines": { "node": ">=24" },
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "build": "pnpm -r build",
+    "build:service": "node scripts/build-service.mjs",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
   }
 }

@@ -1,8 +1,8 @@
-import { fileURLToPath } from 'node:url';
 import type { Adapter, AdapterCapabilities, ExtractInput, Extraction, JobRequest, LaunchPlan, PlanContext, RouteConfig, UsageReport } from '@augur/dispatch-protocol';
+import { scriptPath } from '../paths.js';
 import { optNum, optStr } from './util.js';
 
-const SCRIPT = fileURLToPath(new URL('./api-call.ts', import.meta.url));
+const SCRIPT = scriptPath(import.meta.url, 'api-call');
 const CAPS: AdapterCapabilities = { permissionRequests: false, sessions: false, reportsUsage: true, sandboxed: false, isolatesWorkspace: false, enforcesReadOnly: true };
 
 /**

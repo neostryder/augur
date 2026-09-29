@@ -36,6 +36,14 @@ jobs:
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
       - run: pnpm install --frozen-lockfile
+      # The Windows installer carries the dispatch service (see tauri.windows.conf.json), so it is built first.
+      - if: startsWith(matrix.platform, 'windows')
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: packages/augurd/native/jobhost/go.mod
+          cache-dependency-path: packages/augurd/native/jobhost/go.sum
+      - if: startsWith(matrix.platform, 'windows')
+        run: pnpm build:service
       - if: github.ref_type == 'tag'
         shell: bash
         run: |

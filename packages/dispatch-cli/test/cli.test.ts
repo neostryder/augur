@@ -105,6 +105,17 @@ describe('the other commands', () => {
     expect(off).toBe(4);
     expect((await run(['service', 'status'])).out).toContain('is running');
   });
+
+  it('leaves the service running while a job is running when stop is asked to wait for idle', async () => {
+    const { run } = await boot();
+    const start = await run(['run', 'fake', '--prompt', 'SLEEP 30', '--json']);
+    const id = (JSON.parse(start.out) as { id: string }).id;
+    const stop = await run(['service', 'stop', '--if-idle']);
+    expect(stop.code).toBe(4);
+    expect(stop.out).toContain('still running');
+    expect((await run(['service', 'status'])).out).toContain('is running');
+    await run(['cancel', id]);
+  });
 });
 
 describe('augur pick and augur pressure', () => {
