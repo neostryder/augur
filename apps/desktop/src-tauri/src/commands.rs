@@ -243,6 +243,7 @@ fn executable_path(command: &str) -> Result<PathBuf, String> {
         let fallback = match command {
             "grok" => home_dir()?.join(".grok/bin/grok.exe"),
             "bws" => home_dir()?.join(".local/bin/bws.exe"),
+            "gh" => PathBuf::from("C:/Program Files/GitHub CLI/gh.exe"),
             _ => return Err("Command is not allowed".into()),
         };
         if fallback.is_file() {
@@ -259,6 +260,7 @@ pub async fn run_command(
     timeout_ms: Option<u64>,
 ) -> Result<CommandOutput, String> {
     let allowed = (command == "grok" && args == ["models"])
+        || (command == "gh" && args == ["auth", "token"])
         || (command == "bws"
             && args.len() == 5
             && args[0] == "secret"

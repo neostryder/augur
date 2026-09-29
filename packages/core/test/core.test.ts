@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import type { Host, ProviderPlugin, Snapshot, Meter } from '../src/types.js';
-import { claude, codex, grok, minimax, openrouter, fal, jev } from '../src/providers/index.js';
+import { claude, codex, grok, minimax, openrouter, fal, jev, copilot } from '../src/providers/index.js';
 import { genericProvider, readPath, evaluate } from '../src/generic.js';
 import { calculatePace } from '../src/pace.js';
 import { appendHistory } from '../src/history.js';
@@ -43,6 +43,21 @@ describe('provider parsers', () => {
     expect(result.meters[0]?.id).toBe('supergrok');
     expect(result.meters[0]?.windowSeconds).toBeGreaterThan(0);
     expect(result.money[0]?.id).toBe('prepaid');
+  });
+  it('reads Copilot credits against the spending cap', async () => {
+    const data = { copilot_plan: 'enterprise', quota_reset_date_utc: '2026-10-01T00:00:00.000Z', quota_snapshots: { premium_interactions: { credits_used: 253, overage_permitted: true, unlimited: true } } };
+    const host = fakeHost(() => data);
+    host.run = async (command, args) => command === 'gh' && args.join(' ') === 'auth token' ? { code: 0, stdout: 'test-only', stderr: '' } : { code: 1, stdout: '', stderr: '' };
+    const result = await copilot.fetch(host, { capUsd: '250' });
+    const meter = result.meters[0]!;
+    expect(meter.id).toBe('monthly_credits');
+    expect(meter.usedPct).toBe(1);
+    expect(meter.resetsAt).toBe('2026-10-01T00:00:00.000Z');
+    expect(meter.windowKind).toBe('monthly');
+    expect(result.money[0]).toMatchObject({ amount: 2.53, total: 250 });
+    expect((await copilot.fetch(host, {})).meters[0]!.usedPct).toBe(1);
+    host.run = async () => ({ code: 1, stdout: '', stderr: 'not logged in' });
+    await expect(copilot.fetch(host, {})).rejects.toThrow('gh auth login');
   });
   it('parses MiniMax remaining as used', async () => {
     const result = await fetchOne(minimax, await fixture('minimax'));
@@ -200,7 +215,7 @@ describe('engine, pace, history and alerts', () => {
     const config = migrateConfig({ providers: [{ id: 'unknown', enabled: true }, { id: 'claude', enabled: false }] });
     expect(config.providers.some(p => p.id === 'unknown')).toBe(false);
     expect(config.providers.find(p => p.id === 'claude')?.enabled).toBe(false);
-    expect(config.providers).toHaveLength(7);
+    expect(config.providers).toHaveLength(8);
   });
 });
 

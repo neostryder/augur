@@ -99,7 +99,6 @@ export const RULES_ONLY_PROVIDERS: Array<{ id: string; name: string; detail: str
   { id: 'chatgpt', name: 'ChatGPT', detail: 'chatgpt.com in a browser. Business plan usage is not published.' },
   { id: 'm365copilot', name: 'Microsoft 365 Copilot', detail: 'Work account chat. Usage is not published.' },
   { id: 'laya', name: 'Laya', detail: 'Local typed-judgment model on your own hardware. No usage limits.' },
-  { id: 'copilot', name: 'GitHub Copilot', detail: 'Rules only until a usage reader exists.' },
 ];
 
 // ------------------------------------------------------------------ paths and edits
