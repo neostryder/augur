@@ -192,7 +192,8 @@ describe('an API connector', () => {
     e.writeRoutes({ chat: { model: 'test/text', adapter: 'openai-api', options: { baseUrl: 'http://api.example.com/v1', model: 'x', apiKeyEnv: 'AUGUR_TEST_API_KEY' } } });
     expect(e.sup.submit({ ...textReq('chat'), cwd: e.root })).toMatchObject({ rejected: { reason: expect.stringContaining('https://') } });
     e.writeRoutes({ chat: { model: 'test/text', adapter: 'openai-api', options: { baseUrl: 'http://127.0.0.1:9/v1', model: 'x', apiKeyEnv: 'AUGUR_TEST_API_KEY' } } });
-    expect('rejected' in e.sup.submit({ ...textReq('chat'), cwd: e.root }) && (e.sup.submit({ ...textReq('chat'), cwd: e.root }) as { rejected: { reason: string } }).rejected.reason.includes('https://')).toBe(false);
+    const local = e.sup.submit({ ...textReq('chat'), cwd: e.root });
+    expect('rejected' in local ? local.rejected.reason : '').not.toContain('https://');
   });
 
   it('fails the job with the HTTP status when the API refuses, and never for a job that asks for tools', async () => {

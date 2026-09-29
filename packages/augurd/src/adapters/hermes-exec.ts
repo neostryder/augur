@@ -23,7 +23,7 @@ function command(route: RouteConfig): { command: string; prefix: string[] } | nu
  */
 export const hermesExec: Adapter = {
   id: 'hermes-exec', transport: 'exec',
-  capabilities: { permissionRequests: false, sessions: false, reportsUsage: true, sandboxed: false, isolatesWorkspace: false },
+  capabilities: { permissionRequests: false, sessions: false, reportsUsage: true, sandboxed: false, isolatesWorkspace: false, enforcesReadOnly: false },
   envAllow: ['HERMES_HOME', 'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY', 'SSL_CERT_FILE'],
   validate(route: RouteConfig) {
     if (!optStr(route.options, 'model')) return 'route option model is required';

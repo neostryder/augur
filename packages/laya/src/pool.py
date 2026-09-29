@@ -16,10 +16,18 @@ import time
 import urllib.error
 import urllib.request
 
-DEFAULT_SERVERS = [
-    {"name": "eru", "url": "http://127.0.0.1:8010"},
-    {"name": "bilbo", "url": "http://192.168.2.154:8010"},
-]
+# Only this computer by default. Other machines are listed in ~/.augur/laya.json.
+DEFAULT_SERVERS = [{"name": "local", "url": "http://127.0.0.1:8010"}]
+
+
+def load_config(path=None) -> dict:
+    """~/.augur/laya.json as a dict: `servers` (the pool), `syncHost` (user@host that adapters are copied to) and `repo` (the Augur checkout the trainer exports from)."""
+    path = path or os.path.join(os.path.expanduser("~"), ".augur", "laya.json")
+    try:
+        data = json.load(open(path, encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
 
 
 class PoolError(Exception):
@@ -38,12 +46,7 @@ class Pool:
 
     @classmethod
     def from_config(cls, path=None, **kw):
-        path = path or os.path.join(os.path.expanduser("~"), ".augur", "laya.json")
-        try:
-            servers = json.load(open(path, encoding="utf-8")).get("servers")
-        except (OSError, ValueError):
-            servers = None
-        return cls(servers, **kw)
+        return cls(load_config(path).get("servers"), **kw)
 
     def _skipped(self, url):
         entry = self._skip.get(url)

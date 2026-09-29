@@ -160,7 +160,8 @@ class BrowserAccess:
     def __init__(self, app):
         from starlette.middleware.cors import CORSMiddleware
         self.app = app
-        self.cors = CORSMiddleware(app, allow_origins=["*"], allow_methods=["POST", "OPTIONS"],
+        origins = [o.strip() for o in os.environ.get("LAYA_CORS_ORIGINS", "*").split(",") if o.strip()] or ["*"]
+        self.cors = CORSMiddleware(app, allow_origins=origins, allow_methods=["POST", "OPTIONS"],
                                    allow_headers=["Content-Type", "Authorization"],
                                    allow_credentials=False, allow_private_network=True)
 
@@ -301,7 +302,7 @@ def main():
                     train_ids[name] = man.get("train_ids", [])
             return {"registry": adapters.registry, "loaded": sorted(adapters.loaded), "train_ids": train_ids}
 
-    uvicorn.run(BrowserAccess(LoadGate(app, watch)), host=os.environ.get("LAYA_HOST", "0.0.0.0"), port=S._resolve_port(),
+    uvicorn.run(BrowserAccess(LoadGate(app, watch)), host=os.environ.get("LAYA_HOST", "127.0.0.1"), port=S._resolve_port(),
                 log_level=os.environ.get("LAYA_LOG_LEVEL", "info"))
 
 

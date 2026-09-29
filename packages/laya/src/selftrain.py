@@ -1,6 +1,6 @@
 """Trains Laya adapters from Augur's own decision record, unattended.
 
-    python selftrain.py run [--decisions <decisions.jsonl>] [--min-new 200] [--min-test 10] [--force] [--dry-run]
+    python selftrain.py run [--decisions <decisions.jsonl>] [--min-new 200] [--min-test 50] [--force] [--dry-run]
     python selftrain.py status
 
 Each run exports training rows from the decision record, then for each pilot (augur_activity, augur_data_tier, augur_fit)
@@ -77,7 +77,8 @@ def node_script():
     exp = os.environ.get("AUGUR_EXPORT")
     if exp:
         return [os.environ.get("AUGUR_NODE", "node"), exp], os.path.dirname(exp)
-    repo = os.environ.get("AUGUR_REPO", os.path.join("C:\\", "Repositories", "augur"))
+    from pool import load_config
+    repo = os.environ.get("AUGUR_REPO") or load_config().get("repo") or os.path.normpath(os.path.join(HERE, "..", "..", ".."))
     pkg = os.path.join(repo, "packages", "augurd")
     return [os.environ.get("AUGUR_NODE", "node"), "--import", "tsx", os.path.join(pkg, "src", "export-training.ts")], pkg
 
@@ -106,7 +107,7 @@ def train_py(*args) -> subprocess.CompletedProcess:
 
 def cmd_run(args):
     dry, force = "--dry-run" in args, "--force" in args
-    min_new, min_test = opt(args, "--min-new", 200, int), opt(args, "--min-test", 10, int)
+    min_new, min_test = opt(args, "--min-new", 200, int), opt(args, "--min-test", 50, int)
     decisions = opt(args, "--decisions", default_decisions())
     report = {"at": time.strftime("%Y-%m-%dT%H:%M:%S"), "pilots": {}}
     if not force:

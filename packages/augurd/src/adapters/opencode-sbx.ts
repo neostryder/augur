@@ -16,7 +16,7 @@ interface OpencodeEvent { type?: string; part?: { type?: string; text?: string; 
  */
 export const opencodeSbx: Adapter = {
   id: 'opencode-sbx', transport: 'exec',
-  capabilities: { permissionRequests: false, sessions: false, reportsUsage: true, sandboxed: true, isolatesWorkspace: true },
+  capabilities: { permissionRequests: false, sessions: false, reportsUsage: true, sandboxed: true, isolatesWorkspace: true, enforcesReadOnly: false },
   envAllow: [],
   isolation: { root: workRoot },
   validate: sandboxOptions,

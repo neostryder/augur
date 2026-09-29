@@ -83,5 +83,5 @@ export interface JobEvent { seq: number; jobId: string | null; at: number; kind:
 export interface Rejection { code: RejectionCode; reason: string }
 export const REJECTION_CODES = ['unknown_route', 'unknown_model', 'model_unreviewed', 'model_paused', 'ask_first', 'activity_not_permitted',
   'data_tier_too_high', 'sandbox_required', 'isolation_required', 'text_only', 'quota_denied', 'no_policy', 'depth_exceeded',
-  'descendants_exceeded', 'adapter_unavailable', 'bad_request', 'delegation_not_granted', 'prompt_too_large', 'pace_denied', 'not_picked'] as const;
+  'descendants_exceeded', 'adapter_unavailable', 'bad_request', 'delegation_not_granted', 'prompt_too_large', 'pace_denied', 'not_picked', 'read_not_enforceable'] as const;
 export type RejectionCode = typeof REJECTION_CODES[number];

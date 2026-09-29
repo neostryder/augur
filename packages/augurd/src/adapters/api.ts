@@ -3,7 +3,7 @@ import type { Adapter, AdapterCapabilities, ExtractInput, Extraction, JobRequest
 import { optNum, optStr } from './util.js';
 
 const SCRIPT = fileURLToPath(new URL('./api-call.ts', import.meta.url));
-const CAPS: AdapterCapabilities = { permissionRequests: false, sessions: false, reportsUsage: true, sandboxed: false, isolatesWorkspace: false };
+const CAPS: AdapterCapabilities = { permissionRequests: false, sessions: false, reportsUsage: true, sandboxed: false, isolatesWorkspace: false, enforcesReadOnly: true };
 
 /**
  * A bare model over HTTP: one prompt in, one text answer out, no tools and no files. It runs as a job like any other, so it can be timed out and cancelled.

@@ -24,7 +24,7 @@ function policy(): PolicyFile {
   for (const [id, provider] of Object.entries(p.providers)) for (const label of Object.keys(provider.models)) setField(p, fieldPath(id, label, 'status'), 'confirmed', 'test', now);
   return buildPolicyFile(p, Object.keys(p.providers).map(id => ({ id, name: id === 'codex' ? 'Codex' : id, metered: id !== 'openrouter' })), now);
 }
-const host: AdapterCapabilities = { permissionRequests: false, sessions: false, reportsUsage: true, sandboxed: false, isolatesWorkspace: false };
+const host: AdapterCapabilities = { permissionRequests: false, sessions: false, reportsUsage: true, sandboxed: false, isolatesWorkspace: false, enforcesReadOnly: true };
 const route = (model: string): RouteConfig => ({ model, adapter: 'x' });
 const req = (over: Partial<JobRequest> = {}): JobRequest => ({ route: 'r', activity: 'write_code', dataTier: 'internal', tools: 'write', output: 'write_files', cwd: 'C:/x', prompt: { text: 'hi' }, caller: { kind: 'cli' }, ...over });
 const iso = (offsetS: number) => new Date(now.getTime() + offsetS * 1000).toISOString();

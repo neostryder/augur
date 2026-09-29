@@ -25,7 +25,7 @@ export function parseCount(text: string): number {
  */
 export const copilotExec: Adapter = {
   id: 'copilot-exec', transport: 'exec',
-  capabilities: { permissionRequests: false, sessions: false, reportsUsage: true, sandboxed: false, isolatesWorkspace: false },
+  capabilities: { permissionRequests: false, sessions: false, reportsUsage: true, sandboxed: false, isolatesWorkspace: false, enforcesReadOnly: false },
   envAllow: ['COPILOT_HOME', 'GH_TOKEN', 'GITHUB_TOKEN', 'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY', 'SSL_CERT_FILE'],
   validate(route: RouteConfig) {
     if (!optStr(route.options, 'model')) return 'route option model is required';

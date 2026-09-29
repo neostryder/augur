@@ -456,7 +456,9 @@ def cmd_promote(args):
         verdict = {}
         for q in cand:
             verdict[q] = {"candidate": cand[q], "incumbent": inc.get(q)}
-        wins = [q for q in cand if inc.get(q) is None or _score(cand[q]) > _score(inc[q])]
+        margin = float(_opt(args, "--margin", "0.03"))
+        # A win must clear the incumbent by more than noise: at least `margin` in exact match on the same rows.
+        wins = [q for q in cand if inc.get(q) is None or (_score(cand[q]) > _score(inc[q]) and cand[q]["exact"] - inc[q]["exact"] >= margin)]
         losses = [q for q in cand if inc.get(q) is not None and _score(cand[q]) < _score(inc[q])]
         print(json.dumps({"incumbent": cfg["adapter"] or "base", "comparison": verdict}, indent=1))
         if losses or not wins:

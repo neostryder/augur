@@ -12,7 +12,7 @@ interface McodeResult { type?: string; status?: string; output?: string; error?:
  */
 export const mcodeSbx: Adapter = {
   id: 'mcode-sbx', transport: 'exec',
-  capabilities: { permissionRequests: false, sessions: false, reportsUsage: true, sandboxed: true, isolatesWorkspace: true },
+  capabilities: { permissionRequests: false, sessions: false, reportsUsage: true, sandboxed: true, isolatesWorkspace: true, enforcesReadOnly: false },
   envAllow: [],
   isolation: { root: workRoot },
   validate: sandboxOptions,

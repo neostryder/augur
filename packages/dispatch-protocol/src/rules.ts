@@ -85,6 +85,11 @@ export function evaluate(request: JobRequest, input: RuleInput): Decision {
   if (model.output === 'text_only' && (request.output !== 'text_only' || request.tools !== 'read')) {
     return no('text_only', `${route.model} may return text only, with read tools.`);
   }
+  // A rule that limits a model to text is only as strong as the adapter that runs it. Where the harness cannot hold a read tier itself, the rule fails closed.
+  if (model.output === 'text_only' && !capabilities.enforcesReadOnly) {
+    return no('read_not_enforceable', `${route.model} may return text only, and this adapter cannot hold a read-only tier itself, so the limit could not be enforced.`);
+  }
+  if (request.tools === 'read' && !capabilities.enforcesReadOnly) warnings.push('This adapter asks the harness to stay read-only in the prompt and cannot enforce it. Treat the read tier as advisory.');
   if (model.output === 'patch_only' && request.output === 'write_files') return no('isolation_required', `${route.model} may return a patch only.`);
   if ((model.output === 'patch_only' || request.output === 'patch_only') && !capabilities.isolatesWorkspace) {
     return no('isolation_required', 'A patch-only job needs an adapter that works on a copy of the workspace.');

@@ -15,7 +15,10 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(HERE, "src")
 FILES = ["env.py", "lora.py", "ctxutil.py", "loadgate.py", "pool.py", "sync.py", "selftrain.py", "serve_lora.py", "train.py"]
-BILBO = os.environ.get("LAYA_BILBO", "strider@192.168.2.154")
+sys.path.insert(0, os.path.join(HERE, "src"))
+from pool import load_config  # noqa: E402
+
+BILBO = os.environ.get("LAYA_BILBO") or load_config().get("syncHost") or ""
 
 
 def local_home() -> str:
@@ -24,6 +27,8 @@ def local_home() -> str:
 
 def main() -> None:
     if "--bilbo" in sys.argv:
+        if not BILBO:
+            sys.exit("No second machine is set. Put syncHost (user@host) in ~/.augur/laya.json, or set LAYA_BILBO.")
         for f in FILES:
             subprocess.run(["scp", "-q", os.path.join(SRC, f), f"{BILBO}:laya-serve/lora/{f}"], check=True)
         print(f"copied {len(FILES)} files to {BILBO}:laya-serve/lora")

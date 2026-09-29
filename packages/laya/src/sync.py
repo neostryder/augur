@@ -21,7 +21,9 @@ import subprocess
 import sys
 import tempfile
 
-BILBO = os.environ.get("LAYA_BILBO", "strider@192.168.2.154")
+from pool import load_config  # noqa: E402  (sits beside this file when deployed)
+
+BILBO = os.environ.get("LAYA_BILBO") or load_config().get("syncHost") or ""
 REMOTE = os.environ.get("LAYA_BILBO_HOME", "laya-serve")
 FLAGS = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
@@ -197,6 +199,8 @@ def main() -> None:
     dry = "--dry-run" in sys.argv or cmd == "status"
     if cmd not in ("push", "pull", "status"):
         sys.exit(__doc__)
+    if not BILBO:
+        sys.exit("No second machine is set. Put syncHost (user@host) in ~/.augur/laya.json, or set LAYA_BILBO.")
     out = pull(dry) if cmd == "pull" else push(dry)
     print(json.dumps(out, indent=1))
 

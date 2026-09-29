@@ -7,7 +7,7 @@ import type { Adapter, ExtractInput, Extraction, JobRequest, LaunchPlan, PlanCon
  */
 export const genericExec: Adapter = {
   id: 'exec', transport: 'exec',
-  capabilities: { permissionRequests: false, sessions: false, reportsUsage: false, sandboxed: false, isolatesWorkspace: false },
+  capabilities: { permissionRequests: false, sessions: false, reportsUsage: false, sandboxed: false, isolatesWorkspace: false, enforcesReadOnly: false },
   envAllow: [],
   validate(route: RouteConfig) {
     if (typeof route.options?.command !== 'string') return 'route option command is required';

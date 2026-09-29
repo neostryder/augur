@@ -13,6 +13,8 @@ export interface AdapterCapabilities {
   sandboxed: boolean;
   /** The harness works on a copy of the workspace, so `patch_only` can export a diff. */
   isolatesWorkspace: boolean;
+  /** A read tier is held by the harness itself (it denies writes and commands), not just asked for in the prompt. A bare model with no tools holds it trivially. */
+  enforcesReadOnly: boolean;
 }
 
 /** Route settings from the user's own registry. Machine-specific values live there and never in shipped defaults. */

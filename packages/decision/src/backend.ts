@@ -11,7 +11,8 @@ export interface DecisionBackend {
 export type Fetch = (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string; signal?: AbortSignal }) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
 
 export interface Server { name: string; url: string }
-export const DEFAULT_SERVERS: Server[] = [{ name: 'eru', url: 'http://127.0.0.1:8010' }, { name: 'bilbo', url: 'http://192.168.2.154:8010' }];
+/** Only this computer by default. Other machines are listed in the dispatch config under decision.servers. */
+export const DEFAULT_SERVERS: Server[] = [{ name: 'local', url: 'http://127.0.0.1:8010' }];
 
 /** Tried in order. A server that does not answer, answers 503, or reports busy or not ready on /load is skipped, and remembered for a while. */
 export class ServerPool {

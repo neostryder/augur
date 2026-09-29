@@ -124,7 +124,7 @@ describe('rules at submit', () => {
     expect(code(e, { route: 'pub', dataTier: 'internal' })).toBe('data_tier_too_high');
     expect(code(e, { route: 'sandboxed' })).toBe('sandbox_required');
     expect(code(e, { route: 'text', activity: 'research' })).toBe('text_only');
-    expect(code(e, { route: 'text', activity: 'research', tools: 'read', output: 'text_only' })).toBe('accepted');
+    expect(code(e, { route: 'text', activity: 'research', tools: 'read', output: 'text_only' })).toBe('read_not_enforceable'); // codex-exec cannot hold a read tier itself
     expect(code(e, { activity: 'speech' })).toBe('activity_not_permitted');
     expect(code(e, { output: 'patch_only' })).toBe('isolation_required');
   });

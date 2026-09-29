@@ -25,7 +25,7 @@ interface TurnUsage { input_tokens?: number; cached_input_tokens?: number; cache
  */
 export const codexExec: Adapter = {
   id: 'codex-exec', transport: 'exec',
-  capabilities: { permissionRequests: false, sessions: false, reportsUsage: true, sandboxed: false, isolatesWorkspace: false },
+  capabilities: { permissionRequests: false, sessions: false, reportsUsage: true, sandboxed: false, isolatesWorkspace: false, enforcesReadOnly: false },
   envAllow: ['CODEX_HOME', 'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY', 'SSL_CERT_FILE'],
   validate(route: RouteConfig) {
     const sb = route.options?.sandbox;

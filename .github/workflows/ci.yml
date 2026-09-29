@@ -26,6 +26,34 @@ jobs:
       - run: pnpm --filter @augur/ui build
       - run: pnpm --filter @augur/relay typecheck
 
+  dispatch:
+    # The dispatch service is Windows-only at 1.0, so its tests run where it runs. The job host is built with Go first, because jobs do not start without it.
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: pnpm
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: packages/augurd/native/jobhost/go.mod
+          cache-dependency-path: packages/augurd/native/jobhost/go.sum
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @augur/augurd build:jobhost
+      - run: pnpm -r typecheck
+      - run: pnpm -r test
+
+  laya:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+      - run: python -m unittest discover -s packages/laya/tests -v
+
   rust:
     runs-on: ubuntu-24.04
     steps:
