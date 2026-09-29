@@ -22,6 +22,8 @@ export type PickAnswer = (PickResult & {
   routes: Record<string, string[]>;
   activity: ActivityId;
   dataTier: DataTier;
+  /** Id of the recorded pick, when the service keeps a decision record. */
+  pickId?: string;
   /** What the decision backend answered, when it was asked. */
   decision?: { backend: string; classified?: unknown; fitError?: string };
 }) | { error: string };

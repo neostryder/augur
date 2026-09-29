@@ -14,12 +14,15 @@ import { MAX_COMMAND_LINE } from './adapters/util.js';
 import type { ServiceConfig } from './config.js';
 import { buildEnv } from './env.js';
 import type { Store } from './store.js';
+import type { DecisionLog } from './decisions.js';
 
 export interface SupervisorDeps {
   store: Store; config: ServiceConfig; dir: string; adapters: Map<string, Adapter>;
   routes: () => Record<string, RouteConfig> | null; policy: () => PolicyFile | null; usage: () => UsageSnapshot | null;
   /** Answers the typed questions behind a pick by task description. `local` is a backend that runs on this network, for text about students. */
   decision?: { primary: DecisionBackend; local?: DecisionBackend };
+  /** Where picks and their outcomes are recorded for training. */
+  decisions?: DecisionLog;
   runnerPath?: string; now?: () => number; env?: NodeJS.ProcessEnv;
 }
 
@@ -109,7 +112,8 @@ export class Supervisor {
     s.event(id, 'requested', `${req.caller.kind}${req.caller.label ? ' ' + req.caller.label : ''}`, this.now());
     s.event(id, 'policy_evaluated', warnings.join(' | '), this.now());
     if (req.allow?.length) s.event(id, 'checks_overridden', req.allow.join(', '), this.now());
-    s.event(id, 'queued', '', this.now());
+    this.d.store.event(id, 'queued', '', this.now());
+    this.d.decisions?.linkJob(req.caller.session ?? null, route.model, id);
     this.tick();
     return { id, warnings };
   }
@@ -120,6 +124,7 @@ export class Supervisor {
   async pick(req: PickParams): Promise<PickAnswer> {
     const policy = this.d.policy();
     if (!policy) return { error: 'policy.json was not found. Augur writes it when a rule is saved.' };
+    const declared = { activity: !!req.activity, dataTier: !!req.dataTier }, descriptions: Record<string, string> = {};
     let activity = req.activity, dataTier = req.dataTier, classified: unknown, fitError: string | undefined;
     const fits = { ...(req.fits ?? {}) };
     const backend = this.d.decision;
@@ -134,15 +139,19 @@ export class Supervisor {
       const asked = rank(policy, this.d.usage(), { activity, dataTier }, new Date(this.now())).ranking.map(r => r.model).filter(m => fits[m] === undefined);
       if (asked.length) {
         const describe = (m: string) => { const e = Object.values(policy.providers).map(p => p.models[m]).find(Boolean); return `${e?.name ?? e?.id ?? m}. Permitted: ${Object.keys(e?.activities ?? {}).join(', ')}. ${e?.notes ?? ''}`.trim(); };
-        const got = await fitScores(backend.primary, req.task, asked.map(m => ({ model: m, description: describe(m) })));
+        for (const m of asked) descriptions[m] = describe(m);
+        const got = await fitScores(backend.primary, req.task, asked.map(m => ({ model: m, description: descriptions[m] as string })));
         Object.assign(fits, got.fits); fitError = got.error;
       }
     }
     const result = rank(policy, this.d.usage(), { activity, dataTier, ...(req.named ? { named: req.named } : {}), fits }, new Date(this.now()));
     const routes: Record<string, string[]> = {};
     for (const [name, r] of Object.entries(this.d.routes() ?? {})) if (this.d.adapters.has(r.adapter)) (routes[r.model] ??= []).push(name);
+    const pickId = this.d.decisions?.pick({ session: req.session ?? null, ...(req.task ? { task: req.task } : {}), activity, dataTier, pick: result.pick ?? null,
+      ranking: result.ranking.map(r => ({ model: r.model, ...(fits[r.model] !== undefined ? { fit: fits[r.model] } : {}) })), named: req.named ?? null,
+      ...(backend ? { backend: backend.primary.id } : {}), classified: { activity: !declared.activity, dataTier: !declared.dataTier }, descriptions });
     if (result.pick) this.d.store.addPick({ at: this.now(), session: req.session ?? null, model: result.pick, activity, dataTier, named: req.named ?? null, cleared: result.ranking.map(r => r.model) });
-    return { ...result, routes, activity, dataTier, ...(backend ? { decision: { backend: backend.primary.id, ...(classified ? { classified } : {}), ...(fitError ? { fitError } : {}) } } : {}) };
+    return { ...result, routes, activity, dataTier, ...(pickId ? { pickId } : {}), ...(backend ? { decision: { backend: backend.primary.id, ...(classified ? { classified } : {}), ...(fitError ? { fitError } : {}) } } : {}) };
   }
 
   pressure(): { pressure: ReturnType<typeof pressure>; factors: Record<string, number>; scarcity: number } | null {
@@ -316,6 +325,8 @@ export class Supervisor {
     else if (expectProblem) store.transition(rec.id, 'artifact_validation_failed', { ...patch, reason: expectProblem }, at);
     else { if (expected) store.event(rec.id, 'artifact_validated', inner!.expectFile ?? '', at); store.transition(rec.id, 'completed', patch, at); }
     store.event(rec.id, 'finalized', '', this.now());
+    const done = store.get(rec.id), model = this.d.routes()?.[rec.route]?.model ?? rec.route;
+    if (done) this.d.decisions?.outcome(rec.id, model, done.state, done.reason, done.endedAt && done.startedAt ? done.endedAt - done.startedAt : null);
     this.cleanup(rec.id);
   }
 

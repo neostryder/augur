@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { LearnSettings } from './decisions.js';
 
 export interface DecisionSettings {
   /** Who answers the typed questions behind `augur pick --task`: Laya servers, Jev with the person's own key, or nobody. */
@@ -27,12 +28,13 @@ export interface ServiceConfig {
   /** What to do with a caller's claim that a person named the model: `off` takes it as true, `record` takes it and notes when it cannot be confirmed, `enforce` refuses the job. */
   verifyNamed: 'off' | 'record' | 'enforce';
   decision: DecisionSettings;
+  learn: LearnSettings;
   /** Seconds after which a runner with no heartbeat counts as gone. */
   runnerStaleS: number;
 }
 
 export const DEFAULT_CONFIG: ServiceConfig = { retentionDays: 30, persistPrompts: false, maxConcurrent: 8, maxDepth: 2, maxDescendants: 16,
-  jobhostPath: null, adapters: ['codex-exec'], requirePick: false, verifyNamed: 'record', decision: { backend: 'none' }, runnerStaleS: 20 };
+  jobhostPath: null, adapters: ['codex-exec'], requirePick: false, verifyNamed: 'record', decision: { backend: 'none' }, learn: { recordTasks: false }, runnerStaleS: 20 };
 
 /** The launcher built by `pnpm build:jobhost` sits beside the package's sources, and a packaged install places it next to the service. */
 export function defaultJobhost(): string | null {
@@ -65,6 +67,7 @@ export function loadConfig(dir: string): ServiceConfig {
     requirePick: raw.requirePick === true,
     verifyNamed: raw.verifyNamed === 'off' || raw.verifyNamed === 'enforce' ? raw.verifyNamed : c.verifyNamed,
     decision: decisionSettings(raw.decision),
+    learn: { recordTasks: (raw.learn as { recordTasks?: unknown } | undefined)?.recordTasks === true },
     runnerStaleS: num(raw.runnerStaleS, c.runnerStaleS, 5, 600),
   };
 }

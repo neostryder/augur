@@ -9,3 +9,4 @@ export * from './client.js';
 export * from './adapters/index.js';
 export { startService } from './main.js';
 export type { ServiceOptions } from './main.js';
+export * from './decisions.js';

@@ -14,7 +14,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(HERE, "src")
-FILES = ["env.py", "lora.py", "ctxutil.py", "loadgate.py", "pool.py", "sync.py", "serve_lora.py", "train.py"]
+FILES = ["env.py", "lora.py", "ctxutil.py", "loadgate.py", "pool.py", "sync.py", "selftrain.py", "serve_lora.py", "train.py"]
 BILBO = os.environ.get("LAYA_BILBO", "strider@192.168.2.154")
 
 

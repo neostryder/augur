@@ -5,6 +5,7 @@ import { LayaBackend, ServerPool, ShadowBackend, createBackend, DEFAULT_SERVERS 
 import type { DecisionBackend } from '@augur/decision';
 import { enabledAdapters } from './adapters/index.js';
 import { loadConfig } from './config.js';
+import { DecisionLog } from './decisions.js';
 import { IpcServer, ensureToken } from './ipc.js';
 import { augurHome, dataDir, pipeName } from './paths.js';
 import { policySource, routeSource, usageSource } from './sources.js';
@@ -33,8 +34,8 @@ export async function startService(opts: ServiceOptions = {}) {
   const config = loadConfig(dir), store = new Store(dir), token = ensureToken(dir);
   const policy = policySource(join(home, 'policy.json')), usage = usageSource(join(home, 'usage.json'));
   const routes = routeSource(opts.routesPath ?? process.env.AUGURD_ROUTES ?? join(home, 'dispatch', 'routes.json'));
-  const decision = buildDecision(config, dir);
-  const supervisor = new Supervisor({ store, config, dir, adapters: enabledAdapters(config.adapters), ...(decision ? { decision } : {}), routes: () => routes.read(), policy: () => policy.read(), usage: () => usage.read() });
+  const decision = buildDecision(config, dir), decisions = new DecisionLog(dir, config.learn);
+  const supervisor = new Supervisor({ store, config, dir, adapters: enabledAdapters(config.adapters), ...(decision ? { decision } : {}), decisions, routes: () => routes.read(), policy: () => policy.read(), usage: () => usage.read() });
   const server = new IpcServer(supervisor, store, token, () => routes.read());
   try { await server.start(opts.pipe ?? pipeName(dir)); }
   catch (e) { store.close(); throw e; }
