@@ -58,7 +58,7 @@ describe('the control endpoint', () => {
     const rej = await call('submit', request({ route: 'ask' }, e.root), o);
     expect(rej).toMatchObject({ rejected: { code: 'ask_first' } });
     const routes = await call('routes', undefined, o);
-    expect(routes.find(r => r.name === 'fake')).toEqual({ name: 'fake', model: 'test/fake', adapter: 'codex-exec' });
+    expect(routes.find(r => r.name === 'fake')).toEqual({ name: 'fake', model: 'test/fake', adapter: 'codex-exec', problem: null });
     expect(JSON.stringify(routes)).not.toContain('prefixArgs');
   });
 

@@ -5,3 +5,4 @@ export * from './pace.js';
 export * from './rules.js';
 export * from './pick.js';
 export * from './ipc.js';
+export * from './adapter-info.js';

@@ -45,6 +45,11 @@ fn relative_path(path: &str) -> Result<PathBuf, String> {
     Ok(parsed.to_path_buf())
 }
 
+/// The routes file for the dispatch service: `dispatch/routes.json` in the folder that holds the export file.
+fn dispatch_routes_path(export: &Path) -> PathBuf {
+    export.with_file_name("dispatch").join("routes.json")
+}
+
 async fn allowed_home_path(app: &tauri::AppHandle, path: &str) -> Result<PathBuf, String> {
     let relative = relative_path(path)?;
     let is_credential = matches!(
@@ -53,7 +58,7 @@ async fn allowed_home_path(app: &tauri::AppHandle, path: &str) -> Result<PathBuf
     ) || path == ".codex/models_cache.json";
     let config = load_json(app.clone(), "config".into()).await?;
     // Besides the three login files and the Codex model list, only the exact export file named in settings (a .json file),
-    // and the rules file and rules import file in the same folder.
+    // the rules file and rules import file in the same folder, and the dispatch routes file in that folder's dispatch subfolder.
     let export_file = config
         .as_deref()
         .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
@@ -67,7 +72,8 @@ async fn allowed_home_path(app: &tauri::AppHandle, path: &str) -> Result<PathBuf
     };
     let allowed = export_file.as_deref() == Some(relative.as_path())
         || beside_export("policy.json").as_deref() == Some(relative.as_path())
-        || beside_export("policy-import.json").as_deref() == Some(relative.as_path());
+        || beside_export("policy-import.json").as_deref() == Some(relative.as_path())
+        || export_file.as_deref().map(dispatch_routes_path).as_deref() == Some(relative.as_path());
     if !is_credential && !allowed {
         return Err("Home file path is not allowed".into());
     }
@@ -610,7 +616,16 @@ pub fn hide_popup(app: tauri::AppHandle) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::dispatch_args_allowed;
+    use super::{dispatch_args_allowed, dispatch_routes_path};
+    use std::path::Path;
+
+    #[test]
+    fn dispatch_routes_file_sits_in_the_export_folder() {
+        assert_eq!(
+            dispatch_routes_path(Path::new(".augur/usage.json")),
+            Path::new(".augur/dispatch/routes.json")
+        );
+    }
 
     fn allowed(args: &[&str]) -> bool {
         dispatch_args_allowed(&args.iter().map(|a| a.to_string()).collect::<Vec<_>>())

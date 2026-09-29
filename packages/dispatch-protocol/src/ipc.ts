@@ -48,6 +48,6 @@ export interface Methods {
   human_prompt: { params: { session: string; text: string }; result: { models: string[] } | { error: string } };
   /** Headroom per provider and the usage factor of every model. */
   pressure: { params: undefined; result: { pressure: Record<string, Headroom>; factors: Record<string, number>; scarcity: number } | null };
-  routes: { params: undefined; result: Array<{ name: string; model: string; adapter: string }> };
+  routes: { params: undefined; result: Array<{ name: string; model: string; adapter: string; problem: string | null }> };
 }
 export type MethodName = keyof Methods;

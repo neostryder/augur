@@ -24,6 +24,12 @@ const BAD = new Set<JobState>(['failed', 'artifact_validation_failed', 'killed',
 const TOOL_LABELS: Record<string, string> = { read: 'Reads only', write: 'Can write', full: 'Full access' };
 const OUTPUT_LABELS: Record<string, string> = { write_files: 'Writes files', patch_only: 'Returns a patch', text_only: 'Text only' };
 
+/** Jobs and Routes are two pages of the same area, so both carry this switch. */
+export function dispatchTabs(active: 'jobs' | 'routes'): string {
+  return `<div class="seg dtabs" role="tablist" aria-label="Dispatch">${(['jobs', 'routes'] as const).map((v) =>
+    `<button role="tab" aria-selected="${v === active}" class="${v === active ? 'on' : ''}" data-action="dispatch-tab" data-value="${v}">${v === 'jobs' ? 'Jobs' : 'Routes'}</button>`).join('')}</div>`;
+}
+
 export const isLive = (state: JobState): boolean => LIVE.has(state);
 
 export function duration(job: JobRecord, now = Date.now()): string {
@@ -77,6 +83,6 @@ export function renderJobs(m: JobsModel): string {
     <button class="icon" data-action="${m.sel ? 'job-close' : 'back'}" title="${m.sel ? 'Back to the jobs' : 'Back to usage'}" aria-label="${m.sel ? 'Back to the jobs' : 'Back to usage'}">${ICON.back}</button>
     <div><h1>Jobs</h1><div class="sub">Work agents started through Augur</div></div><span class="grow"></span>
     <button class="icon" data-action="jobs-refresh" title="Refresh" aria-label="Refresh the jobs">${ICON.refresh}</button></header>
-    ${serviceCard(m)}
+    ${m.sel ? '' : dispatchTabs('jobs')}${serviceCard(m)}
     <div class="rules ${m.sel ? 'has-sel' : ''}"><div class="rlist jlist">${list}</div><div class="rdetail">${detail(m)}</div></div></div>`;
 }

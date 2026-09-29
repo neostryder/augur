@@ -93,6 +93,9 @@ describe('the other commands', () => {
     expect((await run(['jobs'])).out).toContain(id);
     expect((await run(['status', id])).out).toContain('running');
     expect((await run(['routes'])).out).toContain('test/fake');
+    const listed = JSON.parse((await run(['routes', '--json'])).out) as Array<{ name: string; problem: string | null }>;
+    expect(listed.find(r => r.name === 'fake')).toMatchObject({ problem: null });
+    expect(listed.find(r => r.name === 'fake')).not.toHaveProperty('options');
     expect((await run(['cancel', id])).out).toContain('Cancel requested');
     expect((await run(['wait', id, '--timeout', '30'])).code).toBe(6);
     expect((await run(['logs', id])).code).toBe(0);

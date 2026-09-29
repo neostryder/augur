@@ -56,6 +56,13 @@ export class Supervisor {
 
   // ------------------------------------------------------------------ submit
 
+  /** Why a route cannot start a job right now, in the words a job would be refused with, or null when it can. */
+  routeProblem(route: RouteConfig): string | null {
+    const adapter = this.d.adapters.get(route.adapter);
+    if (!adapter) return `Adapter ${route.adapter} is not enabled.`;
+    return adapter.validate(route);
+  }
+
   submit(input: JobRequest): SubmitResult {
     let req = input;
     const bad = this.validate(req);

@@ -279,3 +279,13 @@ input[type=color] { width: 26px; height: 22px; border: 0; padding: 0; background
 .scanner .frame { position: relative; width: min(70vw, 280px); aspect-ratio: 1; border: 3px solid #fff; border-radius: 18px; box-shadow: 0 0 0 9999px rgba(0,0,0,0.45); }
 .scanner p { position: relative; margin: 0; text-align: center; font-size: calc(14px * var(--fs)); }
 .scanner button.btn { position: relative; background: #fff; color: #000; border-color: #fff; }
+.dtabs { margin: 0 0 8px; }
+.rtrow { align-items: flex-start; }
+.rtrow label { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.rtrow label small { color: var(--muted); font-size: calc(11.5px * var(--fs)); }
+.rtrow label i { font-style: normal; color: var(--muted); font-weight: 400; }
+.rtrow input[type=text], .rtrow input[type=number], .rtrow select { width: auto; flex: 0 1 220px; max-width: 55%; }
+.rtactions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.rnote.bad { color: var(--crit, #c0392b); }
+.btn.danger { border-color: var(--crit, #c0392b); }
+.rtproblem { padding: 0 8px 6px; }

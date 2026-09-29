@@ -6,6 +6,8 @@ import { renderDashboard, tightest, updateTip, type DashboardModel } from './vie
 import { CUSTOM_EXAMPLE, renderSettings, type SettingsModel } from './views/settings';
 import { renderRules, type RulesFilter, type RulesModel } from './views/rules';
 import { renderJobs, type JobsModel } from './views/jobs';
+import { renderRoutes, type RoutesModel } from './views/routes';
+import { ROUTES_PATH, checkDraft, draftOf, emptyDraft, parseRoutesText, writeRoute } from './routes-model';
 import type { JobRecord } from '@augur/dispatch-protocol';
 import { renderTrayIcon } from './trayicon';
 import { span, until } from './util';
@@ -50,7 +52,7 @@ export class App {
   private snapshot: Snapshot | null = null;
   private history: HistoryRow[] = [];
   private alertState: Record<string, unknown> = {};
-  private view: 'dashboard' | 'settings' | 'rules' | 'jobs' = 'dashboard';
+  private view: 'dashboard' | 'settings' | 'rules' | 'jobs' | 'routes' = 'dashboard';
   private firstRun = false;
   private busy = false;
   private expanded: string | null = null;
@@ -75,6 +77,7 @@ export class App {
   private policyError: string | null = null;
   private jobs: JobsModel = { service: null, serviceNote: '', unavailable: '', jobs: null, sel: null, detail: null, busy: false };
   private jobsTimer: ReturnType<typeof setInterval> | undefined;
+  private routesPage: RoutesModel = { file: null, error: '', health: null, sel: null, draft: null, formError: '', note: '', models: [], confirmDelete: false, busy: false };
   private timer: ReturnType<typeof setInterval> | undefined;
   private lastRun = 0;
   private sortables: Sortable[] = [];
@@ -436,6 +439,9 @@ export class App {
     } else if (this.view === 'jobs') {
       this.twoColumns = this.shell.kind === 'desktop';
       this.root.innerHTML = renderJobs(this.jobs);
+    } else if (this.view === 'routes') {
+      this.twoColumns = this.shell.kind === 'desktop';
+      this.root.innerHTML = renderRoutes(this.routesPage);
     } else if (this.view === 'rules') {
       // The desktop popup opens at its two-column width so the list and the open model's rules sit side by side.
       this.twoColumns = this.shell.kind === 'desktop';
@@ -619,7 +625,8 @@ export class App {
     });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
-        if (this.view === 'jobs') { if (this.jobs.sel) this.closeJob(); else this.leaveJobs(); void this.render(); }
+        if (this.view === 'routes') { if (this.routesPage.sel) this.closeRoute(); else this.view = 'dashboard'; void this.render(); }
+        else if (this.view === 'jobs') { if (this.jobs.sel) this.closeJob(); else { this.leaveJobs(); this.view = 'dashboard'; } void this.render(); }
         else if (this.view === 'rules') { if (this.rules.showHistory) this.rules.showHistory = false; else if (this.rules.sel) this.rules.sel = null; else this.view = 'dashboard'; void this.render(); }
         else if (this.view === 'settings' && !this.firstRun) { this.view = 'dashboard'; void this.render(); } else void this.shell.hidePopup?.();
       }
@@ -707,11 +714,90 @@ export class App {
     await this.loadJobs();
   }
 
+  // ------------------------------------------------------------------ routes
+
+  private closeRoute(): void { Object.assign(this.routesPage, { sel: null, draft: null, formError: '', confirmDelete: false }); }
+
+  private openRoute(name: string): void {
+    const r = this.routesPage.file?.routes.find((x) => x.name === name);
+    if (!r) return;
+    Object.assign(this.routesPage, { sel: name, draft: draftOf(r), formError: '', note: '', confirmDelete: false });
+  }
+
+  /** Model labels the rules already hold, as provider/model, for the model field to offer. */
+  private knownModels(): string[] {
+    return Object.entries(this.config.policy?.providers ?? {}).flatMap(([pid, p]) => Object.keys(p.models).map((label) => `${pid}/${label}`)).sort();
+  }
+
+  private async loadRoutes(): Promise<void> {
+    const read = this.shell.host.readHomeFile;
+    const page = this.routesPage;
+    page.models = this.knownModels();
+    try {
+      const parsed = parseRoutesText(read ? await read(ROUTES_PATH) : null);
+      if (parsed.ok) { page.file = parsed.file; page.error = ''; } else { page.file = null; page.error = parsed.error; }
+    } catch (e) { page.file = null; page.error = e instanceof Error ? e.message : String(e); }
+    // The service knows which routes it can start; without it running, the page still edits the file.
+    page.health = null;
+    if (this.shell.dispatch && page.file) {
+      try {
+        const r = await this.augur<Array<{ name: string; problem: string | null }>>(['routes', '--json']);
+        if (Array.isArray(r.data)) page.health = Object.fromEntries(r.data.map((x) => [x.name, x.problem]));
+      } catch { /* the service is not running */ }
+    }
+    if (this.view === 'routes') await this.render();
+  }
+
+  private async writeRoutes(name: string, draft: ReturnType<typeof emptyDraft> | null, done: string): Promise<void> {
+    const page = this.routesPage, write = this.shell.host.writeHomeFileAtomic;
+    if (!page.file || !write) return;
+    page.busy = true; page.formError = '';
+    await this.render();
+    try {
+      await write(ROUTES_PATH, writeRoute(page.file, name, draft));
+      this.closeRoute();
+      page.note = done;
+      page.busy = false;
+      await this.loadRoutes();
+    } catch (e) {
+      page.busy = false;
+      page.formError = `routes.json was not written. ${e instanceof Error ? e.message : String(e)}`;
+      await this.render();
+    }
+  }
+
+  private async saveRoute(): Promise<void> {
+    const page = this.routesPage, d = page.draft;
+    if (!d || !page.file) return;
+    const problem = checkDraft(d, page.file.routes.map((r) => r.name), page.sel === '+');
+    if (problem) { page.formError = problem; await this.render(); return; }
+    await this.writeRoutes(d.name, d, page.sel === '+' ? `Added ${d.name}.` : `Saved ${d.name}.`);
+  }
+
+  private async deleteRoute(): Promise<void> {
+    const page = this.routesPage;
+    if (page.sel && page.sel !== '+') await this.writeRoutes(page.sel, null, `Deleted ${page.sel}.`);
+  }
+
+  /** A form field on the Routes page changed. Only a new adapter redraws the form, since it changes which options are shown. */
+  private onRouteField(t: HTMLInputElement): boolean {
+    const d = this.routesPage.draft;
+    if (!d || (!t.dataset.rt && !t.dataset.rtOpt)) return false;
+    if (t.dataset.rtOpt) d.options[t.dataset.rtOpt] = t.value;
+    else if (t.dataset.rt === 'name') d.name = t.value.trim();
+    else if (t.dataset.rt === 'model') d.model = t.value.trim();
+    else if (t.dataset.rt === 'notes') d.notes = t.value;
+    else if (t.dataset.rt === 'delegation') d.delegation = t.checked;
+    else if (t.dataset.rt === 'adapter') { d.adapter = t.value; this.routesPage.formError = ''; void this.render(); }
+    return true;
+  }
+
   private async onClick(e: MouseEvent): Promise<void> {
-    const t = (e.target as HTMLElement).closest<HTMLElement>('[data-action],[data-open],[data-collapse],[data-meter],[data-secret-save],[data-secret-del],[data-set],[data-open-provider],[data-color-reset],[data-signin],[data-rsel],[data-rprov],[data-rfilter],[data-status],[data-bulk],[data-undo],[data-add-model],[data-pause-clear],[data-list-now],[data-job]');
+    const t = (e.target as HTMLElement).closest<HTMLElement>('[data-action],[data-open],[data-collapse],[data-meter],[data-secret-save],[data-secret-del],[data-set],[data-open-provider],[data-color-reset],[data-signin],[data-rsel],[data-rprov],[data-rfilter],[data-status],[data-bulk],[data-undo],[data-add-model],[data-pause-clear],[data-list-now],[data-job],[data-route]');
     if (!t) return;
     if (this.view === 'rules' && await this.onRulesClick(t)) return;
     if (t.dataset.job) { await this.openJob(t.dataset.job); return; }
+    if (t.dataset.route) { this.openRoute(t.dataset.route); await this.render(); return; }
     if (t.dataset.open) { e.preventDefault(); await this.shell.openUrl(t.dataset.open); return; }
     if (t.dataset.signin) { await this.shell.openSignIn?.(t.dataset.signin); return; }
     if (t.dataset.collapse) {
@@ -758,6 +844,15 @@ export class App {
       case 'rules-history': this.rules.showHistory = !this.rules.showHistory; await this.render(); break;
       case 'back': this.leaveJobs(); this.view = 'dashboard'; await this.render(); break;
       case 'jobs': this.view = 'jobs'; this.jobs.sel = null; this.jobs.detail = null; this.jobsTimer ??= setInterval(() => { void this.loadJobs(); }, 3000); await this.render(); void this.loadJobs(); break;
+      case 'dispatch-tab':
+        if (t.dataset.value === 'routes') { this.leaveJobs(); this.view = 'routes'; this.closeRoute(); await this.render(); await this.loadRoutes(); }
+        else { this.view = 'jobs'; this.jobs.sel = null; this.jobs.detail = null; this.jobsTimer ??= setInterval(() => { void this.loadJobs(); }, 3000); await this.render(); void this.loadJobs(); }
+        break;
+      case 'route-new': this.routesPage.sel = '+'; this.routesPage.draft = emptyDraft(); this.routesPage.formError = ''; this.routesPage.note = ''; this.routesPage.confirmDelete = false; await this.render(); break;
+      case 'route-close': this.closeRoute(); await this.render(); break;
+      case 'route-save': await this.saveRoute(); break;
+      case 'route-ask-delete': this.routesPage.confirmDelete = true; await this.render(); break;
+      case 'route-delete': await this.deleteRoute(); break;
       case 'job-close': this.closeJob(); await this.render(); break;
       case 'jobs-refresh': await this.loadJobs(); break;
       case 'service-start': case 'service-stop': await this.controlService(t.dataset.action === 'service-start' ? 'start' : 'stop'); break;
@@ -980,6 +1075,7 @@ export class App {
     const t = e.target as HTMLInputElement;
     const d = t.dataset;
     if (this.view === 'rules' && await this.onRulesChange(t)) return;
+    if (this.view === 'routes' && this.onRouteField(t)) return;
     if (d.toggle) {
       const [kind, pid, key] = d.toggle.split(':');
       if (kind === 'enabled') this.provider(pid!).enabled = t.checked;

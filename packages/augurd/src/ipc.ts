@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'n
 import net from 'node:net';
 import { join } from 'node:path';
 import { PROTOCOL_VERSION } from '@augur/dispatch-protocol';
-import type { JobRequest, MethodName, RpcRequest, RpcResponse } from '@augur/dispatch-protocol';
+import type { JobRequest, MethodName, RouteConfig, RpcRequest, RpcResponse } from '@augur/dispatch-protocol';
 import type { Store } from './store.js';
 import type { Supervisor } from './supervisor.js';
 
@@ -25,7 +25,7 @@ export class IpcServer {
   private server: net.Server | null = null;
   private sockets = new Set<net.Socket>();
   private readonly startedAt = Date.now();
-  constructor(private sup: Supervisor, private store: Store, private token: string, private routes: () => Record<string, { model: string; adapter: string }> | null) {}
+  constructor(private sup: Supervisor, private store: Store, private token: string, private routes: () => Record<string, RouteConfig> | null) {}
 
   private handle(method: MethodName, params: unknown): unknown | Promise<unknown> {
     const p = (params ?? {}) as Record<string, unknown>;
@@ -42,7 +42,7 @@ export class IpcServer {
       case 'pick': return this.sup.pick(params as never);
       case 'human_prompt': return this.sup.humanPrompt(String(p.session ?? ''), String(p.text ?? ''));
       case 'pressure': return this.sup.pressure();
-      case 'routes': return Object.entries(this.routes() ?? {}).map(([name, r]) => ({ name, model: r.model, adapter: r.adapter }));
+      case 'routes': return Object.entries(this.routes() ?? {}).map(([name, r]) => ({ name, model: r.model, adapter: r.adapter, problem: this.sup.routeProblem(r as RouteConfig) }));
       default: throw new Error(`unknown method ${String(method)}`);
     }
   }
