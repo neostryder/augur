@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { addModels, buildPolicyFile, emptyPolicy, fieldPath, mergePolicy, migratePolicy, pauseActive, policyPathFor, resolveModel, setField, setFieldMany, undoChange } from '../src/policy.js';
+import { addModels, buildPolicyFile, emptyPolicy, fieldPath, mergePolicy, migratePolicy, pauseActive, policyFromFile, policyPathFor, resolveModel, setField, setFieldMany, undoChange } from '../src/policy.js';
 import { importPolicy } from '../src/policy-import.js';
 import type { PolicyConfig } from '../src/policy.js';
 import { defaultConfig, migrateConfig } from '../src/config.js';
@@ -102,6 +102,19 @@ describe('policy', () => {
     expect(Object.keys(policy.providers.codex!.models)).toEqual(['codex/sol']);
     expect(policy.providers.codex!.models['codex/sol']!.status).toBe('unreviewed');
     expect(policy.providers['Bad Id']).toBeUndefined();
+  });
+
+  it('adopts an existing policy.json with its statuses and pauses intact', () => {
+    const policy = sample();
+    setField(policy, fieldPath('codex', 'codex/sol', 'status'), 'confirmed', 'desktop', t1);
+    setField(policy, fieldPath('codex', 'codex/sol', 'pause'), { until: '2026-10-04T18:49:55.000Z', weights: null, reason: 'week' }, 'desktop', t1);
+    const file = buildPolicyFile(policy, meta.concat([{ id: 'grok', name: 'Grok', metered: true }, { id: 'minimax', name: 'MiniMax', metered: true }]), t2);
+    const adopted = policyFromFile(JSON.parse(JSON.stringify(file)), t2);
+    const again = buildPolicyFile(adopted, meta.concat([{ id: 'grok', name: 'Grok', metered: true }, { id: 'minimax', name: 'MiniMax', metered: true }]), t2);
+    expect(again.providers.codex!.models['codex/sol']).toMatchObject({ status: 'confirmed', pause: { until: '2026-10-04T18:49:55.000Z', weights: null }, dataTier: 'sensitive', cost: 'expensive' });
+    expect(again.providers.codex!.models['codex/luna']!.status).toBe('imported');
+    expect(again.providers.minimax!.thresholds.denyPct).toBe(95);
+    expect(again.providers.codex!.models['codex/sol']!.activities).toEqual(file.providers.codex!.models['codex/sol']!.activities);
   });
 
   it('lifts a pause at its time and puts policy.json beside the export', () => {

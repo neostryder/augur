@@ -1,5 +1,5 @@
 import Sortable from 'sortablejs';
-import { addModels, buildPolicyFile, emptyPolicy, importPolicy, listDue, policyPathFor, releaseChanges, setField, setFieldMany, setModelStatus, syncModelList, undoChange, type AppConfig, type ModelCatalog, type ModelEntry, type ProviderPlugin, type ReleaseChanges, type Shell, type Snapshot, type UpdateInfo } from '@augur/core';
+import { addModels, buildPolicyFile, emptyPolicy, importPolicy, listDue, policyFromFile, policyPathFor, releaseChanges, setField, setFieldMany, setModelStatus, syncModelList, undoChange, type AppConfig, type ModelCatalog, type ModelEntry, type ProviderPlugin, type ReleaseChanges, type Shell, type Snapshot, type UpdateInfo } from '@augur/core';
 import * as core from './core';
 import type { HistoryRow } from './core';
 import { renderDashboard, tightest, updateTip, type DashboardModel } from './views/dashboard';
@@ -494,11 +494,21 @@ export class App {
     }).catch(() => undefined);
   }
 
-  /** While no rules exist yet, a policy-import.json beside the export is imported once, with every model left unconfirmed. */
+  /**
+   * While no rules exist yet, an existing policy.json beside the export is adopted as it stands, so hand-kept rules and pauses survive.
+   * Without one, a policy-import.json is imported once, with every model left unconfirmed.
+   */
   private async importRulesOnce(): Promise<void> {
     const policy = this.config.policy ??= emptyPolicy();
     const read = this.shell.host.readHomeFile;
     if (Object.keys(policy.providers).length || !read || !this.config.exportPath) return;
+    const existing = await read(policyPathFor(this.config.exportPath)).catch(() => null);
+    if (existing) {
+      try {
+        const adopted = policyFromFile(JSON.parse(existing));
+        if (Object.values(adopted.providers).some((p) => Object.keys(p.models).length)) { policy.providers = adopted.providers; await this.saveConfig(false); return; }
+      } catch { /* an unreadable file falls through to the import file */ }
+    }
     const text = await read(policyPathFor(this.config.exportPath, 'policy-import.json')).catch(() => null);
     if (!text) return;
     try { importPolicy(policy, JSON.parse(text)); } catch { return; }

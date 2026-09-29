@@ -291,6 +291,25 @@ export function buildPolicyFile(policy: PolicyConfig, providers: Array<{ id: str
   return { schema: 1, updatedAt: stamps.at(-1) ?? now.toISOString(), weights: WEIGHTS, dataTiers: DATA_TIERS, activities: ACTIVITIES, unreviewed: unreviewed.sort(), providers: out };
 }
 
+/**
+ * Turns a policy.json back into stored rules, keeping each model's status, so an install with a policy.json already in place
+ * (written by hand or by an earlier build) keeps its rules, pauses and confirmations when the app first takes ownership of the file.
+ * Every model's resolved rule becomes its own rule, so a model that inherited a value from its provider now holds it directly.
+ */
+export function policyFromFile(data: unknown, now = new Date()): PolicyConfig {
+  const stored: Record<string, unknown> = {};
+  for (const [pid, raw] of Object.entries(obj(obj(data).providers))) {
+    const p = obj(raw), models: Record<string, unknown> = {};
+    for (const [label, mraw] of Object.entries(obj(p.models))) {
+      const m = obj(mraw);
+      models[label] = { id: m.id, name: m.name, source: m.source, status: m.status, firstSeen: now.toISOString(),
+        rule: { activities: m.activities, dataTier: m.dataTier, askFirst: m.askFirst, output: m.output, sandbox: m.sandbox, effort: m.effort, cost: m.cost, pause: m.pause, dataHandling: m.dataHandling, notes: m.notes } };
+    }
+    stored[pid] = { defaults: {}, thresholds: p.thresholds, models };
+  }
+  return migratePolicy({ providers: stored });
+}
+
 /** policy.json, and the policy-import.json read on first run, sit beside the usage export. */
 export function policyPathFor(exportPath: string, name: 'policy.json' | 'policy-import.json' = 'policy.json'): string {
   const slash = exportPath.lastIndexOf('/');
