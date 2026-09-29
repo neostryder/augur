@@ -12,3 +12,5 @@ CLAUDE.md
 apps/relay/wrangler.toml
 .wrangler/
 packages/augurd/native/bin/
+__pycache__/
+*.pyc
