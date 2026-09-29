@@ -28,7 +28,7 @@ augur result <job>
 augur logs <job> [--stderr] [--follow]
 augur cancel <job>
 augur apply <job> [--check]
-augur pick --activity <a> --data <tier> [--named <model>] [--fit <model>=<0-1>,...]
+augur pick (--task <description> | --activity <a> --data <tier>) [--named <model>] [--fit <model>=<0-1>,...]
 augur pressure
 augur note-prompt --session <id>     tell the service a person sent the message on standard input; it keeps only the models named
 augur routes
@@ -149,19 +149,22 @@ async function run(rest: string[], p: Parsed, io: Io, opts: Opts, say: (h: strin
 }
 
 async function pickCmd(io: Io, opts: Opts, say: (h: string, d: unknown) => void, opt: (n: string) => string | undefined): Promise<number> {
-  const activity = opt('activity'), dataTier = opt('data');
-  if (!activity || !ACTIVITIES.includes(activity as ActivityId) || !dataTier || !DATA_TIERS.includes(dataTier as DataTier)) { io.err('Give --activity and --data, each one of the known values.\n'); return EXIT_CODES.usage; }
+  const activity = opt('activity'), dataTier = opt('data'), task = opt('task');
+  const okA = !activity || ACTIVITIES.includes(activity as ActivityId), okD = !dataTier || DATA_TIERS.includes(dataTier as DataTier);
+  if (!okA || !okD || (!task && (!activity || !dataTier))) { io.err('Give --task, or both --activity and --data, each one of the known values.' + String.fromCharCode(10)); return EXIT_CODES.usage; }
   const fits: Record<string, number> = {};
   for (const part of (opt('fit') ?? '').split(',').filter(Boolean)) {
     const [model, v] = part.split('='), n = Number(v);
-    if (!model || !Number.isFinite(n) || n < 0 || n > 1) { io.err('--fit takes model=number pairs with each number from 0 to 1.\n'); return EXIT_CODES.usage; }
+    if (!model || !Number.isFinite(n) || n < 0 || n > 1) { io.err('--fit takes model=number pairs with each number from 0 to 1.' + String.fromCharCode(10)); return EXIT_CODES.usage; }
     fits[model] = n;
   }
-  const r = await call('pick', { activity: activity as ActivityId, dataTier: dataTier as DataTier, ...(opt('named') ? { named: opt('named') as string } : {}), fits, ...(io.env.CLAUDE_CODE_SESSION_ID ? { session: io.env.CLAUDE_CODE_SESSION_ID } : {}) }, opts);
-  if ('error' in r) { io.err(`${r.error}\n`); return EXIT_CODES.failed; }
+  const r = await call('pick', { ...(activity ? { activity: activity as ActivityId } : {}), ...(dataTier ? { dataTier: dataTier as DataTier } : {}), ...(task ? { task } : {}),
+    ...(opt('named') ? { named: opt('named') as string } : {}), fits, ...(io.env.CLAUDE_CODE_SESSION_ID ? { session: io.env.CLAUDE_CODE_SESSION_ID } : {}) }, opts);
+  if ('error' in r) { io.err(r.error + String.fromCharCode(10)); return EXIT_CODES.failed; }
   const lines = r.ranking.map(x => `  ${x.model.padEnd(22)} ${x.score.toFixed(2)}   fit ${x.fit.toFixed(2)} x ${x.level} ${x.weight.toFixed(2)} x usage ${x.usage.toFixed(2)}   routes ${(r.routes[x.model] ?? []).join(', ') || 'none'}`);
   for (const b of r.blocked) lines.push(`  ${b.model.padEnd(22)} --     ${b.why}`);
-  say(r.pick ? `Pick: ${r.pick}   (${activity}, ${dataTier} data; scarcity ${r.scarcity})\n${lines.join('\n')}` : `No model is permitted ${activity} on ${dataTier} data.\n${lines.join('\n')}`, r);
+  const nl = String.fromCharCode(10);
+  say(r.pick ? `Pick: ${r.pick}   (${r.activity}, ${r.dataTier} data; scarcity ${r.scarcity}${r.decision ? `; ${r.decision.backend}` : ''})${nl}${lines.join(nl)}` : `No model is permitted ${r.activity} on ${r.dataTier} data.${nl}${lines.join(nl)}`, r);
   return r.pick ? 0 : EXIT_CODES.rejected;
 }
 

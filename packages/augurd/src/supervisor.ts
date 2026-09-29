@@ -6,8 +6,10 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { fileURLToPath } from 'node:url';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES } from '@augur/core';
 import type { PolicyFile } from '@augur/core';
+import { classifyTask, fitScores } from '@augur/decision';
+import type { DecisionBackend } from '@augur/decision';
 import { NAMED_PROMPT_WINDOW, PICK_WINDOW_MIN, TOOL_TIERS, checkLineage, checkNamed, checkPick, evaluate, isTerminal, matchNamedModels, pressure, rank, usageFactors } from '@augur/dispatch-protocol';
-import type { Adapter, JobRecord, JobRequest, LaunchPlan, PickRequest, PickResult, Rejection, RouteConfig, UsageSnapshot } from '@augur/dispatch-protocol';
+import type { Adapter, JobRecord, JobRequest, LaunchPlan, PickAnswer, PickParams, Rejection, RouteConfig, UsageSnapshot } from '@augur/dispatch-protocol';
 import { MAX_COMMAND_LINE } from './adapters/util.js';
 import type { ServiceConfig } from './config.js';
 import { buildEnv } from './env.js';
@@ -16,6 +18,8 @@ import type { Store } from './store.js';
 export interface SupervisorDeps {
   store: Store; config: ServiceConfig; dir: string; adapters: Map<string, Adapter>;
   routes: () => Record<string, RouteConfig> | null; policy: () => PolicyFile | null; usage: () => UsageSnapshot | null;
+  /** Answers the typed questions behind a pick by task description. `local` is a backend that runs on this network, for text about students. */
+  decision?: { primary: DecisionBackend; local?: DecisionBackend };
   runnerPath?: string; now?: () => number; env?: NodeJS.ProcessEnv;
 }
 
@@ -113,15 +117,32 @@ export class Supervisor {
   // ------------------------------------------------------------------ picks and pressure
 
   /** Ranks the models a task may use, records the pick, and names the routes that reach each model. */
-  pick(req: PickRequest & { session?: string }): (PickResult & { routes: Record<string, string[]> }) | { error: string } {
+  async pick(req: PickParams): Promise<PickAnswer> {
     const policy = this.d.policy();
     if (!policy) return { error: 'policy.json was not found. Augur writes it when a rule is saved.' };
-    if (!ACTIVITIES.includes(req.activity) || !DATA_TIERS.includes(req.dataTier)) return { error: 'Unknown activity or data tier.' };
-    const result = rank(policy, this.d.usage(), req, new Date(this.now()));
+    let activity = req.activity, dataTier = req.dataTier, classified: unknown, fitError: string | undefined;
+    const fits = { ...(req.fits ?? {}) };
+    const backend = this.d.decision;
+    if (req.task && backend && (!activity || !dataTier)) {
+      const c = await classifyTask(backend, req.task);
+      activity ??= c.activity ?? undefined; dataTier ??= c.dataTier; classified = c.detail;
+    }
+    if (!activity) return { error: req.task ? 'The task could not be classified. Pass the activity, or configure a decision backend.' : 'Give an activity and data tier, or a task description.' };
+    dataTier ??= 'sensitive';
+    if (!ACTIVITIES.includes(activity) || !DATA_TIERS.includes(dataTier)) return { error: 'Unknown activity or data tier.' };
+    if (req.task && backend) {
+      const asked = rank(policy, this.d.usage(), { activity, dataTier }, new Date(this.now())).ranking.map(r => r.model).filter(m => fits[m] === undefined);
+      if (asked.length) {
+        const describe = (m: string) => { const e = Object.values(policy.providers).map(p => p.models[m]).find(Boolean); return `${e?.name ?? e?.id ?? m}. Permitted: ${Object.keys(e?.activities ?? {}).join(', ')}. ${e?.notes ?? ''}`.trim(); };
+        const got = await fitScores(backend.primary, req.task, asked.map(m => ({ model: m, description: describe(m) })));
+        Object.assign(fits, got.fits); fitError = got.error;
+      }
+    }
+    const result = rank(policy, this.d.usage(), { activity, dataTier, ...(req.named ? { named: req.named } : {}), fits }, new Date(this.now()));
     const routes: Record<string, string[]> = {};
     for (const [name, r] of Object.entries(this.d.routes() ?? {})) if (this.d.adapters.has(r.adapter)) (routes[r.model] ??= []).push(name);
-    if (result.pick) this.d.store.addPick({ at: this.now(), session: req.session ?? null, model: result.pick, activity: req.activity, dataTier: req.dataTier, named: req.named ?? null, cleared: result.ranking.map(r => r.model) });
-    return { ...result, routes };
+    if (result.pick) this.d.store.addPick({ at: this.now(), session: req.session ?? null, model: result.pick, activity, dataTier, named: req.named ?? null, cleared: result.ranking.map(r => r.model) });
+    return { ...result, routes, activity, dataTier, ...(backend ? { decision: { backend: backend.primary.id, ...(classified ? { classified } : {}), ...(fitError ? { fitError } : {}) } } : {}) };
   }
 
   pressure(): { pressure: ReturnType<typeof pressure>; factors: Record<string, number>; scarcity: number } | null {

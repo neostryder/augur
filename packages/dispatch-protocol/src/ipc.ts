@@ -1,10 +1,30 @@
 // Wire contract between the service and its callers. One JSON object per line over a named pipe, each request carrying the auth token.
 import type { Headroom } from './pace.js';
+import type { ActivityId, DataTier } from '@augur/core';
 import type { PickRequest, PickResult } from './pick.js';
 import type { JobEvent, JobRecord, JobRequest, Rejection } from './spec.js';
 import type { JobState } from './states.js';
 
 export const PROTOCOL_VERSION = 1;
+
+/**
+ * A task is given either as its activity and data tier, or as a `task` description that the decision backend classifies. `fits` are per-model
+ * fit scores from the caller; models without one are scored by the decision backend when there is one, and count as 0.5 otherwise.
+ * Describe the kind of work in `task`, never paste its data.
+ */
+export interface PickParams extends Omit<PickRequest, 'activity' | 'dataTier'> {
+  activity?: ActivityId;
+  dataTier?: DataTier;
+  task?: string;
+  session?: string;
+}
+export type PickAnswer = (PickResult & {
+  routes: Record<string, string[]>;
+  activity: ActivityId;
+  dataTier: DataTier;
+  /** What the decision backend answered, when it was asked. */
+  decision?: { backend: string; classified?: unknown; fitError?: string };
+}) | { error: string };
 
 export interface RpcRequest { id: number; token: string; method: keyof Methods; params?: unknown }
 export type RpcResponse<T = unknown> = { id: number; result: T } | { id: number; error: { code: string; message: string } };
@@ -21,7 +41,7 @@ export interface Methods {
   /** Applies the patch a job left in its isolated workspace to the working directory the job was started for. */
   apply: { params: { id: string; check?: boolean }; result: { ok: boolean; output: string } | null };
   /** Ranks the models a task may use and records the pick, so later jobs for the same caller are cleared against it. */
-  pick: { params: PickRequest & { session?: string }; result: PickResult & { routes: Record<string, string[]> } };
+  pick: { params: PickParams; result: PickAnswer };
   /** Tells the service a person sent a message in a session. It keeps which models the message named, and drops the text. */
   human_prompt: { params: { session: string; text: string }; result: { models: string[] } | { error: string } };
   /** Headroom per provider and the usage factor of every model. */

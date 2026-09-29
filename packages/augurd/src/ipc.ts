@@ -27,7 +27,7 @@ export class IpcServer {
   private readonly startedAt = Date.now();
   constructor(private sup: Supervisor, private store: Store, private token: string, private routes: () => Record<string, { model: string; adapter: string }> | null) {}
 
-  private handle(method: MethodName, params: unknown): unknown {
+  private handle(method: MethodName, params: unknown): unknown | Promise<unknown> {
     const p = (params ?? {}) as Record<string, unknown>;
     switch (method) {
       case 'ping': return { pid: process.pid, version: PROTOCOL_VERSION, startedAt: this.startedAt };
@@ -67,10 +67,11 @@ export class IpcServer {
             const line = buf.slice(0, i); buf = buf.slice(i + 1);
             let req: RpcRequest;
             try { req = JSON.parse(line) as RpcRequest; } catch { sock.write(JSON.stringify({ id: 0, error: { code: 'bad_json', message: 'Request is not JSON.' } }) + '\n'); continue; }
-            let res: RpcResponse;
-            if (!this.authorized(req.token)) res = { id: req.id, error: { code: 'unauthorized', message: 'Missing or wrong token.' } };
-            else { try { res = { id: req.id, result: this.handle(req.method, req.params) ?? null }; } catch (e) { res = { id: req.id, error: { code: 'failed', message: (e as Error).message } }; } }
-            sock.write(JSON.stringify(res) + '\n');
+            const respond = async (): Promise<RpcResponse> => {
+              if (!this.authorized(req.token)) return { id: req.id, error: { code: 'unauthorized', message: 'Missing or wrong token.' } };
+              try { return { id: req.id, result: (await this.handle(req.method, req.params)) ?? null }; } catch (e) { return { id: req.id, error: { code: 'failed', message: (e as Error).message } }; }
+            };
+            void respond().then(res => { if (!sock.destroyed) sock.write(JSON.stringify(res) + '\n'); });
           }
         });
       });

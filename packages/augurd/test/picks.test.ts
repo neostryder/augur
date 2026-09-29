@@ -9,22 +9,22 @@ const setup = (...a: Parameters<typeof makeEnv>) => { const e = makeEnv(...a); e
 const caller = (session: string) => ({ kind: 'other' as const, label: 'test', session });
 
 describe('picks through the service', () => {
-  it('ranks the models a task may use, leaves out the ones that fail a rule, and names the routes that reach each', () => {
+  it('ranks the models a task may use, leaves out the ones that fail a rule, and names the routes that reach each', async () => {
     const e = setup();
-    const r = e.sup.pick({ activity: 'write_code', dataTier: 'internal' });
+    const r = await e.sup.pick({ activity: 'write_code', dataTier: 'internal' });
     if ('error' in r) throw new Error(r.error);
     expect(r.ranking.map(x => x.model)).toEqual(expect.arrayContaining(['test/fake', 'test/patch', 'test/sandboxed']));
     expect(r.blocked.find(b => b.model === 'test/ask')?.why).toMatch(/ask first/);
     expect(r.blocked.find(b => b.model === 'test/public')?.why).toMatch(/cleared for public data/);
     expect(r.routes['test/fake']).toEqual(expect.arrayContaining(['fake', 'raw', 'boss']));
-    expect(e.sup.pick({ activity: 'write_code', dataTier: 'internal', named: 'test/ask' })).toMatchObject({ ranking: expect.arrayContaining([expect.objectContaining({ model: 'test/ask' })]) });
+    expect(await e.sup.pick({ activity: 'write_code', dataTier: 'internal', named: 'test/ask' })).toMatchObject({ ranking: expect.arrayContaining([expect.objectContaining({ model: 'test/ask' })]) });
   });
 
-  it('answers without a policy and for an unknown activity', () => {
+  it('answers without a policy and for an unknown activity', async () => {
     const e = setup();
-    expect(e.sup.pick({ activity: 'nonsense' as never, dataTier: 'internal' })).toHaveProperty('error');
+    expect(await e.sup.pick({ activity: 'nonsense' as never, dataTier: 'internal' })).toHaveProperty('error');
     const bare = setup(); (bare.sup as unknown as { d: { policy: () => null } }).d.policy = () => null;
-    expect(bare.sup.pick({ activity: 'write_code', dataTier: 'internal' })).toHaveProperty('error');
+    expect(await bare.sup.pick({ activity: 'write_code', dataTier: 'internal' })).toHaveProperty('error');
   });
 
   it('reports pressure only when both policy.json and usage.json exist', () => {
@@ -40,7 +40,7 @@ describe('picks through the service', () => {
     const e = setup({ requirePick: true });
     const asOne = (over: object = {}) => request({ text: 'SLEEP 0', ...over, caller: caller('s1') } as never, e.root);
     expect(e.sup.submit(asOne())).toMatchObject({ rejected: { code: 'not_picked' } });
-    const picked = e.sup.pick({ activity: 'write_code', dataTier: 'internal', session: 's1', fits: { 'test/fake': 1 } });
+    const picked = await e.sup.pick({ activity: 'write_code', dataTier: 'internal', session: 's1', fits: { 'test/fake': 1 } });
     if ('error' in picked) throw new Error(picked.error);
     expect(picked.pick).toBe('test/fake');
     const id = submitOk(e.sup, asOne());
@@ -48,7 +48,7 @@ describe('picks through the service', () => {
     // Another caller's pick does not count.
     expect(e.sup.submit({ ...asOne(), caller: caller('s2') })).toMatchObject({ rejected: { code: 'not_picked' } });
     // A model the pick cleared but ranked lower goes ahead with a note.
-    e.sup.pick({ activity: 'write_code', dataTier: 'public', session: 's1', fits: { 'test/fake': 1, 'test/public': 0 } });
+    await e.sup.pick({ activity: 'write_code', dataTier: 'public', session: 's1', fits: { 'test/fake': 1, 'test/public': 0 } });
     const cleared = e.sup.submit(asOne({ route: 'pub', dataTier: 'public' }));
     expect('warnings' in cleared && cleared.warnings.some(w => /cleared/.test(w))).toBe(true);
     // Named, and the override, both skip the check, and the override is recorded.
@@ -107,5 +107,53 @@ describe('confirming that a person named the model', () => {
     expect('id' in e.sup.submit(ask(e, 's1'))).toBe(true);
     e.sup.humanPrompt('s1', 'a very private sentence about ask');
     expect(JSON.stringify(e.store.db.prepare('select * from prompts').all())).not.toContain('private');
+  });
+});
+
+describe('picking by task description', () => {
+  const backend = (calls: string[] = []) => ({
+    id: 'laya', local: true,
+    async ask(_s: unknown, q: Record<string, unknown>) {
+      const names = Object.keys(q);
+      calls.push(names[0] as string);
+      if ('activity' in q) return { answers: { activity: { choice: 'write_code', confidence: 0.9 } } };
+      if ('data' in q) return { answers: { data: { probabilities: { public: 0.05, internal: 0.9, sensitive: 0.05, regulated: 0 } } } };
+      const answers: Record<string, { score: number }> = {};
+      for (const n of names) answers[n] = { score: n === 'f_test_patch' ? 3 : n === 'r_test_patch' ? 0 : n.startsWith('f_') ? 0 : 3 };
+      return { answers };
+    },
+  });
+  const withBackend = (e: Env, b: unknown) => { (e.sup as unknown as { d: { decision: unknown } }).d.decision = { primary: b }; };
+
+  it('classifies the task, scores each candidate model, and ranks on the result', async () => {
+    const e = setup(), calls: string[] = [];
+    withBackend(e, backend(calls));
+    const r = await e.sup.pick({ task: 'refactor the build scripts' });
+    if ('error' in r) throw new Error(r.error);
+    expect(r).toMatchObject({ activity: 'write_code', dataTier: 'internal', decision: { backend: 'laya' } });
+    expect(calls[0]).toBe('activity');
+    expect(r.ranking[0]?.model).toBe('test/patch');
+    expect(r.ranking.find(x => x.model === 'test/patch')?.fit).toBe(1);
+  });
+
+  it('takes the fits a caller gives and asks only for the rest, and uses a given activity without asking', async () => {
+    const e = setup(), calls: string[] = [];
+    withBackend(e, backend(calls));
+    const r = await e.sup.pick({ task: 'refactor the build scripts', activity: 'write_code', dataTier: 'internal', fits: { 'test/patch': 0, 'test/fake': 1 } });
+    if ('error' in r) throw new Error(r.error);
+    expect(calls).not.toContain('activity');
+    expect(r.ranking.find(x => x.model === 'test/patch')?.fit).toBe(0);
+    expect(r.ranking.find(x => x.model === 'test/fake')?.fit).toBe(1);
+  });
+
+  it('falls back to 0.5 and says why when the backend fails, and refuses a task it cannot classify', async () => {
+    const e = setup();
+    withBackend(e, { id: 'laya', local: true, ask: async () => ({ error: 'down' }) });
+    const r = await e.sup.pick({ task: 'refactor the build scripts', activity: 'write_code', dataTier: 'internal' });
+    if ('error' in r) throw new Error(r.error);
+    expect(r.ranking.every(x => x.fit === 0.5)).toBe(true);
+    expect(r.decision?.fitError).toBeDefined();
+    expect(await e.sup.pick({ task: 'refactor the build scripts' })).toHaveProperty('error');
+    expect(await setup().sup.pick({ task: 'refactor the build scripts' })).toHaveProperty('error');
   });
 });

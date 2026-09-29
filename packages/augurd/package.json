@@ -10,6 +10,6 @@
     "start": "tsx src/main.ts",
     "build:jobhost": "node native/build-jobhost.mjs"
   },
-  "dependencies": { "@augur/core": "workspace:*", "@augur/dispatch-protocol": "workspace:*" },
+  "dependencies": { "@augur/core": "workspace:*", "@augur/decision": "workspace:*", "@augur/dispatch-protocol": "workspace:*" },
   "devDependencies": { "@types/node": "26.6.3", "tsx": "4.23.15", "typescript": "7.0.2", "vitest": "5.0.2" }
 }

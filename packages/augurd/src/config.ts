@@ -2,6 +2,14 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+export interface DecisionSettings {
+  /** Who answers the typed questions behind `augur pick --task`: Laya servers, Jev with the person's own key, or nobody. */
+  backend: 'laya' | 'jev' | 'none';
+  servers?: Array<{ name: string; url: string }>;
+  /** A second backend asked the same questions and only compared with the first. */
+  shadow?: 'laya' | 'jev' | null;
+}
+
 export interface ServiceConfig {
   /** Days a finished job's folder (logs and results) is kept. Job records stay. */
   retentionDays: number;
@@ -18,12 +26,13 @@ export interface ServiceConfig {
   requirePick: boolean;
   /** What to do with a caller's claim that a person named the model: `off` takes it as true, `record` takes it and notes when it cannot be confirmed, `enforce` refuses the job. */
   verifyNamed: 'off' | 'record' | 'enforce';
+  decision: DecisionSettings;
   /** Seconds after which a runner with no heartbeat counts as gone. */
   runnerStaleS: number;
 }
 
 export const DEFAULT_CONFIG: ServiceConfig = { retentionDays: 30, persistPrompts: false, maxConcurrent: 8, maxDepth: 2, maxDescendants: 16,
-  jobhostPath: null, adapters: ['codex-exec'], requirePick: false, verifyNamed: 'record', runnerStaleS: 20 };
+  jobhostPath: null, adapters: ['codex-exec'], requirePick: false, verifyNamed: 'record', decision: { backend: 'none' }, runnerStaleS: 20 };
 
 /** The launcher built by `pnpm build:jobhost` sits beside the package's sources, and a packaged install places it next to the service. */
 export function defaultJobhost(): string | null {
@@ -34,6 +43,13 @@ export function defaultJobhost(): string | null {
 }
 
 const num = (v: unknown, d: number, min: number, max: number) => typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max ? v : d;
+
+function decisionSettings(v: unknown): DecisionSettings {
+  const d = (typeof v === 'object' && v !== null ? v : {}) as Record<string, unknown>;
+  const kind = (x: unknown) => (x === 'laya' || x === 'jev' ? x : null);
+  const servers = Array.isArray(d.servers) ? d.servers.filter((s): s is { name: string; url: string } => typeof s?.name === 'string' && typeof s?.url === 'string') : undefined;
+  return { backend: kind(d.backend) ?? 'none', ...(servers?.length ? { servers } : {}), shadow: kind(d.shadow) };
+}
 
 export function loadConfig(dir: string): ServiceConfig {
   const path = join(dir, 'config.json');
@@ -48,6 +64,7 @@ export function loadConfig(dir: string): ServiceConfig {
     adapters: Array.isArray(raw.adapters) ? raw.adapters.filter((a): a is string => typeof a === 'string') : c.adapters,
     requirePick: raw.requirePick === true,
     verifyNamed: raw.verifyNamed === 'off' || raw.verifyNamed === 'enforce' ? raw.verifyNamed : c.verifyNamed,
+    decision: decisionSettings(raw.decision),
     runnerStaleS: num(raw.runnerStaleS, c.runnerStaleS, 5, 600),
   };
 }
