@@ -26,6 +26,10 @@ export interface RulesModel {
   note: string;
   /** The data tier last applied from the bulk bar. */
   bulkTier: string;
+  /** What a pause about to be set does: stop the model, or change its weights while it lasts. */
+  pauseMode: 'off' | 'weights';
+  /** Weights chosen for that pause, by activity. An empty value leaves the activity as it is. */
+  pauseWeights: Record<string, string>;
   catalog: ModelCatalog;
   /** Providers whose model list is being read right now. */
   listing: Set<string>;
@@ -72,12 +76,12 @@ function summary(provider: string, defaults: Rule, model: ModelEntry): string {
 
 function modelRow(m: RulesModel, pid: string, defaults: Rule, label: string, model: ModelEntry): string {
   const key = `${pid}|${label}`, on = m.sel?.provider === pid && m.sel.model === label;
-  const paused = pauseActive(model.rule.pause ?? defaults.pause);
+  const pause = model.rule.pause ?? defaults.pause, paused = pauseActive(pause);
   const chip = model.status === 'confirmed' ? '' : `<span class="chip ${model.status === 'unreviewed' ? 'stale' : ''}">${esc(STATUS_LABELS[model.status])}</span>`;
   return `<div class="rrow ${on ? 'on' : ''}">
     <input type="checkbox" data-pick="${esc(key)}" ${m.picked.has(key) ? 'checked' : ''} aria-label="Select ${esc(model.name ?? label)}">
     <button class="rpick" data-rsel="${esc(pid)}" data-rmodel="${esc(label)}">
-      <span class="rname">${esc(model.name ?? model.id)} ${chip}${paused ? '<span class="chip">Paused</span>' : ''}</span>
+      <span class="rname">${esc(model.name ?? model.id)} ${chip}${paused ? `<span class="chip">${pause?.weights ? 'Weights changed' : 'Paused'}</span>` : ''}</span>
       <span class="rsum">${esc(label)}, ${esc(summary(pid, defaults, model))}</span></button></div>`;
 }
 
@@ -155,9 +159,18 @@ function pauseRows(m: RulesModel, pid: string, model: string | null, own: Rule['
   let html = '';
   if (shown && active) {
     const until = new Date(shown.until).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-    html += `<div class="rnote">Paused until ${esc(until)}${shown.meter ? ` (the ${esc(meters.find((x) => x.id === shown.meter)?.label ?? shown.meter)} reset)` : ''}${own === undefined ? ', set on the provider' : ''}.${shown.reason ? ` ${esc(shown.reason)}` : ''}</div>`;
+    const changed = shown.weights ? ACTIVITIES.filter((a) => a in shown.weights!).map((a) => `${ACTIVITY_LABELS[a]} ${shown.weights![a] ? WEIGHT_LABELS[shown.weights![a]!].toLowerCase() : 'not allowed'}`) : [];
+    html += `<div class="rnote">${changed.length ? 'Weights changed' : 'Paused'} until ${esc(until)}${shown.meter ? ` (the ${esc(meters.find((x) => x.id === shown.meter)?.label ?? shown.meter)} reset)` : ''}${own === undefined ? ', set on the provider' : ''}.${changed.length ? ` ${esc(changed.join(', '))}.` : ''}${shown.reason ? ` ${esc(shown.reason)}` : ''}</div>`;
     if (own) html += `<div class="actions" style="margin-top:4px"><button class="btn small" data-pause-clear="${esc(path)}">Resume now</button></div>`;
     return html;
+  }
+  html += row('While paused', 'r-pause-mode', `<select id="r-pause-mode" data-pause-mode>${opt('off', 'Do not use this model', m.pauseMode)}${opt('weights', 'Use different weights', m.pauseMode)}</select>`,
+    'Weights replace the ones below until the pause ends, so a cheaper model can be favoured for a week.');
+  if (m.pauseMode === 'weights') {
+    html += ACTIVITIES.map((a) => {
+      const cur = m.pauseWeights[a] ?? '';
+      return row(ACTIVITY_LABELS[a], `r-pw-${a}`, `<select id="r-pw-${a}" data-pause-weight="${a}">${opt('', 'Leave as is', cur)}${opt('none', 'Not allowed', cur)}${WEIGHT_LEVELS.map((w) => opt(w, WEIGHT_LABELS[w], cur)).join('')}</select>`);
+    }).join('');
   }
   html += row('Pause until', 'r-pause-until', `<input type="datetime-local" id="r-pause-until" data-pause-until="${esc(path)}" min="${esc(local(new Date().toISOString()))}">`,
     'Routers skip this model until then.');

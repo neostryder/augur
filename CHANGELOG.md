@@ -4,6 +4,10 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+### Added
+
+- [Visible] [UI] **A model can be paused with different weights instead of stopped.** On the Model rules page, the pause card asks what happens while it lasts: skip the model, or use replacement weights for any activity. Setting the weights of a cheaper model higher during a pause favours it until the pause ends, and the model list marks such a pause as changed weights rather than paused.
+
 ### Changed
 
 - [Visible] [UI] **The update and models-to-review buttons sit to the left of the theme button.** They are the header's alerts, so they now come first and stay apart from the controls.

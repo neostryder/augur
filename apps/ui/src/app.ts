@@ -80,8 +80,8 @@ export class App {
   private hotkeyError = '';
   private catalog: ModelCatalog = {};
   private listing = new Set<string>();
-  private rules: { sel: RulesModel['sel']; query: string; filter: RulesFilter; open: Set<string>; picked: Set<string>; showHistory: boolean; addError: string; note: string; bulkTier: string } =
-    { sel: null, query: '', filter: 'all', open: new Set(), picked: new Set(), showHistory: false, addError: '', note: '', bulkTier: '' };
+  private rules: { sel: RulesModel['sel']; query: string; filter: RulesFilter; open: Set<string>; picked: Set<string>; showHistory: boolean; addError: string; note: string; bulkTier: string; pauseMode: 'off' | 'weights'; pauseWeights: Record<string, string> } =
+    { sel: null, query: '', filter: 'all', open: new Set(), picked: new Set(), showHistory: false, addError: '', note: '', bulkTier: '', pauseMode: 'off', pauseWeights: {} };
 
   private get sync(): SyncConfig | null {
     return this.config.sync ?? null;
@@ -840,11 +840,16 @@ export class App {
       }
       await this.saveRules(); return true;
     }
+    if (d.pauseMode !== undefined) { this.rules.pauseMode = t.value === 'weights' ? 'weights' : 'off'; await this.render(); return true; }
+    if (d.pauseWeight) { this.rules.pauseWeights[d.pauseWeight] = t.value; await this.render(); return true; }
     if (d.pauseUntil || d.pauseMeter) {
       const path = (d.pauseUntil ?? d.pauseMeter)!, pid = path.split('|')[0]!;
       const meter = d.pauseMeter ? this.snapshot?.providers[pid]?.meters.find((x) => x.id === t.value) : undefined;
       const until = d.pauseMeter ? meter?.resetsAt : t.value ? new Date(t.value).toISOString() : null;
-      if (until) setField(policy, path, { until, weights: null, ...(meter ? { meter: meter.id } : {}) }, this.device);
+      const weights = this.rules.pauseMode === 'weights'
+        ? Object.fromEntries(Object.entries(this.rules.pauseWeights).filter(([, v]) => v !== '').map(([a, v]) => [a, v === 'none' ? null : v])) : null;
+      if (until) setField(policy, path, { until, weights: weights && Object.keys(weights).length ? weights : null, ...(meter ? { meter: meter.id } : {}) }, this.device);
+      if (until) { this.rules.pauseMode = 'off'; this.rules.pauseWeights = {}; }
       await this.saveRules(); return true;
     }
     if (!d.rule) return false;
