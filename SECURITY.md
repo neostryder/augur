@@ -15,6 +15,14 @@ Please report security problems privately through GitHub's [private vulnerabilit
 
 The relay at augur.rpgm.tools forwards requests from the web app to a fixed list of usage and status endpoints. Its code stores and logs none of them, though Cloudflare, which runs it, keeps its own request logs. It passes your API key through to the provider in the request you make, the same as a direct call. If you would rather not use it, deploy your own copy from `apps/relay` and enter its address in settings.
 
+## The dispatch service
+
+The dispatch service, `augurd`, is a separate program from the desktop app and runs only once you set it up. It keeps a record of each job in a SQLite database in your user profile, and the job's output and results in a folder there for 30 days by default. A prompt is held only until its job starts. It is not stored unless you turn that on. Each job's process receives only the environment variables its adapter names, not the rest of the service's environment.
+
+The service listens on a named pipe. Windows lets any local account open that pipe for reading but not for writing, and every request also has to carry a token kept in a file in your profile, so another account cannot send it commands. Nothing the service holds goes to the relay or the phone.
+
+Rules apply to jobs started through the service. A harness started directly from a shell is outside it.
+
 ## Supported versions
 
 Only the latest release receives fixes. The desktop app updates itself unless you turn that off.

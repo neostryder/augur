@@ -1,0 +1,14 @@
+{
+  "name": "@augur/dispatch-cli",
+  "version": "0.6.1",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/cli.ts" },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p .",
+    "test": "vitest run",
+    "augur": "tsx src/main.ts"
+  },
+  "dependencies": { "@augur/augurd": "workspace:*", "@augur/core": "workspace:*", "@augur/dispatch-protocol": "workspace:*" },
+  "devDependencies": { "@types/node": "26.6.3", "tsx": "4.23.15", "typescript": "7.0.2", "vitest": "5.0.2" }
+}

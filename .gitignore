@@ -11,3 +11,4 @@ apps/ui/public/__seed.json
 CLAUDE.md
 apps/relay/wrangler.toml
 .wrangler/
+packages/augurd/native/bin/
