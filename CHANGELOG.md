@@ -4,6 +4,8 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-29
+
 ### Added
 
 - [Visible] [Providers] **GitHub Copilot shows its credits used this month.** Augur reads the count through the GitHub CLI's sign-in (`gh auth login`) and compares it with a monthly spending cap you enter in settings, since GitHub does not report a cap. The card shows the credits used and when the month resets. Turn it on in settings; it is off until then.
