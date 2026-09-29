@@ -6,8 +6,8 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { fileURLToPath } from 'node:url';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES } from '@augur/core';
 import type { PolicyFile } from '@augur/core';
-import { TOOL_TIERS, checkLineage, evaluate, isTerminal } from '@augur/dispatch-protocol';
-import type { Adapter, JobRecord, JobRequest, LaunchPlan, Rejection, RouteConfig, UsageSnapshot } from '@augur/dispatch-protocol';
+import { PICK_WINDOW_MIN, TOOL_TIERS, checkLineage, checkPick, evaluate, isTerminal, pressure, rank, usageFactors } from '@augur/dispatch-protocol';
+import type { Adapter, JobRecord, JobRequest, LaunchPlan, PickRequest, PickResult, Rejection, RouteConfig, UsageSnapshot } from '@augur/dispatch-protocol';
 import { MAX_COMMAND_LINE } from './adapters/util.js';
 import type { ServiceConfig } from './config.js';
 import { buildEnv } from './env.js';
@@ -69,6 +69,12 @@ export class Supervisor {
 
     const decision = evaluate(req, { policy: this.d.policy(), usage: this.d.usage(), route, capabilities: adapter.capabilities, now: new Date(this.now()) });
     if (!decision.allow) { this.d.store.event(null, 'policy_evaluated', `rejected ${decision.rejection.code}: ${req.route}`, this.now()); return { rejected: decision.rejection }; }
+    const warnings = [...decision.warnings];
+    if (this.d.config.requirePick && !req.allow?.includes('unpicked')) {
+      const check = checkPick(route.model, !!req.named, req.caller.session ?? null, this.d.store.picksSince(this.now() - PICK_WINDOW_MIN * 60000), this.now());
+      if (!check.ok) { this.d.store.event(null, 'policy_evaluated', `rejected not_picked: ${req.route}`, this.now()); return reject('not_picked', check.reason); }
+      if (check.note) warnings.push(check.note);
+    }
 
     let prompt: string;
     try { prompt = req.prompt.text ?? readFileSync(req.prompt.file as string, 'utf8'); } catch { return reject('bad_request', 'The prompt file could not be read.'); }
@@ -91,10 +97,32 @@ export class Supervisor {
       timeoutS: req.timeoutS ?? null, harnessVersion: null, workspace });
     const s = this.d.store;
     s.event(id, 'requested', `${req.caller.kind}${req.caller.label ? ' ' + req.caller.label : ''}`, this.now());
-    s.event(id, 'policy_evaluated', decision.warnings.join(' | '), this.now());
+    s.event(id, 'policy_evaluated', warnings.join(' | '), this.now());
+    if (req.allow?.length) s.event(id, 'checks_overridden', req.allow.join(', '), this.now());
     s.event(id, 'queued', '', this.now());
     this.tick();
-    return { id, warnings: decision.warnings };
+    return { id, warnings };
+  }
+
+  // ------------------------------------------------------------------ picks and pressure
+
+  /** Ranks the models a task may use, records the pick, and names the routes that reach each model. */
+  pick(req: PickRequest & { session?: string }): (PickResult & { routes: Record<string, string[]> }) | { error: string } {
+    const policy = this.d.policy();
+    if (!policy) return { error: 'policy.json was not found. Augur writes it when a rule is saved.' };
+    if (!ACTIVITIES.includes(req.activity) || !DATA_TIERS.includes(req.dataTier)) return { error: 'Unknown activity or data tier.' };
+    const result = rank(policy, this.d.usage(), req, new Date(this.now()));
+    const routes: Record<string, string[]> = {};
+    for (const [name, r] of Object.entries(this.d.routes() ?? {})) if (this.d.adapters.has(r.adapter)) (routes[r.model] ??= []).push(name);
+    if (result.pick) this.d.store.addPick({ at: this.now(), session: req.session ?? null, model: result.pick, activity: req.activity, dataTier: req.dataTier, named: req.named ?? null, cleared: result.ranking.map(r => r.model) });
+    return { ...result, routes };
+  }
+
+  pressure(): { pressure: ReturnType<typeof pressure>; factors: Record<string, number>; scarcity: number } | null {
+    const policy = this.d.policy(), usage = this.d.usage();
+    if (!policy || !usage) return null;
+    const press = pressure(policy, usage, new Date(this.now()));
+    return { pressure: press, ...usageFactors(policy, press) };
   }
 
   private validate(req: JobRequest): string | null {
@@ -332,6 +360,7 @@ export class Supervisor {
   purge(): number {
     const cutoff = this.now() - this.d.config.retentionDays * 86400000;
     let n = 0;
+    this.d.store.dropPicksBefore(this.now() - 86400000);
     for (const id of this.d.store.purgeable(cutoff)) {
       const rec = this.d.store.get(id);
       try {

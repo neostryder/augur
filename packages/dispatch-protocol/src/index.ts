@@ -1,5 +1,7 @@
 export * from './states.js';
 export * from './spec.js';
 export * from './adapter.js';
+export * from './pace.js';
 export * from './rules.js';
+export * from './pick.js';
 export * from './ipc.js';

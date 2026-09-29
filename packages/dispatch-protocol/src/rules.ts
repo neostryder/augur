@@ -2,16 +2,9 @@
 import { DATA_TIERS, pauseActive } from '@augur/core';
 import type { PolicyFile, ResolvedModel } from '@augur/core';
 import type { AdapterCapabilities, RouteConfig } from './adapter.js';
+import { PACE, factorModels, isWindowMeter, ageMinutes, leastUsed, pressure, usageFactors } from './pace.js';
+import type { UsageSnapshot } from './pace.js';
 import type { JobRequest, Rejection } from './spec.js';
-
-/** The part of usage.json the rules read. */
-export interface UsageSnapshot {
-  providers: Record<string, {
-    meters?: Array<{ id: string; usedPct: number | null }>;
-    money?: Array<{ id: string; amount: number; currency?: string }>;
-    stale?: boolean;
-  }>;
-}
 
 export interface RuleInput {
   policy: PolicyFile | null;
@@ -24,6 +17,43 @@ export interface RuleInput {
 export type Decision = { allow: true; model: ResolvedModel; provider: string; warnings: string[] } | { allow: false; rejection: Rejection };
 
 const no = (code: Rejection['code'], reason: string): Decision => ({ allow: false, rejection: { code, reason } });
+
+interface QuotaProblem { code: 'quota_denied' | 'pace_denied'; reason: string }
+
+/** Session and weekly meters against the provider's limits, a pay-as-you-go balance against its minimum, then the model's pace. `warnings` gains a note for anything short of a refusal. */
+function checkQuota(policy: PolicyFile, provider: string, label: string, snap: UsageSnapshot | null, now: Date, overridden: boolean, warnings: string[]): QuotaProblem | null {
+  const p = policy.providers[provider], usage = snap?.providers[provider];
+  if (!p || !usage) return null;
+  const { warnPct, denyPct, minBalance } = p.thresholds, age = ageMinutes(usage, now), fresh = age <= PACE.ignoreMin;
+  const others = leastUsed(policy, snap, provider), where = others.length ? ` Route it to another engine: ${others.join('; ')}.` : '';
+  if (age > PACE.staleMin || usage.stale) warnings.push(`${p.name} usage is ${usage.stale ? 'from a failed refresh' : `${Math.round(age)} min old`}.`);
+  const meters = (usage.meters ?? []).filter(isWindowMeter);
+  let flagged = false;
+  for (const m of meters) {
+    const used = m.usedPct as number, name = m.label ?? m.id;
+    if (used >= denyPct && fresh) {
+      if (overridden) warnings.push(`${p.name} ${name} is at ${Math.round(used)}%, sent anyway.`);
+      else return { code: 'quota_denied', reason: `${p.name} ${name} is at ${Math.round(used)}%, above the ${denyPct}% limit.${where}` };
+    } else if (used >= warnPct) { warnings.push(`${p.name} ${name} is at ${Math.round(used)}%. Nearly spent.${where}`); flagged = true; }
+  }
+  if (!meters.length) {
+    const balance = usage.money?.find(m => m.id === 'balance')?.amount, floor = minBalance ?? PACE.defaultMinBalance;
+    if (typeof balance === 'number') {
+      if (balance < floor && fresh) {
+        if (overridden) warnings.push(`${p.name} balance is $${balance.toFixed(2)}, sent anyway.`);
+        else return { code: 'quota_denied', reason: `${p.name} balance is $${balance.toFixed(2)}, under the $${floor.toFixed(2)} minimum.${where}` };
+      } else if (balance < Math.max(PACE.lowBalanceUsd, floor * 4)) warnings.push(`${p.name} balance is $${balance.toFixed(2)}. Running low.`);
+    }
+  }
+  if (flagged || !meters.length || !factorModels(policy).some(r => r.label === label)) return null;
+  const press = pressure(policy, snap, now), { factors, scarcity } = usageFactors(policy, press), factor = factors[label];
+  if (typeof factor !== 'number' || factor >= PACE.warn) return null;
+  const better = Object.entries(factors).filter(([l, v]) => l !== label && v >= PACE.warn).sort((a, b) => b[1] - a[1]).map(([l, v]) => `${l} (${v.toFixed(2)})`).join(', ');
+  const msg = `${label} has a usage factor of ${factor.toFixed(2)} (${press[provider]?.why ?? ''}; scarcity ${scarcity}). Better placed: ${better || 'none'}.`;
+  if (factor < PACE.deny && !overridden) return { code: 'pace_denied', reason: msg };
+  warnings.push(msg);
+  return null;
+}
 
 export function findModel(policy: PolicyFile, label: string): { provider: string; model: ResolvedModel } | null {
   for (const [provider, p] of Object.entries(policy.providers)) { const model = p.models[label]; if (model) return { provider, model }; }
@@ -59,19 +89,9 @@ export function evaluate(request: JobRequest, input: RuleInput): Decision {
   if ((model.output === 'patch_only' || request.output === 'patch_only') && !capabilities.isolatesWorkspace) {
     return no('isolation_required', 'A patch-only job needs an adapter that works on a copy of the workspace.');
   }
-  const provided = policy.providers[provider], usage = input.usage?.providers[provider];
-  if (provided && usage) {
-    const { warnPct, denyPct, minBalance } = provided.thresholds;
-    for (const meter of usage.meters ?? []) {
-      if (meter.usedPct === null) continue;
-      if (meter.usedPct >= denyPct) return no('quota_denied', `${provider} ${meter.id} is at ${meter.usedPct}%, above the ${denyPct}% limit.`);
-      if (meter.usedPct >= warnPct) warnings.push(`${provider} ${meter.id} is at ${meter.usedPct}%.`);
-    }
-    if (minBalance !== null && minBalance !== undefined) {
-      for (const m of usage.money ?? []) if (m.amount < minBalance) return no('quota_denied', `${provider} balance ${m.amount} is under the ${minBalance} minimum.`);
-    }
-    if (usage.stale) warnings.push(`${provider} usage is stale.`);
-  }
+  const overridden = !!request.allow?.includes('exhausted');
+  const quota = checkQuota(policy, provider, route.model, input.usage, now, overridden, warnings);
+  if (quota) return no(quota.code, quota.reason);
   return { allow: true, model, provider, warnings };
 }
 

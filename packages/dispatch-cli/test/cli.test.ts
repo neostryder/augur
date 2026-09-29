@@ -99,3 +99,32 @@ describe('the other commands', () => {
     expect((await run(['service', 'status'])).out).toContain('is running');
   });
 });
+
+describe('augur pick and augur pressure', () => {
+  it('ranks models for a task and says which routes reach each', async () => {
+    const { run } = await boot();
+    const r = await run(['pick', '--activity', 'write_code', '--data', 'internal', '--fit', 'test/fake=1,test/patch=0.2', '--json']);
+    expect(r.code).toBe(0);
+    const out = JSON.parse(r.out) as { pick: string; routes: Record<string, string[]> };
+    expect(out.pick).toBe('test/fake');
+    expect(out.routes['test/fake']).toContain('fake');
+    const text = await run(['pick', '--activity', 'write_code', '--data', 'internal']);
+    expect(text.out).toMatch(/^Pick: /);
+    expect((await run(['pick', '--activity', 'write_code', '--data', 'nope'])).code).toBe(1);
+    expect((await run(['pick', '--activity', 'write_code', '--data', 'internal', '--fit', 'test/fake=2'])).code).toBe(1);
+  });
+
+  it('reports a usage factor for each model once there is a usage snapshot', async () => {
+    const { run, e } = await boot();
+    expect((await run(['pressure'])).code).toBe(4);
+    e.writeUsage(30);
+    const r = await run(['pressure', '--json']);
+    expect(JSON.parse(r.out).factors['test/fake']).toBeGreaterThan(0);
+  });
+
+  it('accepts --allow for the two checks and nothing else', async () => {
+    const { run } = await boot();
+    expect((await run(['run', 'fake', '--prompt', 'SLEEP 0', '--allow', 'unpicked,exhausted', '--json'])).code).toBe(0);
+    expect((await run(['run', 'fake', '--prompt', 'SLEEP 0', '--allow', 'everything'])).code).toBe(1);
+  });
+});

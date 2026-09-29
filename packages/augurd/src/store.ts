@@ -3,7 +3,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { canTransition, isTerminal, statesBefore } from '@augur/dispatch-protocol';
-import type { JobEvent, JobRecord, JobState, UsageReport } from '@augur/dispatch-protocol';
+import type { JobEvent, JobRecord, JobState, PickRecord, UsageReport } from '@augur/dispatch-protocol';
 
 interface Row {
   id: string; state: string; route: string; adapter: string; activity: string; data_tier: string; tools: string; output: string; cwd: string;
@@ -43,7 +43,8 @@ export class Store {
       create index if not exists jobs_state on jobs(state);
       create index if not exists jobs_root on jobs(root_job_id);
       create table if not exists events(seq integer primary key autoincrement, job_id text, at integer not null, kind text not null, detail text not null default '');
-      create index if not exists events_job on events(job_id, seq);`);
+      create index if not exists events_job on events(job_id, seq);
+      create table if not exists picks(id integer primary key autoincrement, at integer not null, session text, model text not null, activity text not null, data_tier text not null, named text, cleared text not null);`);
     const have = new Set((this.db.prepare('pragma table_info(jobs)').all() as Array<{ name: string }>).map(c => c.name));
     for (const [name, type] of [['workspace', 'text'], ['patch_path', 'text'], ['changed_files', 'integer']] as const) {
       if (!have.has(name)) this.db.exec(`alter table jobs add column ${name} ${type}`);
@@ -97,6 +98,14 @@ export class Store {
   setUsage(id: string, usage: UsageReport): void { this.db.prepare('update jobs set usage=? where id=?').run(JSON.stringify(usage), id); }
   setVersion(id: string, version: string | null): void { this.db.prepare('update jobs set harness_version=? where id=?').run(version, id); }
   setPatch(id: string, path: string, files: number): void { this.db.prepare('update jobs set patch_path=?, changed_files=? where id=?').run(path, files, id); }
+  addPick(p: PickRecord): void {
+    this.db.prepare('insert into picks(at,session,model,activity,data_tier,named,cleared) values(?,?,?,?,?,?,?)').run(p.at, p.session, p.model, p.activity, p.dataTier, p.named, JSON.stringify(p.cleared));
+  }
+  picksSince(since: number): PickRecord[] {
+    return (this.db.prepare('select at, session, model, activity, data_tier, named, cleared from picks where at>=? order by id').all(since) as Array<{ at: number; session: string | null; model: string; activity: string; data_tier: string; named: string | null; cleared: string }>)
+      .map(r => ({ at: r.at, session: r.session, model: r.model, activity: r.activity, dataTier: r.data_tier, named: r.named, cleared: JSON.parse(r.cleared) as string[] }));
+  }
+  dropPicksBefore(cutoff: number): void { this.db.prepare('delete from picks where at<?').run(cutoff); }
   markPurged(id: string): void { this.db.prepare('update jobs set purged=1 where id=?').run(id); }
 
   event(jobId: string | null, kind: string, detail = '', at = Date.now()): void {

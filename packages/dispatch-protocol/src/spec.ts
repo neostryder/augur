@@ -4,7 +4,12 @@ import type { JobState } from './states.js';
 export type ToolTier = 'read' | 'write' | 'full';
 export const TOOL_TIERS: readonly ToolTier[] = ['read', 'write', 'full'];
 
-export interface Caller { kind: 'cli' | 'mcp' | 'job' | 'other'; label?: string }
+export interface Caller {
+  kind: 'cli' | 'mcp' | 'job' | 'other';
+  label?: string;
+  /** The caller's own session, matched against recent picks when picks are required. */
+  session?: string;
+}
 export interface Lineage { jobId: string; rootJobId: string; depth: number }
 
 /** What a caller asks for. The prompt is delivered to the harness and is not stored unless the service is set to keep prompts. */
@@ -25,6 +30,8 @@ export interface JobRequest {
   named?: boolean;
   caller: Caller;
   parent?: Lineage;
+  /** Checks the caller means to skip. Each use is recorded with the job. */
+  allow?: Array<'unpicked' | 'exhausted'>;
 }
 
 /** Token counts as one figure set. `inputTokens` is the total input, including cached tokens, whatever the source counts. */
@@ -74,5 +81,5 @@ export interface JobEvent { seq: number; jobId: string | null; at: number; kind:
 export interface Rejection { code: RejectionCode; reason: string }
 export const REJECTION_CODES = ['unknown_route', 'unknown_model', 'model_unreviewed', 'model_paused', 'ask_first', 'activity_not_permitted',
   'data_tier_too_high', 'sandbox_required', 'isolation_required', 'text_only', 'quota_denied', 'no_policy', 'depth_exceeded',
-  'descendants_exceeded', 'adapter_unavailable', 'bad_request', 'delegation_not_granted', 'prompt_too_large'] as const;
+  'descendants_exceeded', 'adapter_unavailable', 'bad_request', 'delegation_not_granted', 'prompt_too_large', 'pace_denied', 'not_picked'] as const;
 export type RejectionCode = typeof REJECTION_CODES[number];

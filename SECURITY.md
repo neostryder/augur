@@ -25,6 +25,8 @@ Hermes, Copilot and short OpenCode prompts travel as command-line arguments, and
 
 The key for an API connector comes from the environment variable its route names and is never written to the job's files. Sandboxed harnesses work on a copy of the working folder and hand back a patch, so your folder stays as it is until you run `augur apply`.
 
+The service takes the caller's word that a person named a model, and that a job may skip the pick or usage check. It cannot verify either, so it records both with the job.
+
 Rules apply to jobs started through the service. A harness started directly from a shell is outside it.
 
 ## Supported versions

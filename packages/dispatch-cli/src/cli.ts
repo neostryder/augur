@@ -19,6 +19,7 @@ const HELP = `augur run <route> --prompt-file <file|-> | --prompt <text> [option
   --expect-file <f>  file the job must leave in the working directory
   --timeout <s>      wall time limit in seconds
   --named            the route was named for this task by the person
+  --allow <checks>   skip checks, comma separated: unpicked, exhausted (each use is recorded with the job)
   --wait             wait for the job and print its result
 augur jobs [--state <s>] [--root <id>] [--limit <n>]
 augur status <job>
@@ -27,6 +28,8 @@ augur result <job>
 augur logs <job> [--stderr] [--follow]
 augur cancel <job>
 augur apply <job> [--check]
+augur pick --activity <a> --data <tier> [--named <model>] [--fit <model>=<0-1>,...]
+augur pressure
 augur routes
 augur service status | start | stop
 Every command takes --json. Exit codes: 0 completed, 1 usage, 2 rejected, 3 needs approval, 4 failed, 5 artifact check failed, 6 cancelled, 7 lost, 124 wait timed out.`;
@@ -88,6 +91,12 @@ export async function main(argv: string[], io: Io): Promise<number> {
         if (!r) { io.err('No such job.\n'); return EXIT_CODES.usage; }
         say(r.output, r); return r.ok ? 0 : EXIT_CODES.failed;
       }
+      case 'pick': return await pickCmd(io, opts, say, opt);
+      case 'pressure': {
+        const r = await call('pressure', undefined, opts);
+        if (!r) { io.err('Pressure needs policy.json and usage.json.\n'); return EXIT_CODES.failed; }
+        say(Object.entries(r.factors).map(([m, f]) => `${m.padEnd(22)} factor ${f.toFixed(2)}`).join('\n') + `\nscarcity ${r.scarcity}`, r); return 0;
+      }
       case 'routes': { const r = await call('routes', undefined, opts); say(r.map(x => `${x.name.padEnd(14)} ${x.model.padEnd(16)} ${x.adapter}`).join('\n') || 'No routes.', r); return 0; }
       case 'service': return await service(rest[0], io, opts, json);
       default: io.err(`Unknown command ${cmd}.\n${HELP}\n`); return EXIT_CODES.usage;
@@ -110,12 +119,15 @@ async function run(rest: string[], p: Parsed, io: Io, opts: Opts, say: (h: strin
   const activity = pick('activity', ACTIVITIES, 'write_code'), dataTier = pick('data', DATA_TIERS, 'internal'), tools = pick('tools', TOOL_TIERS, 'write'), output = pick('output', OUTPUT_MODES, 'write_files');
   if (!activity || !dataTier || !tools || !output) { io.err('One of --activity, --data, --tools or --output is not a known value.\n'); return EXIT_CODES.usage; }
   const parentId = io.env.AUGUR_JOB_ID;
+  const allow = (opt('allow') ?? '').split(',').map(x => x.trim()).filter(Boolean) as Array<'unpicked' | 'exhausted'>;
+  if (allow.some(x => x !== 'unpicked' && x !== 'exhausted')) { io.err('--allow takes unpicked, exhausted, or both.\n'); return EXIT_CODES.usage; }
   const req: JobRequest = {
     route, activity: activity as ActivityId, dataTier: dataTier as DataTier, tools: tools as ToolTier, output: output as OutputMode, cwd: resolve(io.cwd, opt('cwd') ?? '.'),
     prompt: promptText !== undefined ? { text: promptText } : { file: resolve(io.cwd, pf as string) },
     ...(opt('expect-file') ? { expectFile: opt('expect-file') as string } : {}), ...(opt('timeout') ? { timeoutS: Number(opt('timeout')) } : {}),
     ...(p.flags.has('named') ? { named: true } : {}),
-    caller: parentId ? { kind: 'job', label: parentId } : { kind: 'cli' },
+    caller: { kind: parentId ? 'job' : 'cli', ...(parentId ? { label: parentId } : {}), ...(io.env.CLAUDE_CODE_SESSION_ID ? { session: io.env.CLAUDE_CODE_SESSION_ID } : {}) },
+    ...(allow.length ? { allow } : {}),
     ...(parentId ? { parent: { jobId: parentId, rootJobId: io.env.AUGUR_ROOT_JOB_ID ?? parentId, depth: 0 } } : {}),
   };
   const res = await call('submit', req, opts);
@@ -126,6 +138,23 @@ async function run(rest: string[], p: Parsed, io: Io, opts: Opts, say: (h: strin
   const r = await call('result', { id: res.id }, opts);
   if (r) io.out(json ? JSON.stringify(r) + '\n' : (r.answer ?? '') + (r.answer?.endsWith('\n') ? '' : '\n'));
   return code;
+}
+
+async function pickCmd(io: Io, opts: Opts, say: (h: string, d: unknown) => void, opt: (n: string) => string | undefined): Promise<number> {
+  const activity = opt('activity'), dataTier = opt('data');
+  if (!activity || !ACTIVITIES.includes(activity as ActivityId) || !dataTier || !DATA_TIERS.includes(dataTier as DataTier)) { io.err('Give --activity and --data, each one of the known values.\n'); return EXIT_CODES.usage; }
+  const fits: Record<string, number> = {};
+  for (const part of (opt('fit') ?? '').split(',').filter(Boolean)) {
+    const [model, v] = part.split('='), n = Number(v);
+    if (!model || !Number.isFinite(n) || n < 0 || n > 1) { io.err('--fit takes model=number pairs with each number from 0 to 1.\n'); return EXIT_CODES.usage; }
+    fits[model] = n;
+  }
+  const r = await call('pick', { activity: activity as ActivityId, dataTier: dataTier as DataTier, ...(opt('named') ? { named: opt('named') as string } : {}), fits, ...(io.env.CLAUDE_CODE_SESSION_ID ? { session: io.env.CLAUDE_CODE_SESSION_ID } : {}) }, opts);
+  if ('error' in r) { io.err(`${r.error}\n`); return EXIT_CODES.failed; }
+  const lines = r.ranking.map(x => `  ${x.model.padEnd(22)} ${x.score.toFixed(2)}   fit ${x.fit.toFixed(2)} x ${x.level} ${x.weight.toFixed(2)} x usage ${x.usage.toFixed(2)}   routes ${(r.routes[x.model] ?? []).join(', ') || 'none'}`);
+  for (const b of r.blocked) lines.push(`  ${b.model.padEnd(22)} --     ${b.why}`);
+  say(r.pick ? `Pick: ${r.pick}   (${activity}, ${dataTier} data; scarcity ${r.scarcity})\n${lines.join('\n')}` : `No model is permitted ${activity} on ${dataTier} data.\n${lines.join('\n')}`, r);
+  return r.pick ? 0 : EXIT_CODES.rejected;
 }
 
 async function waitFor(id: string, timeoutS: number | null, io: Io, opts: Opts, json: boolean, quiet = false): Promise<number> {

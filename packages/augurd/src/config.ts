@@ -14,12 +14,14 @@ export interface ServiceConfig {
   jobhostPath: string | null;
   /** Adapters that may be used. The generic `exec` adapter runs any command a route names, so it is off unless listed here. */
   adapters: string[];
+  /** Refuse a job whose model was not picked for its caller within the last hour, unless the caller says the person named it. */
+  requirePick: boolean;
   /** Seconds after which a runner with no heartbeat counts as gone. */
   runnerStaleS: number;
 }
 
 export const DEFAULT_CONFIG: ServiceConfig = { retentionDays: 30, persistPrompts: false, maxConcurrent: 8, maxDepth: 2, maxDescendants: 16,
-  jobhostPath: null, adapters: ['codex-exec'], runnerStaleS: 20 };
+  jobhostPath: null, adapters: ['codex-exec'], requirePick: false, runnerStaleS: 20 };
 
 /** The launcher built by `pnpm build:jobhost` sits beside the package's sources, and a packaged install places it next to the service. */
 export function defaultJobhost(): string | null {
@@ -42,6 +44,7 @@ export function loadConfig(dir: string): ServiceConfig {
     maxDescendants: num(raw.maxDescendants, c.maxDescendants, 0, 256),
     jobhostPath: typeof raw.jobhostPath === 'string' ? raw.jobhostPath : defaultJobhost(),
     adapters: Array.isArray(raw.adapters) ? raw.adapters.filter((a): a is string => typeof a === 'string') : c.adapters,
+    requirePick: raw.requirePick === true,
     runnerStaleS: num(raw.runnerStaleS, c.runnerStaleS, 5, 600),
   };
 }

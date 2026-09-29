@@ -1,4 +1,6 @@
 // Wire contract between the service and its callers. One JSON object per line over a named pipe, each request carrying the auth token.
+import type { Headroom } from './pace.js';
+import type { PickRequest, PickResult } from './pick.js';
 import type { JobEvent, JobRecord, JobRequest, Rejection } from './spec.js';
 import type { JobState } from './states.js';
 
@@ -18,6 +20,10 @@ export interface Methods {
   cancel: { params: { id: string }; result: { ok: boolean; state: JobState } | null };
   /** Applies the patch a job left in its isolated workspace to the working directory the job was started for. */
   apply: { params: { id: string; check?: boolean }; result: { ok: boolean; output: string } | null };
+  /** Ranks the models a task may use and records the pick, so later jobs for the same caller are cleared against it. */
+  pick: { params: PickRequest & { session?: string }; result: PickResult & { routes: Record<string, string[]> } };
+  /** Headroom per provider and the usage factor of every model. */
+  pressure: { params: undefined; result: { pressure: Record<string, Headroom>; factors: Record<string, number>; scarcity: number } | null };
   routes: { params: undefined; result: Array<{ name: string; model: string; adapter: string }> };
 }
 export type MethodName = keyof Methods;
