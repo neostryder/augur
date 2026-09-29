@@ -14,8 +14,10 @@ export interface Methods {
   list: { params: { state?: JobState; root?: string; limit?: number }; result: JobRecord[] };
   events: { params: { id: string; since?: number }; result: JobEvent[] };
   logs: { params: { id: string; stream?: 'stdout' | 'stderr'; offset?: number; limit?: number }; result: { text: string; next: number; done: boolean } };
-  result: { params: { id: string }; result: { job: JobRecord; lastMessage: string | null } | null };
+  result: { params: { id: string }; result: { job: JobRecord; answer: string | null } | null };
   cancel: { params: { id: string }; result: { ok: boolean; state: JobState } | null };
+  /** Applies the patch a job left in its isolated workspace to the working directory the job was started for. */
+  apply: { params: { id: string; check?: boolean }; result: { ok: boolean; output: string } | null };
   routes: { params: undefined; result: Array<{ name: string; model: string; adapter: string }> };
 }
 export type MethodName = keyof Methods;

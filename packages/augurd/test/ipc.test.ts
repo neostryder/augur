@@ -48,7 +48,7 @@ describe('the control endpoint', () => {
     const events = await call('events', { id }, o);
     expect(events.map(x => x.kind)).toContain('artifact_validated');
     expect((await call('logs', { id }, o))!.text).toContain('turn.completed');
-    expect((await call('result', { id }, o))!.lastMessage).toBe('final message');
+    expect((await call('result', { id }, o))!.answer).toBe('final message');
     expect((await call('list', { limit: 5 }, o)).map(j => j.id)).toContain(id);
     expect(await call('status', { id: 'missing' }, o)).toBeNull();
   });

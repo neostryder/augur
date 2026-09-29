@@ -27,16 +27,44 @@ export interface RouteConfig {
   notes?: string;
 }
 
+export interface PlanContext {
+  jobDir: string;
+  /** The prompt as the caller gave it. Adapters add whatever framing their harness needs, such as `tierNote`. */
+  prompt: string;
+  /** For an adapter that works on a copy of the workspace: the folder the service copies the working directory into, as the host sees it. */
+  workspace: string | null;
+}
+
 export interface LaunchPlan {
   command: string;
   args: string[];
   cwd: string;
-  /** Extra environment on top of the adapter's allowlist. */
+  /** Extra environment on top of the adapter's allowlist. Values here are written to disk, so they must not be secrets. */
   env: Record<string, string>;
-  /** `prompt` feeds the prompt to the process's standard input. */
-  stdin: 'prompt' | 'none';
-  /** The harness cannot be told a tool tier and needs it stated in the prompt. */
-  tierInPrompt?: ToolTier;
+  /** Text fed to the process's standard input, or null for none. It is held in memory by the runner and is not on disk while the job runs. */
+  stdin: string | null;
+  /** Files the service writes before launch and removes when the job ends, unless prompts are kept. Paths are relative to the job folder, or to the copied workspace when `inWorkspace` is set. */
+  files?: Array<{ name: string; content: string; inWorkspace?: boolean }>;
+  /** Indexes of `args` that carry prompt text. The service removes them from its copy of the plan once the job has started. */
+  promptArgs?: number[];
+}
+
+export interface Extraction {
+  /** The harness's final answer. Empty or null on a clean exit is a failed job. */
+  answer: string | null;
+  usage: UsageReport | null;
+  /** A reason the job failed although the process exited cleanly. */
+  failure?: string;
+}
+
+export interface ExtractInput {
+  /** The last few megabytes of standard output. A long transcript is read from `stdoutPath` instead. */
+  stdout: string;
+  stdoutPath: string;
+  stderr: string;
+  exitCode: number | null;
+  jobDir: string;
+  workspace: string | null;
 }
 
 export interface Adapter {
@@ -47,9 +75,20 @@ export interface Adapter {
   envAllow: string[];
   /** Fail fast when the harness is missing or a route option is invalid. */
   validate(route: RouteConfig): string | null;
-  plan(request: JobRequest, route: RouteConfig, jobDir: string): LaunchPlan;
-  /** Read usage from the job's captured output. */
-  usage(stdout: string): UsageReport | null;
+  plan(request: JobRequest, route: RouteConfig, ctx: PlanContext): LaunchPlan;
+  /** Reads the answer and usage out of what the harness left behind. */
+  extract(input: ExtractInput): Extraction;
   /** The harness version, for the job record. */
   version?(route: RouteConfig): string | null;
+  /** Set for an adapter that works on a copy of the workspace, such as one that runs in a sandbox. */
+  isolation?: { root(route: RouteConfig): string };
 }
+
+const NOTES: Record<ToolTier, string> = {
+  read: 'READ-ONLY TASK. Do not create, modify, delete, move or rename any file, and do not run any command that writes to disk, installs packages, or mutates git state. Read, search and report only. If the task cannot be done without writing, say so and stop.',
+  write: 'Confine all edits to the working directory for this task. Do not modify files outside it, and do not install packages or change global or git config.',
+  full: '',
+};
+
+/** Puts the tool tier in the prompt, for harnesses that cannot be told and would otherwise ignore it. */
+export function tierNote(tools: ToolTier, prompt: string): string { return NOTES[tools] ? `${NOTES[tools]}\n\n${prompt}` : prompt; }

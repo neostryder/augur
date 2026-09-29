@@ -19,7 +19,7 @@ describe('a job that finishes', () => {
     expect(job).toMatchObject({ state: 'completed', exitCode: 0, route: 'fake', adapter: 'codex-exec' });
     expect(job.usage).toEqual({ inputTokens: 1200, outputTokens: 34, cachedReadTokens: 1000, reasoningTokens: 5, source: 'reported' });
     expect(kinds(e, id)).toEqual(['requested', 'policy_evaluated', 'queued', 'running', 'process_created', 'first_update', 'process_exited', 'usage_recorded', 'artifact_validated', 'completed', 'finalized']);
-    expect(e.sup.result(id)?.lastMessage).toBe('final message');
+    expect(e.sup.result(id)?.answer).toBe('final message');
   });
 
   it('is artifact_validation_failed when the expected file is missing, and failed on a non-zero exit', async () => {
@@ -108,7 +108,8 @@ describe('what a job can see', () => {
     const e = setup({ persistPrompts: true });
     const id = submitOk(e.sup, request({ tools: 'read', text: 'SLEEP 0', cwd: e.root }));
     await terminal(e.sup, e.store, id);
-    expect(readFileSync(join(e.dir, 'jobs', id, 'prompt.txt'), 'utf8')).toMatch(/^Tool tier: read\./);
+    expect(e.sup.logs(id)!.text).toContain('TIER read');
+    expect(readFileSync(join(e.dir, 'jobs', id, 'prompt.txt'), 'utf8')).toBe('SLEEP 0');
   });
 });
 

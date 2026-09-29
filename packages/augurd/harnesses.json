@@ -1,0 +1,14 @@
+{
+  "checked": "2026-09-28",
+  "harnesses": {
+    "codex-exec": { "harness": "Codex CLI", "transport": "exec", "tested": "codex-cli 0.158.0-alpha.2.1", "conformance": "shadow", "reportsUsage": true, "readTier": "sandbox flag and prompt", "notes": "Prompt on standard input. Final message read from a file. A dead tool host is reported as a failure." },
+    "hermes-exec": { "harness": "Hermes Agent", "transport": "exec", "tested": "v0.21.4 (2026.9.21)", "conformance": "verified", "model": "gpt-6-luna", "reportsUsage": true, "readTier": "safe mode", "notes": "Usage comes from a usage file. Cached reads are added to input." },
+    "copilot-exec": { "harness": "GitHub Copilot CLI", "transport": "exec", "tested": "1.0.89", "conformance": "verified", "model": "gpt-6-luna", "reportsUsage": true, "readTier": "prompt only", "notes": "Cost is reported in AI credits. Token counts are rounded by the CLI. The prompt is an argument, so it is visible in the process list while the job runs." },
+    "grok-exec": { "harness": "Grok CLI", "transport": "exec", "tested": "1.0.41", "conformance": "unit-only", "reportsUsage": true, "readTier": "deny rules for Edit and Bash", "notes": "Prompt read from a file. Not run against the service until the weekly quota resets." },
+    "mcode-sbx": { "harness": "MiniMax Code in Docker Sandboxes", "transport": "exec", "tested": "mcode 0.5.5 on sbx v0.45.1", "conformance": "verified", "model": "custom_provider:minimax-direct/MiniMax-M3", "reportsUsage": true, "readTier": "prompt only", "sandboxed": true, "notes": "Runs on a copy of the workspace and returns a patch." },
+    "opencode-sbx": { "harness": "OpenCode in Docker Sandboxes", "transport": "exec", "tested": "opencode 1.18.32 on sbx v0.45.1", "conformance": "verified", "model": "openrouter/deepseek/deepseek-v4.1-flash", "reportsUsage": true, "readTier": "prompt only", "sandboxed": true, "notes": "Runs on a copy of the workspace and returns a patch. Prompts over 8000 characters go through a task file in the copy." },
+    "openai-api": { "harness": "OpenAI-style chat completions", "transport": "api", "tested": "OpenRouter, deepseek/deepseek-v4.1-flash", "conformance": "verified", "reportsUsage": true, "readTier": "no tools", "notes": "Text only. The key is read from the environment variable the route names." },
+    "anthropic-api": { "harness": "Anthropic-style messages", "transport": "api", "tested": "mock server", "conformance": "unit-only", "reportsUsage": true, "readTier": "no tools", "notes": "Text only. Cache tokens are added to input." },
+    "exec": { "harness": "Any command", "transport": "exec", "tested": "test harness", "conformance": "unit-only", "reportsUsage": false, "notes": "Off unless the service config lists it." }
+  }
+}

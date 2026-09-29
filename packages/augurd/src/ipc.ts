@@ -38,6 +38,7 @@ export class IpcServer {
       case 'logs': return this.sup.logs(String(p.id), p.stream === 'stderr' ? 'stderr' : 'stdout', Number(p.offset ?? 0), Number(p.limit ?? 65536));
       case 'result': return this.sup.result(String(p.id));
       case 'cancel': return this.sup.cancel(String(p.id));
+      case 'apply': return this.sup.apply(String(p.id), p.check === true);
       case 'routes': return Object.entries(this.routes() ?? {}).map(([name, r]) => ({ name, model: r.model, adapter: r.adapter }));
       default: throw new Error(`unknown method ${String(method)}`);
     }

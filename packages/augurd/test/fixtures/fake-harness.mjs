@@ -28,6 +28,7 @@ function run() {
     else if (cmd === 'ESCAPE') spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)', arg], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
     else if (cmd === 'FLOOD') { const chunk = 'héllo 世界 '.repeat(64) + '\n'; for (let i = 0; i < Number(arg) * 1024 * 1024 / chunk.length; i++) process.stdout.write(chunk); }
   }
+  if (/^READ-ONLY TASK\./.test(input)) echo.push('TIER read');
   for (const e of echo) console.log(e);
   if (args.includes('--json')) console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1200, cached_input_tokens: 1000, output_tokens: 34, reasoning_output_tokens: 5 } }));
   if (outFile) writeFileSync(outFile, 'final message');

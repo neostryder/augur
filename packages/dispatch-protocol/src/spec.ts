@@ -27,6 +27,7 @@ export interface JobRequest {
   parent?: Lineage;
 }
 
+/** Token counts as one figure set. `inputTokens` is the total input, including cached tokens, whatever the source counts. */
 export interface UsageReport {
   inputTokens: number;
   outputTokens: number;
@@ -61,6 +62,10 @@ export interface JobRecord {
   named: boolean;
   harnessVersion: string | null;
   usage: UsageReport | null;
+  /** Folder the job ran in when the adapter works on a copy of the workspace. */
+  workspace: string | null;
+  /** Patch of what the job changed in that copy, and how many files it touches. */
+  patch: { path: string; files: number } | null;
 }
 
 export interface JobEvent { seq: number; jobId: string | null; at: number; kind: string; detail: string }
@@ -69,5 +74,5 @@ export interface JobEvent { seq: number; jobId: string | null; at: number; kind:
 export interface Rejection { code: RejectionCode; reason: string }
 export const REJECTION_CODES = ['unknown_route', 'unknown_model', 'model_unreviewed', 'model_paused', 'ask_first', 'activity_not_permitted',
   'data_tier_too_high', 'sandbox_required', 'isolation_required', 'text_only', 'quota_denied', 'no_policy', 'depth_exceeded',
-  'descendants_exceeded', 'adapter_unavailable', 'bad_request', 'delegation_not_granted'] as const;
+  'descendants_exceeded', 'adapter_unavailable', 'bad_request', 'delegation_not_granted', 'prompt_too_large'] as const;
 export type RejectionCode = typeof REJECTION_CODES[number];

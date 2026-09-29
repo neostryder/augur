@@ -4,7 +4,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { closeSync, existsSync, openSync, readFileSync, renameSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-interface JobFile { command: string; args: string[]; cwd: string; stdin: 'prompt' | 'none'; timeoutS: number | null; jobhost: string | null }
+interface JobFile { command: string; args: string[]; cwd: string; stdin: 'prompt' | 'none'; timeoutS: number | null; jobhost: string | null; files?: unknown[]; promptArgs?: number[]; redact?: boolean }
 
 const dir = process.argv[2];
 if (!dir) process.exit(64);
@@ -30,6 +30,9 @@ const child = spawn(argv[0] as string, argv.slice(1), {
 child.on('error', e => { atomic('result.json', { exitCode: null, spawnError: e.message, killedBy, endedAt: Date.now() }); process.exit(0); });
 if (child.pid === undefined) { /* the error handler reports it */ } else {
   atomic('state.json', { runnerPid: process.pid, childPid: child.pid, contained: !!viaHost, startedAt: Date.now() });
+  // The child has what it needs. Take prompt text out of the stored plan so it is not on disk while the job runs.
+  if (job.redact) atomic('job.json', { ...job, args: job.args.map((a, i) => (job.promptArgs ?? []).includes(i) ? '<prompt>' : a),
+    files: (job.files ?? []).map(f => ({ name: (f as { name: string }).name, inWorkspace: (f as { inWorkspace?: boolean }).inWorkspace, content: '' })) });
   if (prompt !== null && child.stdin) { child.stdin.on('error', () => {}); child.stdin.end(prompt); prompt = null; }
 }
 

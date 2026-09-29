@@ -26,6 +26,7 @@ augur wait <job> [--timeout <s>]
 augur result <job>
 augur logs <job> [--stderr] [--follow]
 augur cancel <job>
+augur apply <job> [--check]
 augur routes
 augur service status | start | stop
 Every command takes --json. Exit codes: 0 completed, 1 usage, 2 rejected, 3 needs approval, 4 failed, 5 artifact check failed, 6 cancelled, 7 lost, 124 wait timed out.`;
@@ -74,13 +75,18 @@ export async function main(argv: string[], io: Io): Promise<number> {
       case 'result': {
         const r = await call('result', { id: need(rest[0], 'job id') }, opts);
         if (!r) { io.err('No such job.\n'); return EXIT_CODES.usage; }
-        say(r.lastMessage ?? '', r); return isTerminal(r.job.state) ? exitCodeForState(r.job.state) : EXIT_CODES.wait_timeout;
+        say(r.answer ?? '', r); return isTerminal(r.job.state) ? exitCodeForState(r.job.state) : EXIT_CODES.wait_timeout;
       }
       case 'logs': return await logs(need(rest[0], 'job id'), p.flags.has('stderr') ? 'stderr' : 'stdout', p.flags.has('follow'), io, opts);
       case 'cancel': {
         const r = await call('cancel', { id: need(rest[0], 'job id') }, opts);
         if (!r) { io.err('No such job.\n'); return EXIT_CODES.usage; }
         say(r.ok ? `Cancel requested (${r.state}).` : `Already ${r.state}.`, r); return 0;
+      }
+      case 'apply': {
+        const r = await call('apply', { id: need(rest[0], 'job id'), check: p.flags.has('check') }, opts);
+        if (!r) { io.err('No such job.\n'); return EXIT_CODES.usage; }
+        say(r.output, r); return r.ok ? 0 : EXIT_CODES.failed;
       }
       case 'routes': { const r = await call('routes', undefined, opts); say(r.map(x => `${x.name.padEnd(14)} ${x.model.padEnd(16)} ${x.adapter}`).join('\n') || 'No routes.', r); return 0; }
       case 'service': return await service(rest[0], io, opts, json);
@@ -118,7 +124,7 @@ async function run(rest: string[], p: Parsed, io: Io, opts: Opts, say: (h: strin
   if (!p.flags.has('wait')) { say(res.id, res); return EXIT_CODES.completed; }
   const code = await waitFor(res.id, req.timeoutS ? req.timeoutS + 60 : null, io, opts, json, true);
   const r = await call('result', { id: res.id }, opts);
-  if (r) io.out(json ? JSON.stringify(r) + '\n' : (r.lastMessage ?? '') + (r.lastMessage?.endsWith('\n') ? '' : '\n'));
+  if (r) io.out(json ? JSON.stringify(r) + '\n' : (r.answer ?? '') + (r.answer?.endsWith('\n') ? '' : '\n'));
   return code;
 }
 

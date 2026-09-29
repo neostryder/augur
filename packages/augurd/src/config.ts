@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export interface ServiceConfig {
   /** Days a finished job's folder (logs and results) is kept. Job records stay. */
@@ -20,6 +21,14 @@ export interface ServiceConfig {
 export const DEFAULT_CONFIG: ServiceConfig = { retentionDays: 30, persistPrompts: false, maxConcurrent: 8, maxDepth: 2, maxDescendants: 16,
   jobhostPath: null, adapters: ['codex-exec'], runnerStaleS: 20 };
 
+/** The launcher built by `pnpm build:jobhost` sits beside the package's sources, and a packaged install places it next to the service. */
+export function defaultJobhost(): string | null {
+  if (process.platform !== 'win32') return null;
+  const here = dirname(fileURLToPath(import.meta.url));
+  for (const p of [join(here, '..', 'native', 'bin', 'jobhost.exe'), join(here, 'jobhost.exe')]) if (existsSync(p)) return p;
+  return null;
+}
+
 const num = (v: unknown, d: number, min: number, max: number) => typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max ? v : d;
 
 export function loadConfig(dir: string): ServiceConfig {
@@ -31,7 +40,7 @@ export function loadConfig(dir: string): ServiceConfig {
     retentionDays: num(raw.retentionDays, c.retentionDays, 0, 3650), persistPrompts: raw.persistPrompts === true,
     maxConcurrent: num(raw.maxConcurrent, c.maxConcurrent, 1, 64), maxDepth: num(raw.maxDepth, c.maxDepth, 0, 8),
     maxDescendants: num(raw.maxDescendants, c.maxDescendants, 0, 256),
-    jobhostPath: typeof raw.jobhostPath === 'string' ? raw.jobhostPath : null,
+    jobhostPath: typeof raw.jobhostPath === 'string' ? raw.jobhostPath : defaultJobhost(),
     adapters: Array.isArray(raw.adapters) ? raw.adapters.filter((a): a is string => typeof a === 'string') : c.adapters,
     runnerStaleS: num(raw.runnerStaleS, c.runnerStaleS, 5, 600),
   };

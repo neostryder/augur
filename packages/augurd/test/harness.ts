@@ -23,7 +23,8 @@ const RULES = { providers: { test: { defaults: { dataTier: 'internal', output: '
   'test/ask': { id: 'ask-1', rule: { askFirst: true, activities: { write_code: 'normal' } } },
   'test/text': { id: 'text-1', rule: { output: 'text_only', activities: { research: 'normal' } } },
   'test/sandboxed': { id: 'sbx-1', rule: { sandbox: true, activities: { write_code: 'normal' } } },
-  'test/public': { id: 'pub-1', rule: { dataTier: 'public', activities: { write_code: 'normal' } } } } } } };
+  'test/public': { id: 'pub-1', rule: { dataTier: 'public', activities: { write_code: 'normal' } } },
+  'test/patch': { id: 'patch-1', rule: { output: 'patch_only', sandbox: true, activities: { write_code: 'normal', research: 'normal' } } } } } } };
 
 export interface Env {
   root: string; dir: string; home: string; store: Store; sup: Supervisor; config: ServiceConfig; routesPath: string;

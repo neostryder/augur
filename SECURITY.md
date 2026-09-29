@@ -21,6 +21,10 @@ The dispatch service, `augurd`, is a separate program from the desktop app and r
 
 The service listens on a named pipe. Windows lets any local account open that pipe for reading but not for writing, and every request also has to carry a token kept in a file in your profile, so another account cannot send it commands. Nothing the service holds goes to the relay or the phone.
 
+Hermes, Copilot and short OpenCode prompts travel as command-line arguments, and Grok and long OpenCode prompts go through a file, so a prompt can be visible in the process list or on disk while its job runs. The service deletes those files when the job ends and blanks the prompt in its own record of the job.
+
+The key for an API connector comes from the environment variable its route names and is never written to the job's files. Sandboxed harnesses work on a copy of the working folder and hand back a patch, so your folder stays as it is until you run `augur apply`.
+
 Rules apply to jobs started through the service. A harness started directly from a shell is outside it.
 
 ## Supported versions

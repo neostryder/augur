@@ -1,7 +1,9 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Adapter, JobRequest, LaunchPlan, RouteConfig, UsageReport } from '@augur/dispatch-protocol';
+import { tierNote } from '@augur/dispatch-protocol';
+import type { Adapter, ExtractInput, Extraction, JobRequest, LaunchPlan, PlanContext, RouteConfig, UsageReport } from '@augur/dispatch-protocol';
+import { readTextIfExists, resolveExecutable } from './util.js';
 
 /** The OpenAI-managed install keeps itself current and ships the host binary next to codex.exe. Prefer it over whatever is on PATH. */
 export function findMaintainedCodex(env: NodeJS.ProcessEnv = process.env): string | null {
@@ -31,35 +33,28 @@ export const codexExec: Adapter = {
     if (route.options?.prefixArgsJson !== undefined) { try { if (!Array.isArray(JSON.parse(String(route.options.prefixArgsJson)))) return 'prefixArgsJson must be an array'; } catch { return 'prefixArgsJson is not valid JSON'; } }
     return null;
   },
-  plan(request: JobRequest, route: RouteConfig, jobDir: string): LaunchPlan {
+  plan(request: JobRequest, route: RouteConfig, ctx: PlanContext): LaunchPlan {
     const o = route.options ?? {};
-    const command = typeof o.command === 'string' ? o.command : findMaintainedCodex() ?? 'codex';
+    const command = typeof o.command === 'string' ? o.command : findMaintainedCodex() ?? resolveExecutable('codex')?.command ?? 'codex';
     const prefix: string[] = typeof o.prefixArgsJson === 'string' ? JSON.parse(o.prefixArgsJson) as string[] : [];
     const sandbox = typeof o.sandbox === 'string' ? o.sandbox : 'danger-full-access';
-    const args = [...prefix, 'exec', '--skip-git-repo-check', '--json', '-o', join(jobDir, 'last-message.txt'), '--sandbox', sandbox];
+    const args = [...prefix, 'exec', '--skip-git-repo-check', '--json', '-o', join(ctx.jobDir, 'last-message.txt'), '--sandbox', sandbox];
     if (typeof o.model === 'string') args.push('-m', o.model);
     if (typeof o.effort === 'string') args.push('-c', `model_reasoning_effort=${o.effort}`);
     args.push('-');
-    return { command, args, cwd: request.cwd, env: {}, stdin: 'prompt', tierInPrompt: request.tools };
+    return { command, args, cwd: request.cwd, env: {}, stdin: tierNote(request.tools, ctx.prompt) };
   },
-  usage(stdout: string): UsageReport | null {
-    let total: UsageReport | null = null;
-    for (const line of stdout.split('\n')) {
-      if (!line.includes('turn.completed')) continue;
-      let e: { type?: string; usage?: TurnUsage };
-      try { e = JSON.parse(line) as typeof e; } catch { continue; }
-      if (e.type !== 'turn.completed' || !e.usage) continue;
-      const u = e.usage;
-      total ??= { inputTokens: 0, outputTokens: 0, source: 'reported' };
-      total.inputTokens += u.input_tokens ?? 0; total.outputTokens += u.output_tokens ?? 0;
-      if (u.cached_input_tokens !== undefined) total.cachedReadTokens = (total.cachedReadTokens ?? 0) + u.cached_input_tokens;
-      if (u.cache_write_input_tokens) total.cachedWriteTokens = (total.cachedWriteTokens ?? 0) + u.cache_write_input_tokens;
-      if (u.reasoning_output_tokens !== undefined) total.reasoningTokens = (total.reasoningTokens ?? 0) + u.reasoning_output_tokens;
+  extract(input: ExtractInput): Extraction {
+    const usage = codexUsage(input.stdout);
+    const answer = readTextIfExists(join(input.jobDir, 'last-message.txt'))?.trim() || null;
+    // Codex reports a broken tool host as ordinary tool output, then answers politely and exits 0.
+    if (/failed to spawn code-mode host/.test(input.stdout + input.stderr)) {
+      return { answer, usage, failure: 'codex could not start its workspace tool host, so it answered without being able to read or write files' };
     }
-    return total;
+    return { answer, usage };
   },
   version(route: RouteConfig) {
-    const o = route.options ?? {}, command = typeof o.command === 'string' ? o.command : findMaintainedCodex() ?? 'codex';
+    const o = route.options ?? {}, command = typeof o.command === 'string' ? o.command : findMaintainedCodex() ?? resolveExecutable('codex')?.command ?? 'codex';
     if (typeof o.command === 'string' && typeof o.prefixArgsJson === 'string') return null;
     if (versions.has(command)) return versions.get(command) ?? null;
     let v: string | null = null;
@@ -67,3 +62,20 @@ export const codexExec: Adapter = {
     versions.set(command, v); return v;
   },
 };
+
+function codexUsage(stdout: string): UsageReport | null {
+  let total: UsageReport | null = null;
+  for (const line of stdout.split(String.fromCharCode(10))) {
+    if (!line.includes('turn.completed')) continue;
+    let e: { type?: string; usage?: TurnUsage };
+    try { e = JSON.parse(line) as typeof e; } catch { continue; }
+    if (e.type !== 'turn.completed' || !e.usage) continue;
+    const u = e.usage;
+    total ??= { inputTokens: 0, outputTokens: 0, source: 'reported' };
+    total.inputTokens += u.input_tokens ?? 0; total.outputTokens += u.output_tokens ?? 0;
+    if (u.cached_input_tokens !== undefined) total.cachedReadTokens = (total.cachedReadTokens ?? 0) + u.cached_input_tokens;
+    if (u.cache_write_input_tokens) total.cachedWriteTokens = (total.cachedWriteTokens ?? 0) + u.cache_write_input_tokens;
+    if (u.reasoning_output_tokens !== undefined) total.reasoningTokens = (total.reasoningTokens ?? 0) + u.reasoning_output_tokens;
+  }
+  return total;
+}
