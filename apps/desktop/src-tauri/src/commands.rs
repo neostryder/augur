@@ -60,7 +60,11 @@ async fn allowed_home_path(app: &tauri::AppHandle, path: &str) -> Result<PathBuf
         .and_then(|value| value.get("exportPath")?.as_str().map(str::to_owned))
         .and_then(|export| relative_path(&export).ok())
         .filter(|export| export.extension().is_some_and(|ext| ext == "json"));
-    let beside_export = |name: &str| export_file.as_deref().map(|export| export.with_file_name(name));
+    let beside_export = |name: &str| {
+        export_file
+            .as_deref()
+            .map(|export| export.with_file_name(name))
+    };
     let allowed = export_file.as_deref() == Some(relative.as_path())
         || beside_export("policy.json").as_deref() == Some(relative.as_path())
         || beside_export("policy-import.json").as_deref() == Some(relative.as_path());
