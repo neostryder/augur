@@ -7,10 +7,12 @@
     "dev": "vite --port 5174 --strictPort",
     "build": "tsc --noEmit -p . && vite build",
     "typecheck": "tsc --noEmit -p .",
+    "test": "vitest run",
     "preview": "vite preview --port 5175"
   },
   "dependencies": {
     "@augur/core": "workspace:*",
+    "@augur/dispatch-protocol": "workspace:*",
     "@augur/host-tauri": "workspace:*",
     "jsqr": "1.4.0",
     "qrcode-generator": "^2.0.4",
@@ -19,6 +21,7 @@
   "devDependencies": {
     "@types/sortablejs": "^1.15.9",
     "typescript": "^7.0.2",
+    "vitest": "5.0.2",
     "vite": "^8.3.1"
   }
 }

@@ -106,6 +106,7 @@ export function createTauriShell(): Shell {
     setPopupSize: (cssWidth: number, cssHeight: number) => invoke<void>('set_popup_size', { cssWidth, cssHeight, dpr: devicePixelRatio }),
     maxPopupHeight: () => invoke<number>('max_popup_height', { dpr: devicePixelRatio }),
     hidePopup: () => invoke<void>('hide_popup'),
+    ...(platform() === 'windows' ? { dispatch: (args: string[]) => invoke<{ code: number; stdout: string; stderr: string }>('dispatch_cli', { args }) } : {}),
     getAutostart: () => isEnabled(),
     setAutostart: (on: boolean) => on ? enable() : disable(),
     setHotkey: (accelerator: string | null) => invoke<void>('set_hotkey', { accelerator }),

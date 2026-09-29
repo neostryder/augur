@@ -295,6 +295,88 @@ pub async fn run_command(
     })
 }
 
+/// What the page may ask the packaged `augur` command to do: read the service's state and start or stop it, cancel a job, never submit or apply one.
+fn dispatch_args_allowed(args: &[String]) -> bool {
+    let is_id = |s: &str| s.len() == 12 && s.bytes().all(|b| b.is_ascii_hexdigit());
+    let is_number =
+        |s: &str| !s.is_empty() && s.len() <= 4 && s.bytes().all(|b| b.is_ascii_digit());
+    let is_state = |s: &str| {
+        !s.is_empty() && s.len() <= 32 && s.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
+    };
+    let mut rest = args.iter().map(String::as_str);
+    match rest.next() {
+        Some("service") => {
+            let rest: Vec<&str> = rest.filter(|a| *a != "--json").collect();
+            matches!(
+                rest.as_slice(),
+                ["status" | "start" | "stop"] | ["stop", "--if-idle"]
+            )
+        }
+        Some("routes" | "pressure") => rest.all(|a| a == "--json"),
+        Some("jobs") => {
+            let rest: Vec<&str> = rest.collect();
+            let mut i = 0;
+            while i < rest.len() {
+                match rest[i] {
+                    "--json" => i += 1,
+                    "--state" if rest.get(i + 1).is_some_and(|v| is_state(v)) => i += 2,
+                    "--limit" if rest.get(i + 1).is_some_and(|v| is_number(v)) => i += 2,
+                    _ => return false,
+                }
+            }
+            true
+        }
+        Some("status" | "result" | "cancel") => {
+            rest.next().is_some_and(is_id) && rest.all(|a| a == "--json")
+        }
+        Some("logs") => {
+            rest.next().is_some_and(is_id) && rest.all(|a| a == "--json" || a == "--stderr")
+        }
+        _ => false,
+    }
+}
+
+#[cfg(windows)]
+#[tauri::command]
+pub async fn dispatch_cli(
+    app: tauri::AppHandle,
+    args: Vec<String>,
+) -> Result<CommandOutput, String> {
+    if !dispatch_args_allowed(&args) {
+        return Err("Command and arguments are not allowed".into());
+    }
+    let dir = std::env::var_os("AUGUR_SERVICE_DIR")
+        .map(PathBuf::from)
+        .or_else(|| app.path().resource_dir().ok().map(|d| d.join("service")))
+        .filter(|d| d.join("augur.mjs").is_file())
+        .ok_or_else(|| "The dispatch service is not installed with this build".to_owned())?;
+    let mut process = tokio::process::Command::new(dir.join("augur-node.exe"));
+    process
+        .arg(dir.join("augur.mjs"))
+        .args(args)
+        .current_dir(&dir)
+        .kill_on_drop(true);
+    process.creation_flags(0x0800_0000);
+    let output = tokio::time::timeout(Duration::from_secs(20), process.output())
+        .await
+        .map_err(|_| "Command timed out".to_owned())?
+        .map_err(|e| e.to_string())?;
+    Ok(CommandOutput {
+        code: output.status.code().unwrap_or(-1),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    })
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+pub async fn dispatch_cli(
+    _app: tauri::AppHandle,
+    _args: Vec<String>,
+) -> Result<CommandOutput, String> {
+    Err("Dispatch runs on Windows only in this release".into())
+}
+
 fn keyring_entry(service: &str, account: &str) -> Result<keyring::Entry, String> {
     keyring::Entry::new(service, account).map_err(|e| e.to_string())
 }
@@ -524,4 +606,40 @@ pub fn hide_popup(app: tauri::AppHandle) -> Result<(), String> {
         .ok_or("Popup unavailable")?
         .hide()
         .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::dispatch_args_allowed;
+
+    fn allowed(args: &[&str]) -> bool {
+        dispatch_args_allowed(&args.iter().map(|a| a.to_string()).collect::<Vec<_>>())
+    }
+
+    #[test]
+    fn dispatch_allows_reading_and_service_control_only() {
+        assert!(allowed(&["service", "status"]));
+        assert!(allowed(&["service", "start"]));
+        assert!(allowed(&["service", "status", "--json"]));
+        assert!(allowed(&["service", "stop", "--if-idle"]));
+        assert!(allowed(&[
+            "jobs", "--json", "--state", "running", "--limit", "50"
+        ]));
+        assert!(allowed(&["status", "0d26110efa99", "--json"]));
+        assert!(allowed(&["cancel", "0d26110efa99"]));
+        assert!(allowed(&["logs", "0d26110efa99", "--stderr"]));
+        assert!(allowed(&["routes", "--json"]));
+    }
+
+    #[test]
+    fn dispatch_refuses_submitting_applying_and_odd_arguments() {
+        assert!(!allowed(&[]));
+        assert!(!allowed(&["run", "codex", "--prompt", "x"]));
+        assert!(!allowed(&["apply", "0d26110efa99"]));
+        assert!(!allowed(&["service", "stop", "--force"]));
+        assert!(!allowed(&["status", r"..\..\evil", "--json"]));
+        assert!(!allowed(&["status", "0d26110efa99", "--cwd", "C:/"]));
+        assert!(!allowed(&["jobs", "--state", "Running;x"]));
+        assert!(!allowed(&["jobs", "--limit", "99999"]));
+    }
 }

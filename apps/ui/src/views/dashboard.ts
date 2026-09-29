@@ -19,6 +19,8 @@ export interface DashboardModel {
   desktopWait?: 'waiting' | 'timeout' | null;
   /** Set only by the desktop shell; the phone app never checks for updates. */
   update?: UpdateState;
+  /** True where the app carries the dispatch service, which is what the Jobs page reads. */
+  canDispatch?: boolean;
 }
 
 const WINDOWED = (m: Meter) => m.windowKind !== 'credits' && m.usedPct != null;
@@ -183,6 +185,7 @@ export function renderDashboard(model: DashboardModel): string {
   const themeName = model.config.layout.theme === 'system' ? 'System theme' : model.config.layout.theme === 'light' ? 'Light theme' : 'Dark theme';
   let html = `<header class="top"><div><h1>Usage</h1><div class="sub">${subLine(model)}</div></div><span class="grow"></span>
     ${updateButton(model)}${reviewButton(model)}<button class="icon" data-action="theme" title="${themeName}, click to change" aria-label="${themeName}, click to change">${themeIcon}</button>
+    ${model.canDispatch ? `<button class="icon" data-action="jobs" title="Jobs" aria-label="Jobs">${ICON.jobs}</button>` : ''}
     <button class="icon" data-action="rules" title="Model rules" aria-label="Model rules">${ICON.rules}</button>
     <button class="icon" data-action="settings" title="Open settings" aria-label="Open settings">${ICON.gear}</button>
     <button class="icon refresh" data-action="refresh" title="Refresh now" aria-label="Refresh now">${ICON.refresh}</button></header>`;

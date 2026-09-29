@@ -62,6 +62,11 @@ export interface Shell {
   setHotkey?(accelerator: string | null): Promise<void>;
   /** Opens a window to sign in to a site that webSession reads. */
   openSignIn?(site: string): Promise<void>;
+  /**
+   * Runs one allowed `augur` command against the dispatch service the installer carries, with --json where the command has it.
+   * Only on the Windows desktop app; undefined elsewhere. It rejects a command outside the read, cancel and service-control set.
+   */
+  dispatch?(args: string[]): Promise<{ code: number; stdout: string; stderr: string }>;
   /** The running app's version. */
   appVersion?(): Promise<string>;
   /** Looks for a newer release; null means this is the latest. */

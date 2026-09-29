@@ -5,6 +5,8 @@ import type { HistoryRow } from './core';
 import { renderDashboard, tightest, updateTip, type DashboardModel } from './views/dashboard';
 import { CUSTOM_EXAMPLE, renderSettings, type SettingsModel } from './views/settings';
 import { renderRules, type RulesFilter, type RulesModel } from './views/rules';
+import { renderJobs, type JobsModel } from './views/jobs';
+import type { JobRecord } from '@augur/dispatch-protocol';
 import { renderTrayIcon } from './trayicon';
 import { span, until } from './util';
 import qrcode from 'qrcode-generator';
@@ -48,7 +50,7 @@ export class App {
   private snapshot: Snapshot | null = null;
   private history: HistoryRow[] = [];
   private alertState: Record<string, unknown> = {};
-  private view: 'dashboard' | 'settings' | 'rules' = 'dashboard';
+  private view: 'dashboard' | 'settings' | 'rules' | 'jobs' = 'dashboard';
   private firstRun = false;
   private busy = false;
   private expanded: string | null = null;
@@ -71,6 +73,8 @@ export class App {
   private savedFlash: string | null = null;
   /** Set while the last policy.json write failed. Agents keep enforcing the older file until a write succeeds. */
   private policyError: string | null = null;
+  private jobs: JobsModel = { service: null, serviceNote: '', unavailable: '', jobs: null, sel: null, detail: null, busy: false };
+  private jobsTimer: ReturnType<typeof setInterval> | undefined;
   private timer: ReturnType<typeof setInterval> | undefined;
   private lastRun = 0;
   private sortables: Sortable[] = [];
@@ -406,6 +410,7 @@ export class App {
     return {
       config: this.config, snapshot: this.snapshot, history: this.history, plugins: this.pluginMap(), busy: this.busy,
       twoColumns: this.twoColumns, expanded: this.expanded, dark: this.isDark(), shellKind: this.shell.kind, desktopWait: this.desktopWait, update: this.update,
+      canDispatch: this.shell.dispatch !== undefined,
     };
   }
 
@@ -428,6 +433,9 @@ export class App {
     const active = document.activeElement as HTMLInputElement | null, focusId = active?.id, caret = active?.selectionStart ?? null;
     if (this.view === 'dashboard') {
       await this.chooseColumns();
+    } else if (this.view === 'jobs') {
+      this.twoColumns = this.shell.kind === 'desktop';
+      this.root.innerHTML = renderJobs(this.jobs);
     } else if (this.view === 'rules') {
       // The desktop popup opens at its two-column width so the list and the open model's rules sit side by side.
       this.twoColumns = this.shell.kind === 'desktop';
@@ -611,7 +619,8 @@ export class App {
     });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
-        if (this.view === 'rules') { if (this.rules.showHistory) this.rules.showHistory = false; else if (this.rules.sel) this.rules.sel = null; else this.view = 'dashboard'; void this.render(); }
+        if (this.view === 'jobs') { if (this.jobs.sel) this.closeJob(); else this.leaveJobs(); void this.render(); }
+        else if (this.view === 'rules') { if (this.rules.showHistory) this.rules.showHistory = false; else if (this.rules.sel) this.rules.sel = null; else this.view = 'dashboard'; void this.render(); }
         else if (this.view === 'settings' && !this.firstRun) { this.view = 'dashboard'; void this.render(); } else void this.shell.hidePopup?.();
       }
       if (e.key === 'F5') { e.preventDefault(); void this.refresh(true); }
@@ -629,10 +638,80 @@ export class App {
     void this.render();
   }
 
+  // ------------------------------------------------------------------ jobs
+
+  /** One allowed `augur` command with its JSON output parsed. A stopped service exits non-zero but still says so in its output, so the exit code is returned, not thrown. */
+  private async augur<T>(args: string[]): Promise<{ code: number; data: T | null; text: string; err: string }> {
+    const r = await this.shell.dispatch!(args);
+    let data: T | null = null;
+    try { data = JSON.parse(r.stdout) as T; } catch { /* plain text output */ }
+    return { code: r.code, data, text: r.stdout, err: r.stderr.trim() };
+  }
+
+  private jobsSig = '';
+
+  private leaveJobs(): void {
+    if (this.jobsTimer) { clearInterval(this.jobsTimer); this.jobsTimer = undefined; }
+    this.jobs.sel = null; this.jobs.detail = null; this.jobsSig = '';
+  }
+
+  private closeJob(): void { this.jobs.sel = null; this.jobs.detail = null; }
+
+  private async loadJobs(): Promise<void> {
+    if (this.view !== 'jobs') { this.leaveJobs(); return; }
+    if (!this.shell.dispatch) return;
+    try {
+      const st = await this.augur<{ running?: boolean; pid?: number }>(['service', 'status', '--json']);
+      this.jobs.unavailable = '';
+      this.jobs.service = { running: st.data?.running === true, pid: st.data?.pid ?? null };
+      if (this.jobs.service.running) {
+        const list = await this.augur<JobRecord[]>(['jobs', '--json', '--limit', '50']);
+        this.jobs.jobs = Array.isArray(list.data) ? list.data : [];
+        if (this.jobs.sel) await this.loadDetail(this.jobs.sel);
+      } else this.jobs.jobs = [];
+    } catch (e) { this.jobs.unavailable = e instanceof Error ? e.message : String(e); }
+    // The page is drawn again only when something on it changed, so a scrolled log is not sent back to the top every few seconds.
+    const sig = JSON.stringify([this.jobs.service, this.jobs.unavailable, this.jobs.serviceNote, this.jobs.jobs, this.jobs.detail, this.jobs.busy]);
+    if (this.view === 'jobs' && sig !== this.jobsSig) { this.jobsSig = sig; await this.render(); }
+  }
+
+  private async loadDetail(id: string): Promise<void> {
+    const r = await this.augur<{ job: JobRecord; answer: string | null }>(['result', id, '--json']);
+    if (!r.data?.job) return;
+    const [out, err] = await Promise.all([this.shell.dispatch!(['logs', id]), this.shell.dispatch!(['logs', id, '--stderr'])]);
+    if (this.jobs.sel === id) this.jobs.detail = { job: r.data.job, result: r.data.answer ?? '', stdout: out.stdout, stderr: err.stdout };
+  }
+
+  private async openJob(id: string): Promise<void> {
+    this.jobs.sel = id; this.jobs.detail = null;
+    await this.render();
+    await this.loadJobs();
+  }
+
+  private async controlService(action: 'start' | 'stop'): Promise<void> {
+    this.jobs.busy = true; this.jobs.serviceNote = '';
+    await this.render();
+    try {
+      const r = await this.augur(['service', action, '--json']);
+      this.jobs.serviceNote = r.code === 0 ? '' : r.err || 'That did not work. The service keeps its own log in the dispatch data folder.';
+    } catch (e) { this.jobs.serviceNote = e instanceof Error ? e.message : String(e); }
+    this.jobs.busy = false;
+    await this.loadJobs();
+  }
+
+  private async cancelJob(id: string): Promise<void> {
+    this.jobs.busy = true;
+    await this.render();
+    try { await this.augur(['cancel', id, '--json']); } catch (e) { this.jobs.serviceNote = e instanceof Error ? e.message : String(e); }
+    this.jobs.busy = false;
+    await this.loadJobs();
+  }
+
   private async onClick(e: MouseEvent): Promise<void> {
-    const t = (e.target as HTMLElement).closest<HTMLElement>('[data-action],[data-open],[data-collapse],[data-meter],[data-secret-save],[data-secret-del],[data-set],[data-open-provider],[data-color-reset],[data-signin],[data-rsel],[data-rprov],[data-rfilter],[data-status],[data-bulk],[data-undo],[data-add-model],[data-pause-clear],[data-list-now]');
+    const t = (e.target as HTMLElement).closest<HTMLElement>('[data-action],[data-open],[data-collapse],[data-meter],[data-secret-save],[data-secret-del],[data-set],[data-open-provider],[data-color-reset],[data-signin],[data-rsel],[data-rprov],[data-rfilter],[data-status],[data-bulk],[data-undo],[data-add-model],[data-pause-clear],[data-list-now],[data-job]');
     if (!t) return;
     if (this.view === 'rules' && await this.onRulesClick(t)) return;
+    if (t.dataset.job) { await this.openJob(t.dataset.job); return; }
     if (t.dataset.open) { e.preventDefault(); await this.shell.openUrl(t.dataset.open); return; }
     if (t.dataset.signin) { await this.shell.openSignIn?.(t.dataset.signin); return; }
     if (t.dataset.collapse) {
@@ -677,7 +756,12 @@ export class App {
       case 'retry-policy': await this.writePolicy(); await this.render(); break;
       case 'rules': this.view = 'rules'; this.rules.showHistory = false; if (t.dataset.value) this.rules.filter = t.dataset.value as RulesFilter; await this.render(); break;
       case 'rules-history': this.rules.showHistory = !this.rules.showHistory; await this.render(); break;
-      case 'back': this.view = 'dashboard'; await this.render(); break;
+      case 'back': this.leaveJobs(); this.view = 'dashboard'; await this.render(); break;
+      case 'jobs': this.view = 'jobs'; this.jobs.sel = null; this.jobs.detail = null; this.jobsTimer ??= setInterval(() => { void this.loadJobs(); }, 3000); await this.render(); void this.loadJobs(); break;
+      case 'job-close': this.closeJob(); await this.render(); break;
+      case 'jobs-refresh': await this.loadJobs(); break;
+      case 'service-start': case 'service-stop': await this.controlService(t.dataset.action === 'service-start' ? 'start' : 'stop'); break;
+      case 'job-cancel': await this.cancelJob(t.dataset.id!); break;
       case 'theme': {
         const order: AppConfig['layout']['theme'][] = ['system', 'light', 'dark'];
         this.config.layout.theme = order[(order.indexOf(this.config.layout.theme) + 1) % 3]!;

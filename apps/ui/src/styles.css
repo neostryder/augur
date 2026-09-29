@@ -191,6 +191,23 @@ input[type=color] { width: 26px; height: 22px; border: 0; padding: 0; background
 .rsec { font-size: calc(12px * var(--fs)); font-weight: 600; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.4px; margin: 12px 2px 6px; }
 .rdetail .row select, .rdetail .row input[type=text], .rdetail .row input[type=datetime-local] { width: auto; max-width: min(210px, 62%); }
 .rstatus .grow { min-width: 190px; }
+/* jobs page */
+.rbanner.ok { border-color: var(--line); background: var(--card); }
+.jrow { display: flex; align-items: center; gap: 8px; width: 100%; background: none; border: 0; border-top: 1px solid var(--line); border-radius: 0; padding: 7px 6px; cursor: pointer; text-align: left; color: var(--ink); }
+.jrow:hover, .jrow.on { background: var(--hover); }
+.jmain { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.jsub, .jwhen { color: var(--muted); font-size: calc(11.5px * var(--fs)); }
+.jwhen { min-width: 52px; text-align: right; }
+.jchip { border: 1px solid var(--line); border-radius: 10px; padding: 1px 8px; font-size: calc(11.5px * var(--fs)); white-space: nowrap; }
+.jchip.live { border-color: var(--accent, var(--ink-2)); }
+.jchip.bad { border-color: var(--crit, var(--warn)); }
+.jhead { display: flex; align-items: center; gap: 8px; margin: 0 2px 8px; }
+.jhead h2 { margin: 0; font-size: calc(14px * var(--fs)); font-weight: 600; flex: 1; }
+.jreason { margin: 0 2px 8px; color: var(--ink-2); }
+.jfields { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 6px 12px; margin: 0 2px 8px; }
+.jf { display: flex; flex-direction: column; min-width: 0; } .jf span { color: var(--muted); font-size: calc(11px * var(--fs)); } .jf b { font-weight: 600; word-break: break-all; }
+.jdetail h3 { margin: 10px 2px 4px; font-size: calc(12px * var(--fs)); color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.4px; }
+.jlog { margin: 0; max-height: 220px; overflow: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 7px; padding: 8px; white-space: pre-wrap; word-break: break-word; font: 12px/1.45 ui-monospace, Consolas, monospace; }
 @media (max-width: 699px) { .rules-page.has-sel .rtools, .rules-page.has-sel .rbanner { display: none; } }
 .rdetail input[type=datetime-local] { background: var(--surface); border: 1px solid var(--line); border-radius: 7px; padding: 5px 7px; }
 .rnote { color: var(--ink-2); font-size: calc(12px * var(--fs)); padding: 4px 0; }
