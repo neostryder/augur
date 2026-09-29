@@ -128,3 +128,14 @@ describe('augur pick and augur pressure', () => {
     expect((await run(['run', 'fake', '--prompt', 'SLEEP 0', '--allow', 'everything'])).code).toBe(1);
   });
 });
+
+describe('augur note-prompt', () => {
+  it('records the models a message names, and needs a session', async () => {
+    const { run } = await boot();
+    const r = await run(['note-prompt', '--session', 's1', '--json'], 'run it on the fake model please');
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.out).models).toEqual(expect.arrayContaining(['test/fake']));
+    const none = await run(['note-prompt'], 'hello', { CLAUDE_CODE_SESSION_ID: '' });
+    expect(none.code).toBe(1);
+  });
+});

@@ -26,6 +26,16 @@ describe('policy', () => {
     expect(policy.providers.codex!.defaults.dataTier).toBe('internal');
   });
 
+  it('imports rules already confirmed when setup accepts the recommended set', () => {
+    const policy = emptyPolicy();
+    importPolicy(policy, RULES, t0, 'confirmed');
+    const statuses = Object.values(policy.providers).flatMap(p => Object.values(p.models).map(m => m.status));
+    expect(new Set(statuses)).toEqual(new Set(['confirmed']));
+    const file = buildPolicyFile(policy, Object.keys(policy.providers).map(id => ({ id, name: id, metered: true })), t0);
+    expect(file.unreviewed).toEqual([]);
+    expect(file.providers.codex!.models['codex/sol']!.status).toBe('confirmed');
+  });
+
   it('keeps rules through a config save and load', () => {
     const config = defaultConfig();
     expect(config.policy!.providers).toEqual({});

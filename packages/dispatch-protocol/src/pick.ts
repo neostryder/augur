@@ -66,3 +66,34 @@ export function checkPick(model: string, named: boolean, session: string | null,
   const latest = recent.at(-1);
   return { ok: false, reason: `${model} was not picked for this task${latest ? ` (the latest pick was ${latest.model}, for ${latest.activity})` : ''}, and it was not named. Ask for a pick, or name the model.` };
 }
+
+const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** The models a person's message names. A model is named by its label, its id, its display name, or the last part of its label (sol, luna, grok). */
+export function matchNamedModels(policy: PolicyFile, text: string): string[] {
+  const out: string[] = [];
+  for (const p of Object.values(policy.providers)) {
+    for (const [label, m] of Object.entries(p.models)) {
+      const words = new Set<string>([label, label.split('/').pop() ?? label, m.id, m.name ?? ''].map(w => w.trim()).filter(w => w.length >= 2));
+      const hit = [...words].some(w => new RegExp(String.raw`(?<![\w.-])${escapeRegex(w).replace(/[\s_-]+/g, String.raw`[\s_-]*`)}(?![\w-]|\.\w)`, 'i').test(text));
+      if (hit) out.push(label);
+    }
+  }
+  return out;
+}
+
+/** One message a person typed, reduced to the models it named. The text itself is not kept. */
+export interface PromptRecord { at: number; session: string; models: string[] }
+
+export const NAMED_PROMPT_WINDOW = 3;
+export const NAMED_MAX_AGE_MIN = 360;
+
+export type NamedCheck = { ok: true; via: 'interactive' | 'prompt' } | { ok: false; reason: string };
+
+/** A claim that a person named the model holds when the person is at the keyboard, or when one of the caller session's newest few messages named it. `recent` is newest first. */
+export function checkNamed(model: string, session: string | null, interactive: boolean, recent: readonly PromptRecord[], now: number): NamedCheck {
+  if (interactive) return { ok: true, via: 'interactive' };
+  if (!session) return { ok: false, reason: `The claim that ${model} was named has no session to check against.` };
+  const found = recent.filter(p => p.session === session && p.at >= now - NAMED_MAX_AGE_MIN * 60000).slice(0, NAMED_PROMPT_WINDOW).some(p => p.models.includes(model));
+  return found ? { ok: true, via: 'prompt' } : { ok: false, reason: `None of the last ${NAMED_PROMPT_WINDOW} messages from a person in this session named ${model}.` };
+}

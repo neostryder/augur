@@ -16,12 +16,14 @@ export interface ServiceConfig {
   adapters: string[];
   /** Refuse a job whose model was not picked for its caller within the last hour, unless the caller says the person named it. */
   requirePick: boolean;
+  /** What to do with a caller's claim that a person named the model: `off` takes it as true, `record` takes it and notes when it cannot be confirmed, `enforce` refuses the job. */
+  verifyNamed: 'off' | 'record' | 'enforce';
   /** Seconds after which a runner with no heartbeat counts as gone. */
   runnerStaleS: number;
 }
 
 export const DEFAULT_CONFIG: ServiceConfig = { retentionDays: 30, persistPrompts: false, maxConcurrent: 8, maxDepth: 2, maxDescendants: 16,
-  jobhostPath: null, adapters: ['codex-exec'], requirePick: false, runnerStaleS: 20 };
+  jobhostPath: null, adapters: ['codex-exec'], requirePick: false, verifyNamed: 'record', runnerStaleS: 20 };
 
 /** The launcher built by `pnpm build:jobhost` sits beside the package's sources, and a packaged install places it next to the service. */
 export function defaultJobhost(): string | null {
@@ -45,6 +47,7 @@ export function loadConfig(dir: string): ServiceConfig {
     jobhostPath: typeof raw.jobhostPath === 'string' ? raw.jobhostPath : defaultJobhost(),
     adapters: Array.isArray(raw.adapters) ? raw.adapters.filter((a): a is string => typeof a === 'string') : c.adapters,
     requirePick: raw.requirePick === true,
+    verifyNamed: raw.verifyNamed === 'off' || raw.verifyNamed === 'enforce' ? raw.verifyNamed : c.verifyNamed,
     runnerStaleS: num(raw.runnerStaleS, c.runnerStaleS, 5, 600),
   };
 }

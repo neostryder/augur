@@ -6,7 +6,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { fileURLToPath } from 'node:url';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES } from '@augur/core';
 import type { PolicyFile } from '@augur/core';
-import { PICK_WINDOW_MIN, TOOL_TIERS, checkLineage, checkPick, evaluate, isTerminal, pressure, rank, usageFactors } from '@augur/dispatch-protocol';
+import { NAMED_PROMPT_WINDOW, PICK_WINDOW_MIN, TOOL_TIERS, checkLineage, checkNamed, checkPick, evaluate, isTerminal, matchNamedModels, pressure, rank, usageFactors } from '@augur/dispatch-protocol';
 import type { Adapter, JobRecord, JobRequest, LaunchPlan, PickRequest, PickResult, Rejection, RouteConfig, UsageSnapshot } from '@augur/dispatch-protocol';
 import { MAX_COMMAND_LINE } from './adapters/util.js';
 import type { ServiceConfig } from './config.js';
@@ -46,7 +46,8 @@ export class Supervisor {
 
   // ------------------------------------------------------------------ submit
 
-  submit(req: JobRequest): SubmitResult {
+  submit(input: JobRequest): SubmitResult {
+    let req = input;
     const bad = this.validate(req);
     if (bad) return reject('bad_request', bad);
     const routes = this.d.routes();
@@ -67,9 +68,14 @@ export class Supervisor {
       if (lineage) return { rejected: lineage };
     }
 
+    const named = this.confirmNamed(req, route.model);
+    if ('rejected' in named) return named;
+    if (named.note) req = { ...req, named: named.value };
     const decision = evaluate(req, { policy: this.d.policy(), usage: this.d.usage(), route, capabilities: adapter.capabilities, now: new Date(this.now()) });
-    if (!decision.allow) { this.d.store.event(null, 'policy_evaluated', `rejected ${decision.rejection.code}: ${req.route}`, this.now()); return { rejected: decision.rejection }; }
+    if (!decision.allow) { this.d.store.event(null, 'policy_evaluated', `rejected ${decision.rejection.code}: ${req.route}`, this.now()); return { rejected: named.note && decision.rejection.code === 'ask_first' ? { ...decision.rejection, reason: `${decision.rejection.reason} ${named.note}` } : decision.rejection }; }
     const warnings = [...decision.warnings];
+    if (named.note) warnings.push(named.note);
+    if (req.named) this.d.store.event(null, 'named_claim', `${route.model} ${named.via}`, this.now());
     if (this.d.config.requirePick && !req.allow?.includes('unpicked')) {
       const check = checkPick(route.model, !!req.named, req.caller.session ?? null, this.d.store.picksSince(this.now() - PICK_WINDOW_MIN * 60000), this.now());
       if (!check.ok) { this.d.store.event(null, 'policy_evaluated', `rejected not_picked: ${req.route}`, this.now()); return reject('not_picked', check.reason); }
@@ -123,6 +129,28 @@ export class Supervisor {
     if (!policy || !usage) return null;
     const press = pressure(policy, usage, new Date(this.now()));
     return { pressure: press, ...usageFactors(policy, press) };
+  }
+
+  /** Checks a claim that a person named the model. Returns the value to use and a note when the claim could not be confirmed. */
+  private confirmNamed(req: JobRequest, model: string): { rejected: Rejection } | { value: boolean; note: string | null; via: string } {
+    if (!req.named) return { value: false, note: null, via: 'none' };
+    const mode = this.d.config.verifyNamed;
+    if (mode === 'off') return { value: true, note: null, via: 'unchecked' };
+    const session = req.caller.session ?? null;
+    const check = checkNamed(model, session, !!req.caller.interactive, session ? this.d.store.recentPrompts(session, NAMED_PROMPT_WINDOW) : [], this.now());
+    if (check.ok) return { value: true, note: null, via: check.via };
+    if (mode === 'enforce') return { value: false, note: `${check.reason} It was treated as not named.`, via: 'refused' };
+    return { value: true, note: `${check.reason} It was accepted as named because the service only records this check.`, via: 'unconfirmed' };
+  }
+
+  /** Records which models a person's message named, for confirming later claims. The text is not kept. */
+  humanPrompt(session: string, text: string): { models: string[] } | { error: string } {
+    const policy = this.d.policy();
+    if (!policy) return { error: 'policy.json was not found. Augur writes it when a rule is saved.' };
+    if (!session) return { error: 'A session is required.' };
+    const models = matchNamedModels(policy, text);
+    this.d.store.addPrompt({ at: this.now(), session, models });
+    return { models };
   }
 
   private validate(req: JobRequest): string | null {

@@ -71,3 +71,41 @@ describe('picks through the service', () => {
     expect(Object.keys(ROUTES).length).toBeGreaterThan(0);
   });
 });
+
+describe('confirming that a person named the model', () => {
+  const ask = (e: Env, session: string, extra: object = {}) => ({ ...request({ route: 'ask', text: 'SLEEP 0', ...extra } as never, e.root), named: true, caller: { kind: 'other' as const, session, ...extra } });
+
+  it('takes the claim and notes it when the service only records, which is the default', () => {
+    const e = setup();
+    const r = e.sup.submit(ask(e, 's1'));
+    expect('warnings' in r && r.warnings.some(w => /only records/.test(w))).toBe(true);
+  });
+
+  it('refuses an ask-first model in enforce mode until a recent message from a person names it', async () => {
+    const e = setup({ verifyNamed: 'enforce' });
+    const first = e.sup.submit(ask(e, 's1'));
+    expect(first).toMatchObject({ rejected: { code: 'ask_first', reason: expect.stringContaining('treated as not named') } });
+    expect(e.sup.humanPrompt('s1', 'please use ask for this')).toEqual({ models: ['test/ask'] });
+    const ok = e.sup.submit(ask(e, 's1'));
+    expect('id' in ok).toBe(true);
+    // Another session's message does not count, and neither does a person who named something else.
+    expect(e.sup.submit(ask(e, 's2'))).toMatchObject({ rejected: { code: 'ask_first' } });
+    e.sup.humanPrompt('s3', 'use fake instead');
+    expect(e.sup.submit(ask(e, 's3'))).toMatchObject({ rejected: { code: 'ask_first' } });
+    if ('id' in ok) expect((await terminal(e.sup, e.store, ok.id)).named).toBe(true);
+  });
+
+  it('lets a caller at the keyboard through, and forgets a message after three more', () => {
+    const e = setup({ verifyNamed: 'enforce' });
+    expect('id' in e.sup.submit(ask(e, 's1', { interactive: true }))).toBe(true);
+    e.sup.humanPrompt('s5', 'use ask'); for (const t of ['one', 'two', 'three']) e.sup.humanPrompt('s5', t);
+    expect(e.sup.submit(ask(e, 's5'))).toMatchObject({ rejected: { code: 'ask_first' } });
+  });
+
+  it('takes the claim without checking when the setting is off, and keeps only the model names of a message', () => {
+    const e = setup({ verifyNamed: 'off' });
+    expect('id' in e.sup.submit(ask(e, 's1'))).toBe(true);
+    e.sup.humanPrompt('s1', 'a very private sentence about ask');
+    expect(JSON.stringify(e.store.db.prepare('select * from prompts').all())).not.toContain('private');
+  });
+});

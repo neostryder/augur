@@ -22,6 +22,8 @@ export interface Methods {
   apply: { params: { id: string; check?: boolean }; result: { ok: boolean; output: string } | null };
   /** Ranks the models a task may use and records the pick, so later jobs for the same caller are cleared against it. */
   pick: { params: PickRequest & { session?: string }; result: PickResult & { routes: Record<string, string[]> } };
+  /** Tells the service a person sent a message in a session. It keeps which models the message named, and drops the text. */
+  human_prompt: { params: { session: string; text: string }; result: { models: string[] } | { error: string } };
   /** Headroom per provider and the usage factor of every model. */
   pressure: { params: undefined; result: { pressure: Record<string, Headroom>; factors: Record<string, number>; scarcity: number } | null };
   routes: { params: undefined; result: Array<{ name: string; model: string; adapter: string }> };

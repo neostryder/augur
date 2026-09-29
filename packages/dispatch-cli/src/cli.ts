@@ -8,7 +8,7 @@ import { EXIT_CODES, TOOL_TIERS, exitCodeForState, isTerminal } from '@augur/dis
 import type { JobRecord, JobRequest, ToolTier } from '@augur/dispatch-protocol';
 import { ServiceError, call, dataDir } from '@augur/augurd';
 
-export interface Io { out(text: string): void; err(text: string): void; stdin(): string; env: NodeJS.ProcessEnv; cwd: string }
+export interface Io { out(text: string): void; err(text: string): void; stdin(): string; env: NodeJS.ProcessEnv; cwd: string; /** A person is at the terminal: input and output are both attached to it. */ interactive?: boolean }
 
 const HELP = `augur run <route> --prompt-file <file|-> | --prompt <text> [options]
   --activity <a>     one of: ${ACTIVITIES.join(', ')} (default write_code)
@@ -30,6 +30,7 @@ augur cancel <job>
 augur apply <job> [--check]
 augur pick --activity <a> --data <tier> [--named <model>] [--fit <model>=<0-1>,...]
 augur pressure
+augur note-prompt --session <id>     tell the service a person sent the message on standard input; it keeps only the models named
 augur routes
 augur service status | start | stop
 Every command takes --json. Exit codes: 0 completed, 1 usage, 2 rejected, 3 needs approval, 4 failed, 5 artifact check failed, 6 cancelled, 7 lost, 124 wait timed out.`;
@@ -91,6 +92,13 @@ export async function main(argv: string[], io: Io): Promise<number> {
         if (!r) { io.err('No such job.\n'); return EXIT_CODES.usage; }
         say(r.output, r); return r.ok ? 0 : EXIT_CODES.failed;
       }
+      case 'note-prompt': {
+        const session = opt('session') ?? io.env.CLAUDE_CODE_SESSION_ID;
+        if (!session) { io.err('Give --session, or run inside a session that sets CLAUDE_CODE_SESSION_ID.' + String.fromCharCode(10)); return EXIT_CODES.usage; }
+        const r = await call('human_prompt', { session, text: io.stdin() }, opts);
+        if ('error' in r) { io.err(r.error + String.fromCharCode(10)); return EXIT_CODES.failed; }
+        say(r.models.join(', ') || 'No models named.', r); return 0;
+      }
       case 'pick': return await pickCmd(io, opts, say, opt);
       case 'pressure': {
         const r = await call('pressure', undefined, opts);
@@ -126,7 +134,7 @@ async function run(rest: string[], p: Parsed, io: Io, opts: Opts, say: (h: strin
     prompt: promptText !== undefined ? { text: promptText } : { file: resolve(io.cwd, pf as string) },
     ...(opt('expect-file') ? { expectFile: opt('expect-file') as string } : {}), ...(opt('timeout') ? { timeoutS: Number(opt('timeout')) } : {}),
     ...(p.flags.has('named') ? { named: true } : {}),
-    caller: { kind: parentId ? 'job' : 'cli', ...(parentId ? { label: parentId } : {}), ...(io.env.CLAUDE_CODE_SESSION_ID ? { session: io.env.CLAUDE_CODE_SESSION_ID } : {}) },
+    caller: { kind: parentId ? 'job' : 'cli', ...(parentId ? { label: parentId } : {}), ...(io.env.CLAUDE_CODE_SESSION_ID ? { session: io.env.CLAUDE_CODE_SESSION_ID } : {}), ...(io.interactive ? { interactive: true } : {}) },
     ...(allow.length ? { allow } : {}),
     ...(parentId ? { parent: { jobId: parentId, rootJobId: io.env.AUGUR_ROOT_JOB_ID ?? parentId, depth: 0 } } : {}),
   };

@@ -3,7 +3,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { canTransition, isTerminal, statesBefore } from '@augur/dispatch-protocol';
-import type { JobEvent, JobRecord, JobState, PickRecord, UsageReport } from '@augur/dispatch-protocol';
+import type { JobEvent, JobRecord, JobState, PickRecord, PromptRecord, UsageReport } from '@augur/dispatch-protocol';
 
 interface Row {
   id: string; state: string; route: string; adapter: string; activity: string; data_tier: string; tools: string; output: string; cwd: string;
@@ -44,7 +44,8 @@ export class Store {
       create index if not exists jobs_root on jobs(root_job_id);
       create table if not exists events(seq integer primary key autoincrement, job_id text, at integer not null, kind text not null, detail text not null default '');
       create index if not exists events_job on events(job_id, seq);
-      create table if not exists picks(id integer primary key autoincrement, at integer not null, session text, model text not null, activity text not null, data_tier text not null, named text, cleared text not null);`);
+      create table if not exists picks(id integer primary key autoincrement, at integer not null, session text, model text not null, activity text not null, data_tier text not null, named text, cleared text not null);
+      create table if not exists prompts(id integer primary key autoincrement, at integer not null, session text not null, models text not null);`);
     const have = new Set((this.db.prepare('pragma table_info(jobs)').all() as Array<{ name: string }>).map(c => c.name));
     for (const [name, type] of [['workspace', 'text'], ['patch_path', 'text'], ['changed_files', 'integer']] as const) {
       if (!have.has(name)) this.db.exec(`alter table jobs add column ${name} ${type}`);
@@ -105,7 +106,13 @@ export class Store {
     return (this.db.prepare('select at, session, model, activity, data_tier, named, cleared from picks where at>=? order by id').all(since) as Array<{ at: number; session: string | null; model: string; activity: string; data_tier: string; named: string | null; cleared: string }>)
       .map(r => ({ at: r.at, session: r.session, model: r.model, activity: r.activity, dataTier: r.data_tier, named: r.named, cleared: JSON.parse(r.cleared) as string[] }));
   }
-  dropPicksBefore(cutoff: number): void { this.db.prepare('delete from picks where at<?').run(cutoff); }
+  dropPicksBefore(cutoff: number): void { this.db.prepare('delete from picks where at<?').run(cutoff); this.db.prepare('delete from prompts where at<?').run(cutoff); }
+  addPrompt(p: PromptRecord): void { this.db.prepare('insert into prompts(at,session,models) values(?,?,?)').run(p.at, p.session, JSON.stringify(p.models)); }
+  /** The newest messages a person sent in a session, newest first. */
+  recentPrompts(session: string, limit: number): PromptRecord[] {
+    return (this.db.prepare('select at, session, models from prompts where session=? order by id desc limit ?').all(session, limit) as Array<{ at: number; session: string; models: string }>)
+      .map(r => ({ at: r.at, session: r.session, models: JSON.parse(r.models) as string[] }));
+  }
   markPurged(id: string): void { this.db.prepare('update jobs set purged=1 where id=?').run(id); }
 
   event(jobId: string | null, kind: string, detail = '', at = Date.now()): void {

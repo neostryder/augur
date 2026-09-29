@@ -9,6 +9,8 @@ export interface Caller {
   label?: string;
   /** The caller's own session, matched against recent picks when picks are required. */
   session?: string;
+  /** A person is at the keyboard: the caller is a terminal with input and output attached. A claim that the person named a model is taken as true. */
+  interactive?: boolean;
 }
 export interface Lineage { jobId: string; rootJobId: string; depth: number }
 

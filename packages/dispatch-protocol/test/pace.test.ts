@@ -5,8 +5,8 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { buildPolicyFile, emptyPolicy, fieldPath, importPolicy, setField } from '@augur/core';
 import type { PolicyFile } from '@augur/core';
-import { checkPick, evaluate, pressure, rank, usageFactors } from '../src/index.js';
-import type { AdapterCapabilities, JobRequest, PickRecord, RouteConfig, UsageSnapshot } from '../src/index.js';
+import { checkNamed, checkPick, evaluate, matchNamedModels, pressure, rank, usageFactors } from '../src/index.js';
+import type { AdapterCapabilities, JobRequest, PickRecord, PromptRecord, RouteConfig, UsageSnapshot } from '../src/index.js';
 
 const now = new Date('2026-09-28T12:00:00Z');
 const RULES = { providers: {
@@ -161,6 +161,31 @@ describe('picks', () => {
     expect(checkPick('codex/sol', false, 's1', [pick({ at: t - 61 * 60000 })], t)).toMatchObject({ ok: false });
     expect(checkPick('codex/sol', false, 's2', [pick()], t)).toMatchObject({ ok: false });
     expect(checkPick('codex/sol', false, null, [pick()], t)).toEqual({ ok: true });
+  });
+});
+
+describe('naming a model', () => {
+  const p = policy();
+  it('finds the models a message names by label, id, display name or the last part of the label', () => {
+    expect(matchNamedModels(p, 'Please run this on codex/astra.')).toEqual(['codex/astra']);
+    expect(matchNamedModels(p, 'use gpt 6 sol for it')).toEqual(['codex/sol']);
+    expect(matchNamedModels(p, 'Luna and grok can share the work')).toEqual(expect.arrayContaining(['codex/luna', 'xai/grok']));
+    expect(matchNamedModels(p, 'the MiniMax-M3 route')).toEqual(['minimax/m3']);
+  });
+  it('does not take a longer word or a version number for a name', () => {
+    expect(matchNamedModels(p, 'a solution to the resolve problem')).toEqual([]);
+    expect(matchNamedModels(p, 'the astrand library and lunar phases')).toEqual([]);
+    expect(matchNamedModels(p, 'no models here')).toEqual([]);
+  });
+  const t = now.getTime();
+  const msg = (over: Partial<PromptRecord> = {}): PromptRecord => ({ at: t - 60000, session: 's1', models: ['codex/astra'], ...over });
+  it('takes the claim as true at a keyboard, and otherwise wants one of the last three messages to have named the model', () => {
+    expect(checkNamed('codex/astra', null, true, [], t)).toEqual({ ok: true, via: 'interactive' });
+    expect(checkNamed('codex/astra', 's1', false, [msg()], t)).toEqual({ ok: true, via: 'prompt' });
+    expect(checkNamed('codex/astra', 's1', false, [msg({ models: [] }), msg({ models: [] }), msg({ models: [] }), msg()], t)).toMatchObject({ ok: false });
+    expect(checkNamed('codex/astra', 's2', false, [msg()], t)).toMatchObject({ ok: false });
+    expect(checkNamed('codex/astra', 's1', false, [msg({ at: t - 7 * 3600000 })], t)).toMatchObject({ ok: false });
+    expect(checkNamed('codex/astra', null, false, [msg()], t)).toMatchObject({ ok: false, reason: expect.stringContaining('no session') });
   });
 });
 

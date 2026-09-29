@@ -40,6 +40,7 @@ export class IpcServer {
       case 'cancel': return this.sup.cancel(String(p.id));
       case 'apply': return this.sup.apply(String(p.id), p.check === true);
       case 'pick': return this.sup.pick(params as never);
+      case 'human_prompt': return this.sup.humanPrompt(String(p.session ?? ''), String(p.text ?? ''));
       case 'pressure': return this.sup.pressure();
       case 'routes': return Object.entries(this.routes() ?? {}).map(([name, r]) => ({ name, model: r.model, adapter: r.adapter }));
       default: throw new Error(`unknown method ${String(method)}`);
