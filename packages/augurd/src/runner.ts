@@ -11,6 +11,10 @@ if (!dir) process.exit(64);
 const job = JSON.parse(readFileSync(join(dir, 'job.json'), 'utf8')) as JobFile;
 const atomic = (name: string, value: unknown) => { const tmp = join(dir, name + '.tmp'); writeFileSync(tmp, JSON.stringify(value)); renameSync(tmp, join(dir, name)); };
 
+// The stored plan holds the command line, which for some harnesses carries the prompt. It is scrubbed before anything can fail, so a spawn error leaves no prompt behind.
+if (job.redact) atomic('job.json', { ...job, args: job.args.map((a, i) => (job.promptArgs ?? []).includes(i) ? '<prompt>' : a),
+  files: (job.files ?? []).map(f => ({ name: (f as { name: string }).name, inWorkspace: (f as { inWorkspace?: boolean }).inWorkspace, content: '' })) });
+
 // The prompt is read into memory and its file removed before the child starts, so it is never on disk while the job runs.
 let prompt: string | null = null;
 const promptFile = join(dir, 'prompt.in');
@@ -19,6 +23,8 @@ if (job.stdin === 'prompt' && existsSync(promptFile)) { prompt = readFileSync(pr
 const out = openSync(join(dir, 'stdout.log'), 'a'), err = openSync(join(dir, 'stderr.log'), 'a');
 const win = process.platform === 'win32';
 const viaHost = win && job.jobhost && existsSync(job.jobhost);
+// Without the Job Object launcher a Windows job could leave detached descendants behind, so it does not start.
+if (win && !viaHost) { atomic('result.json', { exitCode: null, spawnError: 'The Windows job host was not found, so the job was not started.', killedBy: null, endedAt: Date.now() }); process.exit(0); }
 const argv = viaHost ? [job.jobhost as string, job.command, ...job.args] : [job.command, ...job.args];
 let killedBy: 'cancel' | 'timeout' | null = null;
 
@@ -30,9 +36,6 @@ const child = spawn(argv[0] as string, argv.slice(1), {
 child.on('error', e => { atomic('result.json', { exitCode: null, spawnError: e.message, killedBy, endedAt: Date.now() }); process.exit(0); });
 if (child.pid === undefined) { /* the error handler reports it */ } else {
   atomic('state.json', { runnerPid: process.pid, childPid: child.pid, contained: !!viaHost, startedAt: Date.now() });
-  // The child has what it needs. Take prompt text out of the stored plan so it is not on disk while the job runs.
-  if (job.redact) atomic('job.json', { ...job, args: job.args.map((a, i) => (job.promptArgs ?? []).includes(i) ? '<prompt>' : a),
-    files: (job.files ?? []).map(f => ({ name: (f as { name: string }).name, inWorkspace: (f as { inWorkspace?: boolean }).inWorkspace, content: '' })) });
   if (prompt !== null && child.stdin) { child.stdin.on('error', () => {}); child.stdin.end(prompt); prompt = null; }
 }
 

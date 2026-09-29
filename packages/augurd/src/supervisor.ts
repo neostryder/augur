@@ -32,6 +32,9 @@ const readJson = <T>(path: string): T | null => { try { return JSON.parse(readFi
 const alive = (pid: number | null | undefined): boolean => { if (!pid) return false; try { process.kill(pid, 0); return true; } catch { return false; } };
 const reject = (code: Rejection['code'], reason: string): SubmitResult => ({ rejected: { code, reason } });
 const COPY_EXCLUDE = new Set(['.git', 'node_modules', '.venv']);
+/** Files that usually hold secrets stay out of the copy a patch-only job works on. The copy limits what a job can change, and this keeps the obvious credentials out of its view too. */
+const SECRET_FILE = /^(\.env(\..*)?|id_(rsa|dsa|ecdsa|ed25519)|\.npmrc|\.pypirc|\.netrc|.*\.(pem|key|p12|pfx))$/i;
+const copyFilter = (src: string): boolean => { const name = basename(src); return !COPY_EXCLUDE.has(name) && !SECRET_FILE.test(name); };
 const GIT = ['-c', 'core.autocrlf=false', '-c', 'core.safecrlf=false'];
 
 interface RunnerResult { exitCode: number | null; signal?: string | null; killedBy: 'cancel' | 'timeout' | null; endedAt: number; spawnError?: string }
@@ -89,6 +92,9 @@ export class Supervisor {
       if (check.note) warnings.push(check.note);
     }
 
+    if (process.platform === 'win32' && !(this.d.config.jobhostPath && existsSync(this.d.config.jobhostPath))) {
+      return reject('adapter_unavailable', 'The Windows job host (jobhost.exe) was not found, so jobs cannot be contained. Build it with pnpm build:jobhost.');
+    }
     let prompt: string;
     try { prompt = req.prompt.text ?? readFileSync(req.prompt.file as string, 'utf8'); } catch { return reject('bad_request', 'The prompt file could not be read.'); }
     const id = randomBytes(6).toString('hex'), dir = this.jobDir(id);
@@ -192,6 +198,10 @@ export class Supervisor {
     const inData = relative(resolve(this.d.dir), resolve(req.cwd));
     if (!inData.startsWith('..') && !isAbsolute(inData)) return 'cwd may not be inside the service data folder.';
     if ((req.prompt.text === undefined) === (req.prompt.file === undefined)) return 'Give the prompt as text or as a file, not both.';
+    if (req.prompt.file !== undefined) {
+      const file = resolve(req.prompt.file), roots = [req.cwd, ...this.d.config.promptRoots].map(r => resolve(r));
+      if (!roots.some(r => file === r || file.startsWith(r + sep))) return 'A prompt file must be inside the job working folder or a folder listed in promptRoots.';
+    }
     if (req.expectFile !== undefined) {
       const target = resolve(req.cwd, req.expectFile);
       if (target !== resolve(req.cwd) && !target.startsWith(resolve(req.cwd) + sep)) return 'expectFile must stay inside cwd.';
@@ -211,7 +221,7 @@ export class Supervisor {
   private prepareWorkspace(rec: JobRecord, ws: string): string | null {
     try {
       mkdirSync(dirname(ws), { recursive: true });
-      cpSync(rec.cwd, ws, { recursive: true, filter: src => !COPY_EXCLUDE.has(basename(src)) });
+      cpSync(rec.cwd, ws, { recursive: true, filter: copyFilter });
     } catch (e) { return `copying the working directory failed: ${(e as Error).message}`; }
     if (!this.git(ws, ['init', '-q']).ok) return 'git could not record the starting tree';
     this.git(ws, ['add', '-A']);

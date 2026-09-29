@@ -62,7 +62,7 @@ export function findModel(policy: PolicyFile, label: string): { provider: string
 
 export function evaluate(request: JobRequest, input: RuleInput): Decision {
   const { policy, route, capabilities } = input, now = input.now ?? new Date(), warnings: string[] = [];
-  if (!policy) return no('no_policy', 'policy.json was not found. Augur writes it when a rule is saved.');
+  if (!policy) return no('no_policy', 'policy.json was not found or is not valid. Augur writes it when a rule is saved.');
   const found = findModel(policy, route.model);
   if (!found) return no('unknown_model', `${route.model} is not in policy.json.`);
   const { provider, model } = found;

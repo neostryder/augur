@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -241,5 +241,24 @@ describe('retention', () => {
     expect(existsSync(join(e.dir, 'jobs', id))).toBe(false);
     expect(e.store.get(id)!.state).toBe('completed');
     expect(statSync(e.dir).isDirectory()).toBe(true);
+  });
+});
+
+describe('what a job may read and where it runs', () => {
+  it('reads a prompt file only from inside the working folder or a listed root', () => {
+    const e = setup();
+    const inside = join(e.root, 'prompt.txt'), outside = join(e.root, '..', 'elsewhere.txt');
+    writeFileSync(inside, 'SLEEP 0'); writeFileSync(outside, 'SLEEP 0');
+    const ok = e.sup.submit({ ...request({ cwd: e.root }), prompt: { file: inside } });
+    expect('id' in ok).toBe(true);
+    const refused = e.sup.submit({ ...request({ cwd: e.root }), prompt: { file: outside } });
+    expect(refused).toMatchObject({ rejected: { code: 'bad_request' } });
+    const listed = setup({ promptRoots: [join(e.root, '..')] });
+    expect('id' in listed.sup.submit({ ...request({ cwd: listed.root }), prompt: { file: join(listed.root, '..', 'elsewhere.txt') } })).toBe(true);
+  });
+
+  it.runIf(process.platform === 'win32')('does not start a job on Windows without the job host', () => {
+    const e = setup({ jobhostPath: null });
+    expect(e.sup.submit(request({ cwd: e.root }))).toMatchObject({ rejected: { code: 'adapter_unavailable' } });
   });
 });

@@ -104,16 +104,17 @@ describe('classifying a task', () => {
     const c = await classifyTask({ primary: new NoBackend() }, 'refactor the build scripts');
     expect(c).toMatchObject({ activity: null, dataTier: 'sensitive' });
   });
-  it('judges text about students only on a local backend, never below sensitive, and never on a hosted one', async () => {
+  it('checks text about students first, asks only a local backend anything about it, and never drops below regulated', async () => {
     const hosted = scripted(answers, false), local = scripted(answers, true);
     const c = await classifyTask({ primary: hosted, local }, 'grade the rubric for the section 4 students');
-    expect(c.dataTier).toBe('sensitive');
+    expect(c.dataTier).toBe('regulated');
     expect(c.detail.data?.backend).toBe('laya');
-    expect(hosted.asked).toEqual(['activity']);
+    expect(hosted.asked).toEqual([]);
+    expect(local.asked).toEqual(['activity', 'data']);
     const noLocal = await classifyTask({ primary: hosted }, 'grade the rubric for the section 4 students');
-    expect(noLocal.dataTier).toBe('sensitive');
+    expect(noLocal).toMatchObject({ activity: null, dataTier: 'regulated' });
     expect(noLocal.detail.data?.backend).toBe('none');
-    expect(hosted.asked).toEqual(['activity', 'activity']);
+    expect(hosted.asked).toEqual([]);
   });
 });
 

@@ -69,6 +69,8 @@ export class App {
   private customDraft = '[]';
   private customError = '';
   private savedFlash: string | null = null;
+  /** Set while the last policy.json write failed. Agents keep enforcing the older file until a write succeeds. */
+  private policyError: string | null = null;
   private timer: ReturnType<typeof setInterval> | undefined;
   private lastRun = 0;
   private sortables: Sortable[] = [];
@@ -419,7 +421,7 @@ export class App {
 
   private rulesModel(): RulesModel {
     return { config: this.config, providers: core.policyProviders(this.config), plugins: this.pluginMap(), snapshot: this.snapshot,
-      dark: document.documentElement.dataset.theme === 'dark', catalog: this.catalog, listing: this.listing, canList: this.shell.kind === 'desktop', ...this.rules };
+      dark: document.documentElement.dataset.theme === 'dark', policyError: this.policyError, catalog: this.catalog, listing: this.listing, canList: this.shell.kind === 'desktop', ...this.rules };
   }
 
   private async render(): Promise<void> {
@@ -553,14 +555,19 @@ export class App {
   private async writePolicy(): Promise<void> {
     if (!this.shell.exportSnapshot || !this.config.exportPath || !this.config.policy) return;
     const file = buildPolicyFile(this.config.policy, core.policyProviders(this.config));
-    await this.shell.exportSnapshot(policyPathFor(this.config.exportPath), JSON.stringify(file, null, 2)).catch(() => undefined);
+    try {
+      await this.shell.exportSnapshot(policyPathFor(this.config.exportPath), JSON.stringify(file, null, 2));
+      this.policyError = null;
+    } catch (e) {
+      this.policyError = e instanceof Error ? e.message : String(e);
+    }
   }
 
   private async saveConfig(flash = true): Promise<void> {
     await this.shell.saveConfig(this.config);
     await this.writePolicy();
     if (flash) {
-      this.savedFlash = 'Saved';
+      this.savedFlash = this.policyError ? 'Saved, but policy.json was not written' : 'Saved';
       setTimeout(() => { this.savedFlash = null; if (this.view === 'settings') void this.render(); }, 1500);
     }
   }
@@ -652,6 +659,7 @@ export class App {
       case 'update-check': await this.checkForUpdate(false); break;
       case 'update-install': await this.installUpdate(); break;
       case 'settings': this.view = 'settings'; await this.render(); break;
+      case 'retry-policy': await this.writePolicy(); await this.render(); break;
       case 'rules': this.view = 'rules'; this.rules.showHistory = false; if (t.dataset.value) this.rules.filter = t.dataset.value as RulesFilter; await this.render(); break;
       case 'rules-history': this.rules.showHistory = !this.rules.showHistory; await this.render(); break;
       case 'back': this.view = 'dashboard'; await this.render(); break;

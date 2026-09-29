@@ -1,5 +1,6 @@
 // The `augur` command: the canonical caller of the dispatch service. Every command takes --json. Exit codes come from the protocol package.
 import { spawn } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES } from '@augur/core';
@@ -122,16 +123,20 @@ async function run(rest: string[], p: Parsed, io: Io, opts: Opts, say: (h: strin
   const route = need(rest[0], 'route');
   const pf = opt('prompt-file'), text = opt('prompt');
   if ((pf === undefined) === (text === undefined)) { io.err('Give the prompt with --prompt <text> or --prompt-file <file|->.\n'); return EXIT_CODES.usage; }
-  const promptText = pf === '-' ? io.stdin() : text;
+  // The CLI is the person's own process, so it reads the prompt file itself and sends the text. The service reads a prompt file only from inside the job's folder.
+  let promptText: string | undefined = pf === '-' ? io.stdin() : text;
+  if (pf !== undefined && pf !== '-') { try { promptText = readFileSync(resolve(io.cwd, pf), 'utf8'); } catch { io.err(`The prompt file ${pf} could not be read.\n`); return EXIT_CODES.usage; } }
+  // What the work is and how sensitive its data is decide which models may see it, so neither has a default. Tools and output default to the least authority.
+  if (opt('activity') === undefined || opt('data') === undefined) { io.err('Give --activity and --data. The data tier decides which models may see the task, so it is never assumed.\n'); return EXIT_CODES.usage; }
   const pick = <T extends string>(name: string, list: readonly T[], d: T): T | null => { const v = (opt(name) ?? d) as T; return list.includes(v) ? v : null; };
-  const activity = pick('activity', ACTIVITIES, 'write_code'), dataTier = pick('data', DATA_TIERS, 'internal'), tools = pick('tools', TOOL_TIERS, 'write'), output = pick('output', OUTPUT_MODES, 'write_files');
+  const activity = pick('activity', ACTIVITIES, 'research'), dataTier = pick('data', DATA_TIERS, 'regulated'), tools = pick('tools', TOOL_TIERS, 'read'), output = pick('output', OUTPUT_MODES, 'text_only');
   if (!activity || !dataTier || !tools || !output) { io.err('One of --activity, --data, --tools or --output is not a known value.\n'); return EXIT_CODES.usage; }
   const parentId = io.env.AUGUR_JOB_ID;
   const allow = (opt('allow') ?? '').split(',').map(x => x.trim()).filter(Boolean) as Array<'unpicked' | 'exhausted'>;
   if (allow.some(x => x !== 'unpicked' && x !== 'exhausted')) { io.err('--allow takes unpicked, exhausted, or both.\n'); return EXIT_CODES.usage; }
   const req: JobRequest = {
     route, activity: activity as ActivityId, dataTier: dataTier as DataTier, tools: tools as ToolTier, output: output as OutputMode, cwd: resolve(io.cwd, opt('cwd') ?? '.'),
-    prompt: promptText !== undefined ? { text: promptText } : { file: resolve(io.cwd, pf as string) },
+    prompt: { text: promptText as string },
     ...(opt('expect-file') ? { expectFile: opt('expect-file') as string } : {}), ...(opt('timeout') ? { timeoutS: Number(opt('timeout')) } : {}),
     ...(p.flags.has('named') ? { named: true } : {}),
     caller: { kind: parentId ? 'job' : 'cli', ...(parentId ? { label: parentId } : {}), ...(io.env.CLAUDE_CODE_SESSION_ID ? { session: io.env.CLAUDE_CODE_SESSION_ID } : {}), ...(io.interactive ? { interactive: true } : {}) },

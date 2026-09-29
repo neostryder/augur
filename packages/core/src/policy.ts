@@ -294,18 +294,30 @@ export function buildPolicyFile(policy: PolicyConfig, providers: Array<{ id: str
 /**
  * Turns a policy.json back into stored rules, keeping each model's status, so an install with a policy.json already in place
  * (written by hand or by an earlier build) keeps its rules, pauses and confirmations when the app first takes ownership of the file.
- * Every model's resolved rule becomes its own rule, so a model that inherited a value from its provider now holds it directly.
+ * A field a model lists under `inherited` goes back to the provider's defaults, so a later change to a default still reaches that model.
+ * A model whose inherited value differs from the value the provider's other models share keeps it as its own.
  */
 export function policyFromFile(data: unknown, now = new Date()): PolicyConfig {
   const stored: Record<string, unknown> = {};
   for (const [pid, raw] of Object.entries(obj(obj(data).providers))) {
-    const p = obj(raw), models: Record<string, unknown> = {};
+    const p = obj(raw), defaults: Record<string, unknown> = {}, defaultActivities: Record<string, unknown> = {}, models: Record<string, unknown> = {};
+    const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
     for (const [label, mraw] of Object.entries(obj(p.models))) {
-      const m = obj(mraw);
-      models[label] = { id: m.id, name: m.name, source: m.source, status: m.status, firstSeen: now.toISOString(),
-        rule: { activities: m.activities, dataTier: m.dataTier, askFirst: m.askFirst, output: m.output, sandbox: m.sandbox, effort: m.effort, cost: m.cost, pause: m.pause, dataHandling: m.dataHandling, notes: m.notes } };
+      const m = obj(mraw), inherited = new Set(Array.isArray(m.inherited) ? m.inherited.filter((x): x is string => typeof x === 'string') : []);
+      const rule: Record<string, unknown> = {}, activities: Record<string, unknown> = {};
+      for (const field of ['dataTier', 'askFirst', 'output', 'sandbox', 'effort', 'cost', 'pause', 'dataHandling', 'notes']) {
+        if (inherited.has(field) && (!(field in defaults) || same(defaults[field], m[field]))) defaults[field] = m[field];
+        else rule[field] = m[field];
+      }
+      for (const [act, level] of Object.entries(obj(m.activities))) {
+        const name = `activities.${act}`;
+        if (inherited.has(name) && (!(act in defaultActivities) || same(defaultActivities[act], level))) defaultActivities[act] = level;
+        else activities[act] = level;
+      }
+      rule.activities = activities;
+      models[label] = { id: m.id, name: m.name, source: m.source, status: m.status, firstSeen: now.toISOString(), rule };
     }
-    stored[pid] = { defaults: {}, thresholds: p.thresholds, models };
+    stored[pid] = { defaults: { ...defaults, activities: defaultActivities }, thresholds: p.thresholds, models };
   }
   return migratePolicy({ providers: stored });
 }

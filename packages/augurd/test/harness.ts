@@ -48,7 +48,7 @@ export function makeEnv(over: Partial<ServiceConfig> = {}, env: NodeJS.ProcessEn
   const root = mkdtempSync(join(tmpdir(), 'augurd-')), dir = join(root, 'data'), home = join(root, 'home');
   mkdirSync(dir, { recursive: true }); mkdirSync(join(home, 'dispatch'), { recursive: true });
   const routesPath = join(home, 'dispatch', 'routes.json');
-  const config: ServiceConfig = { ...DEFAULT_CONFIG, adapters: ['codex-exec', 'exec'], jobhostPath: existsSync(JOBHOST) ? JOBHOST : null, ...over };
+  const config: ServiceConfig = { ...DEFAULT_CONFIG, requirePick: false, verifyNamed: 'record', adapters: ['codex-exec', 'exec'], jobhostPath: existsSync(JOBHOST) ? JOBHOST : null, ...over };
   const store = new Store(dir), policy = policySource(join(home, 'policy.json')), usage = usageSource(join(home, 'usage.json')), routes = routeSource(routesPath);
   const stores: Store[] = [store];
   const build = (st: Store, cfg: ServiceConfig, e: NodeJS.ProcessEnv) => new Supervisor({ store: st, config: cfg, dir, adapters: enabledAdapters(cfg.adapters), routes: () => routes.read(), policy: () => policy.read(), usage: () => usage.read(), env: e });

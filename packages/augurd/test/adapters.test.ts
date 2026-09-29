@@ -187,6 +187,14 @@ describe('an API connector', () => {
     expect(m.seen[0]!.headers['anthropic-version']).toBe('2023-06-01');
   });
 
+  it('refuses to send a key over plain http to a remote host, and allows http for localhost', () => {
+    const e = setup({ adapters: ['openai-api'] }, { ...process.env, AUGUR_TEST_API_KEY: 'k' });
+    e.writeRoutes({ chat: { model: 'test/text', adapter: 'openai-api', options: { baseUrl: 'http://api.example.com/v1', model: 'x', apiKeyEnv: 'AUGUR_TEST_API_KEY' } } });
+    expect(e.sup.submit({ ...textReq('chat'), cwd: e.root })).toMatchObject({ rejected: { reason: expect.stringContaining('https://') } });
+    e.writeRoutes({ chat: { model: 'test/text', adapter: 'openai-api', options: { baseUrl: 'http://127.0.0.1:9/v1', model: 'x', apiKeyEnv: 'AUGUR_TEST_API_KEY' } } });
+    expect('rejected' in e.sup.submit({ ...textReq('chat'), cwd: e.root }) && (e.sup.submit({ ...textReq('chat'), cwd: e.root }) as { rejected: { reason: string } }).rejected.reason.includes('https://')).toBe(false);
+  });
+
   it('fails the job with the HTTP status when the API refuses, and never for a job that asks for tools', async () => {
     const m = await mock(() => ({ status: 401, json: { error: 'bad key' } }));
     const e = setup({ adapters: ['openai-api'] }, { ...process.env, AUGUR_TEST_API_KEY: 'nope' });

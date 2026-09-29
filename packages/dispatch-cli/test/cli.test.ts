@@ -13,12 +13,19 @@ afterEach(async () => { while (cleanup.length) await cleanup.pop()!(); });
 async function boot() {
   const e: Env = makeEnv();
   const pipe = process.platform === 'win32' ? `\\\\.\\pipe\\augurd-cli-${Date.now()}-${Math.floor(Math.random() * 1e6)}` : join(e.root, 'cli.sock');
-  writeFileSync(join(e.dir, 'config.json'), JSON.stringify({ adapters: ['codex-exec', 'exec'], jobhostPath: existsSync(JOBHOST) ? JOBHOST : null }));
+  writeFileSync(join(e.dir, 'config.json'), JSON.stringify({ requirePick: false, verifyNamed: 'record', adapters: ['codex-exec', 'exec'], jobhostPath: existsSync(JOBHOST) ? JOBHOST : null }));
   const svc = await startService({ dir: e.dir, home: e.home, pipe, routesPath: e.routesPath });
   cleanup.push(async () => { await svc.stop().catch(() => {}); e.dispose(); });
+  // `run` has no default activity or data tier and defaults to read tools and text output, so most tests state the usual authority once here. `--bare` skips that.
+  const withUsual = (args: string[]): string[] => {
+    if (args[0] !== 'run') return args;
+    if (args.includes('--bare')) return args.filter(a => a !== '--bare');
+    const flag = (name: string, value: string) => args.includes(name) ? [] : [name, value];
+    return [...args, ...flag('--activity', 'write_code'), ...flag('--data', 'internal'), ...flag('--tools', 'write'), ...flag('--output', 'write_files')];
+  };
   const run = async (args: string[], stdin = '', env: NodeJS.ProcessEnv = {}) => {
     let out = '', err = '';
-    const code = await main(args, { out: t => { out += t; }, err: t => { err += t; }, stdin: () => stdin, env: { ...process.env, AUGURD_DATA: e.dir, AUGURD_PIPE: pipe, ...env }, cwd: e.root });
+    const code = await main(withUsual(args), { out: t => { out += t; }, err: t => { err += t; }, stdin: () => stdin, env: { ...process.env, AUGURD_DATA: e.dir, AUGURD_PIPE: pipe, ...env }, cwd: e.root });
     return { code, out, err };
   };
   return { e, run };
@@ -137,5 +144,27 @@ describe('augur note-prompt', () => {
     expect(JSON.parse(r.out).models).toEqual(expect.arrayContaining(['test/fake']));
     const none = await run(['note-prompt'], 'hello', { CLAUDE_CODE_SESSION_ID: '' });
     expect(none.code).toBe(1);
+  });
+});
+
+describe('augur run defaults', () => {
+  it('needs an activity and a data tier, and defaults to read tools and text output', async () => {
+    const { run } = await boot();
+    const bare = await run(['run', 'fake', '--prompt', 'SLEEP 0', '--bare']);
+    expect(bare.code).toBe(1);
+    expect(bare.err).toContain('--activity and --data');
+    const partial = await run(['run', 'fake', '--prompt', 'SLEEP 0', '--activity', 'research', '--bare']);
+    expect(partial.code).toBe(1);
+    const read = await run(['run', 'fake', '--prompt', 'SLEEP 0', '--activity', 'research', '--data', 'internal', '--bare', '--json']);
+    expect(read.code).toBe(0);
+  });
+
+  it('reads a prompt file itself and sends the text', async () => {
+    const { e, run } = await boot();
+    writeFileSync(join(e.root, 'p.txt'), 'SLEEP 0');
+    const res = await run(['run', 'fake', '--prompt-file', 'p.txt', '--wait']);
+    expect(res.code).toBe(0);
+    const missing = await run(['run', 'fake', '--prompt-file', 'nope.txt']);
+    expect(missing.code).toBe(1);
   });
 });

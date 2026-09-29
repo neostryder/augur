@@ -14,7 +14,8 @@ function make(id: string, shape: 'openai' | 'anthropic'): Adapter {
     id, transport: 'api', capabilities: CAPS, envAllow: [],
     validate(route: RouteConfig) {
       if (!optStr(route.options, 'baseUrl')) return 'route option baseUrl is required';
-      if (!/^https?:\/\//.test(optStr(route.options, 'baseUrl') as string)) return 'baseUrl must start with http:// or https://';
+      const base = optStr(route.options, 'baseUrl') as string;
+      if (!/^https:\/\//.test(base) && !/^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/.test(base)) return 'baseUrl must start with https://, or with http:// for localhost only, since the key is sent with every request';
       if (!optStr(route.options, 'model')) return 'route option model is required';
       if (!optStr(route.options, 'apiKeyEnv')) return 'route option apiKeyEnv (the environment variable that holds the key) is required';
       return null;

@@ -17,7 +17,22 @@ class JsonSource<T> {
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
-export const policySource = (path: string) => new JsonSource<PolicyFile>(path, v => isObj(v) && v.schema === 1 && isObj(v.providers) ? v as unknown as PolicyFile : null);
+const TIERS = ['public', 'internal', 'sensitive', 'regulated'], OUTPUTS = ['write_files', 'patch_only', 'text_only'], STATUSES = ['confirmed', 'imported', 'unreviewed', 'hidden'];
+/** A policy.json is a security input that people also edit by hand, so a malformed model rejects the whole file rather than being read with missing fields. */
+export function validPolicyFile(v: unknown): boolean {
+  if (!isObj(v) || v.schema !== 1 || !isObj(v.providers)) return false;
+  for (const p of Object.values(v.providers)) {
+    if (!isObj(p) || !isObj(p.models) || !isObj(p.thresholds)) return false;
+    for (const m of Object.values(p.models)) {
+      if (!isObj(m) || typeof m.id !== 'string' || !STATUSES.includes(m.status as string) || !isObj(m.activities)) return false;
+      if (!TIERS.includes(m.dataTier as string) || typeof m.askFirst !== 'boolean' || !OUTPUTS.includes(m.output as string) || typeof m.sandbox !== 'boolean') return false;
+      if (m.pause !== null && m.pause !== undefined && (!isObj(m.pause) || typeof m.pause.until !== 'string')) return false;
+    }
+  }
+  return true;
+}
+
+export const policySource = (path: string) => new JsonSource<PolicyFile>(path, v => validPolicyFile(v) ? v as unknown as PolicyFile : null);
 export const usageSource = (path: string) => new JsonSource<UsageSnapshot>(path, v => isObj(v) && isObj(v.providers) ? v as unknown as UsageSnapshot : null);
 
 /** routes.json: `{ "routes": { "<name>": { "model": "codex/sol", "adapter": "codex-exec", "options": { ... } } } }` */

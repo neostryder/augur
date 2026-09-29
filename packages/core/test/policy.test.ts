@@ -117,6 +117,14 @@ describe('policy', () => {
     expect(again.providers.codex!.models['codex/sol']!.activities).toEqual(file.providers.codex!.models['codex/sol']!.activities);
   });
 
+  it('keeps a model inheriting from its provider after its policy.json is adopted', () => {
+    const file = buildPolicyFile(sample(), meta, t2), adopted = policyFromFile(JSON.parse(JSON.stringify(file)), t2);
+    expect(adopted.providers.codex!.defaults.dataTier).toBe('sensitive');
+    expect(adopted.providers.codex!.models['codex/sol']!.rule.dataTier).toBeUndefined();
+    setField(adopted, fieldPath('codex', null, 'dataTier'), 'internal', 'desktop', t2);
+    expect(buildPolicyFile(adopted, meta, t2).providers.codex!.models['codex/luna']!.dataTier).toBe('internal');
+  });
+
   it('lifts a pause at its time and puts policy.json beside the export', () => {
     expect(pauseActive({ until: t1.toISOString() }, t0)).toBe(true);
     expect(pauseActive({ until: t1.toISOString() }, t2)).toBe(false);

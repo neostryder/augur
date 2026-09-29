@@ -13,7 +13,7 @@ afterEach(async () => { while (cleanup.length) await cleanup.pop()!(); });
 async function boot() {
   const e: Env = makeEnv();
   const pipe = process.platform === 'win32' ? `\\\\.\\pipe\\augurd-test-${Date.now()}-${Math.floor(Math.random() * 1e6)}` : join(e.root, 'test.sock');
-  writeFileSync(join(e.dir, 'config.json'), JSON.stringify({ adapters: ['codex-exec', 'exec'], jobhostPath: existsSync(JOBHOST) ? JOBHOST : null }));
+  writeFileSync(join(e.dir, 'config.json'), JSON.stringify({ requirePick: false, verifyNamed: 'record', adapters: ['codex-exec', 'exec'], jobhostPath: existsSync(JOBHOST) ? JOBHOST : null }));
   const svc = await startService({ dir: e.dir, home: e.home, pipe, routesPath: e.routesPath });
   cleanup.push(async () => { await svc.stop().catch(() => {}); e.dispose(); });
   const o = { dir: e.dir, pipe };

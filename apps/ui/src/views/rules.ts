@@ -13,6 +13,8 @@ export interface RulesModel {
   plugins: Map<string, ProviderPlugin>;
   snapshot: Snapshot | null;
   dark: boolean;
+  /** Why the last policy.json write failed, or null. While set, agents keep using the older file. */
+  policyError: string | null;
   /** The provider defaults (model null) or model whose rules are open. */
   sel: { provider: string; model: string | null } | null;
   query: string;
@@ -283,6 +285,7 @@ export function renderRules(m: RulesModel): string {
     <div><h1>${m.showHistory ? 'Rule changes' : 'Model rules'}</h1><div class="sub">${m.showHistory ? 'Newest first. Undo writes the old value back as a new change.' : 'What agents may use each model for'}</div></div><span class="grow"></span>
     ${m.showHistory ? '' : `<button class="btn small" data-action="rules-history">History</button>`}</header>`;
   if (m.showHistory) return html + historyView(m) + '</div>';
+  if (m.policyError) html += `<div class="card rbanner bad"><span class="grow"><b>policy.json was not written.</b> Agents are still using the older file. ${esc(m.policyError)}</span><button class="btn small" data-action="retry-policy">Try again</button></div>`;
 
   if (pending) html += `<div class="card rbanner"><span class="grow">${pending} ${pending === 1 ? 'model needs' : 'models need'} review. Routers skip them until their rules are confirmed.</span>
     ${m.filter === 'needs' ? '' : '<button class="btn small" data-rfilter="needs">Show them</button>'}</div>`;

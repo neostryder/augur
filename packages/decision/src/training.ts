@@ -19,12 +19,12 @@ export interface TrainingRow {
 const TEST_SHARE = 0.15;
 const splitOf = (id: string): 'train' | 'test' => parseInt(createHash('sha256').update(id).digest('hex').slice(0, 8), 16) / 0xffffffff < TEST_SHARE ? 'test' : 'train';
 const key = (name: string) => name.replace(/[^A-Za-z0-9_]/g, '_');
-const BAD = new Set(['failed', 'killed', 'lost', 'artifact_validation_failed']);
 
 /**
  * Activity and data tier come from picks whose caller declared them (a declared value is a rule, where a classified one would only repeat the model).
- * Fit comes from what happened to the job after the pick: completed is a good fit, a failure is a poor one, and a job that used a model over the picked one
- * and completed is an excellent one. Only models that were actually used are observed, so these labels are biased toward the ranking's own top choices.
+ * Fit comes from what happened to the job after the pick: completed is a good fit, and a job that used a model over the picked one and completed is an excellent one.
+ * A failed, killed, lost or invalid-output job says nothing about how well the model suited the task, since a crash, a timeout or a broken adapter looks the same, so it makes no label.
+ * Only models that were actually used are observed, so these labels are biased toward the ranking's own top choices.
  */
 export function trainingRows(records: DecisionRow[]): TrainingRow[] {
   const picks = new Map<string, PickRow>(), jobs = new Map<string, JobRow>(), out: TrainingRow[] = [];
@@ -44,7 +44,6 @@ export function trainingRows(records: DecisionRow[]): TrainingRow[] {
     if (!pick?.task || !job) continue;
     let level: number;
     if (o.state === 'completed') level = job.overridden ? 3 : 2;
-    else if (BAD.has(o.state) && !job.overridden) level = 0;
     else continue;
     const desc = pick.descriptions?.[o.model] ?? '';
     const q = fitQuestions([{ model: o.model, description: desc }]);
