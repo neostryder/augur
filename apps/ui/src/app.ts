@@ -4,11 +4,12 @@ import * as core from './core';
 import type { HistoryRow } from './core';
 import { renderDashboard, tightest, updateTip, type DashboardModel } from './views/dashboard';
 import { CUSTOM_EXAMPLE, renderSettings, type SettingsModel } from './views/settings';
-import { pauseResets, renderRules, type RulesFilter, type RulesModel } from './views/rules';
+import { dialEndChoices, pauseResets, renderRules, type RulesFilter, type RulesModel } from './views/rules';
 import { renderJobs, type JobsModel } from './views/jobs';
 import { renderRoutes, type RoutesModel } from './views/routes';
 import { renderService, type ConfigLine, type ServiceModel } from './views/service';
 import { BULK_FIELDS, previewBulk, type BulkPreview } from './rules-bulk';
+import { pauseValue, planDialBack, type DialBackPlan } from './dial-back';
 import { ROUTES_PATH, checkDraft, draftOf, emptyDraft, parseRoutesText, writeRoute } from './routes-model';
 import type { JobRecord } from '@augur/dispatch-protocol';
 import { renderTrayIcon } from './trayicon';
@@ -95,8 +96,8 @@ export class App {
   private hotkeyError = '';
   private catalog: ModelCatalog = {};
   private listing = new Set<string>();
-  private rules: { sel: RulesModel['sel']; query: string; filter: RulesFilter; open: Set<string>; picked: Set<string>; showHistory: boolean; addError: string; note: string; bulkTier: string; bulkField: string; bulkValue: string; preview: BulkPreview | null; pauseMode: 'off' | 'weights'; pauseWeights: Record<string, string> } =
-    { sel: null, query: '', filter: 'all', open: new Set(), picked: new Set(), showHistory: false, addError: '', note: '', bulkTier: '', bulkField: 'cost', bulkValue: '', preview: null, pauseMode: 'off', pauseWeights: {} };
+  private rules: { sel: RulesModel['sel']; query: string; filter: RulesFilter; open: Set<string>; picked: Set<string>; showHistory: boolean; addError: string; note: string; bulkTier: string; bulkField: string; bulkValue: string; preview: BulkPreview | null; dialOpen: boolean; dialEnd: string; dialCustom: string; dialPlan: DialBackPlan | null; dialError: string; pauseMode: 'off' | 'weights'; pauseWeights: Record<string, string> } =
+    { sel: null, query: '', filter: 'all', open: new Set(), picked: new Set(), showHistory: false, addError: '', note: '', bulkTier: '', bulkField: 'cost', bulkValue: '', preview: null, dialOpen: false, dialEnd: '', dialCustom: '', dialPlan: null, dialError: '', pauseMode: 'off', pauseWeights: {} };
 
   private get sync(): SyncConfig | null {
     return this.config.sync ?? null;
@@ -147,7 +148,7 @@ export class App {
     }
     await this.refreshSecrets();
     // With Also run jobs chosen, the service is up whenever the app is. A service that is already running answers and nothing changes.
-    if (this.config.dispatch?.runJobs && this.shell.dispatch) void this.augur(['service', 'start', '--json']).catch(() => undefined);
+    if (this.config.dispatch?.runJobs && this.shell.dispatch) void this.augur(['service', 'start', '--json']).then(() => this.loadService()).catch(() => undefined);
 
     if (this.firstRun) {
       this.view = 'settings';
@@ -432,6 +433,7 @@ export class App {
       config: this.config, plugins: this.pluginMap(), snapshot: this.snapshot, secrets: this.secrets, shellKind: this.shell.kind,
       autostart: this.autostart, update: this.update, openProvider: this.openProvider, customDraft: this.customDraft, customError: this.customError,
       firstRun: this.firstRun, savedFlash: this.savedFlash, canDispatch: this.shell.dispatch !== undefined, runJobs: this.config.dispatch?.runJobs === true,
+      classifier: this.servicePage.lines?.find((l) => l.key === 'decision.backend')?.value ?? null,
       sync: this.sync, relay: this.relay(), pwaUrl: this.pwaUrl(), pairQr: this.pairQr, pairUrl: this.pairUrl,
       scanError: this.scanError, iosInstallHint: iosInstallHint(), hotkeyError: this.hotkeyError, canHotkey: !!this.shell.setHotkey,
     };
@@ -742,7 +744,7 @@ export class App {
       page.service = { running: st.data?.running === true, pid: st.data?.pid ?? null };
       page.unavailable = '';
     } catch (e) { page.unavailable = e instanceof Error ? e.message : String(e); }
-    if (this.view === 'service') await this.render();
+    if (this.view === 'service' || (this.view === 'settings' && this.firstRun)) await this.render();
   }
 
   /** Usage only stops the service when nothing is running on it; Also run jobs starts it. */
@@ -759,7 +761,7 @@ export class App {
       } catch (e) { page.error = e instanceof Error ? e.message : String(e); }
     }
     await this.render();
-    if (this.view === 'service') await this.loadService();
+    await this.loadService();
   }
 
   private async restartService(): Promise<void> {
@@ -872,7 +874,7 @@ export class App {
   }
 
   private async onClick(e: MouseEvent): Promise<void> {
-    const t = (e.target as HTMLElement).closest<HTMLElement>('[data-action],[data-open],[data-collapse],[data-meter],[data-secret-save],[data-secret-del],[data-set],[data-open-provider],[data-color-reset],[data-signin],[data-rsel],[data-rprov],[data-rfilter],[data-status],[data-bulk],[data-undo],[data-add-model],[data-pause-clear],[data-list-now],[data-job],[data-route]');
+    const t = (e.target as HTMLElement).closest<HTMLElement>('[data-action],[data-open],[data-collapse],[data-meter],[data-secret-save],[data-secret-del],[data-set],[data-open-provider],[data-color-reset],[data-signin],[data-rsel],[data-rprov],[data-rfilter],[data-status],[data-bulk],[data-undo],[data-add-model],[data-pause-clear],[data-list-now],[data-job],[data-route],[data-dial]');
     if (!t) return;
     if (this.view === 'rules' && await this.onRulesClick(t)) return;
     if (t.dataset.job) { await this.openJob(t.dataset.job); return; }
@@ -920,6 +922,7 @@ export class App {
       case 'settings': this.view = 'settings'; await this.render(); break;
       case 'retry-policy': await this.writePolicy(); await this.render(); break;
       case 'rules': this.view = 'rules'; this.rules.showHistory = false; if (t.dataset.value) this.rules.filter = t.dataset.value as RulesFilter; await this.render(); break;
+      case 'rules-dial': this.rules.dialOpen = !this.rules.dialOpen; this.rules.dialPlan = null; this.rules.dialError = ''; await this.render(); break;
       case 'rules-history': this.rules.showHistory = !this.rules.showHistory; await this.render(); break;
       case 'back': this.leaveJobs(); this.view = 'dashboard'; await this.render(); break;
       case 'jobs': this.view = 'jobs'; this.jobs.sel = null; this.jobs.detail = null; this.jobsTimer ??= setInterval(() => { void this.loadJobs(); }, 3000); await this.render(); void this.loadJobs(); break;
@@ -929,6 +932,13 @@ export class App {
         else { this.view = 'jobs'; this.jobs.sel = null; this.jobs.detail = null; this.jobsTimer ??= setInterval(() => { void this.loadJobs(); }, 3000); await this.render(); void this.loadJobs(); }
         break;
       case 'dispatch-mode': await this.setDispatchMode(t.dataset.value === 'jobs'); break;
+      case 'dispatch-classifier': {
+        const r = await this.augur(['config', 'set', 'decision.backend', t.dataset.value ?? 'none']);
+        this.servicePage.error = r.code === 0 ? '' : r.err || 'That choice was not accepted.';
+        if (r.code === 0) await this.restartService(); else await this.loadService();
+        await this.render();
+        break;
+      }
       case 'service-restart': await this.restartService(); break;
       case 'route-new': this.routesPage.sel = '+'; this.routesPage.draft = emptyDraft(); this.routesPage.formError = ''; this.routesPage.note = ''; this.routesPage.confirmDelete = false; await this.render(); break;
       case 'route-close': this.closeRoute(); await this.render(); break;
@@ -1121,6 +1131,25 @@ export class App {
       this.rules.addError = ''; this.rules.open.add(d.addModel); this.rules.sel = { provider: d.addModel, model: label };
       await this.saveRules(); return true;
     }
+    if (d.dial) {
+      const r = this.rules;
+      if (d.dial === 'close') { r.dialOpen = false; r.dialPlan = null; r.dialError = ''; await this.render(); return true; }
+      const choices = dialEndChoices({ snapshot: this.snapshot, providers: core.policyProviders(this.config) });
+      const chosen = r.dialEnd === 'custom' || !choices.length ? null : choices.find((c) => c.value === r.dialEnd) ?? choices[0];
+      const until = chosen ? chosen.until : r.dialCustom ? new Date(r.dialCustom).toISOString() : '';
+      if (d.dial === 'preview') {
+        if (!until || Date.parse(until) <= Date.now()) { r.dialError = 'Pick a time in the future.'; r.dialPlan = null; } else { r.dialError = ''; r.dialPlan = planDialBack(policy, until); }
+        await this.render(); return true;
+      }
+      if (d.dial === 'apply' && r.dialPlan) {
+        for (const item of r.dialPlan.items) setField(policy, item.path, pauseValue(item, r.dialPlan.until), this.device);
+        const n = r.dialPlan.items.length;
+        this.rules.note = `Dialed back ${n} ${n === 1 ? 'model' : 'models'} until ${new Date(r.dialPlan.until).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}.`;
+        r.dialOpen = false; r.dialPlan = null;
+        await this.saveRules(); return true;
+      }
+      return true;
+    }
     if (d.bulk) {
       const picked = [...this.rules.picked].map((k) => k.split('|') as [string, string]);
       const n = picked.length, count = `${n} ${n === 1 ? 'model' : 'models'}`;
@@ -1157,6 +1186,8 @@ export class App {
   private async onRulesChange(t: HTMLInputElement): Promise<boolean> {
     const d = t.dataset, policy = this.config.policy ??= emptyPolicy();
     if (d.pick) { if (t.checked) this.rules.picked.add(d.pick); else this.rules.picked.delete(d.pick); this.rules.note = ''; this.rules.bulkTier = ''; this.rules.preview = null; await this.render(); return true; }
+    if (d.dialEnd !== undefined) { this.rules.dialEnd = t.value; this.rules.dialPlan = null; this.rules.dialError = ''; await this.render(); return true; }
+    if (d.dialCustom !== undefined) { this.rules.dialCustom = t.value; this.rules.dialPlan = null; this.rules.dialError = ''; return true; }
     if (d.bulkField !== undefined) { this.rules.bulkField = t.value; this.rules.bulkValue = ''; this.rules.preview = null; await this.render(); return true; }
     if (d.bulkValue !== undefined) { this.rules.bulkValue = t.value; this.rules.preview = null; await this.render(); return true; }
     if (d.pickAll) {

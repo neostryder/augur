@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CLASSIFIER_TEXT, MODE_TEXT, modeChooser, renderService, type ConfigLine, type ServiceModel } from '../src/views/service';
+import { CLASSIFIER_TEXT, MODE_TEXT, classifierChooser, modeChooser, renderService, type ConfigLine, type ServiceModel } from '../src/views/service';
 
 const line = (over: Partial<ConfigLine>): ConfigLine => ({ key: 'maxConcurrent', label: 'Jobs at once', help: 'How many jobs run together.', kind: 'number', min: 1, max: 64, weakens: false, value: '8', default: '8', ...over });
 const model = (over: Partial<ServiceModel> = {}): ServiceModel => ({ lines: [], service: { running: true, pid: 99 }, runJobs: true, note: '', error: '', busy: false, unavailable: '', ...over });
@@ -42,5 +42,15 @@ describe('the service page', () => {
   it('marks the current mode as checked', () => {
     expect(modeChooser(true)).toMatch(/aria-checked="true" class="on" data-action="dispatch-mode" data-value="jobs"/);
     expect(modeChooser(false)).toMatch(/aria-checked="true" class="on" data-action="dispatch-mode" data-value="usage"/);
+  });
+});
+
+describe('the classifier choice in first-run setup', () => {
+  it('marks the current choice and says where task text goes for it', () => {
+    const html = classifierChooser('jev');
+    expect(html).toMatch(/aria-checked="true" class="on" data-action="dispatch-classifier" data-value="jev"/);
+    expect(html).toContain('hosted service from TypeSafe');
+    expect(classifierChooser('none')).toContain('Nothing classifies tasks');
+    expect(classifierChooser('laya')).toContain('stays on your network');
   });
 });

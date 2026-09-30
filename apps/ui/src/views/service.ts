@@ -39,6 +39,14 @@ export function modeChooser(runJobs: boolean): string {
   }).join('')}</div><p class="help">${esc(runJobs ? MODE_TEXT.jobs : MODE_TEXT.usage)}</p>`;
 }
 
+/** Who answers the questions behind augur pick --task, with what each choice does with task text. Used in first-run setup. */
+export function classifierChooser(current: string): string {
+  const choices: Array<[string, string]> = [['none', 'None'], ['laya', 'Laya'], ['jev', 'Jev']];
+  return `<div class="seg" role="radiogroup" aria-label="Task classifier">${choices.map(([v, label]) =>
+    `<button role="radio" aria-checked="${v === current}" class="${v === current ? 'on' : ''}" data-action="dispatch-classifier" data-value="${v}">${label}</button>`).join('')}</div>
+    <p class="help">${esc(CLASSIFIER_TEXT[current] ?? '')}</p>`;
+}
+
 function control(l: ConfigLine, locked: boolean): string {
   const id = `cfg-${l.key}`, attrs = `id="${id}" data-cfg="${esc(l.key)}" ${locked ? 'disabled' : ''}`;
   if (l.kind === 'bool') return `<label class="switch"><input type="checkbox" ${attrs} ${l.value === 'true' ? 'checked' : ''} aria-label="${esc(l.label)}"><span></span></label>`;

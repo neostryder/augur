@@ -5,7 +5,7 @@ import type { BulkPreview } from '../src/rules-bulk';
 
 const model = (over: Partial<RulesModel> = {}): RulesModel => ({
   config: migrateConfig({}), providers: [], plugins: new Map(), snapshot: null, dark: false, policyError: null, sel: null, query: '', filter: 'all', open: new Set(),
-  picked: new Set(['codex|codex/sol']), showHistory: false, addError: '', note: '', bulkTier: '', bulkField: 'cost', bulkValue: '', preview: null, pauseMode: 'off', pauseWeights: {},
+  picked: new Set(['codex|codex/sol']), showHistory: false, addError: '', note: '', bulkTier: '', bulkField: 'cost', bulkValue: '', preview: null, dialOpen: false, dialEnd: '', dialCustom: '', dialPlan: null, dialError: '', pauseMode: 'off', pauseWeights: {},
   catalog: {}, listing: new Set(), canList: false, ...over });
 
 describe('the bulk bar', () => {
@@ -32,5 +32,25 @@ describe('the bulk bar', () => {
     const none = renderRules(model({ preview: { ...preview, changes: [] } }));
     expect(none).toContain('Nothing to change.');
     expect(none).not.toContain('data-bulk="apply-field"');
+  });
+});
+
+describe('the dial-back card', () => {
+  it('opens from the header and offers a custom time when no reset can be trusted', () => {
+    expect(renderRules(model())).toContain('data-action="rules-dial"');
+    expect(renderRules(model())).not.toContain('Dial back usage');
+    const open = renderRules(model({ dialOpen: true }));
+    expect(open).toContain('Dial back usage');
+    expect(open).toContain('data-dial-custom');
+  });
+
+  it('shows the plan with Apply only when something would change', () => {
+    const plan = { until: '2026-10-04T17:00:00.000Z', skipped: 3, items: [{ provider: 'codex', label: 'codex/sol', path: 'codex|codex/sol|pause', action: 'stop' as const }] };
+    const html = renderRules(model({ dialOpen: true, dialPlan: plan }));
+    expect(html).toContain('1 model changes.');
+    expect(html).toContain('codex/sol</b> stops');
+    expect(html).toContain('3 left alone');
+    expect(html).toContain('data-dial="apply"');
+    expect(renderRules(model({ dialOpen: true, dialPlan: { ...plan, items: [] } }))).not.toContain('data-dial="apply"');
   });
 });

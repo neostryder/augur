@@ -2,7 +2,7 @@ import type { AppConfig, ProviderPlugin, Snapshot } from '@augur/core';
 import type { UpdateState } from '../app';
 import { ICON, esc } from '../util';
 import { DEFAULT_REFRESH_SECONDS } from '../core';
-import { modeChooser } from './service';
+import { classifierChooser, modeChooser } from './service';
 
 export interface SettingsModel {
   config: AppConfig;
@@ -30,11 +30,13 @@ export interface SettingsModel {
   /** True where the app carries the dispatch service. */
   canDispatch: boolean;
   runJobs: boolean;
+  /** The task classifier the service is set to, or null before the service settings have been read. */
+  classifier: string | null;
 }
 
 function agentsSection(m: SettingsModel, first: boolean): string {
   if (!m.canDispatch) return '';
-  return `<h2 class="sec">Agents</h2><div class="card">${modeChooser(m.runJobs)}
+  return `<h2 class="sec">Agents</h2><div class="card">${modeChooser(m.runJobs)}${first && m.runJobs && m.classifier !== null ? `<div class="rsec">Who classifies tasks</div>${classifierChooser(m.classifier)}` : ''}
     <p class="help">${first ? 'You can change this later on the Service page.' : 'Jobs, routes and the service settings are on their own pages.'}</p>${first ? '' : '<div class="actions"><button class="btn small" data-action="jobs">Open jobs, routes and service</button></div>'}</div>`;
 }
 

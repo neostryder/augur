@@ -5,6 +5,7 @@ import {
 } from '@augur/core';
 import { BULK_FIELDS } from '../rules-bulk';
 import type { BulkPreview } from '../rules-bulk';
+import type { DialBackPlan } from '../dial-back';
 import { ICON, ago, esc } from '../util';
 
 export type RulesFilter = 'all' | 'needs' | 'imported' | 'confirmed' | 'hidden';
@@ -34,6 +35,12 @@ export interface RulesModel {
   bulkField: string;
   bulkValue: string;
   preview: BulkPreview | null;
+  /** The dial-back card: whether it is open, when it should end, and the plan it would apply. */
+  dialOpen: boolean;
+  dialEnd: string;
+  dialCustom: string;
+  dialPlan: DialBackPlan | null;
+  dialError: string;
   /** What a pause about to be set does: stop the model, or change its weights while it lasts. */
   pauseMode: 'off' | 'weights';
   /** Weights chosen for that pause, by activity. An empty value leaves the activity as it is. */
@@ -360,12 +367,35 @@ function bulkPreview(m: RulesModel): string {
     <span class="rbulkrow">${n ? `<button class="btn small primary" data-bulk="apply-field">Apply</button>` : ''}<button class="btn small" data-bulk="preview-cancel">${n ? 'Cancel' : 'Close'}</button></span></div>`;
 }
 
+/** The resets ahead, across providers whose last reading can be trusted, as choices for when a dial-back ends. */
+export function dialEndChoices(m: Pick<RulesModel, 'snapshot' | 'providers'>, now = Date.now()): Array<{ value: string; label: string; until: string }> {
+  const when = (iso: string) => new Date(iso).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  return m.providers.flatMap((p) => pauseResets(m.snapshot, p.id, now).meters.map((x) => ({ value: `${p.id}|${x.id}`, label: `${p.name} ${x.label.toLowerCase()} resets, ${when(x.resetsAt)}`, until: x.resetsAt })))
+    .sort((a, b) => a.until.localeCompare(b.until));
+}
+
+function dialCard(m: RulesModel): string {
+  const choices = dialEndChoices(m), plan = m.dialPlan;
+  const local = (d: Date) => { const x = new Date(d); x.setMinutes(x.getMinutes() - x.getTimezoneOffset()); return x.toISOString().slice(0, 16); };
+  const list = plan ? plan.items.slice(0, 10).map((i) => `<li><b>${esc(i.label)}</b> ${i.action === 'stop' ? 'stops' : 'is favoured'}</li>`).join('') : '';
+  return `<div class="card dialcard"><div class="rsec" style="margin-top:0">Dial back usage</div>
+    <p class="help">Stops the high-cost models and raises the weights of the cheaper ones until the time you pick. Each model goes back to its normal rules when it ends.</p>
+    <div class="row"><label class="name" for="r-dial-end">Until</label><select id="r-dial-end" data-dial-end>${choices.map((c) => opt(c.value, c.label, m.dialEnd)).join('')}${opt('custom', 'A date and time', m.dialEnd)}</select></div>
+    ${m.dialEnd === 'custom' || !choices.length ? `<div class="row"><label class="name" for="r-dial-custom">Date and time</label><input type="datetime-local" id="r-dial-custom" data-dial-custom value="${esc(m.dialCustom)}" min="${esc(local(new Date()))}"></div>` : ''}
+    ${m.dialError ? `<div class="rnote bad" role="alert">${esc(m.dialError)}</div>` : ''}
+    ${plan ? `<div class="rpreview"><span><b>${plan.items.length ? `${plan.items.length} ${plan.items.length === 1 ? 'model changes' : 'models change'}.` : 'Nothing to change.'}</b> ${plan.skipped} left alone.</span>
+      ${plan.items.length ? `<ul>${list}${plan.items.length > 10 ? `<li>and ${plan.items.length - 10} more</li>` : ''}</ul>` : ''}</div>` : ''}
+    <div class="actions" style="margin-top:6px"><button class="btn small ${plan ? '' : 'primary'}" data-dial="preview">Preview</button>
+      ${plan?.items.length ? '<button class="btn small primary" data-dial="apply">Apply</button>' : ''}<button class="btn small" data-dial="close">Close</button></div></div>`;
+}
+
 export function renderRules(m: RulesModel): string {
   const pending = pendingCount(m.config);
   let html = `<div class="rules-page ${m.sel ? 'has-sel' : ''}"><header class="top">
     <button class="icon" data-action="${m.showHistory ? 'rules-history' : 'back'}" title="${m.showHistory ? 'Back to the rules' : 'Back to usage'}" aria-label="${m.showHistory ? 'Back to the rules' : 'Back to usage'}">${ICON.back}</button>
     <div><h1>${m.showHistory ? 'Rule changes' : 'Model rules'}</h1><div class="sub">${m.showHistory ? 'Newest first. Undo writes the old value back as a new change.' : 'What agents may use each model for'}</div></div><span class="grow"></span>
-    ${m.showHistory ? '' : `<button class="btn small" data-action="rules-history">History</button>`}</header>`;
+    ${m.showHistory ? '' : `<button class="btn small" data-action="rules-dial">Dial back</button><button class="btn small" data-action="rules-history">History</button>`}</header>`;
+  if (m.dialOpen && !m.showHistory) html += dialCard(m);
   if (m.showHistory) return html + historyView(m) + '</div>';
   if (m.policyError) html += `<div class="card rbanner bad"><span class="grow"><b>policy.json was not written.</b> Agents are still using the older file. ${esc(m.policyError)}</span><button class="btn small" data-action="retry-policy">Try again</button></div>`;
 
