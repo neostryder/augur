@@ -111,9 +111,6 @@ svg.spark { width: 64px; height: 18px; flex: none; overflow: visible; }
 .err svg { width: 14px; height: 14px; flex: none; color: var(--warn); margin-top: 1px; }
 .notes { color: var(--muted); font-size: calc(11.5px * var(--fs)); margin-top: 5px; }
 
-footer.bottom { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: calc(11px * var(--fs)); margin: 8px 2px 0; }
-footer.bottom button { background: none; border: 0; padding: 0; color: var(--muted); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; font-size: calc(11px * var(--fs)); }
-footer.bottom button:hover { color: var(--ink-2); }
 
 #tip.rich { white-space: normal; width: max-content; max-width: min(320px, calc(100vw - 12px)); padding: 8px 10px; line-height: 1.4; }
 #tip.rich b { display: block; font-weight: 600; }

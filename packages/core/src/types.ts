@@ -105,6 +105,8 @@ export interface Host {
   /** Generic-password items in the OS keychain (macOS stores the Claude Code login there). */
   keychainGet?(service: string, account?: string): Promise<string | null>;
   keychainSet?(service: string, account: string, value: string): Promise<void>;
+  /** Reads Copilot usage for the GitHub CLI's signed-in account without handing the caller its token. Desktop only; other shells fall back to run. */
+  copilotUsage?(): Promise<HttpResponse>;
   /** Reads an account page through a browser session the shell keeps signed in, for providers with no usage API. Resolves to null when there is no session. */
   webSession?(site: string): Promise<Record<string, unknown> | null>;
   now?(): Date;

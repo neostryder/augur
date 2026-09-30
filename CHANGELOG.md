@@ -16,6 +16,9 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Changed
 
+- [Visible] [UI] **The review button counts models, and the usage data file has its own row in Settings.** The button reads "6 models to review" and each provider on the rules page reads "6 need review". The Open data file link left the bottom of the usage page for the This computer section.
+- [Visible] [UI] **Rule history shows what changed inside a grouped value.** A pause reads as its end time and any weights it changes, and data handling lists only the words that differ, where both used to say "changed".
+- [Internal] [Security] **The desktop app reads the GitHub CLI's token itself when it fetches Copilot usage.** The token no longer reaches page code, and the page can no longer run `gh auth token`.
 - [Visible] [Sync] **Pairing a phone sends your API keys only if you turn that on.** The setting used to be on by default. The warning under the pairing code now says the link can read everything the phone syncs, keys included.
 - [Visible] [UI] **A provider card can be moved with the keyboard.** Focus its handle and press Alt with the Up or Down arrow. The card's link and collapse buttons are now 24 px.
 - [Internal] [Security] **The dispatch service starts stricter.** It checks picks and named-model claims by default, reads a prompt file only from inside the job's folder or a listed root, sends an API key only over https or to localhost, and will not start a job on Windows without the job host. A rule that limits a model to text is refused for an adapter that cannot hold a read-only tier. `augur run` needs --activity and --data, and defaults to read tools and text output.
@@ -27,6 +30,8 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Fixed
 
+- [Internal] [Platform] **The service notices a file that changed within the same timestamp tick.** It re-reads policy.json, usage.json and routes.json when their size changes as well as their modification time, so two quick writes no longer leave it on the older one.
+- [Visible] [UI] **A pause until a reset is not offered on a stale reading.** If the provider's last reading failed or is more than 30 minutes old, the reset list stays empty and says why, and a reset that has already passed is never listed. A pause could otherwise end at the wrong time, or not last at all.
 - [Internal] [Platform] **`augur service stop` waits until the service is gone.** It used to return while the service was still answering.
 - [Visible] [UI] **A failed write of policy.json shows on the Model rules page.** It used to say Saved while agents kept the older file. The banner has a Try again button.
 - [Internal] [Platform] **Adopting an existing policy.json keeps each model inheriting from its provider.** A later change to a provider default reaches those models.

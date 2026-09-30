@@ -270,7 +270,6 @@ pub async fn run_command(
     timeout_ms: Option<u64>,
 ) -> Result<CommandOutput, String> {
     let allowed = (command == "grok" && args == ["models"])
-        || (command == "gh" && args == ["auth", "token"])
         || (command == "bws"
             && args.len() == 5
             && args[0] == "secret"
@@ -299,6 +298,39 @@ pub async fn run_command(
         stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
     })
+}
+
+/// Copilot usage for the GitHub CLI's signed-in account. The token is read and used here, so the page never holds it.
+#[tauri::command]
+pub async fn copilot_usage() -> Result<HttpResponse, String> {
+    let not_signed_in = || "Not signed in. Run gh auth login on this computer.".to_owned();
+    let mut process = tokio::process::Command::new(executable_path("gh")?);
+    process.args(["auth", "token"]).kill_on_drop(true);
+    #[cfg(windows)]
+    {
+        process.creation_flags(0x0800_0000);
+    }
+    let output = tokio::time::timeout(Duration::from_secs(15), process.output())
+        .await
+        .map_err(|_| "gh timed out".to_owned())?
+        .map_err(|_| not_signed_in())?;
+    let token = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if !output.status.success() || token.is_empty() {
+        return Err(not_signed_in());
+    }
+    let headers = HashMap::from([
+        ("Authorization".to_owned(), format!("Bearer {token}")),
+        ("Accept".to_owned(), "application/json".to_owned()),
+        ("User-Agent".to_owned(), "augur".to_owned()),
+    ]);
+    http_request(
+        "https://api.github.com/copilot_internal/user".into(),
+        "GET".into(),
+        headers,
+        None,
+        Some(20_000),
+    )
+    .await
 }
 
 /// The service settings the page may change. The ones that lower what the service checks (requirePick, verifyNamed) and the exec adapter are left to

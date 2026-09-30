@@ -49,6 +49,7 @@ async function bwsSecret(name: string): Promise<string | null> {
 export function createTauriShell(): Shell {
   const host: Host = {
     platform: platform(),
+    copilotUsage: () => invoke<HttpResponse>('copilot_usage'),
     webSession: (site: string) => invoke<Record<string, unknown> | null>('web_session_read', { site }),
     http: (req: HttpRequest): Promise<HttpResponse> => invoke('http_request', {
       url: req.url,

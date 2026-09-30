@@ -282,6 +282,7 @@ pub fn run() {
             commands::write_home_file_atomic,
             commands::run_command,
             commands::dispatch_cli,
+            commands::copilot_usage,
             commands::keychain_get,
             commands::keychain_set,
             commands::secret_get,

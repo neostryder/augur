@@ -4,7 +4,7 @@ import * as core from './core';
 import type { HistoryRow } from './core';
 import { renderDashboard, tightest, updateTip, type DashboardModel } from './views/dashboard';
 import { CUSTOM_EXAMPLE, renderSettings, type SettingsModel } from './views/settings';
-import { renderRules, type RulesFilter, type RulesModel } from './views/rules';
+import { pauseResets, renderRules, type RulesFilter, type RulesModel } from './views/rules';
 import { renderJobs, type JobsModel } from './views/jobs';
 import { renderRoutes, type RoutesModel } from './views/routes';
 import { renderService, type ConfigLine, type ServiceModel } from './views/service';
@@ -1161,7 +1161,7 @@ export class App {
     if (d.pauseWeight) { this.rules.pauseWeights[d.pauseWeight] = t.value; await this.render(); return true; }
     if (d.pauseUntil || d.pauseMeter) {
       const path = (d.pauseUntil ?? d.pauseMeter)!, pid = path.split('|')[0]!;
-      const meter = d.pauseMeter ? this.snapshot?.providers[pid]?.meters.find((x) => x.id === t.value) : undefined;
+      const meter = d.pauseMeter ? pauseResets(this.snapshot, pid).meters.find((x) => x.id === t.value) : undefined;
       const until = d.pauseMeter ? meter?.resetsAt : t.value ? new Date(t.value).toISOString() : null;
       const weights = this.rules.pauseMode === 'weights'
         ? Object.fromEntries(Object.entries(this.rules.pauseWeights).filter(([, v]) => v !== '').map(([a, v]) => [a, v === 'none' ? null : v])) : null;

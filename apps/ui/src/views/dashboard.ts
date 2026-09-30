@@ -49,7 +49,7 @@ export function tightest(model: DashboardModel): { p: ProviderSnapshot; m: Meter
 /** Shown while any model waits for its rules to be confirmed, since routers skip it until then. */
 function reviewButton(model: DashboardModel): string {
   const n = pendingCount(model.config);
-  return n ? `<button class="review-pill" data-action="rules" data-value="needs" title="Models waiting for rules">${n} to review</button>` : '';
+  return n ? `<button class="review-pill" data-action="rules" data-value="needs" title="Models waiting for rules">${n} ${n === 1 ? 'model' : 'models'} to review</button>` : '';
 }
 
 function spark(rows: HistoryRow[], pid: string, m: Meter): string {
@@ -202,7 +202,5 @@ export function renderDashboard(model: DashboardModel): string {
       ${sev ? `<span class="grow"></span><span class="sev ${sev}">${sev === 'crit' ? ICON.crit : ICON.warn}</span>` : ''}</div>`;
   }
   html += `<div class="cards${model.twoColumns ? ' two' : ''}" id="cards">${enabled.map((p) => cardHtml(model, p.id)).join('')}</div>`;
-  html += `<footer class="bottom"><span></span>
-    <span>${model.shellKind === 'desktop' ? '<button data-action="open-export">Open data file</button>' : ''}</span></footer>`;
   return html;
 }

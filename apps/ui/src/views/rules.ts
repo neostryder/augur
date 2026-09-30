@@ -100,7 +100,7 @@ function providerBlock(m: RulesModel, meta: RulesModel['providers'][number]): st
   return `<section class="card rprov">
     <div class="phead">
       <span class="dot" style="background:${esc(colorOf(m, meta.id))}"></span>
-      <span class="pname">${esc(meta.name)}${meta.metered ? '' : '<span class="chip">No usage data</span>'}${pending ? `<span class="chip stale">${pending} to review</span>` : ''}</span>
+      <span class="pname">${esc(meta.name)}${meta.metered ? '' : '<span class="chip">No usage data</span>'}${pending ? `<span class="chip stale">${pending} ${pending === 1 ? 'needs' : 'need'} review</span>` : ''}</span>
       <span class="age">${total} ${total === 1 ? 'model' : 'models'}</span>
       <button class="link" data-rprov="${esc(meta.id)}" aria-expanded="${open}" aria-label="${open ? 'Hide' : 'Show'} ${esc(meta.name)} models" style="transform:rotate(${open ? 0 : -90}deg)">${ICON.chevron}</button></div>
     ${open ? `<div class="rlist-body">
@@ -154,15 +154,33 @@ function handlingRows(pid: string, model: string | null, own: Rule['dataHandling
     + text('hostCountry', 'Host country', 'US') + tri('retainsPrompts', 'Keeps prompts') + tri('trainsOnPrompts', 'Trains on prompts') + text('pinnedHost', 'Pinned host', 'None');
 }
 
+/** How old a provider's last good reading may be before its reset times are not trusted for a pause. */
+export const RESET_TRUST_MS = 30 * 60_000;
+
+/**
+ * The resets a pause may wait for: meters whose reset is still ahead. When the provider's last reading failed or is old, none are offered and the reason is
+ * returned instead, since a reset time from a stale reading could end the pause at the wrong moment.
+ */
+export function pauseResets(snapshot: Snapshot | null, pid: string, now = Date.now()): { meters: Array<{ id: string; label: string; resetsAt: string }>; blocked: string | null } {
+  const p = snapshot?.providers[pid];
+  const meters = (p?.meters ?? []).flatMap((x) => (x.resetsAt && new Date(x.resetsAt).getTime() > now ? [{ id: x.id, label: x.label, resetsAt: x.resetsAt }] : []));
+  if (!p) return { meters, blocked: null };
+  const age = p.fetchedAt ? now - new Date(p.fetchedAt).getTime() : Infinity;
+  if (p.stale || !p.ok) return { meters: [], blocked: 'The last reading failed, so its reset times may be out of date. Refresh, then choose one.' };
+  if (age > RESET_TRUST_MS) return { meters: [], blocked: 'The last reading is more than 30 minutes old, so its reset times may be out of date. Refresh, then choose one.' };
+  return { meters, blocked: null };
+}
+
 function pauseRows(m: RulesModel, pid: string, model: string | null, own: Rule['pause'], inherited: Rule['pause']): string {
-  const path = fieldPath(pid, model, 'pause'), meters = (m.snapshot?.providers[pid]?.meters ?? []).filter((x) => x.resetsAt);
+  const path = fieldPath(pid, model, 'pause'), { meters, blocked } = pauseResets(m.snapshot, pid);
+  const known = m.snapshot?.providers[pid]?.meters ?? [];
   const shown = own ?? (model !== null ? inherited : null), active = pauseActive(shown);
   const local = (iso: string) => { const d = new Date(iso); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
   let html = '';
   if (shown && active) {
     const until = new Date(shown.until).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
     const changed = shown.weights ? ACTIVITIES.filter((a) => a in shown.weights!).map((a) => `${ACTIVITY_LABELS[a]} ${shown.weights![a] ? WEIGHT_LABELS[shown.weights![a]!].toLowerCase() : 'not allowed'}`) : [];
-    html += `<div class="rnote">${changed.length ? 'Weights changed' : 'Paused'} until ${esc(until)}${shown.meter ? ` (the ${esc(meters.find((x) => x.id === shown.meter)?.label ?? shown.meter)} reset)` : ''}${own === undefined ? ', set on the provider' : ''}.${changed.length ? ` ${esc(changed.join(', '))}.` : ''}${shown.reason ? ` ${esc(shown.reason)}` : ''}</div>`;
+    html += `<div class="rnote">${changed.length ? 'Weights changed' : 'Paused'} until ${esc(until)}${shown.meter ? ` (the ${esc(known.find((x) => x.id === shown.meter)?.label ?? shown.meter)} reset)` : ''}${own === undefined ? ', set on the provider' : ''}.${changed.length ? ` ${esc(changed.join(', '))}.` : ''}${shown.reason ? ` ${esc(shown.reason)}` : ''}</div>`;
     if (own) html += `<div class="actions" style="margin-top:4px"><button class="btn small" data-pause-clear="${esc(path)}">Resume now</button></div>`;
     return html;
   }
@@ -176,6 +194,7 @@ function pauseRows(m: RulesModel, pid: string, model: string | null, own: Rule['
   }
   html += row('Pause until', 'r-pause-until', `<input type="datetime-local" id="r-pause-until" data-pause-until="${esc(path)}" min="${esc(local(new Date().toISOString()))}">`,
     'Routers skip this model until then.');
+  if (blocked) html += `<div class="rnote">${esc(blocked)}</div>`;
   if (meters.length) html += row('Or until a reset', 'r-pause-meter', `<select id="r-pause-meter" data-pause-meter="${esc(path)}">${opt('', 'Choose a meter', '')}${meters.map((x) => opt(x.id, x.label, '')).join('')}</select>`);
   return html;
 }
@@ -261,13 +280,38 @@ function modelListSection(m: RulesModel, pid: string, own: 'auto' | 'catalog' | 
 
 // ------------------------------------------------------------------ history
 
+const plain = (v: unknown): string => (typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v).replace(/_/g, ' '));
+
+/** A rule value in words. A pause reads as its end time and any changed weights, and other grouped values as their parts. */
+export function showValue(field: string, v: unknown): string {
+  if (v === null || v === undefined) return 'unset';
+  if (typeof v !== 'object') return plain(v);
+  const o = v as Record<string, unknown>;
+  if (field === 'pause' && typeof o.until === 'string') {
+    const when = new Date(o.until).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    const weights = o.weights && typeof o.weights === 'object' ? Object.entries(o.weights as Record<string, string | null>).map(([a, l]) => `${ACTIVITY_LABELS[a as keyof typeof ACTIVITY_LABELS] ?? a} ${l ? (WEIGHT_LABELS[l as keyof typeof WEIGHT_LABELS] ?? l).toLowerCase() : 'not allowed'}`) : [];
+    return `${weights.length ? 'weights changed' : 'paused'} until ${when}${weights.length ? ` (${weights.join(', ')})` : ''}`;
+  }
+  return Object.entries(o).map(([k, x]) => `${k} ${plain(x)}`).join(', ');
+}
+
+/** What a change did. Two grouped values show only the parts that differ, so a one-word edit to data handling reads as that word. */
+export function changeText(field: string, from: unknown, to: unknown): string {
+  const both = from && to && typeof from === 'object' && typeof to === 'object' && field !== 'pause';
+  if (both) {
+    const a = from as Record<string, unknown>, b = to as Record<string, unknown>;
+    const parts = [...new Set([...Object.keys(a), ...Object.keys(b)])].filter((k) => JSON.stringify(a[k]) !== JSON.stringify(b[k])).map((k) => `${k} ${a[k] === undefined ? 'unset' : plain(a[k])} to ${b[k] === undefined ? 'unset' : plain(b[k])}`);
+    if (parts.length) return parts.join(', ');
+  }
+  return `${showValue(field, from)} to ${showValue(field, to)}`;
+}
+
 function describe(m: RulesModel, c: PolicyChange): string {
   const [pid = '', model = '', field = ''] = c.path.split('|');
   const who = model || `${m.providers.find((p) => p.id === pid)?.name ?? pid} defaults`;
   const name = field.startsWith('activities.') ? ACTIVITY_LABELS[field.slice(11) as keyof typeof ACTIVITY_LABELS] ?? field
     : field.startsWith('thresholds.') ? field.slice(11) : field;
-  const show = (v: unknown) => v === null || v === undefined ? 'unset' : typeof v === 'object' ? 'changed' : String(v).replace(/_/g, ' ');
-  return `<b>${esc(who)}</b> ${esc(name)}: ${esc(show(c.from))} to ${esc(show(c.to))}`;
+  return `<b>${esc(who)}</b> ${esc(name)}: ${esc(changeText(field, c.from, c.to))}`;
 }
 
 function historyView(m: RulesModel): string {

@@ -1,16 +1,17 @@
-// Readers for the files Augur writes (policy.json, usage.json) and the user's route registry, cached by modification time.
+// Readers for the files Augur writes (policy.json, usage.json) and the user's route registry, cached by modification time and size.
 import { readFileSync, statSync } from 'node:fs';
 import type { PolicyFile } from '@augur/core';
 import type { RouteConfig, UsageSnapshot } from '@augur/dispatch-protocol';
 
 class JsonSource<T> {
-  private mtime = -1; private value: T | null = null;
+  /** Modification time and size together: two writes inside one timestamp tick still differ in length. */
+  private stamp = ''; private value: T | null = null;
   constructor(private path: string, private check: (v: unknown) => T | null) {}
   read(): T | null {
-    let m: number;
-    try { m = statSync(this.path).mtimeMs; } catch { this.mtime = -1; return this.value = null; }
-    if (m === this.mtime) return this.value;
-    try { this.value = this.check(JSON.parse(readFileSync(this.path, 'utf8'))); this.mtime = m; } catch { this.value = null; this.mtime = -1; }
+    let stamp: string;
+    try { const st = statSync(this.path); stamp = `${st.mtimeMs}:${st.size}`; } catch { this.stamp = ''; return this.value = null; }
+    if (stamp === this.stamp) return this.value;
+    try { this.value = this.check(JSON.parse(readFileSync(this.path, 'utf8'))); this.stamp = stamp; } catch { this.value = null; this.stamp = ''; }
     return this.value;
   }
 }

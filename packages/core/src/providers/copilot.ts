@@ -17,20 +17,31 @@ export const copilot: ProviderPlugin = {
   fields: [{ key: 'capUsd', label: 'Monthly spending cap (USD)', kind: 'text', placeholder: String(DEFAULT_CAP_USD),
     help: 'The cap your organization set on this seat. The GitHub API does not report it, so the meter measures credits against this amount.' }],
   detect: async host => {
-    if (!host.run) return false;
-    try { return (await host.run('gh', ['auth', 'token'], 15000)).code === 0; } catch { return false; }
+    try {
+      if (host.copilotUsage) return (await host.copilotUsage()).status === 200;
+      return host.run ? (await host.run('gh', ['auth', 'token'], 15000)).code === 0 : false;
+    } catch { return false; }
   },
   async fetch(host, settings) {
-    if (!host.run) throw new Error('Copilot usage is read through the GitHub CLI, which this shell cannot run.');
-    let token = '';
-    try {
-      const out = await host.run('gh', ['auth', 'token'], 15000);
-      if (out.code === 0) token = out.stdout.trim();
-    } catch { /* falls through to the sign-in message */ }
-    if (!token) throw new Error('Not signed in. Run gh auth login on this computer.');
+    const denied = () => new Error('GitHub did not return Copilot usage for this login. Sign in again with gh auth login.');
     let data: Record<string, any>;
-    try { data = obj(await json(host, { url: 'https://api.github.com/copilot_internal/user', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'User-Agent': 'augur' } })); }
-    catch (error) { if (error instanceof HttpError && [401, 403, 404].includes(error.status)) throw new Error('GitHub did not return Copilot usage for this login. Sign in again with gh auth login.'); throw error; }
+    if (host.copilotUsage) {
+      // The desktop app reads the token itself, so it never reaches this code.
+      const res = await host.copilotUsage();
+      if ([401, 403, 404].includes(res.status)) throw denied();
+      if (res.status < 200 || res.status >= 300) throw new HttpError(res.status);
+      try { data = obj(JSON.parse(res.body)); } catch { throw new Error('GitHub returned Copilot usage in a form Augur could not read.'); }
+    } else {
+      if (!host.run) throw new Error('Copilot usage is read through the GitHub CLI, which this shell cannot run.');
+      let token = '';
+      try {
+        const out = await host.run('gh', ['auth', 'token'], 15000);
+        if (out.code === 0) token = out.stdout.trim();
+      } catch { /* falls through to the sign-in message */ }
+      if (!token) throw new Error('Not signed in. Run gh auth login on this computer.');
+      try { data = obj(await json(host, { url: 'https://api.github.com/copilot_internal/user', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'User-Agent': 'augur' } })); }
+      catch (error) { if (error instanceof HttpError && [401, 403, 404].includes(error.status)) throw denied(); throw error; }
+    }
     const snap = obj(obj(data.quota_snapshots).premium_interactions);
     const used = num(snap.credits_used);
     if (used === null) throw new Error('GitHub returned no Copilot credit count.');
