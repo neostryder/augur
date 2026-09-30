@@ -61,7 +61,7 @@ function row(m: JobsModel, j: JobRecord): string {
     ${chip(j.state)}<span class="jwhen">${esc(when)}</span></button>`;
 }
 
-const field = (label: string, value: string) => `<div class="jf"><span>${esc(label)}</span><b>${esc(value)}</b></div>`;
+const field = (label: string, value: string, wide = false) => `<div class="jf${wide ? ' wide' : ''}"><span>${esc(label)}</span><b>${esc(value)}</b></div>`;
 
 function detail(m: JobsModel): string {
   const d = m.detail;
@@ -76,8 +76,8 @@ function detail(m: JobsModel): string {
     ${j.reason ? `<p class="jreason">${esc(j.reason)}</p>` : ''}
     <div class="jfields">${field('Activity', ACTIVITY_LABELS[j.activity] ?? j.activity)}${field('Data', DATA_TIER_LABELS[j.dataTier] ?? j.dataTier)}
       ${field('Tools', TOOL_LABELS[j.tools] ?? j.tools)}${field('Output', OUTPUT_LABELS[j.output] ?? j.output)}${field('Adapter', j.adapter)}
-      ${field('Started by', j.caller.label ?? j.caller.kind)}${field('Folder', j.cwd)}
-      ${j.startedAt ? field('Took', duration(j)) : ''}${j.exitCode !== null ? field('Exit code', String(j.exitCode)) : ''}${usage ? field('Tokens', usage) : ''}${cost ? field('Cost', cost) : ''}
+      ${field('Started by', j.caller.label ?? j.caller.kind)}${field('Folder', j.cwd, true)}
+      ${j.startedAt ? field('Took', duration(j)) : ''}${j.exitCode !== null ? field('Exit code', String(j.exitCode)) : ''}${usage ? field('Tokens', usage, true) : ''}${cost ? field('Cost', cost) : ''}
       ${j.patch ? field('Patch', `${j.patch.files} ${j.patch.files === 1 ? 'file' : 'files'}, apply with augur apply ${j.id}`) : ''}</div>
     ${block('Result', d.result)}${block('Output', d.stdout)}${block('Errors', d.stderr)}</div>`;
 }

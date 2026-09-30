@@ -150,7 +150,7 @@ textarea { font: calc(12px * var(--fs))/1.4 ui-monospace, "Cascadia Code", Conso
 button.btn { border: 1px solid var(--line); background: var(--card); border-radius: 8px; padding: 6px 12px; cursor: pointer; }
 button.btn:hover { border-color: var(--muted); }
 button.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-button.btn.small { padding: 3px 9px; font-size: calc(12px * var(--fs)); }
+button.btn.small { padding: 3px 9px; font-size: calc(12px * var(--fs)); white-space: nowrap; }
 .saved { color: var(--good); font-size: calc(11.5px * var(--fs)); }
 .swatch { width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--line); padding: 0; cursor: pointer; flex: none; }
 input[type=color] { width: 26px; height: 22px; border: 0; padding: 0; background: none; cursor: pointer; }
@@ -202,7 +202,7 @@ input[type=color] { width: 26px; height: 22px; border: 0; padding: 0; background
 .jhead h2 { margin: 0; font-size: calc(14px * var(--fs)); font-weight: 600; flex: 1; }
 .jreason { margin: 0 2px 8px; color: var(--ink-2); }
 .jfields { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 6px 12px; margin: 0 2px 8px; }
-.jf { display: flex; flex-direction: column; min-width: 0; } .jf span { color: var(--muted); font-size: calc(11px * var(--fs)); } .jf b { font-weight: 600; word-break: break-all; }
+.jf { display: flex; flex-direction: column; min-width: 0; } .jf span { color: var(--muted); font-size: calc(11px * var(--fs)); } .jf b { font-weight: 600; overflow-wrap: anywhere; } .jf.wide { grid-column: 1 / -1; }
 .jdetail h3 { margin: 10px 2px 4px; font-size: calc(12px * var(--fs)); color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.4px; }
 .jlog { margin: 0; max-height: 220px; overflow: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 7px; padding: 8px; white-space: pre-wrap; word-break: break-word; font: 12px/1.45 ui-monospace, Consolas, monospace; }
 @media (max-width: 699px) { .rules-page.has-sel .rtools, .rules-page.has-sel .rbanner { display: none; } }
@@ -286,6 +286,11 @@ input[type=color] { width: 26px; height: 22px; border: 0; padding: 0; background
 .rtrow label small { color: var(--muted); font-size: calc(11.5px * var(--fs)); }
 .rtrow label i { font-style: normal; color: var(--muted); font-weight: 400; }
 .rtrow input[type=text], .rtrow input[type=number], .rtrow select { width: auto; flex: 0 1 220px; max-width: 55%; }
+.rtkey { display: flex; flex-direction: column; gap: 6px; flex: 0 1 280px; max-width: 60%; min-width: 0; }
+.rtrow .rtkey input { width: 100%; max-width: none; flex: none; }
+.rtrow label.switch { display: inline-block; flex: none; }
+.rtrow .cfglist { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; flex: 0 1 220px; }
+.rtrow .cfglist label { display: flex; flex-direction: row; align-items: center; gap: 8px; flex: none; }
 .rtbudget { display: flex; flex-wrap: wrap; gap: 6px; flex: 0 1 280px; max-width: 60%; }
 .rtrow .rtbudget input, .rtrow .rtbudget select { flex: 1 1 80px; max-width: none; min-width: 0; }
 .rtactions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }

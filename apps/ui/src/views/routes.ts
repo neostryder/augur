@@ -45,9 +45,9 @@ function keyRow(m: RoutesModel): string {
   if (!m.canTest) return '<div class="rnote">Keys are saved from the desktop app on Windows.</div>';
   const state = m.keyStored === null ? 'Checking the credential store.' : m.keyStored ? 'A key is saved in the Windows credential store. A new one replaces it, and the route file never holds it.' : 'No key is saved yet.';
   return `<div class="row rtrow"><label for="rt-key"><span>Key</span><small>${esc(state)}</small></label>
-    <input type="password" id="rt-key" data-rt-key autocomplete="off" spellcheck="false" placeholder="${m.keyStored ? 'Enter a new key to replace it' : 'Paste the key'}">
-    <div class="rtactions"><button class="btn small" data-action="route-key-save" ${m.busy ? 'disabled' : ''}>Save key</button>${m.keyStored ? '<button class="btn small" data-action="route-key-clear">Remove key</button>' : ''}</div>
-    ${m.keyNote ? `<div class="rnote" role="status">${esc(m.keyNote)}</div>` : ''}</div>`;
+    <div class="rtkey"><input type="password" id="rt-key" data-rt-key autocomplete="off" spellcheck="false" placeholder="${m.keyStored ? 'Enter a new key to replace it' : 'Paste the key'}">
+      <div class="rtactions"><button class="btn small" data-action="route-key-save" ${m.busy ? 'disabled' : ''}>Save key</button>${m.keyStored ? '<button class="btn small" data-action="route-key-clear">Remove key</button>' : ''}</div>
+      ${m.keyNote ? `<div class="rnote" role="status">${esc(m.keyNote)}</div>` : ''}</div></div>`;
 }
 
 function form(m: RoutesModel): string {
@@ -63,8 +63,7 @@ function form(m: RoutesModel): string {
       <datalist id="rt-models">${m.models.map((x) => `<option value="${esc(x)}"></option>`).join('')}</datalist></div>
     <div class="row rtrow"><label for="rt-adapter"><span>Adapter</span><small>${esc(info?.summary ?? '')}</small></label>
       <select id="rt-adapter" data-rt="adapter">${ADAPTER_INFO.map((a) => `<option value="${a.id}" ${a.id === d.adapter ? 'selected' : ''}>${esc(a.label)}</option>`).join('')}</select></div>
-    ${(info?.options ?? []).filter((spec) => !(spec.key === 'apiKeyEnv' && d.options.keySource === 'store')).map((spec) => optionField(spec, d.options[spec.key] ?? '')).join('')}
-    ${d.options.keySource === 'store' ? keyRow(m) : ''}
+    ${(info?.options ?? []).filter((spec) => !(spec.key === 'apiKeyEnv' && d.options.keySource === 'store')).map((spec) => optionField(spec, d.options[spec.key] ?? '') + (spec.key === 'keySource' && d.options.keySource === 'store' ? keyRow(m) : '')).join('')}
     <div class="row rtrow"><label for="rt-notes"><span>Notes</span><small>For you. Agents do not see them.</small></label>
       <input type="text" id="rt-notes" data-rt="notes" value="${esc(d.notes)}" autocomplete="off"></div>
     <div class="row rtrow"><label for="rt-budget-usd"><span>Budget</span><small>Refuses new jobs on this route once it has used this much in the period. Leave a limit empty for none. Dollars count only jobs whose cost is known, which needs a rate for the model.</small></label>
