@@ -4,6 +4,8 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-09-30
+
 ### Added
 
 - [Visible] [Alerts] **A notification says when a plan is spent and a limit reset is in hand.** It fires once per window for providers that report resets, such as Codex, and for Claude once its count is entered or read.
