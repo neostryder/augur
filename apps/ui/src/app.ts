@@ -1256,6 +1256,13 @@ export class App {
   /** Handles an edit on the rules page. Returns false for inputs the shared handler owns. */
   private async onRulesChange(t: HTMLInputElement): Promise<boolean> {
     const d = t.dataset, policy = this.config.policy ??= emptyPolicy();
+    if (d.wait) {
+      const [wp = '', wm = ''] = d.wait.split('|'), entry = policy.providers[wp]?.models[wm];
+      const now = entry?.rule.useAfter ?? policy.providers[wp]?.defaults.useAfter ?? [];
+      const next = t.checked ? [...new Set([...now, t.value])] : now.filter((x) => x !== t.value);
+      setField(policy, d.wait, next.length ? next : undefined, this.device);
+      await this.saveRules(); return true;
+    }
     if (d.pick) { if (t.checked) this.rules.picked.add(d.pick); else this.rules.picked.delete(d.pick); this.rules.note = ''; this.rules.bulkTier = ''; this.rules.preview = null; await this.render(); return true; }
     if (d.dialEnd !== undefined) { this.rules.dialEnd = t.value; this.rules.dialPlan = null; this.rules.dialError = ''; await this.render(); return true; }
     if (d.dialCustom !== undefined) { this.rules.dialCustom = t.value; this.rules.dialPlan = null; this.rules.dialError = ''; return true; }

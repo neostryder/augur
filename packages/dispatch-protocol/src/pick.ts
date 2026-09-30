@@ -1,7 +1,7 @@
 // Ranks the models a task may use, and checks a job against the picks made for its caller. Pure.
 import { DATA_TIERS, pauseActive } from '@augur/core';
 import type { ActivityId, DataTier, PolicyFile, WeightLevel } from '@augur/core';
-import { pressure, usageFactors } from './pace.js';
+import { modelOwners, pressure, usageFactors } from './pace.js';
 import type { UsageSnapshot } from './pace.js';
 
 export interface PickRequest {
@@ -40,12 +40,40 @@ export function rank(policy: PolicyFile, usage: UsageSnapshot | null, req: PickR
       if (why) blocked.push({ model, why }); else rows.push({ model, provider, level: level as WeightLevel });
     }
   }
+  holdBack(policy, press, rows, blocked, notes);
   const { factors, scarcity } = usageFactors(policy, press, rows.map(r => r.model));
   const ranking = rows.map(r => {
     const fit = req.fits?.[r.model] ?? 0.5, weight = policy.weights[r.level] ?? 1, factor = factors[r.model] ?? 1;
     return { model: r.model, score: Math.round(fit * weight * factor * 1000) / 1000, fit, level: r.level, weight, usage: factor, why: press[r.provider]?.why ?? '' };
   }).sort((a, b) => b.score - a.score);
   return { pick: ranking[0]?.model ?? null, ranking, blocked, scarcity, unreviewed: policy.unreviewed, notes };
+}
+
+/**
+ * Takes out of the running every model that waits on others through `useAfter` while one of them can still do the task.
+ * A model it waits on can do the task when it passed every rule above and its provider is neither spent nor down. A model held back itself still counts, so a chain of waits keeps every link out until the first model is used up. A model in a circle of waits ignores them.
+ * Rows and blocked are changed in place. Notes say when a held model was released because the provider it waited on is spent with limit resets still in hand.
+ */
+function holdBack(policy: PolicyFile, press: ReturnType<typeof pressure>, rows: Array<{ model: string; provider: string }>, blocked: Blocked[], notes: string[]): void {
+  const owner = modelOwners(policy), entries = new Map<string, PolicyFile['providers'][string]['models'][string]>();
+  for (const p of Object.values(policy.providers)) for (const [label, m] of Object.entries(p.models)) entries.set(label, m);
+  const live = new Set(rows.map(r => r.model)), waits = (label: string) => (entries.get(label)?.useAfter ?? []).filter(l => l !== label && entries.has(l));
+  const reaches = (from: string, target: string, seen = new Set<string>()): boolean => waits(from).some(l => l === target || (!seen.has(l) && !!seen.add(l) && reaches(l, target, seen)));
+  const can = (label: string): boolean => live.has(label) && !press[owner[label] as string]?.spent && !press[owner[label] as string]?.down;
+  for (const row of [...rows]) {
+    const need = reaches(row.model, row.model) ? [] : waits(row.model);
+    if (!need.length) continue;
+    const first = need.find(can);
+    if (first) {
+      rows.splice(rows.indexOf(row), 1);
+      blocked.push({ model: row.model, why: `use ${first} first: it still has usage and ${row.model} waits until it is spent, paused or unavailable` });
+      continue;
+    }
+    for (const l of need) {
+      const h = press[owner[l] as string];
+      if (h?.spent && h.resets) notes.push(`${policy.providers[owner[l] as string]?.name ?? owner[l]} is spent with ${h.resets} limit ${h.resets === 1 ? 'reset' : 'resets'} in hand, so ${row.model} can run. Use a reset first to keep the work on ${l}.`);
+    }
+  }
 }
 
 /** One pick a caller made, as the service keeps it. */

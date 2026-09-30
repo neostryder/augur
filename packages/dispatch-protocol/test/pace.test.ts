@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { buildPolicyFile, emptyPolicy, fieldPath, importPolicy, setField } from '@augur/core';
 import type { PolicyFile } from '@augur/core';
-import { checkNamed, checkPick, evaluate, matchNamedModels, pressure, rank, usageFactors } from '../src/index.js';
+import { checkNamed, checkPick, drainProviders, evaluate, matchNamedModels, pressure, rank, usageFactors } from '../src/index.js';
 import type { AdapterCapabilities, JobRequest, PickRecord, PromptRecord, RouteConfig, UsageSnapshot } from '../src/index.js';
 
 const now = new Date('2026-09-28T12:00:00Z');
@@ -228,4 +228,88 @@ describe.skipIf(!existsSync(PICKER))('parity with model_pick.py --pressure', () 
       } finally { rmSync(dir, { recursive: true, force: true }); }
     });
   }
+});
+
+
+describe('spending a provider in full before the models that wait on it', () => {
+  const RULES2 = { providers: {
+    codex: { defaults: { dataTier: 'sensitive', output: 'write_files', cost: 'high' }, models: {
+      'codex/sol': { id: 'gpt-6-sol', rule: { activities: { write_code: 'preferred', review_code: 'often' } } },
+      'codex/luna': { id: 'gpt-6-luna', rule: { cost: 'cheap', activities: { write_code: 'normal' } } } } },
+    copilot: { defaults: { dataTier: 'sensitive', output: 'write_files', cost: 'high' }, models: {
+      'copilot/gpt-6-sol': { id: 'gpt-6-sol', rule: { useAfter: ['codex/sol'], activities: { write_code: 'often', review_code: 'often' } } },
+      'copilot/gpt-6-luna': { id: 'gpt-6-luna', rule: { useAfter: ['codex/luna'], cost: 'cheap', activities: { write_code: 'normal' } } },
+      'copilot/kimi-k3': { id: 'kimi-k3', rule: { activities: { write_code: 'occasional' } } } } },
+  } };
+  const policy2 = (tweak: (p: ReturnType<typeof emptyPolicy>) => void = () => {}): PolicyFile => {
+    const p = emptyPolicy(); importPolicy(p, RULES2, now);
+    for (const [id, provider] of Object.entries(p.providers)) for (const label of Object.keys(provider.models)) setField(p, fieldPath(id, label, 'status'), 'confirmed', 'test', now);
+    tweak(p);
+    return buildPolicyFile(p, [{ id: 'codex', name: 'Codex', metered: true }, { id: 'copilot', name: 'GitHub Copilot', metered: true }], now);
+  };
+  const usage = (codex: object, copilot: object = { meters: [weekly(10, 0.5)] }): UsageSnapshot => ({ providers: { codex: fresh(codex), copilot: fresh(copilot) } });
+  const order = (r: ReturnType<typeof rank>) => r.ranking.map(x => x.model);
+  const write = { activity: 'write_code', dataTier: 'internal' } as const;
+  const review = { activity: 'review_code', dataTier: 'internal' } as const;
+
+  it('names the providers that other models wait on', () => {
+    expect([...drainProviders(policy2())]).toEqual(['codex']);
+    expect(drainProviders(policy())).toEqual(new Set());
+  });
+
+  it('does not pace a provider that is being spent in full, until a window is spent', () => {
+    const ahead = usage({ meters: [weekly(70, 0.8)] });
+    expect(pressure(policy(), ahead, now).codex?.headroom).toBeCloseTo(0.375, 3);
+    expect(pressure(policy2(), ahead, now).codex).toMatchObject({ headroom: 1, why: expect.stringMatching(/to be spent in full/) });
+    expect(pressure(policy2(), usage({ meters: [weekly(99, 0.8)] }), now).codex).toMatchObject({ headroom: 0, spent: true });
+  });
+
+  it('counts each limit reset in hand as another full weekly window for a provider that is paced', () => {
+    const at = (resets: number) => pressure(policy(), { providers: { codex: fresh({ meters: [weekly(70, 0.8)], notes: { resets_available: resets } }) } }, now).codex as { headroom: number; why: string };
+    expect(at(0).headroom).toBeCloseTo(0.375, 3);
+    expect(at(1).headroom).toBe(1);
+    // A spent window stays spent, and says a reset is waiting.
+    const spent = pressure(policy(), { providers: { codex: fresh({ meters: [weekly(99, 0.8)], notes: { resets_available: 1 } }) } }, now).codex;
+    expect(spent).toMatchObject({ headroom: 0, spent: true, resets: 1 });
+    expect(spent?.why).toMatch(/1 limit reset in hand/);
+  });
+
+  it('holds a model back while the model it waits on has usage, and ranks it once that one is spent', () => {
+    const open = rank(policy2(), usage({ meters: [weekly(60, 0.4)] }), write, now);
+    expect(order(open)).toEqual(['codex/sol', 'codex/luna', 'copilot/kimi-k3']);
+    expect(open.blocked).toContainEqual({ model: 'copilot/gpt-6-sol', why: expect.stringMatching(/^use codex\/sol first/) });
+    expect(open.blocked.map(b => b.model)).toContain('copilot/gpt-6-luna');
+
+    const spent = rank(policy2(), usage({ meters: [weekly(99, 0.4)] }), write, now);
+    expect(order(spent)).toEqual(expect.arrayContaining(['copilot/gpt-6-sol', 'copilot/gpt-6-luna', 'copilot/kimi-k3']));
+    expect(spent.blocked.find(b => b.model === 'copilot/gpt-6-sol')).toBeUndefined();
+  });
+
+  it('releases a held model when the one it waits on is paused, or its provider is down, and not for a minor incident', () => {
+    const fine = usage({ meters: [weekly(40, 0.4)] });
+    const paused = policy2(p => setField(p, fieldPath('codex', 'codex/sol', 'pause'), { until: new Date(now.getTime() + 86400000).toISOString(), weights: null }, 'test', now));
+    expect(order(rank(paused, fine, write, now))).toContain('copilot/gpt-6-sol');
+    expect(order(rank(paused, fine, write, now))).not.toContain('copilot/gpt-6-luna');
+    expect(order(rank(policy2(), fine, review, now))).toEqual(['codex/sol']);
+    const down = rank(policy2(), usage({ meters: [weekly(40, 0.4)], status: { indicator: 'major' } }), review, now);
+    expect(order(down)).toEqual(expect.arrayContaining(['codex/sol', 'copilot/gpt-6-sol']));
+    const minor = rank(policy2(), usage({ meters: [weekly(40, 0.4)], status: { indicator: 'minor' } }), review, now);
+    expect(order(minor)).toEqual(['codex/sol']);
+  });
+
+  it('says when a provider is spent with a limit reset still in hand', () => {
+    const r = rank(policy2(), usage({ meters: [weekly(99, 0.4)], notes: { resets_available: 1 } }), write, now);
+    expect(r.notes.join(' ')).toMatch(/Codex is spent with 1 limit reset in hand, so copilot\/gpt-6-sol can run/);
+  });
+
+  it('ignores a circle of waits and follows a chain to the model at its end', () => {
+    const circle = policy2(p => setField(p, fieldPath('codex', 'codex/sol', 'useAfter'), ['copilot/gpt-6-sol'], 'test', now));
+    expect(order(rank(circle, usage({ meters: [weekly(40, 0.4)] }), review, now))).toEqual(expect.arrayContaining(['codex/sol', 'copilot/gpt-6-sol']));
+    // Kimi waits on Copilot's Sol, which waits on Codex's Sol: while Codex's Sol can run, both stay held.
+    const chain = policy2(p => setField(p, fieldPath('copilot', 'copilot/kimi-k3', 'useAfter'), ['copilot/gpt-6-sol'], 'test', now));
+    expect(order(rank(chain, usage({ meters: [weekly(40, 0.4)] }), write, now))).not.toContain('copilot/kimi-k3');
+    const c = rank(chain, usage({ meters: [weekly(99, 0.4)] }), write, now);
+    expect(order(c)).toContain('copilot/gpt-6-sol');
+    expect(order(c)).not.toContain('copilot/kimi-k3');
+  });
 });

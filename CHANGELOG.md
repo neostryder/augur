@@ -4,6 +4,11 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+### Added
+
+- [Visible] [Providers] **A model can wait until other models are spent.** On the Model rules page, Use only after lists the models that must be spent, paused or down before this one is picked. Their providers are used up in full instead of paced, so Codex runs to its limit before Copilot's GPT-6 Sol is chosen. A major or critical outage on a provider's status page counts as down, and a minor incident does not.
+- [Visible] [Providers] **Limit resets in hand count as more room.** A provider that reports resets, such as Codex, is no longer slowed for running ahead of pace while one is left, and a pick notes when a spent provider still has a reset waiting. Claude's API does not report its resets, so its provider settings have a Limit resets in hand field.
+
 ## [1.0.0] - 2026-09-29
 
 ### Added

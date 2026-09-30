@@ -240,6 +240,20 @@ describe('policy', () => {
     expect(buildPolicyFile(adopted, meta, t2).providers.codex!.models['codex/luna']!.dataTier).toBe('internal');
   });
 
+  it('keeps the models a model waits on through save, policy.json and adoption, and drops entries that are not route labels', () => {
+    const p = sample();
+    setField(p, fieldPath('grok', 'xai/grok', 'useAfter'), ['codex/sol', 'codex/sol', 'codex/luna'], 'desktop', t1);
+    expect(p.providers.grok!.models['xai/grok']!.rule.useAfter).toEqual(['codex/sol', 'codex/sol', 'codex/luna']);
+    const loaded = migratePolicy(JSON.parse(JSON.stringify(p)));
+    expect(loaded.providers.grok!.models['xai/grok']!.rule.useAfter).toEqual(['codex/sol', 'codex/luna']);
+    const file = buildPolicyFile(loaded, [{ id: 'codex', name: 'Codex', metered: true }, { id: 'grok', name: 'Grok', metered: true }], t2);
+    expect(file.providers.grok!.models['xai/grok']!.useAfter).toEqual(['codex/sol', 'codex/luna']);
+    expect(file.providers.codex!.models['codex/sol']!.useAfter).toEqual([]);
+    const adopted = policyFromFile(JSON.parse(JSON.stringify(file)), t2);
+    expect(adopted.providers.grok!.models['xai/grok']!.rule.useAfter).toEqual(['codex/sol', 'codex/luna']);
+    expect(migratePolicy({ providers: { codex: { models: { 'codex/a': { id: 'a', rule: { useAfter: ['nope', 7, 'x/y'] } } } } } }).providers.codex!.models['codex/a']!.rule.useAfter).toEqual(['x/y']);
+  });
+
   it('lifts a pause at its time and puts policy.json beside the export', () => {
     expect(pauseActive({ until: t1.toISOString() }, t0)).toBe(true);
     expect(pauseActive({ until: t1.toISOString() }, t2)).toBe(false);

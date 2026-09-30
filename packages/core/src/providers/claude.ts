@@ -51,9 +51,11 @@ const headers = (token: string) => ({ Authorization: `Bearer ${token}`, 'anthrop
 
 export const claude: ProviderPlugin = {
   id: 'claude', color: { light: '#eb6834', dark: '#d95926' }, name: 'Claude', needsLocalLogin: true,
-  links: { usage: 'https://claude.ai/settings/usage', status: 'https://status.claude.com/', statusApi: 'https://status.claude.com/api/v2/status.json' }, fields: [],
+  links: { usage: 'https://claude.ai/settings/usage', status: 'https://status.claude.com/', statusApi: 'https://status.claude.com/api/v2/status.json' },
+  fields: [{ key: 'resets', label: 'Limit resets in hand', kind: 'text', placeholder: '0',
+    help: 'The full and 5-hour resets listed on your claude.ai usage page. The Claude API does not report them, so enter the count. Augur treats each as one more full window of room.' }],
   detect: async host => { try { await read(host); return true; } catch { return false; } },
-  async fetch(host) {
+  async fetch(host, settings) {
     const data = await withLogin(host, token => json(host, { url: 'https://api.anthropic.com/api/oauth/usage', headers: headers(token) }));
     const meters: Meter[] = [];
     for (const row of Array.isArray(data.limits) ? data.limits : []) {
@@ -73,9 +75,9 @@ export const claude: ProviderPlugin = {
     const extra = obj(data.extra_usage), spend = obj(data.spend), used = obj(spend.used);
     const money = extra.is_enabled && num(used.amount_minor) !== null ? [{ id: 'extra', label: 'Extra usage spend',
       amount: round(Number(used.amount_minor) / 10 ** (num(used.exponent) ?? 2), 2), currency: String(used.currency ?? 'USD') }] : [];
-    const latest = await read(host);
+    const resets = Math.max(0, Math.floor(Number(settings?.resets) || 0)), latest = await read(host);
     return { plan: obj(latest.data.claudeAiOauth).subscriptionType ?? null, meters, money,
-      notes: { extra_usage_enabled: !!extra.is_enabled, spend_percent: spend.percent ?? null } };
+      notes: { extra_usage_enabled: !!extra.is_enabled, spend_percent: spend.percent ?? null, ...(resets > 0 ? { resets_available: resets } : {}) } };
   },
   async listModels(host) {
     const data = await withLogin(host, token => json(host, { url: 'https://api.anthropic.com/v1/models?limit=100', headers: { ...headers(token), 'anthropic-version': '2023-06-01' } }));

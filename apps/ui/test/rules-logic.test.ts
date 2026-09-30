@@ -31,6 +31,9 @@ describe('describing a rule change', () => {
   it('reads plain values as words and a missing one as unset', () => {
     expect(changeText('cost', 'moderate', 'very_high')).toBe('moderate to very high');
     expect(changeText('output', null, 'text_only')).toBe('unset to text only');
+    expect(changeText('useAfter', ['codex/sol'], ['codex/sol', 'xai/grok'])).toBe('codex/sol to codex/sol, xai/grok');
+    expect(changeText('useAfter', ['codex/sol'], [])).toBe('codex/sol to none');
+    expect(changeText('useAfter', null, ['codex/sol'])).toBe('unset to codex/sol');
   });
 
   it('shows only the parts of a grouped value that differ', () => {

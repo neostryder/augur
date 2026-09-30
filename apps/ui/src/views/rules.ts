@@ -86,7 +86,7 @@ function summary(provider: string, defaults: Rule, model: ModelEntry): string {
   const acts = ACTIVITIES.filter((a) => r.activities[a]).sort((a, b) => WEIGHT_LEVELS.indexOf(r.activities[b]!) - WEIGHT_LEVELS.indexOf(r.activities[a]!));
   const names = acts.slice(0, 2).map((a) => ACTIVITY_LABELS[a]).join(', ');
   const acts_ = acts.length ? names + (acts.length > 2 ? ` +${acts.length - 2}` : '') : 'No activities allowed';
-  return `${acts_}, ${DATA_TIER_LABELS[r.dataTier]}${r.askFirst ? ', Ask first' : ''}`;
+  return `${acts_}, ${DATA_TIER_LABELS[r.dataTier]}${r.askFirst ? ', Ask first' : ''}${r.useAfter.length ? `, Waits for ${r.useAfter.length}` : ''}`;
 }
 
 function modelRow(m: RulesModel, pid: string, defaults: Rule, label: string, model: ModelEntry): string {
@@ -110,10 +110,11 @@ function providerBlock(m: RulesModel, meta: RulesModel['providers'][number]): st
   const open = m.open.has(meta.id) || searching;
   const allPicked = rows.length > 0 && rows.every(([label]) => m.picked.has(`${meta.id}|${label}`));
   const defaultsOn = m.sel?.provider === meta.id && m.sel.model === null;
+  const mine = new Set(Object.keys(p.models)), drained = Object.values(policyOf(m).providers).some((q) => Object.values(q.models).some((x) => x.status === 'confirmed' && (x.rule.useAfter ?? q.defaults.useAfter ?? []).some((l) => mine.has(l))));
   return `<section class="card rprov">
     <div class="phead">
       <span class="dot" style="background:${esc(colorOf(m, meta.id))}"></span>
-      <span class="pname">${esc(meta.name)}${meta.metered ? '' : '<span class="chip">No usage data</span>'}${pending ? `<span class="chip stale">${pending} ${pending === 1 ? 'needs' : 'need'} review</span>` : ''}</span>
+      <span class="pname">${esc(meta.name)}${meta.metered ? '' : '<span class="chip">No usage data</span>'}${drained ? '<span class="chip">Used up first</span>' : ''}${pending ? `<span class="chip stale">${pending} ${pending === 1 ? 'needs' : 'need'} review</span>` : ''}</span>
       <span class="age">${total} ${total === 1 ? 'model' : 'models'}</span>
       <button class="link" data-rprov="${esc(meta.id)}" aria-expanded="${open}" aria-label="${open ? 'Hide' : 'Show'} ${esc(meta.name)} models" style="transform:rotate(${open ? 0 : -90}deg)">${ICON.chevron}</button></div>
     ${open ? `<div class="rlist-body">
@@ -128,6 +129,15 @@ function providerBlock(m: RulesModel, meta: RulesModel['providers'][number]): st
 
 function control(id: string, path: string, kind: string, options: string[]): string {
   return `<select id="${esc(id)}" data-rule="${esc(path)}" data-kind="${esc(kind)}">${options.join('')}</select>`;
+}
+
+/** Checkboxes for the other models this one waits on. The provider of each checked model is used up in full before this model is picked. */
+function waitRows(m: RulesModel, pid: string, model: string, own: string[] | undefined, inherited: string[] | undefined): string {
+  const path = fieldPath(pid, model, 'useAfter'), on = new Set(own ?? inherited ?? []);
+  const others = Object.entries(policyOf(m).providers).flatMap(([id, p]) => Object.entries(p.models).filter(([label, x]) => label !== model && x.status !== 'hidden').map(([label, x]) => ({ id, label, name: x.name ?? x.id })));
+  const boxes = others.map((x) => `<label class="wait"><input type="checkbox" data-wait="${esc(path)}" value="${esc(x.label)}" ${on.has(x.label) ? 'checked' : ''}> ${esc(x.name)} <span class="desc">${esc(x.label)}</span></label>`).join('');
+  return `<div class="row wrap"><span class="name">Use only after<span class="desc">Stays out of picks until every model checked here is spent, paused or down. Their providers are used up in full instead of paced.</span></span>
+    <div class="waitlist">${boxes || '<span class="desc">No other models to choose from.</span>'}</div></div>`;
 }
 
 function row(label: string, id: string, input: string, help = ''): string {
@@ -263,6 +273,7 @@ function detail(m: RulesModel): string {
     ${row('Output', 'r-output', enumSelect(pid, model, 'output', OUTPUT_MODES, OUTPUT_LABELS, rule.output, d.output, 'Text only'))}
     ${row('Runs in a sandbox', 'r-sandbox', boolSelect(pid, model, 'sandbox', rule.sandbox, d.sandbox))}
     ${row('Cost', 'r-cost', enumSelect(pid, model, 'cost', COST_TIERS, COST_LABELS, rule.cost, d.cost, 'Moderate'), 'Higher-cost models drop out first when usage runs high.')}
+    ${isModel ? waitRows(m, pid, model!, rule.useAfter, d.useAfter) : ''}
     ${row('Reasoning effort', 'r-effort', `<input type="text" id="r-effort" data-rule="${esc(fieldPath(pid, model, 'effort'))}" data-kind="text" value="${esc(rule.effort ?? '')}" placeholder="${esc(isModel ? d.effort ?? 'Default' : 'Default')}" style="max-width:150px">`)}
   </div>`;
   html += `<h3 class="rsec">Pause</h3><div class="card">${pauseRows(m, pid, model, rule.pause, d.pause)}</div>`;
@@ -302,6 +313,7 @@ const plain = (v: unknown): string => (typeof v === 'object' && v !== null ? JSO
 /** A rule value in words. A pause reads as its end time and any changed weights, and other grouped values as their parts. */
 export function showValue(field: string, v: unknown): string {
   if (v === null || v === undefined) return 'unset';
+  if (Array.isArray(v)) return v.length ? v.join(', ') : 'none';
   if (typeof v !== 'object') return plain(v);
   const o = v as Record<string, unknown>;
   if (field === 'pause' && typeof o.until === 'string') {
@@ -314,7 +326,7 @@ export function showValue(field: string, v: unknown): string {
 
 /** What a change did. Two grouped values show only the parts that differ, so a one-word edit to data handling reads as that word. */
 export function changeText(field: string, from: unknown, to: unknown): string {
-  const both = from && to && typeof from === 'object' && typeof to === 'object' && field !== 'pause';
+  const both = from && to && typeof from === 'object' && typeof to === 'object' && field !== 'pause' && !Array.isArray(from) && !Array.isArray(to);
   if (both) {
     const a = from as Record<string, unknown>, b = to as Record<string, unknown>;
     const parts = [...new Set([...Object.keys(a), ...Object.keys(b)])].filter((k) => JSON.stringify(a[k]) !== JSON.stringify(b[k])).map((k) => `${k} ${a[k] === undefined ? 'unset' : plain(a[k])} to ${b[k] === undefined ? 'unset' : plain(b[k])}`);

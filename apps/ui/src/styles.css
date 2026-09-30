@@ -186,6 +186,10 @@ input[type=color] { width: 26px; height: 22px; border: 0; padding: 0; background
 .rhead .sub { color: var(--muted); font-size: calc(11.5px * var(--fs)); word-break: break-all; }
 .rstatus { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .rsec { font-size: calc(12px * var(--fs)); font-weight: 600; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.4px; margin: 12px 2px 6px; }
+.rdetail .row.wrap { align-items: flex-start; flex-wrap: wrap; }
+.rdetail .waitlist { display: flex; flex-direction: column; gap: 4px; width: 100%; }
+.rdetail .wait { display: flex; align-items: center; gap: 6px; font-size: calc(13px * var(--fs)); }
+.rdetail .wait .desc { display: inline; }
 .rdetail .row select, .rdetail .row input[type=text], .rdetail .row input[type=datetime-local] { width: auto; max-width: min(210px, 62%); }
 .rstatus .grow { min-width: 190px; }
 /* jobs page */

@@ -56,9 +56,11 @@ export interface Rule {
   cost?: CostTier;
   pause?: Pause | null;
   dataHandling?: DataHandling;
+  /** Route labels of other models. This model stays out of the running until every one of them is spent, paused or otherwise unavailable for the task, and each such model's provider is spent in full first instead of being paced. */
+  useAfter?: string[];
   notes?: string;
 }
-export const RULE_FIELDS = ['dataTier', 'askFirst', 'output', 'sandbox', 'effort', 'cost', 'pause', 'dataHandling', 'notes'] as const;
+export const RULE_FIELDS = ['dataTier', 'askFirst', 'output', 'sandbox', 'effort', 'cost', 'pause', 'dataHandling', 'useAfter', 'notes'] as const;
 export type RuleField = typeof RULE_FIELDS[number] | `activities.${ActivityId}`;
 
 export interface ModelEntry {
@@ -281,12 +283,13 @@ export interface ResolvedModel {
   cost: CostTier;
   pause: Pause | null;
   dataHandling: DataHandling;
+  useAfter: string[];
   notes: string;
   /** Fields taken from the provider's defaults. */
   inherited: string[];
 }
 
-const FALLBACK: Required<Omit<Rule, 'activities' | 'dataHandling'>> = { dataTier: 'public', askFirst: false, output: 'text_only', sandbox: false, effort: null, cost: 'moderate', pause: null, notes: '' };
+const FALLBACK: Required<Omit<Rule, 'activities' | 'dataHandling'>> = { dataTier: 'public', askFirst: false, output: 'text_only', sandbox: false, effort: null, cost: 'moderate', pause: null, useAfter: [], notes: '' };
 
 export function resolveModel(provider: string, defaults: Rule, model: ModelEntry): ResolvedModel {
   const inherited: string[] = [], pick = <K extends keyof typeof FALLBACK>(field: K): (typeof FALLBACK)[K] => {
@@ -308,7 +311,7 @@ export function resolveModel(provider: string, defaults: Rule, model: ModelEntry
   }
   return { provider, id: model.id, name: model.name, status: model.status, source: model.source, activities,
     dataTier: pick('dataTier'), askFirst: pick('askFirst'), output: pick('output'), sandbox: pick('sandbox'), effort: pick('effort'),
-    cost: pick('cost'), pause: pick('pause'), dataHandling, notes: pick('notes'), inherited };
+    cost: pick('cost'), pause: pick('pause'), dataHandling, useAfter: [...pick('useAfter')], notes: pick('notes'), inherited };
 }
 
 export function resolveThresholds(p: ProviderPolicy | undefined): Thresholds { return { ...DEFAULT_THRESHOLDS, ...p?.thresholds }; }
@@ -360,7 +363,7 @@ export function policyFromFile(data: unknown, now = new Date()): PolicyConfig {
     for (const [label, mraw] of Object.entries(obj(p.models))) {
       const m = obj(mraw), inherited = new Set(Array.isArray(m.inherited) ? m.inherited.filter((x): x is string => typeof x === 'string') : []);
       const rule: Record<string, unknown> = {}, activities: Record<string, unknown> = {};
-      for (const field of ['dataTier', 'askFirst', 'output', 'sandbox', 'effort', 'cost', 'pause', 'notes']) {
+      for (const field of ['dataTier', 'askFirst', 'output', 'sandbox', 'effort', 'cost', 'pause', 'useAfter', 'notes']) {
         if (inherited.has(field) && (!(field in defaults) || same(defaults[field], m[field]))) defaults[field] = m[field];
         else rule[field] = m[field];
       }
@@ -421,6 +424,7 @@ function migrateRule(value: unknown): Rule {
     if ('pinnedHost' in d) parts.pinnedHost = str(d.pinnedHost);
     if (Object.keys(parts).length) rule.dataHandling = parts;
   }
+  if (Array.isArray(s.useAfter)) rule.useAfter = [...new Set(s.useAfter.filter((x): x is string => typeof x === 'string' && x.includes('/')))];
   if (typeof s.notes === 'string') rule.notes = s.notes;
   return rule;
 }

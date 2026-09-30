@@ -16,14 +16,14 @@ const fakeHost = (respond: (url: string, headers: Record<string, string>, body?:
   platform: 'windows', now: () => at, secret: async () => 'test-only',
   http: async req => ({ status: 200, headers: {}, body: JSON.stringify(respond(req.url, req.headers ?? {}, req.body)) })
 });
-const fetchOne = async (plugin: ProviderPlugin, data: unknown, extra?: unknown) => {
+const fetchOne = async (plugin: ProviderPlugin, data: unknown, extra?: unknown, settings: Record<string, string | boolean | undefined> = {}) => {
   const host = fakeHost(url => url.includes('models/usage') ? extra : url.endsWith('/key') ? { data: (data as any).key } : url.endsWith('/credits') ? { data: (data as any).credits } : data);
   if (plugin === claude || plugin === codex || plugin === grok) {
     host.readHomeFile = async path => path.includes('.claude') ? JSON.stringify({ claudeAiOauth: { accessToken: 'test-only', expiresAt: at.getTime() + 9999999, subscriptionType: 'pro' } }) :
       path.includes('.codex') ? JSON.stringify({ tokens: { access_token: `a.${btoa(JSON.stringify({ exp: at.getTime() / 1000 + 99999 }))}.c`, account_id: 'test-only' } }) :
       JSON.stringify({ test: { key: 'test-only', expires_at: '2099-01-01T00:00:00Z' } });
   }
-  return plugin.fetch(host, {});
+  return plugin.fetch(host, settings);
 };
 
 describe('provider parsers', () => {
@@ -32,6 +32,11 @@ describe('provider parsers', () => {
     expect(result.meters[0]?.id).toBe('session');
     expect(result.meters[0]?.windowSeconds).toBe(18000);
     expect(result.meters.some(m => m.windowKind === 'weekly')).toBe(true);
+  });
+  it('reports the limit resets a person enters for Claude, since its API does not', async () => {
+    expect((await fetchOne(claude, await fixture('claude'))).notes?.resets_available).toBeUndefined();
+    expect((await fetchOne(claude, await fixture('claude'), undefined, { resets: '1' })).notes?.resets_available).toBe(1);
+    expect((await fetchOne(claude, await fixture('claude'), undefined, { resets: 'many' })).notes?.resets_available).toBeUndefined();
   });
   it('parses Codex usage', async () => {
     const result = await fetchOne(codex, await fixture('codex'));
