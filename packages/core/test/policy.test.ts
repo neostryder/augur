@@ -94,6 +94,56 @@ describe('policy', () => {
     expect(mergePolicy(merged, merged).history).toHaveLength(4);
   });
 
+  describe('data handling inherits part by part', () => {
+    const prov = (dh: Record<string, unknown> | undefined, own: Record<string, unknown> | undefined) => migratePolicy({ providers: { codex: { defaults: dh ? { dataHandling: dh } : {}, models: { 'codex/sol': { id: 'sol', status: 'confirmed', rule: own ? { dataHandling: own } : {} } } } } });
+    const resolved = (p: PolicyConfig) => resolveModel('codex', p.providers.codex!.defaults, p.providers.codex!.models['codex/sol']!);
+
+    it('takes each part from the model when it sets one, and from the provider otherwise', () => {
+      const r = resolved(prov({ hostCountry: 'US', retainsPrompts: false, trainsOnPrompts: false }, { hostCountry: 'DE' }));
+      expect(r.dataHandling).toEqual({ hostCountry: 'DE', retainsPrompts: false, trainsOnPrompts: false });
+      expect(r.inherited).toEqual(expect.arrayContaining(['dataHandling.retainsPrompts', 'dataHandling.trainsOnPrompts']));
+      expect(r.inherited).not.toContain('dataHandling.hostCountry');
+    });
+
+    it('lets a model say a part is unknown without losing the rest', () => {
+      const r = resolved(prov({ hostCountry: 'US', retainsPrompts: false }, { retainsPrompts: null }));
+      expect(r.dataHandling).toEqual({ hostCountry: 'US', retainsPrompts: null });
+    });
+
+    it('changing one part writes only that part and stamps only that field', () => {
+      const p = prov({ hostCountry: 'US', retainsPrompts: false }, undefined);
+      setField(p, fieldPath('codex', 'codex/sol', 'dataHandling.trainsOnPrompts'), true, 'desktop', t1);
+      expect(p.providers.codex!.models['codex/sol']!.rule.dataHandling).toEqual({ trainsOnPrompts: true });
+      expect(Object.keys(p.stamps)).toEqual([fieldPath('codex', 'codex/sol', 'dataHandling.trainsOnPrompts')]);
+      setField(p, fieldPath('codex', 'codex/sol', 'dataHandling.trainsOnPrompts'), undefined, 'desktop', t2);
+      expect(p.providers.codex!.models['codex/sol']!.rule.dataHandling).toBeUndefined();
+      expect(resolved(p).dataHandling).toEqual({ hostCountry: 'US', retainsPrompts: false });
+    });
+
+    it('keeps a partial value partial when it is saved and loaded again', () => {
+      const p = prov(undefined, { hostCountry: 'DE' });
+      expect(migratePolicy(JSON.parse(JSON.stringify(p))).providers.codex!.models['codex/sol']!.rule.dataHandling).toEqual({ hostCountry: 'DE' });
+    });
+
+    it('merges two devices part by part', () => {
+      const a = prov({ hostCountry: 'US' }, undefined), b = structuredClone(a);
+      setField(a, fieldPath('codex', 'codex/sol', 'dataHandling.hostCountry'), 'DE', 'desktop', t1);
+      setField(b, fieldPath('codex', 'codex/sol', 'dataHandling.retainsPrompts'), true, 'phone', t2);
+      const merged = resolved(mergePolicy(a, b)).dataHandling;
+      expect(merged).toEqual({ hostCountry: 'DE', retainsPrompts: true });
+    });
+
+    it('reads a file that lists the whole field as inherited, and one that lists single parts', () => {
+      const file = (inherited: string[]) => ({ providers: { codex: { models: { 'codex/sol': { id: 'sol', status: 'confirmed', inherited, dataHandling: { hostCountry: 'US', retainsPrompts: false }, activities: {} } } } } });
+      const whole = policyFromFile(file(['dataHandling']));
+      expect(whole.providers.codex!.defaults.dataHandling).toMatchObject({ hostCountry: 'US', retainsPrompts: false });
+      expect(whole.providers.codex!.models['codex/sol']!.rule.dataHandling).toBeUndefined();
+      const one = policyFromFile(file(['dataHandling.retainsPrompts']));
+      expect(one.providers.codex!.defaults.dataHandling).toEqual({ retainsPrompts: false });
+      expect(one.providers.codex!.models['codex/sol']!.rule.dataHandling).toEqual({ hostCountry: 'US' });
+    });
+  });
+
   describe('clock stamps', () => {
     const cost = fieldPath('codex', 'codex/sol', 'cost');
     const same = (a: PolicyConfig, b: PolicyConfig) => { expect(a.providers).toEqual(b.providers); expect(a.stamps).toEqual(b.stamps); expect(a.clock).toEqual(b.clock); expect(a.history).toEqual(b.history); };

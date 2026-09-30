@@ -41,6 +41,7 @@ export interface Pause {
   reason?: string;
 }
 
+const DH_KEYS = ['hostCountry', 'retainsPrompts', 'trainsOnPrompts', 'pinnedHost'] as const;
 export interface DataHandling { hostCountry?: string | null; retainsPrompts?: boolean | null; trainsOnPrompts?: boolean | null; pinnedHost?: string | null }
 export interface Thresholds { warnPct: number; denyPct: number; minBalance: number | null }
 
@@ -139,10 +140,18 @@ function providerPolicy(policy: PolicyConfig, id: string): ProviderPolicy {
 
 function readField(rule: Rule, field: string): unknown {
   if (field.startsWith('activities.')) return rule.activities?.[field.slice(11) as ActivityId];
+  if (field.startsWith('dataHandling.')) return (rule.dataHandling as Record<string, unknown> | undefined)?.[field.slice(13)];
   return (rule as Record<string, unknown>)[field];
 }
 
 function writeField(rule: Rule, field: string, value: unknown): void {
+  if (field.startsWith('dataHandling.')) {
+    // One part of the data handling is its own field, so a model can set the host country and still inherit the rest.
+    const key = field.slice(13), parts = { ...rule.dataHandling } as Record<string, unknown>;
+    if (value === undefined) delete parts[key]; else parts[key] = value;
+    if (Object.keys(parts).length) rule.dataHandling = parts as DataHandling; else delete rule.dataHandling;
+    return;
+  }
   if (field.startsWith('activities.')) {
     const key = field.slice(11) as ActivityId, activities = { ...rule.activities };
     if (value === undefined) delete activities[key]; else activities[key] = value as WeightLevel | null;
@@ -269,7 +278,7 @@ export interface ResolvedModel {
   inherited: string[];
 }
 
-const FALLBACK: Required<Omit<Rule, 'activities'>> = { dataTier: 'public', askFirst: false, output: 'text_only', sandbox: false, effort: null, cost: 'moderate', pause: null, dataHandling: {}, notes: '' };
+const FALLBACK: Required<Omit<Rule, 'activities' | 'dataHandling'>> = { dataTier: 'public', askFirst: false, output: 'text_only', sandbox: false, effort: null, cost: 'moderate', pause: null, notes: '' };
 
 export function resolveModel(provider: string, defaults: Rule, model: ModelEntry): ResolvedModel {
   const inherited: string[] = [], pick = <K extends keyof typeof FALLBACK>(field: K): (typeof FALLBACK)[K] => {
@@ -284,9 +293,14 @@ export function resolveModel(provider: string, defaults: Rule, model: ModelEntry
     if (own === undefined && defaults.activities?.[a] !== undefined) inherited.push(`activities.${a}`);
     if (level) activities[a] = level;
   }
+  const dataHandling: DataHandling = {};
+  for (const k of DH_KEYS) {
+    if (model.rule.dataHandling && k in model.rule.dataHandling) (dataHandling as Record<string, unknown>)[k] = model.rule.dataHandling[k];
+    else if (defaults.dataHandling && k in defaults.dataHandling) { (dataHandling as Record<string, unknown>)[k] = defaults.dataHandling[k]; inherited.push(`dataHandling.${k}`); }
+  }
   return { provider, id: model.id, name: model.name, status: model.status, source: model.source, activities,
     dataTier: pick('dataTier'), askFirst: pick('askFirst'), output: pick('output'), sandbox: pick('sandbox'), effort: pick('effort'),
-    cost: pick('cost'), pause: pick('pause'), dataHandling: pick('dataHandling'), notes: pick('notes'), inherited };
+    cost: pick('cost'), pause: pick('pause'), dataHandling, notes: pick('notes'), inherited };
 }
 
 export function resolveThresholds(p: ProviderPolicy | undefined): Thresholds { return { ...DEFAULT_THRESHOLDS, ...p?.thresholds }; }
@@ -333,15 +347,22 @@ export function buildPolicyFile(policy: PolicyConfig, providers: Array<{ id: str
 export function policyFromFile(data: unknown, now = new Date()): PolicyConfig {
   const stored: Record<string, unknown> = {};
   for (const [pid, raw] of Object.entries(obj(obj(data).providers))) {
-    const p = obj(raw), defaults: Record<string, unknown> = {}, defaultActivities: Record<string, unknown> = {}, models: Record<string, unknown> = {};
+    const p = obj(raw), defaults: Record<string, unknown> = {}, defaultActivities: Record<string, unknown> = {}, defaultHandling: Record<string, unknown> = {}, models: Record<string, unknown> = {};
     const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
     for (const [label, mraw] of Object.entries(obj(p.models))) {
       const m = obj(mraw), inherited = new Set(Array.isArray(m.inherited) ? m.inherited.filter((x): x is string => typeof x === 'string') : []);
       const rule: Record<string, unknown> = {}, activities: Record<string, unknown> = {};
-      for (const field of ['dataTier', 'askFirst', 'output', 'sandbox', 'effort', 'cost', 'pause', 'dataHandling', 'notes']) {
+      for (const field of ['dataTier', 'askFirst', 'output', 'sandbox', 'effort', 'cost', 'pause', 'notes']) {
         if (inherited.has(field) && (!(field in defaults) || same(defaults[field], m[field]))) defaults[field] = m[field];
         else rule[field] = m[field];
       }
+      // Data handling is inherited part by part. A file that lists the whole field as inherited counts every part.
+      const handling = obj(m.dataHandling), ownHandling: Record<string, unknown> = {};
+      for (const k of DH_KEYS) {
+        if ((inherited.has('dataHandling') || inherited.has(`dataHandling.${k}`)) && (!(k in defaultHandling) || same(defaultHandling[k], handling[k]))) defaultHandling[k] = handling[k];
+        else if (k in handling) ownHandling[k] = handling[k];
+      }
+      if (Object.keys(ownHandling).length) rule.dataHandling = ownHandling;
       for (const [act, level] of Object.entries(obj(m.activities))) {
         const name = `activities.${act}`;
         if (inherited.has(name) && (!(act in defaultActivities) || same(defaultActivities[act], level))) defaultActivities[act] = level;
@@ -350,7 +371,7 @@ export function policyFromFile(data: unknown, now = new Date()): PolicyConfig {
       rule.activities = activities;
       models[label] = { id: m.id, name: m.name, source: m.source, status: m.status, firstSeen: now.toISOString(), rule };
     }
-    stored[pid] = { defaults: { ...defaults, activities: defaultActivities }, thresholds: p.thresholds, models };
+    stored[pid] = { defaults: { ...defaults, activities: defaultActivities, ...(Object.keys(defaultHandling).length ? { dataHandling: defaultHandling } : {}) }, thresholds: p.thresholds, models };
   }
   return migratePolicy({ providers: stored });
 }
@@ -385,7 +406,12 @@ function migrateRule(value: unknown): Rule {
   }
   if (s.dataHandling && typeof s.dataHandling === 'object') {
     const d = obj(s.dataHandling), str = (v: unknown) => typeof v === 'string' ? v : null, bool = (v: unknown) => typeof v === 'boolean' ? v : null;
-    rule.dataHandling = { hostCountry: str(d.hostCountry), retainsPrompts: bool(d.retainsPrompts), trainsOnPrompts: bool(d.trainsOnPrompts), pinnedHost: str(d.pinnedHost) };
+    const parts: DataHandling = {};
+    if ('hostCountry' in d) parts.hostCountry = str(d.hostCountry);
+    if ('retainsPrompts' in d) parts.retainsPrompts = bool(d.retainsPrompts);
+    if ('trainsOnPrompts' in d) parts.trainsOnPrompts = bool(d.trainsOnPrompts);
+    if ('pinnedHost' in d) parts.pinnedHost = str(d.pinnedHost);
+    if (Object.keys(parts).length) rule.dataHandling = parts;
   }
   if (typeof s.notes === 'string') rule.notes = s.notes;
   return rule;

@@ -142,16 +142,20 @@ function activityRows(pid: string, model: string | null, rule: Rule, defaults: R
   }).join('');
 }
 
+/** Each part of the data handling is its own field, so a model can set one and inherit the rest from its provider. */
 function handlingRows(pid: string, model: string | null, own: Rule['dataHandling'], inherited: Rule['dataHandling']): string {
-  const path = fieldPath(pid, model, 'dataHandling'), d = own ?? {}, from = model !== null && own === undefined ? inherited ?? {} : d;
-  const text = (key: 'hostCountry' | 'pinnedHost', label: string, placeholder: string) => row(label, `r-dh-${key}`,
-    `<input type="text" id="r-dh-${key}" data-rule="${esc(path)}" data-kind="dh:${key}" value="${esc(from[key] ?? '')}" placeholder="${esc(placeholder)}" style="max-width:150px">`);
-  const tri = (key: 'retainsPrompts' | 'trainsOnPrompts', label: string) => {
-    const v = from[key], cur = v === true ? 'yes' : v === false ? 'no' : '';
-    return row(label, `r-dh-${key}`, `<select id="r-dh-${key}" data-rule="${esc(path)}" data-kind="dh:${key}">${opt('', 'Unknown', cur)}${opt('yes', 'Yes', cur)}${opt('no', 'No', cur)}</select>`);
+  const text = (key: 'hostCountry' | 'pinnedHost', label: string, placeholder: string) => {
+    const mine = own?.[key], theirs = model !== null ? inherited?.[key] : undefined;
+    const hint = model !== null && theirs ? `Default (${theirs})` : placeholder;
+    return row(label, `r-dh-${key}`, `<input type="text" id="r-dh-${key}" data-rule="${esc(fieldPath(pid, model, `dataHandling.${key}`))}" data-kind="text" value="${esc(mine ?? '')}" placeholder="${esc(hint)}" style="max-width:150px">`);
   };
-  return (model !== null && own === undefined ? '<div class="rnote">Showing the provider values. Changing one gives this model its own.</div>' : '')
-    + text('hostCountry', 'Host country', 'US') + tri('retainsPrompts', 'Keeps prompts') + tri('trainsOnPrompts', 'Trains on prompts') + text('pinnedHost', 'Pinned host', 'None');
+  const tri = (key: 'retainsPrompts' | 'trainsOnPrompts', label: string) => {
+    const mine = own?.[key], theirs = model !== null ? inherited?.[key] : undefined, word = (v: boolean | null | undefined) => (v === true ? 'Yes' : v === false ? 'No' : 'Unknown');
+    const cur = mine === undefined ? '' : mine === true ? 'yes' : mine === false ? 'no' : 'unknown';
+    const first = model === null ? opt('', 'Unknown', cur) : opt('', `Default (${word(theirs)})`, cur);
+    return row(label, `r-dh-${key}`, control(`r-dh-${key}`, fieldPath(pid, model, `dataHandling.${key}`), 'tri', [first, ...(model === null ? [] : [opt('unknown', 'Unknown', cur)]), opt('yes', 'Yes', cur), opt('no', 'No', cur)]));
+  };
+  return text('hostCountry', 'Host country', 'US') + tri('retainsPrompts', 'Keeps prompts') + tri('trainsOnPrompts', 'Trains on prompts') + text('pinnedHost', 'Pinned host', 'None');
 }
 
 /** How old a provider's last good reading may be before its reset times are not trusted for a pause. */

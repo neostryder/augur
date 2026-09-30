@@ -1171,15 +1171,8 @@ export class App {
     }
     if (!d.rule) return false;
     const kind = d.kind ?? 'text', v = t.value;
-    if (kind.startsWith('dh:')) {
-      // Data handling is one field, so changing one of its values gives the model its own copy of all four.
-      const [pid = '', model = ''] = d.rule.split('|'), key = kind.slice(3);
-      const p = policy.providers[pid], own = model ? p?.models[model]?.rule.dataHandling : p?.defaults.dataHandling;
-      const base = { ...(own ?? (model ? p?.defaults.dataHandling : undefined) ?? {}) } as Record<string, unknown>;
-      base[key] = key === 'retainsPrompts' || key === 'trainsOnPrompts' ? (v === 'yes' ? true : v === 'no' ? false : null) : v.trim() || null;
-      setField(policy, d.rule, base, this.device);
-    } else {
-      const value = v === '' ? undefined : kind === 'bool' ? v === 'yes' : kind === 'act' && v === 'none' ? null : kind === 'num' ? Number(v) : kind === 'text' ? v.trim() || undefined : v;
+    {
+      const value = v === '' ? undefined : kind === 'bool' ? v === 'yes' : kind === 'tri' ? (v === 'yes' ? true : v === 'no' ? false : null) : kind === 'act' && v === 'none' ? null : kind === 'num' ? Number(v) : kind === 'text' ? v.trim() || undefined : v;
       if (kind === 'num' && typeof value === 'number' && !Number.isFinite(value)) return true;
       setField(policy, d.rule, value, this.device);
     }

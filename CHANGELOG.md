@@ -16,6 +16,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Changed
 
+- [Visible] [UI] **A model can set one part of its data handling and inherit the rest.** Host country, keeping prompts, training on prompts and pinned host are separate fields, so choosing a host country for one model no longer copies the other three from its provider. The three-way choices gain a Default entry that follows the provider. In policy.json, a model's `inherited` list can name a single part, such as `dataHandling.retainsPrompts`.
 - [Visible] [UI] **The review button counts models, and the usage data file has its own row in Settings.** The button reads "6 models to review" and each provider on the rules page reads "6 need review". The Open data file link left the bottom of the usage page for the This computer section.
 - [Visible] [UI] **Rule history shows what changed inside a grouped value.** A pause reads as its end time and any weights it changes, and data handling lists only the words that differ, where both used to say "changed".
 - [Internal] [Security] **The desktop app reads the GitHub CLI's token itself when it fetches Copilot usage.** The token no longer reaches page code, and the page can no longer run `gh auth token`.
