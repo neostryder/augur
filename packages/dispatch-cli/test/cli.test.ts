@@ -109,6 +109,19 @@ describe('the other commands', () => {
     expect((await run(['service', 'status'])).out).toContain('is running');
   });
 
+  it('shows the service settings and changes one, refusing a value the service would ignore', async () => {
+    const { run } = await boot();
+    const shown = JSON.parse((await run(['config', '--json'])).out) as Array<{ key: string; value: string }>;
+    expect(shown.find(l => l.key === 'maxDepth')).toBeDefined();
+    const set = await run(['config', 'set', 'maxDepth', '1']);
+    expect(set.code).toBe(0);
+    expect(set.out).toContain('now 1');
+    expect((JSON.parse((await run(['config', '--json'])).out) as Array<{ key: string; value: string }>).find(l => l.key === 'maxDepth')?.value).toBe('1');
+    const bad = await run(['config', 'set', 'maxDepth', '99']);
+    expect(bad.code).toBe(1);
+    expect(bad.err).toContain('whole number');
+  });
+
   it('leaves the service running while a job is running when stop is asked to wait for idle', async () => {
     const { run } = await boot();
     const start = await run(['run', 'fake', '--prompt', 'SLEEP 30', '--json']);

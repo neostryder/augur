@@ -7,7 +7,7 @@ import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES } from '@augur/core';
 import type { ActivityId, DataTier, OutputMode } from '@augur/core';
 import { EXIT_CODES, TOOL_TIERS, exitCodeForState, isTerminal } from '@augur/dispatch-protocol';
 import type { JobRecord, JobRequest, ToolTier } from '@augur/dispatch-protocol';
-import { ServiceError, call, dataDir } from '@augur/augurd';
+import { ServiceError, call, configLines, dataDir, setConfigValue } from '@augur/augurd';
 
 export interface Io { out(text: string): void; err(text: string): void; stdin(): string; env: NodeJS.ProcessEnv; cwd: string; /** A person is at the terminal: input and output are both attached to it. */ interactive?: boolean }
 
@@ -33,6 +33,8 @@ augur pick (--task <description> | --activity <a> --data <tier>) [--named <model
 augur pressure
 augur note-prompt --session <id>     tell the service a person sent the message on standard input; it keeps only the models named
 augur routes
+augur config [--json]                 the service's settings and what each is now
+augur config set <setting> <value>    change one; a running service needs augur service stop then start to read it
 augur service status | start | stop [--if-idle]     --if-idle stops the service only when no job is running, so an upgrade never cuts one off
 Every command takes --json. Exit codes: 0 completed, 1 usage, 2 rejected, 3 needs approval, 4 failed, 5 artifact check failed, 6 cancelled, 7 lost, 124 wait timed out.`;
 
@@ -107,6 +109,15 @@ export async function main(argv: string[], io: Io): Promise<number> {
         say(Object.entries(r.factors).map(([m, f]) => `${m.padEnd(22)} factor ${f.toFixed(2)}`).join('\n') + `\nscarcity ${r.scarcity}`, r); return 0;
       }
       case 'routes': { const r = await call('routes', undefined, opts); say(r.map(x => `${x.name.padEnd(14)} ${x.model.padEnd(16)} ${x.adapter}${x.problem ? `   cannot run: ${x.problem}` : ''}`).join('\n') || 'No routes.', r); return 0; }
+      case 'config': {
+        if (rest[0] === 'set') {
+          const r = setConfigValue(opts.dir, need(rest[1], 'setting'), need(rest[2], 'value'));
+          if (!r.ok) { io.err(r.error + '\n'); return EXIT_CODES.usage; }
+          say(`${rest[1]} is now ${r.value}. A running service reads it when it next starts.`, { setting: rest[1], value: r.value }); return 0;
+        }
+        const lines = configLines(opts.dir);
+        say(lines.map(l => `${l.key.padEnd(20)} ${l.value.padEnd(24)} ${l.value === l.default ? '' : `(default ${l.default}) `}${l.weakens ? '[lowers checks] ' : ''}${l.label}`).join('\n'), lines); return 0;
+      }
       case 'service': return await service(rest[0], io, opts, json, p.flags.has('if-idle'));
       default: io.err(`Unknown command ${cmd}.\n${HELP}\n`); return EXIT_CODES.usage;
     }

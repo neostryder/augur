@@ -42,7 +42,7 @@ export function migrateConfig(value: unknown): AppConfig {
     hotkey: source.hotkey === null || source.hotkey === '' ? null : typeof source.hotkey === 'string' ? source.hotkey : DEFAULT_HOTKEY,
     autoUpdate: source.autoUpdate !== false,
     sync: syncConfig(source.sync), secretSources: secretSources(source.secretSources),
-    policy: migratePolicy(source.policy) };
+    policy: migratePolicy(source.policy), dispatch: { runJobs: obj(source.dispatch).runJobs === true } };
 }
 
 function syncConfig(value: unknown): AppConfig['sync'] {

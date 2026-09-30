@@ -1,5 +1,6 @@
 export * from './paths.js';
 export * from './config.js';
+export * from './config-edit.js';
 export * from './sources.js';
 export * from './store.js';
 export * from './supervisor.js';

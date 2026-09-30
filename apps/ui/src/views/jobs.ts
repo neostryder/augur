@@ -25,9 +25,10 @@ const TOOL_LABELS: Record<string, string> = { read: 'Reads only', write: 'Can wr
 const OUTPUT_LABELS: Record<string, string> = { write_files: 'Writes files', patch_only: 'Returns a patch', text_only: 'Text only' };
 
 /** Jobs and Routes are two pages of the same area, so both carry this switch. */
-export function dispatchTabs(active: 'jobs' | 'routes'): string {
-  return `<div class="seg dtabs" role="tablist" aria-label="Dispatch">${(['jobs', 'routes'] as const).map((v) =>
-    `<button role="tab" aria-selected="${v === active}" class="${v === active ? 'on' : ''}" data-action="dispatch-tab" data-value="${v}">${v === 'jobs' ? 'Jobs' : 'Routes'}</button>`).join('')}</div>`;
+const TAB_LABELS = { jobs: 'Jobs', routes: 'Routes', service: 'Service' } as const;
+export function dispatchTabs(active: keyof typeof TAB_LABELS): string {
+  return `<div class="seg dtabs" role="tablist" aria-label="Dispatch">${(Object.keys(TAB_LABELS) as Array<keyof typeof TAB_LABELS>).map((v) =>
+    `<button role="tab" aria-selected="${v === active}" class="${v === active ? 'on' : ''}" data-action="dispatch-tab" data-value="${v}">${TAB_LABELS[v]}</button>`).join('')}</div>`;
 }
 
 export const isLive = (state: JobState): boolean => LIVE.has(state);
@@ -43,7 +44,7 @@ const chip = (state: JobState) => `<span class="jchip ${LIVE.has(state) ? 'live'
 function serviceCard(m: JobsModel): string {
   if (m.unavailable) return `<div class="card rbanner bad"><span class="grow"><b>The dispatch service is not available.</b> ${esc(m.unavailable)}</span></div>`;
   const s = m.service;
-  const state = s === null ? 'Checking the service.' : s.running ? `Service running${s.pid ? ` (process ${s.pid})` : ''}.` : 'Service stopped. Agents cannot start jobs until it runs.';
+  const state = s === null ? 'Checking the service.' : s.running ? `Service running${s.pid ? ` (process ${s.pid})` : ''}.` : 'Service stopped. Agents cannot start jobs until you start it.';
   const button = s === null ? '' : s.running
     ? `<button class="btn small" data-action="service-stop" ${m.busy ? 'disabled' : ''}>Stop</button>`
     : `<button class="btn small primary" data-action="service-start" ${m.busy ? 'disabled' : ''}>Start</button>`;

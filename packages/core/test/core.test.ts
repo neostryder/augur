@@ -217,6 +217,11 @@ describe('engine, pace, history and alerts', () => {
     expect(config.providers.find(p => p.id === 'claude')?.enabled).toBe(false);
     expect(config.providers).toHaveLength(8);
   });
+  it('keeps jobs off until they are chosen, and reads only an explicit yes', () => {
+    expect(migrateConfig({}).dispatch).toEqual({ runJobs: false });
+    expect(migrateConfig({ dispatch: { runJobs: 'yes' } }).dispatch).toEqual({ runJobs: false });
+    expect(migrateConfig({ dispatch: { runJobs: true } }).dispatch).toEqual({ runJobs: true });
+  });
 });
 
 describe('changelog', () => {

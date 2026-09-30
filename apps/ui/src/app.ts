@@ -7,6 +7,7 @@ import { CUSTOM_EXAMPLE, renderSettings, type SettingsModel } from './views/sett
 import { renderRules, type RulesFilter, type RulesModel } from './views/rules';
 import { renderJobs, type JobsModel } from './views/jobs';
 import { renderRoutes, type RoutesModel } from './views/routes';
+import { renderService, type ConfigLine, type ServiceModel } from './views/service';
 import { ROUTES_PATH, checkDraft, draftOf, emptyDraft, parseRoutesText, writeRoute } from './routes-model';
 import type { JobRecord } from '@augur/dispatch-protocol';
 import { renderTrayIcon } from './trayicon';
@@ -52,7 +53,7 @@ export class App {
   private snapshot: Snapshot | null = null;
   private history: HistoryRow[] = [];
   private alertState: Record<string, unknown> = {};
-  private view: 'dashboard' | 'settings' | 'rules' | 'jobs' | 'routes' = 'dashboard';
+  private view: 'dashboard' | 'settings' | 'rules' | 'jobs' | 'routes' | 'service' = 'dashboard';
   private firstRun = false;
   private busy = false;
   private expanded: string | null = null;
@@ -77,6 +78,7 @@ export class App {
   private policyError: string | null = null;
   private jobs: JobsModel = { service: null, serviceNote: '', unavailable: '', jobs: null, sel: null, detail: null, busy: false };
   private jobsTimer: ReturnType<typeof setInterval> | undefined;
+  private servicePage: ServiceModel = { lines: null, service: null, runJobs: false, note: '', error: '', busy: false, unavailable: '' };
   private routesPage: RoutesModel = { file: null, error: '', health: null, sel: null, draft: null, formError: '', note: '', models: [], confirmDelete: false, busy: false };
   private timer: ReturnType<typeof setInterval> | undefined;
   private lastRun = 0;
@@ -140,6 +142,8 @@ export class App {
       document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') void this.autoInstall(); });
     }
     await this.refreshSecrets();
+    // With Also run jobs chosen, the service is up whenever the app is. A service that is already running answers and nothing changes.
+    if (this.config.dispatch?.runJobs && this.shell.dispatch) void this.augur(['service', 'start', '--json']).catch(() => undefined);
 
     if (this.firstRun) {
       this.view = 'settings';
@@ -421,7 +425,7 @@ export class App {
     return {
       config: this.config, plugins: this.pluginMap(), snapshot: this.snapshot, secrets: this.secrets, shellKind: this.shell.kind,
       autostart: this.autostart, update: this.update, openProvider: this.openProvider, customDraft: this.customDraft, customError: this.customError,
-      firstRun: this.firstRun, savedFlash: this.savedFlash,
+      firstRun: this.firstRun, savedFlash: this.savedFlash, canDispatch: this.shell.dispatch !== undefined, runJobs: this.config.dispatch?.runJobs === true,
       sync: this.sync, relay: this.relay(), pwaUrl: this.pwaUrl(), pairQr: this.pairQr, pairUrl: this.pairUrl,
       scanError: this.scanError, iosInstallHint: iosInstallHint(), hotkeyError: this.hotkeyError, canHotkey: !!this.shell.setHotkey,
     };
@@ -442,6 +446,10 @@ export class App {
     } else if (this.view === 'routes') {
       this.twoColumns = this.shell.kind === 'desktop';
       this.root.innerHTML = renderRoutes(this.routesPage);
+    } else if (this.view === 'service') {
+      this.twoColumns = false;
+      this.servicePage.runJobs = this.config.dispatch?.runJobs === true;
+      this.root.innerHTML = renderService(this.servicePage);
     } else if (this.view === 'rules') {
       // The desktop popup opens at its two-column width so the list and the open model's rules sit side by side.
       this.twoColumns = this.shell.kind === 'desktop';
@@ -625,7 +633,8 @@ export class App {
     });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
-        if (this.view === 'routes') { if (this.routesPage.sel) this.closeRoute(); else this.view = 'dashboard'; void this.render(); }
+        if (this.view === 'service') { this.view = 'dashboard'; void this.render(); }
+        else if (this.view === 'routes') { if (this.routesPage.sel) this.closeRoute(); else this.view = 'dashboard'; void this.render(); }
         else if (this.view === 'jobs') { if (this.jobs.sel) this.closeJob(); else { this.leaveJobs(); this.view = 'dashboard'; } void this.render(); }
         else if (this.view === 'rules') { if (this.rules.showHistory) this.rules.showHistory = false; else if (this.rules.sel) this.rules.sel = null; else this.view = 'dashboard'; void this.render(); }
         else if (this.view === 'settings' && !this.firstRun) { this.view = 'dashboard'; void this.render(); } else void this.shell.hidePopup?.();
@@ -712,6 +721,70 @@ export class App {
     try { await this.augur(['cancel', id, '--json']); } catch (e) { this.jobs.serviceNote = e instanceof Error ? e.message : String(e); }
     this.jobs.busy = false;
     await this.loadJobs();
+  }
+
+  // ------------------------------------------------------------------ service
+
+  private async loadService(): Promise<void> {
+    const page = this.servicePage;
+    page.runJobs = this.config.dispatch?.runJobs === true;
+    if (!this.shell.dispatch) return;
+    try {
+      const cfg = await this.augur<ConfigLine[]>(['config', '--json']);
+      page.lines = Array.isArray(cfg.data) ? cfg.data : null;
+      const st = await this.augur<{ running?: boolean; pid?: number }>(['service', 'status', '--json']);
+      page.service = { running: st.data?.running === true, pid: st.data?.pid ?? null };
+      page.unavailable = '';
+    } catch (e) { page.unavailable = e instanceof Error ? e.message : String(e); }
+    if (this.view === 'service') await this.render();
+  }
+
+  /** Usage only stops the service when nothing is running on it; Also run jobs starts it. */
+  private async setDispatchMode(runJobs: boolean): Promise<void> {
+    this.config.dispatch = { runJobs };
+    await this.saveConfig(false);
+    const page = this.servicePage;
+    page.note = ''; page.error = '';
+    if (this.shell.dispatch) {
+      try {
+        const r = await this.augur(['service', runJobs ? 'start' : 'stop', ...(runJobs ? [] : ['--if-idle']), '--json']);
+        if (r.code !== 0 && runJobs) page.error = r.err || 'The service did not start. It keeps a log in the dispatch data folder.';
+        if (r.code !== 0 && !runJobs) page.note = 'A job is still running, so the service was left running. It stops the next time you choose this with no job running.';
+      } catch (e) { page.error = e instanceof Error ? e.message : String(e); }
+    }
+    await this.render();
+    if (this.view === 'service') await this.loadService();
+  }
+
+  private async restartService(): Promise<void> {
+    const page = this.servicePage;
+    page.busy = true; page.note = ''; page.error = '';
+    await this.render();
+    try {
+      await this.augur(['service', 'stop', '--json']);
+      const r = await this.augur(['service', 'start', '--json']);
+      if (r.code !== 0) page.error = r.err || 'The service did not start again.';
+      else page.note = 'Restarted. Jobs that were running kept going.';
+    } catch (e) { page.error = e instanceof Error ? e.message : String(e); }
+    page.busy = false;
+    await this.loadService();
+  }
+
+  /** A setting on the Service page changed. It is written at once; a running service reads it after a restart. */
+  private async onServiceField(t: HTMLInputElement): Promise<boolean> {
+    const key = t.dataset.cfg ?? t.dataset.cfgItem;
+    if (!key || !this.shell.dispatch) return false;
+    let value: string;
+    if (t.dataset.cfgItem) value = [...this.root.querySelectorAll<HTMLInputElement>(`[data-cfg-item="${key}"]`)].filter((x) => x.checked).map((x) => x.value).join(',');
+    else value = t.type === 'checkbox' ? String(t.checked) : t.value;
+    const page = this.servicePage;
+    try {
+      const r = await this.augur(['config', 'set', key, value]);
+      page.error = r.code === 0 ? '' : r.err || 'That value was not accepted.';
+      page.note = r.code === 0 ? 'Saved. Restart the service to use it.' : '';
+    } catch (e) { page.error = e instanceof Error ? e.message : String(e); }
+    await this.loadService();
+    return true;
   }
 
   // ------------------------------------------------------------------ routes
@@ -845,9 +918,12 @@ export class App {
       case 'back': this.leaveJobs(); this.view = 'dashboard'; await this.render(); break;
       case 'jobs': this.view = 'jobs'; this.jobs.sel = null; this.jobs.detail = null; this.jobsTimer ??= setInterval(() => { void this.loadJobs(); }, 3000); await this.render(); void this.loadJobs(); break;
       case 'dispatch-tab':
-        if (t.dataset.value === 'routes') { this.leaveJobs(); this.view = 'routes'; this.closeRoute(); await this.render(); await this.loadRoutes(); }
+        if (t.dataset.value === 'service') { this.leaveJobs(); this.view = 'service'; await this.render(); await this.loadService(); }
+        else if (t.dataset.value === 'routes') { this.leaveJobs(); this.view = 'routes'; this.closeRoute(); await this.render(); await this.loadRoutes(); }
         else { this.view = 'jobs'; this.jobs.sel = null; this.jobs.detail = null; this.jobsTimer ??= setInterval(() => { void this.loadJobs(); }, 3000); await this.render(); void this.loadJobs(); }
         break;
+      case 'dispatch-mode': await this.setDispatchMode(t.dataset.value === 'jobs'); break;
+      case 'service-restart': await this.restartService(); break;
       case 'route-new': this.routesPage.sel = '+'; this.routesPage.draft = emptyDraft(); this.routesPage.formError = ''; this.routesPage.note = ''; this.routesPage.confirmDelete = false; await this.render(); break;
       case 'route-close': this.closeRoute(); await this.render(); break;
       case 'route-save': await this.saveRoute(); break;
@@ -1076,6 +1152,7 @@ export class App {
     const d = t.dataset;
     if (this.view === 'rules' && await this.onRulesChange(t)) return;
     if (this.view === 'routes' && this.onRouteField(t)) return;
+    if (this.view === 'service' && await this.onServiceField(t)) return;
     if (d.toggle) {
       const [kind, pid, key] = d.toggle.split(':');
       if (kind === 'enabled') this.provider(pid!).enabled = t.checked;

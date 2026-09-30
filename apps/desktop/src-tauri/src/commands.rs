@@ -301,6 +301,25 @@ pub async fn run_command(
     })
 }
 
+/// The service settings the page may change. The ones that lower what the service checks (requirePick, verifyNamed) and the exec adapter are left to
+/// the command line and the config file, so a page cannot switch them.
+fn dispatch_setting_allowed(key: &str, value: &str) -> bool {
+    let plain = !value.is_empty()
+        && value.len() <= 64
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b',' | b'_' | b'-' | b'.'));
+    if !plain {
+        return false;
+    }
+    match key {
+        "retentionDays" | "persistPrompts" | "maxConcurrent" | "maxDepth" | "maxDescendants"
+        | "decision.backend" | "decision.shadow" | "learn.recordTasks" => true,
+        "adapters" => value.split(',').all(|a| a != "exec"),
+        _ => false,
+    }
+}
+
 /// What the page may ask the packaged `augur` command to do: read the service's state and start or stop it, cancel a job, never submit or apply one.
 fn dispatch_args_allowed(args: &[String]) -> bool {
     let is_id = |s: &str| s.len() == 12 && s.bytes().all(|b| b.is_ascii_hexdigit());
@@ -319,6 +338,14 @@ fn dispatch_args_allowed(args: &[String]) -> bool {
             )
         }
         Some("routes" | "pressure") => rest.all(|a| a == "--json"),
+        Some("config") => {
+            let rest: Vec<&str> = rest.collect();
+            match rest.as_slice() {
+                [] | ["--json"] => true,
+                ["set", key, value] => dispatch_setting_allowed(key, value),
+                _ => false,
+            }
+        }
         Some("jobs") => {
             let rest: Vec<&str> = rest.collect();
             let mut i = 0;
@@ -644,6 +671,15 @@ mod tests {
         assert!(allowed(&["cancel", "0d26110efa99"]));
         assert!(allowed(&["logs", "0d26110efa99", "--stderr"]));
         assert!(allowed(&["routes", "--json"]));
+        assert!(allowed(&["config", "--json"]));
+        assert!(allowed(&["config", "set", "maxConcurrent", "4"]));
+        assert!(allowed(&[
+            "config",
+            "set",
+            "adapters",
+            "codex-exec,grok-exec"
+        ]));
+        assert!(allowed(&["config", "set", "decision.backend", "laya"]));
     }
 
     #[test]
@@ -656,5 +692,10 @@ mod tests {
         assert!(!allowed(&["status", "0d26110efa99", "--cwd", "C:/"]));
         assert!(!allowed(&["jobs", "--state", "Running;x"]));
         assert!(!allowed(&["jobs", "--limit", "99999"]));
+        assert!(!allowed(&["config", "set", "requirePick", "false"]));
+        assert!(!allowed(&["config", "set", "verifyNamed", "off"]));
+        assert!(!allowed(&["config", "set", "adapters", "codex-exec,exec"]));
+        assert!(!allowed(&["config", "set", "maxConcurrent", "4; calc"]));
+        assert!(!allowed(&["config", "unset", "maxConcurrent"]));
     }
 }

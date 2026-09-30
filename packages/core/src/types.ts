@@ -215,6 +215,8 @@ export interface AppConfig {
   secretSources?: { bws?: { projectId: string; map: Record<string, string> } } | null;
   /** Usage rules per provider and model, written to policy.json beside the export. */
   policy?: PolicyConfig;
+  /** Windows desktop: whether the app also runs the dispatch service for agents. Off means usage tracking and rules only. */
+  dispatch?: { runJobs: boolean };
 }
 
 // ------------------------------------------------------------------ declarative providers

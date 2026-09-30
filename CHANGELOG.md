@@ -6,6 +6,8 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Added
 
+- [Visible] [UI] **A Service page sets what Augur does for agents.** Usage only keeps Augur as it was, and Also run jobs starts the dispatch service whenever the app opens. The page lists the service's settings, saves each change as you make it, and says where task text goes for the classifier you pick. First-run setup offers the same choice.
+- [Internal] [Platform] **`augur config` shows and changes the service's settings.** Each setting has a type and a range, and a value the service would ignore is refused. The two settings that lower the service's checks, and the exec adapter, can be changed from the command line and never from the app.
 - [Visible] [UI] **A Routes page adds, edits and removes the routes agents use.** A route joins a model label to an adapter, and the form asks for that adapter's options and marks the required ones. With the service running, each route shows whether it can start a job. Entries the service would skip are named, and saving leaves them in the file.
 - [Visible] [UI] **A Jobs page lists the work agents started through Augur.** It shows whether the dispatch service is running, with Start and Stop buttons, and each job's state, result, output and errors. A job that is still going can be cancelled there. The page is in the Windows app.
 - [Visible] [Platform] **The Windows installer carries the dispatch service and the `augur` command.** They go in a `service` folder beside the app. An upgrade or uninstall stops the service first, and waits if a job is running so the job is not cut off. `augur service stop --if-idle` makes the same check by hand.

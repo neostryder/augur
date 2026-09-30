@@ -2,6 +2,7 @@ import type { AppConfig, ProviderPlugin, Snapshot } from '@augur/core';
 import type { UpdateState } from '../app';
 import { ICON, esc } from '../util';
 import { DEFAULT_REFRESH_SECONDS } from '../core';
+import { modeChooser } from './service';
 
 export interface SettingsModel {
   config: AppConfig;
@@ -26,6 +27,15 @@ export interface SettingsModel {
   canHotkey: boolean;
   /** iPhone or iPad Safari, not yet on the home screen: it has no install prompt of its own. */
   iosInstallHint: boolean;
+  /** True where the app carries the dispatch service. */
+  canDispatch: boolean;
+  runJobs: boolean;
+}
+
+function agentsSection(m: SettingsModel, first: boolean): string {
+  if (!m.canDispatch) return '';
+  return `<h2 class="sec">Agents</h2><div class="card">${modeChooser(m.runJobs)}
+    <p class="help">${first ? 'You can change this later on the Service page.' : 'Jobs, routes and the service settings are on their own pages.'}</p>${first ? '' : '<div class="actions"><button class="btn small" data-action="jobs">Open jobs, routes and service</button></div>'}</div>`;
 }
 
 const seg = (name: string, value: string, options: Array<[string, string]>) =>
@@ -105,10 +115,12 @@ export function renderSettings(m: SettingsModel): string {
   html += `<h2 class="sec">Providers</h2><div id="provider-list">${c.providers.map((p) => providerCard(m, p.id)).join('')}</div>`;
 
   if (m.firstRun) {
+    html += agentsSection(m, true);
     html += `<div class="actions"><button class="btn primary" data-action="finish-setup">Start tracking</button></div></div>`;
     return html;
   }
 
+  html += agentsSection(m, false);
   html += `<h2 class="sec">Model rules</h2><div class="card"><div class="row"><label class="name">What agents may use each model for<span class="desc">Saved to policy.json beside the usage file, for agents to read.</span></label><button class="btn small" data-action="rules">Open</button></div></div>`;
   html += `<h2 class="sec">Appearance</h2><div class="card">
     <div class="row"><label class="name">Theme</label>${seg('theme', c.layout.theme, [['system', 'System'], ['light', 'Light'], ['dark', 'Dark']])}</div>
