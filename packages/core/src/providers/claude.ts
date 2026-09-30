@@ -47,13 +47,28 @@ async function withLogin(host: Host, call: (token: string) => Promise<unknown>):
   catch (error) { if (!(error instanceof HttpError) || error.status !== 401) throw error; token = await refresh(host); return obj(await call(token)); }
 }
 
+/** The resets still usable in the grants claude.ai lists: not paused, not ended, with some left. `endsAt` is the earliest end among them. */
+function openGrants(value: unknown, now: Date): { left: number; endsAt: string | null } {
+  let left = 0, endsAt: string | null = null;
+  for (const raw of Array.isArray(value) ? value : []) {
+    const g = obj(raw), count = num(g.resetsLeft), end = typeof g.endsAt === 'string' ? Date.parse(g.endsAt) : NaN;
+    if (g.paused === true || !count || count < 1 || (Number.isFinite(end) && end <= now.getTime())) continue;
+    left += Math.floor(count);
+    if (Number.isFinite(end) && (endsAt === null || end < Date.parse(endsAt))) endsAt = new Date(end).toISOString();
+  }
+  return { left, endsAt };
+}
+
 const headers = (token: string) => ({ Authorization: `Bearer ${token}`, 'anthropic-beta': 'oauth-2025-04-20', 'User-Agent': 'claude-code/2.1' });
 
 export const claude: ProviderPlugin = {
   id: 'claude', color: { light: '#eb6834', dark: '#d95926' }, name: 'Claude', needsLocalLogin: true,
   links: { usage: 'https://claude.ai/settings/usage', status: 'https://status.claude.com/', statusApi: 'https://status.claude.com/api/v2/status.json' },
-  fields: [{ key: 'resets', label: 'Limit resets in hand', kind: 'text', placeholder: '0',
-    help: 'The full and 5-hour resets listed on your claude.ai usage page. The Claude API does not report them, so enter the count. Augur treats each as one more full window of room.' }],
+  fields: [
+    { key: 'web', label: 'Read resets from claude.ai', kind: 'toggle', help: 'Counts the limit resets listed on your claude.ai usage page, which the Claude API does not report. Sign in below once. Each reset counts as one more full window of room.' },
+    { key: 'signin', label: 'claude.ai', kind: 'signin', site: 'claude', help: 'Sign in to claude.ai once so Augur can read your limit resets.' },
+    { key: 'resets', label: 'Limit resets in hand', kind: 'text', placeholder: '0', help: 'The count to use when the claude.ai reading is off or unavailable.' },
+  ],
   detect: async host => { try { await read(host); return true; } catch { return false; } },
   async fetch(host, settings) {
     const data = await withLogin(host, token => json(host, { url: 'https://api.anthropic.com/api/oauth/usage', headers: headers(token) }));
@@ -75,9 +90,14 @@ export const claude: ProviderPlugin = {
     const extra = obj(data.extra_usage), spend = obj(data.spend), used = obj(spend.used);
     const money = extra.is_enabled && num(used.amount_minor) !== null ? [{ id: 'extra', label: 'Extra usage spend',
       amount: round(Number(used.amount_minor) / 10 ** (num(used.exponent) ?? 2), 2), currency: String(used.currency ?? 'USD') }] : [];
-    const resets = Math.max(0, Math.floor(Number(settings?.resets) || 0)), latest = await read(host);
+    const manual = Math.max(0, Math.floor(Number(settings?.resets) || 0)), latest = await read(host);
+    const web = settings?.web === true && host.webSession ? await host.webSession('claude').catch(() => null) : null;
+    const grants = web?.signedIn === true ? openGrants(web.grants, host.now?.() ?? new Date()) : null;
+    const resets = grants ? grants.left : manual;
     return { plan: obj(latest.data.claudeAiOauth).subscriptionType ?? null, meters, money,
-      notes: { extra_usage_enabled: !!extra.is_enabled, spend_percent: spend.percent ?? null, ...(resets > 0 ? { resets_available: resets } : {}) } };
+      notes: { extra_usage_enabled: !!extra.is_enabled, spend_percent: spend.percent ?? null, ...(resets > 0 ? { resets_available: resets } : {}),
+        ...(grants?.endsAt ? { resetsEndsAt: grants.endsAt } : {}),
+        ...(web?.signedIn === false ? (web.reason === 'challenge' ? { resetsChallenge: true } : { resetsSignIn: true }) : {}) } };
   },
   async listModels(host) {
     const data = await withLogin(host, token => json(host, { url: 'https://api.anthropic.com/v1/models?limit=100', headers: { ...headers(token), 'anthropic-version': '2023-06-01' } }));

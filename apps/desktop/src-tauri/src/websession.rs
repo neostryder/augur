@@ -15,6 +15,10 @@ use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tokio::sync::oneshot;
 
 const CACHE_FOR: Duration = Duration::from_secs(600);
+// Limit resets change a few times a month, so they are read far less often than a balance.
+const CLAUDE_CACHE_FOR: Duration = Duration::from_secs(6 * 3600);
+// A reading that found no sign-in is kept briefly, so a provider that refreshes every minute does not open a window each time.
+const SIGNED_OUT_CACHE_FOR: Duration = Duration::from_secs(900);
 const WATCH_EVERY: Duration = Duration::from_secs(5);
 const WATCH_FOR: Duration = Duration::from_secs(900);
 const READ_TIMEOUT: Duration = Duration::from_secs(45);
@@ -26,6 +30,7 @@ struct Site {
     sign_in_url: &'static str,
     read_url: &'static str,
     script: &'static str,
+    cache_for: Duration,
     timeout_message: &'static str,
 }
 
@@ -36,7 +41,16 @@ fn site(id: &str) -> Option<Site> {
             sign_in_url: "https://console.typesafe.ai/",
             read_url: "https://console.typesafe.ai/settings/billing",
             script: TYPESAFE_SCRIPT,
+            cache_for: CACHE_FOR,
             timeout_message: "Could not read the TypeSafe billing page within 45 seconds. Check that you are still signed in under Jev in settings.",
+        }),
+        "claude" => Some(Site {
+            title: "Sign in to Claude",
+            sign_in_url: "https://claude.ai/login",
+            read_url: "https://claude.ai/settings/usage",
+            script: CLAUDE_SCRIPT,
+            cache_for: CLAUDE_CACHE_FOR,
+            timeout_message: "Could not read the Claude usage page within 45 seconds. Check that you are still signed in to claude.ai under Claude in settings.",
         }),
         _ => None,
     }
@@ -44,6 +58,7 @@ fn site(id: &str) -> Option<Site> {
 
 // The reader script lives in its own file so the core tests can run it against saved page text.
 const TYPESAFE_SCRIPT: &str = include_str!("readers/typesafe.js");
+const CLAUDE_SCRIPT: &str = include_str!("readers/claude.js");
 
 #[derive(Default)]
 pub struct WebSessions {
@@ -86,7 +101,7 @@ pub async fn web_session_sign_in(app: tauri::AppHandle, site: String) -> Result<
             {
                 return;
             }
-            let reading = read_site(&watcher, &watched).await;
+            let reading = read_site(&watcher, &watched, true).await;
             if let Ok(Some(value)) = reading {
                 if value.get("signedIn") == Some(&Value::Bool(true)) {
                     if let Some(popup) = watcher.get_webview_window("popup") {
@@ -117,15 +132,27 @@ pub async fn web_session_read(
     app: tauri::AppHandle,
     site: String,
 ) -> Result<Option<Value>, String> {
-    read_site(&app, &site).await
+    read_site(&app, &site, false).await
 }
 
-async fn read_site(app: &tauri::AppHandle, site: &str) -> Result<Option<Value>, String> {
+async fn read_site(
+    app: &tauri::AppHandle,
+    site: &str,
+    fresh: bool,
+) -> Result<Option<Value>, String> {
     let state = app.state::<WebSessions>();
     let site = site.to_string();
     let spec = self::site(&site).ok_or("Unknown site")?;
     if let Some((at, value)) = state.cache.lock().map_err(|e| e.to_string())?.get(&site) {
-        if at.elapsed() < CACHE_FOR {
+        let signed_in = value.get("signedIn") == Some(&Value::Bool(true));
+        let keep = if signed_in {
+            spec.cache_for
+        } else if fresh {
+            Duration::ZERO
+        } else {
+            SIGNED_OUT_CACHE_FOR
+        };
+        if at.elapsed() < keep {
             return Ok(Some(value.clone()));
         }
     }
@@ -186,14 +213,13 @@ async fn read_site(app: &tauri::AppHandle, site: &str) -> Result<Option<Value>, 
     let Some(value) = result else {
         return Err(spec.timeout_message.into());
     };
-    // Only a signed-in reading is kept, so the next refresh after signing in reads the page again.
-    if value.get("signedIn") == Some(&Value::Bool(true)) {
-        state
-            .cache
-            .lock()
-            .map_err(|e| e.to_string())?
-            .insert(site, (Instant::now(), value.clone()));
-    }
+    // A signed-out reading is kept only briefly and never served to the sign-in window's own watcher,
+    // so signing in shows up at once.
+    state
+        .cache
+        .lock()
+        .map_err(|e| e.to_string())?
+        .insert(site, (Instant::now(), value.clone()));
     Ok(Some(value))
 }
 

@@ -19,7 +19,7 @@ Augur shows how much of your AI plans and credits you have used, in one place: a
 
 | Provider | What you see | What it needs |
 | --- | --- | --- |
-| Claude | Current session, weekly limit, weekly limit per model | The Claude Code app signed in on this computer |
+| Claude | Current session, weekly limit, weekly limit per model, limit resets | The Claude Code app signed in on this computer, plus a one-time sign-in to claude.ai for the resets |
 | Codex | Weekly plan limit, limit resets available | The Codex CLI signed in on this computer |
 | Grok | Weekly SuperGrok limit | The Grok CLI signed in on this computer |
 | MiniMax | Coding plan: 5-hour and weekly text limits, video counts | An API key |
@@ -46,6 +46,8 @@ Every release also carries `SHA256SUMS.txt`, with a checksum for each installer,
 The first launch shows a setup screen. Providers that are already signed in on the computer are turned on for you. For the others, paste an API key and turn them on. The Claude, Codex and Grok cards need the matching app signed in on this computer. Without one of them, turn on a provider that takes an API key, such as OpenRouter. Keys are stored in the operating system's keychain (Windows Credential Manager, the macOS Keychain, or the Secret Service on Linux), and each one is sent only to its own provider.
 
 To see your TypeSafe balance, open Jev in settings and choose Sign in. Augur keeps that console session in its own window and uses it only to read your billing page.
+
+To count your Claude limit resets, open Claude in settings, turn on Read resets from claude.ai and choose Sign in. Augur keeps that session in its own window and uses it only to read your usage page, about every six hours. Without the sign-in, enter the count under Limit resets in hand.
 
 ## Using it
 

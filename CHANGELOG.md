@@ -4,6 +4,10 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+### Added
+
+- [Visible] [Providers] **Augur reads your Claude limit resets from claude.ai.** Turn on Read resets from claude.ai in Claude's settings and sign in once. The dashboard then shows how many resets are left and when the first ends, and the pace math counts them. The page is read about every six hours, and the entered count is used when the reading is off or fails.
+
 ## [1.1.0] - 2026-09-30
 
 ### Added

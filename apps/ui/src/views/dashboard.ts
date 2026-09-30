@@ -141,7 +141,8 @@ function notesLine(p: ProviderSnapshot): string {
   const out: string[] = [];
   if (typeof n.resets_available === 'number' || typeof n.resetsAvailable === 'number') {
     const k = n.resetsAvailable ?? n.resets_available;
-    out.push(`${k} limit reset${k === 1 ? '' : 's'} available`);
+    const ends = typeof n.resetsEndsAt === 'string' ? new Date(n.resetsEndsAt).toLocaleDateString([], { month: 'short', day: 'numeric' }) : '';
+    out.push(`${k} limit reset${k === 1 ? '' : 's'} available${ends ? `, the first ends ${ends}` : ''}`);
   }
   const ku = n.keyUsage ?? n.key_usage;
   if (ku) out.push(`This key: ${money(ku.day)} today, ${money(ku.week)} this week, ${money(ku.month)} this month`);
@@ -150,6 +151,8 @@ function notesLine(p: ProviderSnapshot): string {
   if (n.lastWeek) out.push(`${Number(n.lastWeek.requests).toLocaleString()} requests, ${(Number(n.lastWeek.tokens) / 1e6).toFixed(1)}M tokens in 7 days`);
   if (typeof n.refill === 'string') out.push(n.refill);
   if (n.signInNeeded) out.push('Sign in to the TypeSafe console in settings to see your balance');
+  if (n.resetsSignIn) out.push('Claude resets are not counted yet. Sign in to claude.ai in settings.');
+  if (n.resetsChallenge) out.push('claude.ai is showing a Cloudflare check. Open it from settings and pass it so your resets can be read.');
   if (n.cloudflareCheck) out.push('Open the TypeSafe console in settings and pass the Cloudflare check to show your balance');
   if (n.balanceMissing) out.push('The TypeSafe billing page opened but showed no credit balance');
   if (typeof n.latencyMs === 'number') out.push(`Answered in ${Math.round(n.latencyMs)} ms${n.model ? `, ${n.model}` : ''}`);
