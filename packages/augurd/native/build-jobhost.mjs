@@ -9,3 +9,5 @@ if (process.platform !== 'win32') { console.log('jobhost is only used on Windows
 mkdirSync(join(here, 'bin'), { recursive: true });
 execFileSync('go', ['build', '-ldflags', '-H=windowsgui -s -w', '-o', join(here, 'bin', 'jobhost.exe'), '.'], { cwd: join(here, 'jobhost'), stdio: 'inherit', windowsHide: true });
 console.log('built native/bin/jobhost.exe');
+execFileSync('go', ['build', '-ldflags', '-s -w', '-o', join(here, 'bin', 'credread.exe'), '.'], { cwd: join(here, 'credread'), stdio: 'inherit', windowsHide: true });
+console.log('built native/bin/credread.exe');

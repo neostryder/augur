@@ -1,15 +1,29 @@
 // One text request to an OpenAI-style or Anthropic-style HTTP API, run as a job by the API adapters. Plain node, erasable TypeScript only.
-// The prompt arrives on standard input. The key is read from the environment variable named by --key-env and is never printed.
+// The prompt arrives on standard input. The key is read from the environment variable named by --key-env, or from the Windows credential store when
+// --key-target names a credential, and is never printed.
 // Standard output is one JSON object: { answer, usage }. A failure exits non-zero with a short message on standard error.
 
-export {}; // makes this file a module, so top-level await is allowed
+import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 const args = process.argv.slice(2);
 const opt = (name: string): string | undefined => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
-const shape = opt('--shape'), url = opt('--url'), model = opt('--model'), keyEnv = opt('--key-env');
+const shape = opt('--shape'), url = opt('--url'), model = opt('--model'), keyEnv = opt('--key-env'), keyTarget = opt('--key-target');
 const maxTokens = Number(opt('--max-tokens') ?? '4096'), timeoutS = Number(opt('--timeout-s') ?? '900');
-if (!shape || !url || !model || !keyEnv) { console.error('missing --shape, --url, --model or --key-env'); process.exit(64); }
-const key = process.env[keyEnv];
-if (!key) { console.error(`environment variable ${keyEnv} is not set for this job`); process.exit(65); }
+if (!shape || !url || !model || (!keyEnv && !keyTarget)) { console.error('missing --shape, --url, --model or --key-env'); process.exit(64); }
+
+/** The credential reader sits beside this file in an install, and in native/bin in the source tree. */
+function storedKey(target: string): string | null {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const helper = [join(here, 'credread.exe'), join(here, '..', '..', 'native', 'bin', 'credread.exe')].find(existsSync);
+  if (!helper) return null;
+  try { return execFileSync(helper, [target], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }); } catch { return null; }
+}
+
+const key = keyTarget ? storedKey(keyTarget) : process.env[keyEnv as string];
+if (!key) { console.error(keyTarget ? 'no key is stored for this route in the Windows credential store' : `environment variable ${keyEnv} is not set for this job`); process.exit(65); }
 
 let promptText = '';
 process.stdin.setEncoding('utf8');

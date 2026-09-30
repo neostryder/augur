@@ -11,6 +11,7 @@ import { renderService, type ConfigLine, type ServiceModel } from './views/servi
 import { BULK_FIELDS, previewBulk, type BulkPreview } from './rules-bulk';
 import { pauseValue, planDialBack, type DialBackPlan } from './dial-back';
 import { ROUTES_PATH, checkDraft, draftOf, emptyDraft, parseRoutesText, writeRoute } from './routes-model';
+import { routeSecretName } from '@augur/dispatch-protocol';
 import type { Accounted, JobRecord } from '@augur/dispatch-protocol';
 import { renderTrayIcon } from './trayicon';
 import { span, until } from './util';
@@ -84,7 +85,7 @@ export class App {
   private jobs: JobsModel = { service: null, serviceNote: '', unavailable: '', jobs: null, accounted: {}, sel: null, detail: null, busy: false };
   private jobsTimer: ReturnType<typeof setInterval> | undefined;
   private servicePage: ServiceModel = { lines: null, service: null, runJobs: false, note: '', error: '', busy: false, unavailable: '' };
-  private routesPage: RoutesModel = { file: null, error: '', health: null, sel: null, draft: null, formError: '', note: '', models: [], confirmDelete: false, busy: false, canTest: false, testing: false, testNote: '' };
+  private routesPage: RoutesModel = { file: null, error: '', health: null, sel: null, draft: null, formError: '', note: '', models: [], confirmDelete: false, busy: false, canTest: false, testing: false, testNote: '', keyStored: null, keyNote: '' };
   private timer: ReturnType<typeof setInterval> | undefined;
   private lastRun = 0;
   private sortables: Sortable[] = [];
@@ -799,12 +800,45 @@ export class App {
 
   // ------------------------------------------------------------------ routes
 
-  private closeRoute(): void { Object.assign(this.routesPage, { sel: null, draft: null, formError: '', confirmDelete: false, testNote: '' }); }
+  private closeRoute(): void { Object.assign(this.routesPage, { sel: null, draft: null, formError: '', confirmDelete: false, testNote: '', keyStored: null, keyNote: '' }); }
+
+  /** Asks the credential store whether the route being edited has a key, and redraws. Only the yes or no comes back. */
+  private async refreshKeyState(): Promise<void> {
+    const page = this.routesPage, d = page.draft;
+    if (!d || d.options.keySource !== 'store' || !page.canTest || !/^[a-z][a-z0-9_-]*$/.test(d.name)) { page.keyStored = null; return; }
+    page.keyStored = await this.shell.hasSecret(routeSecretName(d.name)).catch(() => null);
+    await this.render();
+  }
+
+  private async saveRouteKey(): Promise<void> {
+    const page = this.routesPage, d = page.draft, input = document.getElementById('rt-key') as HTMLInputElement | null;
+    if (!d || !input) return;
+    if (!/^[a-z][a-z0-9_-]*$/.test(d.name)) { page.keyNote = 'Give the route a valid name first.'; await this.render(); return; }
+    const value = input.value.trim();
+    if (!value) { page.keyNote = 'Paste the key first.'; await this.render(); return; }
+    try {
+      await this.shell.setSecret(routeSecretName(d.name), value);
+      input.value = '';
+      page.keyStored = true; page.keyNote = 'The key is saved in the Windows credential store.';
+    } catch (e) { page.keyNote = `The key was not saved. ${e instanceof Error ? e.message : String(e)}`; }
+    await this.render();
+  }
+
+  private async clearRouteKey(): Promise<void> {
+    const page = this.routesPage, d = page.draft;
+    if (!d) return;
+    try {
+      await this.shell.deleteSecret(routeSecretName(d.name));
+      page.keyStored = false; page.keyNote = 'The key was removed.';
+    } catch (e) { page.keyNote = `The key was not removed. ${e instanceof Error ? e.message : String(e)}`; }
+    await this.render();
+  }
 
   private openRoute(name: string): void {
     const r = this.routesPage.file?.routes.find((x) => x.name === name);
     if (!r) return;
-    Object.assign(this.routesPage, { sel: name, draft: draftOf(r), formError: '', note: '', confirmDelete: false, testNote: '' });
+    Object.assign(this.routesPage, { sel: name, draft: draftOf(r), formError: '', note: '', confirmDelete: false, testNote: '', keyStored: null, keyNote: '' });
+    void this.refreshKeyState();
   }
 
   /** Model labels the rules already hold, as provider/model, for the model field to offer. */
@@ -890,7 +924,11 @@ export class App {
   private onRouteField(t: HTMLInputElement): boolean {
     const d = this.routesPage.draft;
     if (!d || (!t.dataset.rt && !t.dataset.rtOpt)) return false;
-    if (t.dataset.rtOpt) d.options[t.dataset.rtOpt] = t.value;
+    if (t.dataset.rtOpt) {
+      d.options[t.dataset.rtOpt] = t.value;
+      // The key source decides which fields are shown, so a change redraws the form and looks up the key.
+      if (t.dataset.rtOpt === 'keySource') { this.routesPage.keyNote = ''; void this.render().then(() => this.refreshKeyState()); }
+    }
     else if (t.dataset.rt === 'name') d.name = t.value.trim();
     else if (t.dataset.rt === 'model') d.model = t.value.trim();
     else if (t.dataset.rt === 'notes') d.notes = t.value;
@@ -967,6 +1005,8 @@ export class App {
       }
       case 'service-restart': await this.restartService(); break;
       case 'route-new': this.routesPage.sel = '+'; this.routesPage.draft = emptyDraft(); this.routesPage.formError = ''; this.routesPage.note = ''; this.routesPage.confirmDelete = false; await this.render(); break;
+      case 'route-key-save': await this.saveRouteKey(); break;
+      case 'route-key-clear': await this.clearRouteKey(); break;
       case 'route-close': this.closeRoute(); await this.render(); break;
       case 'route-save': await this.saveRoute(); break;
       case 'route-test': await this.testRoute(t.dataset.id ?? ''); break;

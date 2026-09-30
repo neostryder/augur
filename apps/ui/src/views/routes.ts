@@ -26,6 +26,10 @@ export interface RoutesModel {
   /** True while a test job runs, and what the last one said. */
   testing: boolean;
   testNote: string;
+  /** Whether the credential store holds a key for the route being edited; null until asked. */
+  keyStored: boolean | null;
+  /** What the last save or removal of a key said. The key itself is never shown or kept. */
+  keyNote: string;
 }
 
 const optionField = (spec: OptionSpec, value: string): string => {
@@ -35,6 +39,16 @@ const optionField = (spec: OptionSpec, value: string): string => {
     : `<input type="${spec.kind === 'number' ? 'number' : 'text'}" id="${id}" data-rt-opt="${spec.key}" value="${esc(value)}" ${spec.kind === 'number' ? 'min="1"' : ''} placeholder="${esc(spec.placeholder ?? '')}" spellcheck="false" autocomplete="off">`;
   return `<div class="row rtrow"><label for="${id}"><span>${esc(spec.label)}${spec.required ? ' <i>(required)</i>' : ''}</span><small>${esc(spec.help)}</small></label>${control}</div>`;
 };
+
+/** Write-only: the key goes to the Windows credential store when saved and is never read back into the page. */
+function keyRow(m: RoutesModel): string {
+  if (!m.canTest) return '<div class="rnote">Keys are saved from the desktop app on Windows.</div>';
+  const state = m.keyStored === null ? 'Checking the credential store.' : m.keyStored ? 'A key is saved in the Windows credential store. A new one replaces it, and the route file never holds it.' : 'No key is saved yet.';
+  return `<div class="row rtrow"><label for="rt-key"><span>Key</span><small>${esc(state)}</small></label>
+    <input type="password" id="rt-key" data-rt-key autocomplete="off" spellcheck="false" placeholder="${m.keyStored ? 'Enter a new key to replace it' : 'Paste the key'}">
+    <div class="rtactions"><button class="btn small" data-action="route-key-save" ${m.busy ? 'disabled' : ''}>Save key</button>${m.keyStored ? '<button class="btn small" data-action="route-key-clear">Remove key</button>' : ''}</div>
+    ${m.keyNote ? `<div class="rnote" role="status">${esc(m.keyNote)}</div>` : ''}</div>`;
+}
 
 function form(m: RoutesModel): string {
   const d = m.draft;
@@ -49,7 +63,8 @@ function form(m: RoutesModel): string {
       <datalist id="rt-models">${m.models.map((x) => `<option value="${esc(x)}"></option>`).join('')}</datalist></div>
     <div class="row rtrow"><label for="rt-adapter"><span>Adapter</span><small>${esc(info?.summary ?? '')}</small></label>
       <select id="rt-adapter" data-rt="adapter">${ADAPTER_INFO.map((a) => `<option value="${a.id}" ${a.id === d.adapter ? 'selected' : ''}>${esc(a.label)}</option>`).join('')}</select></div>
-    ${(info?.options ?? []).map((spec) => optionField(spec, d.options[spec.key] ?? '')).join('')}
+    ${(info?.options ?? []).filter((spec) => !(spec.key === 'apiKeyEnv' && d.options.keySource === 'store')).map((spec) => optionField(spec, d.options[spec.key] ?? '')).join('')}
+    ${d.options.keySource === 'store' ? keyRow(m) : ''}
     <div class="row rtrow"><label for="rt-notes"><span>Notes</span><small>For you. Agents do not see them.</small></label>
       <input type="text" id="rt-notes" data-rt="notes" value="${esc(d.notes)}" autocomplete="off"></div>
     <div class="row rtrow"><label for="rt-delegation"><span>May start more jobs</span><small>Lets a job on this route run <code>augur</code> itself, within the depth and count limits.</small></label>

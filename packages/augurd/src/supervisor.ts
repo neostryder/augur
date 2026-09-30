@@ -7,7 +7,7 @@ import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES } from '@augur/core';
 import type { PolicyFile } from '@augur/core';
 import { classifyTask, fitScores } from '@augur/decision';
 import type { DecisionBackend } from '@augur/decision';
-import { NAMED_PROMPT_WINDOW, PICK_WINDOW_MIN, TOOL_TIERS, checkLineage, checkNamed, checkPick, evaluate, isTerminal, matchNamedModels, pressure, rank, usageFactors } from '@augur/dispatch-protocol';
+import { NAMED_PROMPT_WINDOW, PICK_WINDOW_MIN, TOOL_TIERS, checkLineage, credentialTarget, routeSecretName, checkNamed, checkPick, evaluate, isTerminal, matchNamedModels, pressure, rank, usageFactors } from '@augur/dispatch-protocol';
 import type { Adapter, JobRecord, JobRequest, LaunchPlan, PickAnswer, PickParams, Rejection, RouteConfig, UsageSnapshot } from '@augur/dispatch-protocol';
 import { MAX_COMMAND_LINE } from './adapters/util.js';
 import type { ServiceConfig } from './config.js';
@@ -15,6 +15,7 @@ import { buildEnv } from './env.js';
 import type { Store } from './store.js';
 import type { DecisionLog } from './decisions.js';
 import { scriptPath } from './paths.js';
+import { hasStoredKey } from './secrets.js';
 
 export interface SupervisorDeps {
   store: Store; config: ServiceConfig; dir: string; adapters: Map<string, Adapter>;
@@ -24,6 +25,8 @@ export interface SupervisorDeps {
   /** Where picks and their outcomes are recorded for training. */
   decisions?: DecisionLog;
   runnerPath?: string; now?: () => number; env?: NodeJS.ProcessEnv;
+  /** Says whether a credential is stored. Tests stand in for the Windows credential store. */
+  hasKey?: (target: string) => boolean;
 }
 
 export type SubmitResult = { id: string; warnings: string[] } | { rejected: Rejection };
@@ -57,10 +60,17 @@ export class Supervisor {
   // ------------------------------------------------------------------ submit
 
   /** Why a route cannot start a job right now, in the words a job would be refused with, or null when it can. */
-  routeProblem(route: RouteConfig): string | null {
+  /** Why a route cannot run, or null. `name` is the route's name in routes.json; a route whose key is kept in the credential store needs it to look the key up. */
+  routeProblem(route: RouteConfig, name?: string): string | null {
     const adapter = this.d.adapters.get(route.adapter);
     if (!adapter) return `Adapter ${route.adapter} is not enabled.`;
-    return adapter.validate(route);
+    return adapter.validate(route) ?? this.keyProblem(route, name);
+  }
+
+  private keyProblem(route: RouteConfig, name?: string): string | null {
+    if (route.options?.keySource !== 'store' || !name) return null;
+    if (process.platform !== 'win32') return 'A key kept in the credential store needs Windows.';
+    return (this.d.hasKey ?? hasStoredKey)(credentialTarget(routeSecretName(name))) ? null : 'No key is stored for this route. Add it on the Routes page.';
   }
 
   submit(input: JobRequest): SubmitResult {
@@ -72,7 +82,7 @@ export class Supervisor {
     if (!route) return reject('unknown_route', `Route ${req.route} is not in routes.json.`);
     const adapter = this.d.adapters.get(route.adapter);
     if (!adapter) return reject('adapter_unavailable', `Adapter ${route.adapter} is not enabled.`);
-    const invalid = adapter.validate(route);
+    const invalid = this.routeProblem(route, req.route);
     if (invalid) return reject('adapter_unavailable', `Route ${req.route}: ${invalid}`);
 
     let root: string | null = null, parentId: string | null = null, depth = 0;

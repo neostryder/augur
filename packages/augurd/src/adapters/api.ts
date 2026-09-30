@@ -1,4 +1,5 @@
 import type { Adapter, AdapterCapabilities, ExtractInput, Extraction, JobRequest, LaunchPlan, PlanContext, RouteConfig, UsageReport } from '@augur/dispatch-protocol';
+import { credentialTarget, routeSecretName } from '@augur/dispatch-protocol';
 import { scriptPath } from '../paths.js';
 import { optNum, optStr } from './util.js';
 
@@ -7,7 +8,7 @@ const CAPS: AdapterCapabilities = { permissionRequests: false, sessions: false, 
 
 /**
  * A bare model over HTTP: one prompt in, one text answer out, no tools and no files. It runs as a job like any other, so it can be timed out and cancelled.
- * Route options: `baseUrl`, `model`, `apiKeyEnv` (the environment variable that holds the key), `maxTokens`, `timeoutS`.
+ * Route options: `baseUrl`, `model`, `keySource` (`env`, the default, or `store`), `apiKeyEnv` (the environment variable that holds the key, for `env`), `maxTokens`, `timeoutS`.
  */
 function make(id: string, shape: 'openai' | 'anthropic'): Adapter {
   return {
@@ -17,13 +18,16 @@ function make(id: string, shape: 'openai' | 'anthropic'): Adapter {
       const base = optStr(route.options, 'baseUrl') as string;
       if (!/^https:\/\//.test(base) && !/^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/.test(base)) return 'baseUrl must start with https://, or with http:// for localhost only, since the key is sent with every request';
       if (!optStr(route.options, 'model')) return 'route option model is required';
-      if (!optStr(route.options, 'apiKeyEnv')) return 'route option apiKeyEnv (the environment variable that holds the key) is required';
+      const source = optStr(route.options, 'keySource') ?? 'env';
+      if (source !== 'env' && source !== 'store') return 'keySource must be env or store';
+      if (source === 'env' && !optStr(route.options, 'apiKeyEnv')) return 'route option apiKeyEnv (the environment variable that holds the key) is required';
       return null;
     },
     plan(request: JobRequest, route: RouteConfig, ctx: PlanContext): LaunchPlan {
       if (request.tools !== 'read' || request.output !== 'text_only') throw new Error('an API route returns text only. Use tools read and output text_only.');
       const o = route.options;
-      const args = [SCRIPT, '--shape', shape, '--url', optStr(o, 'baseUrl') as string, '--model', optStr(o, 'model') as string, '--key-env', optStr(o, 'apiKeyEnv') as string,
+      const args = [SCRIPT, '--shape', shape, '--url', optStr(o, 'baseUrl') as string, '--model', optStr(o, 'model') as string,
+        ...(optStr(o, 'keySource') === 'store' ? ['--key-target', credentialTarget(routeSecretName(request.route))] : ['--key-env', optStr(o, 'apiKeyEnv') as string]),
         '--max-tokens', String(optNum(o, 'maxTokens') ?? 4096), '--timeout-s', String(optNum(o, 'timeoutS') ?? request.timeoutS ?? 900)];
       return { command: process.execPath, args, cwd: request.cwd, env: {}, stdin: ctx.prompt };
     },

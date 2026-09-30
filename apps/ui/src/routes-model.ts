@@ -61,7 +61,11 @@ export function checkDraft(d: RouteDraft, existing: string[], isNew: boolean): s
   if (!info) return 'Choose an adapter.';
   for (const spec of info.options) {
     const value = (d.options[spec.key] ?? '').trim();
-    if (!value) { if (spec.required) return `${spec.label} is required for this adapter.`; continue; }
+    if (!value) {
+      // A key kept in the credential store has no variable to name.
+      if (spec.required && !(spec.key === 'apiKeyEnv' && d.options.keySource === 'store')) return `${spec.label} is required for this adapter.`;
+      continue;
+    }
     const problem = checkOption(spec, value);
     if (problem) return problem;
   }

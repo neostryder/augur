@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { credentialTarget, routeSecretName } from '@augur/dispatch-protocol';
 import type { ExtractInput, JobRequest } from '@augur/dispatch-protocol';
 import { anthropicApi, codexExec, copilotExec, grokExec, hermesExec, mcodeSbx, opencodeSbx, openaiApi } from '../src/adapters/index.js';
 import { parseCount } from '../src/adapters/copilot-exec.js';
@@ -209,6 +210,40 @@ describe('an API connector', () => {
     const id2 = submitOk(unset.sup, { ...textReq('chat'), cwd: unset.root });
     expect((await terminal(unset.sup, unset.store, id2)).state).toBe('failed');
     expect(unset.sup.logs(id2, 'stderr')!.text).toContain('AUGUR_KEY_NOT_SET is not set');
+  });
+
+  it.skipIf(process.platform !== 'win32')('reads a route\'s key from the Windows credential store when its keySource is store', async () => {
+    const name = `store-test-${Math.floor(Math.random() * 1e9)}`, target = credentialTarget(routeSecretName(name));
+    const m = await mock(() => ({ json: { choices: [{ message: { content: 'pong' } }], usage: { prompt_tokens: 5, completion_tokens: 1 } } }));
+    const e = setup({ adapters: ['openai-api'] }, { ...process.env });
+    e.writeRoutes({ [name]: { model: 'test/text', adapter: 'openai-api', options: { baseUrl: `${m.url}/v1`, model: 'cheap-1', keySource: 'store' } } });
+    try {
+      // With nothing stored the route is refused and says why, and the service never looks at a value.
+      expect(e.sup.submit({ ...textReq(name), cwd: e.root })).toMatchObject({ rejected: { reason: expect.stringContaining('No key is stored') } });
+      execFileSync('cmdkey', [`/generic:${target}`, '/user:augur', '/pass:stored-key-value'], { windowsHide: true, stdio: 'ignore' });
+      const id = submitOk(e.sup, { ...textReq(name), cwd: e.root });
+      expect(await terminal(e.sup, e.store, id)).toMatchObject({ state: 'completed' });
+      expect(m.seen[0]!.headers.authorization).toBe('Bearer stored-key-value');
+      const files = readdirSync(join(e.dir, 'jobs', id)).map(f => readFileSync(join(e.dir, 'jobs', id, f), 'utf8'));
+      for (const text of files) expect(text).not.toContain('stored-key-value');
+    } finally {
+      try { execFileSync('cmdkey', [`/delete:${target}`], { windowsHide: true, stdio: 'ignore' }); } catch { /* nothing was stored */ }
+    }
+  });
+
+  it('names a route\'s secret so that no two routes share one', () => {
+    expect(routeSecretName('luna')).toBe('dispatch.luna');
+    expect(routeSecretName('my-route')).toBe('dispatch.my_droute');
+    expect(routeSecretName('my_route')).toBe('dispatch.my_uroute');
+    expect(new Set(['a-b', 'a_b', 'a_db', 'a-_b'].map(routeSecretName)).size).toBe(4);
+    expect(credentialTarget('dispatch.luna')).toBe('dispatch.luna.augur');
+  });
+
+  it('accepts keySource env or store and refuses anything else', () => {
+    const base = { model: 'x', baseUrl: 'https://api.example.com/v1' };
+    expect(openaiApi.validate({ model: 'a/b', adapter: 'openai-api', options: { ...base, keySource: 'store' } })).toBeNull();
+    expect(openaiApi.validate({ model: 'a/b', adapter: 'openai-api', options: { ...base, keySource: 'env' } })).toMatch(/apiKeyEnv/);
+    expect(openaiApi.validate({ model: 'a/b', adapter: 'openai-api', options: { ...base, keySource: 'vault', apiKeyEnv: 'K' } })).toMatch(/keySource/);
   });
 
   it('validates its route options', () => {

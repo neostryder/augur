@@ -87,7 +87,7 @@ augur usage
 Here `luna` is a route you added on the Routes page. A run has to state its activity and data tier, and it has to follow a pick made for the same caller in the last hour. `augur --help` lists every command.
 
 - The Jobs page lists what agents started, with each job's result, output and errors, and lets you cancel one that is still going.
-- The Routes page joins a model to the program that runs it. A route is an entry in `dispatch/routes.json`, and Test route checks that it works.
+- The Routes page joins a model to the program that runs it. A route is an entry in `dispatch/routes.json`, and Test route checks that it works. An API route can keep its key in the Windows credential store: choose store as the key source and save the key on the page, and it never appears in `routes.json` or a job record.
 - The Service page holds the service's settings, and `augur config` shows the same list.
 - Tokens and cost appear with each job, labelled reported, derived or imputed. [docs/accounting.md](docs/accounting.md) explains how they are worked out and how to set a rate.
 - `augur-mcp.cmd`, beside `augur.cmd`, lets Claude Code, Claude Desktop and other MCP clients pick and run models under the same rules. See [docs/mcp.md](docs/mcp.md).

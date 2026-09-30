@@ -24,6 +24,13 @@ describe('reading routes.json', () => {
 describe('checking a route before it is saved', () => {
   const good = () => ({ ...emptyDraft(), name: 'sol', model: 'codex/sol', adapter: 'copilot-exec', options: { model: 'gpt-6-sol' } });
 
+  it('needs no key variable when the key is kept in the credential store', () => {
+    const api = { ...emptyDraft(), name: 'chat', model: 'openai/gpt', adapter: 'openai-api', options: { baseUrl: 'https://api.example.com/v1', model: 'x' } };
+    expect(checkDraft(api, [], true)).toContain('Key variable');
+    expect(checkDraft({ ...api, options: { ...api.options, keySource: 'store' } }, [], true)).toBeNull();
+    expect(checkDraft({ ...api, options: { ...api.options, keySource: 'vault' } }, [], true)).toContain('one of env, store');
+  });
+
   it('accepts a complete route', () => expect(checkDraft(good(), ['luna'], true)).toBeNull());
 
   it('rejects names the service would ignore, and a name that is taken', () => {

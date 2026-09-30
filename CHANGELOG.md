@@ -6,6 +6,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Added
 
+- [Visible] [Security] **An API route can keep its key in the Windows credential store.** You save the key on the Routes page instead of naming an environment variable. It is never written to `routes.json` or a job record, and the route cannot run until a key is saved.
 - [Visible] [UI] **A new provider starts with cautious rules that its models inherit.** Public data only, text output only and named before use, with no activity allowed and every model unreviewed. A model can be used only after you confirm it and allow what it needs, and setup says so. Providers already in your rules keep what they have.
 - [Visible] [Security] **Each release lists a SHA-256 checksum for every installer and attaches a bill of materials for its JavaScript and Rust dependencies.** The README shows how to compare a download against its checksum, which matters while the installers are unsigned.
 - [Visible] [Docs] **The README now covers model rules, running jobs for agents and the choice of Jev or Laya, with the steps to install Laya on your own computer.** The MCP server and the token and cost figures each have their own page under `docs/`, and SECURITY.md describes what the MCP server can and cannot do.

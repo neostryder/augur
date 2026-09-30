@@ -26,9 +26,10 @@ await build({
 });
 
 if (process.platform === 'win32') {
-  const host = join(root, 'packages/augurd/native/bin/jobhost.exe');
-  if (!existsSync(host)) execFileSync('pnpm', ['--filter', '@augur/augurd', 'build:jobhost'], { cwd: root, stdio: 'inherit', windowsHide: true, shell: true });
+  const host = join(root, 'packages/augurd/native/bin/jobhost.exe'), cred = join(root, 'packages/augurd/native/bin/credread.exe');
+  if (!existsSync(host) || !existsSync(cred)) execFileSync('pnpm', ['--filter', '@augur/augurd', 'build:jobhost'], { cwd: root, stdio: 'inherit', windowsHide: true, shell: true });
   copyFileSync(host, join(out, 'jobhost.exe'));
+  copyFileSync(cred, join(out, 'credread.exe'));
   // The runtime is copied under its own name so an installer can tell the service's processes from anyone else's node.
   copyFileSync(process.execPath, join(out, 'augur-node.exe'));
   writeFileSync(join(out, 'augur.cmd'), '@"%~dp0augur-node.exe" "%~dp0augur.mjs" %*\r\n');

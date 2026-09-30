@@ -4,9 +4,27 @@ import { renderRoutes, type RoutesModel } from '../src/views/routes';
 
 const fileOf = (text: string) => { const p = parseRoutesText(text); if (!p.ok) throw new Error('bad fixture'); return p.file; };
 const model = (over: Partial<RoutesModel> = {}): RoutesModel => ({ file: fileOf(JSON.stringify({ routes: { luna: { model: 'codex/luna', adapter: 'codex-exec' }, Bad: { adapter: 'exec' } } })),
-  error: '', health: null, sel: null, draft: null, formError: '', note: '', models: ['codex/luna', 'codex/sol'], confirmDelete: false, busy: false, canTest: true, testing: false, testNote: '', ...over });
+  error: '', health: null, sel: null, draft: null, formError: '', note: '', models: ['codex/luna', 'codex/sol'], confirmDelete: false, busy: false, canTest: true, testing: false, testNote: '', keyStored: null, keyNote: '', ...over });
 
 describe('the routes page', () => {
+  const apiDraft = (over: Record<string, string> = {}) => ({ ...emptyDraft(), name: 'chat', model: 'openai/gpt', adapter: 'openai-api', options: { baseUrl: 'https://api.example.com/v1', model: 'x', ...over } });
+
+  it('shows a write-only key field instead of the variable name when the key is kept in the credential store', () => {
+    const env = renderRoutes(model({ sel: '+', draft: apiDraft({ keySource: 'env', apiKeyEnv: 'KEY_VAR' }) }));
+    expect(env).toContain('id="rt-opt-apiKeyEnv"');
+    expect(env).not.toContain('id="rt-key"');
+    const none = renderRoutes(model({ sel: '+', draft: apiDraft({ keySource: 'store' }), keyStored: false }));
+    expect(none).not.toContain('id="rt-opt-apiKeyEnv"');
+    expect(none).toContain('type="password"');
+    expect(none).toContain('No key is saved yet.');
+    expect(none).not.toContain('data-action="route-key-clear"');
+    const saved = renderRoutes(model({ sel: '+', draft: apiDraft({ keySource: 'store' }), keyStored: true, keyNote: 'The key is saved in the Windows credential store.' }));
+    expect(saved).toContain('A key is saved in the Windows credential store.');
+    expect(saved).toContain('data-action="route-key-clear"');
+    expect(/<input type="password"[^>]*>/.exec(saved)![0]).not.toContain('value=');
+    expect(renderRoutes(model({ sel: '+', draft: apiDraft({ keySource: 'store' }), canTest: false }))).toContain('Keys are saved from the desktop app on Windows.');
+  });
+
   it('lists routes with the adapter in plain words and names what the service skips', () => {
     const html = renderRoutes(model());
     expect(html).toContain('data-route="luna"');
