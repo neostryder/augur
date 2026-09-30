@@ -4,6 +4,8 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-30
+
 ### Added
 
 - [Visible] [UI] **The phone app refreshes when you pull down from the top.** A pull reads every provider again, pulls the desktop's latest numbers, checks for newer app files and reloads.
