@@ -121,6 +121,7 @@ export class Supervisor {
     this.d.store.insert({ id, route: req.route, adapter: adapter.id, activity: req.activity, dataTier: req.dataTier, tools: req.tools, output: req.output, cwd: req.cwd,
       createdAt: this.now(), rootJobId: root ?? id, parentJobId: parentId, depth, caller: req.caller, named: !!req.named, expectFile: req.expectFile ?? null,
       timeoutS: req.timeoutS ?? null, harnessVersion: null, workspace });
+    this.d.store.setChars(id, { prompt: prompt.length });
     const s = this.d.store;
     s.event(id, 'requested', `${req.caller.kind}${req.caller.label ? ' ' + req.caller.label : ''}`, this.now());
     s.event(id, 'policy_evaluated', warnings.join(' | '), this.now());
@@ -323,7 +324,7 @@ export class Supervisor {
       const stdoutPath = join(dir, 'stdout.log');
       const x = adapter.extract({ stdout: this.tail(stdoutPath, 4 * 1024 * 1024), stdoutPath, stderr: this.tail(join(dir, 'stderr.log'), 1024 * 1024), exitCode: res.exitCode, jobDir: dir, workspace: rec.workspace });
       answer = x.answer?.trim() ? x.answer : null; failure = x.failure;
-      if (answer) writeFileSync(join(dir, 'answer.txt'), answer);
+      if (answer) { writeFileSync(join(dir, 'answer.txt'), answer); store.setChars(rec.id, { answer: answer.length }); }
       if (x.usage) { store.setUsage(rec.id, x.usage); store.event(rec.id, 'usage_recorded', `${x.usage.inputTokens} in, ${x.usage.outputTokens} out`, at); }
     }
     const patch = { endedAt: res.endedAt, exitCode: res.exitCode };

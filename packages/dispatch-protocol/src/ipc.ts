@@ -1,4 +1,5 @@
 // Wire contract between the service and its callers. One JSON object per line over a named pipe, each request carrying the auth token.
+import type { Accounted, RouteCalibration, Totals } from './accounting.js';
 import type { Headroom } from './pace.js';
 import type { ActivityId, DataTier } from '@augur/core';
 import type { PickRequest, PickResult } from './pick.js';
@@ -49,5 +50,14 @@ export interface Methods {
   /** Headroom per provider and the usage factor of every model. */
   pressure: { params: undefined; result: { pressure: Record<string, Headroom>; factors: Record<string, number>; scarcity: number } | null };
   routes: { params: undefined; result: Array<{ name: string; model: string; adapter: string; problem: string | null }> };
+  /** Tokens and cost of recent jobs and totals per route, each figure labelled reported, derived or imputed. */
+  accounting: { params: { limit?: number }; result: AccountingAnswer };
+}
+
+export interface AccountingAnswer {
+  jobs: Array<{ id: string; route: string; model: string | null; accounted: Accounted }>;
+  routes: Record<string, { model: string | null; totals: Totals; calibration: RouteCalibration | null }>;
+  /** Models with a rate set, so a page can say when a route's cost is missing for want of one. */
+  ratedModels: string[];
 }
 export type MethodName = keyof Methods;

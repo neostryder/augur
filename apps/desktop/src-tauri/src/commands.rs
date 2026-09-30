@@ -370,6 +370,14 @@ fn dispatch_args_allowed(args: &[String]) -> bool {
             )
         }
         Some("routes" | "pressure") => rest.all(|a| a == "--json"),
+        Some("usage") => {
+            let rest: Vec<&str> = rest.collect();
+            match rest.as_slice() {
+                ["--json"] => true,
+                ["--json", "--limit", n] => is_number(n),
+                _ => false,
+            }
+        }
         Some("config") => {
             let rest: Vec<&str> = rest.collect();
             match rest.as_slice() {
@@ -713,6 +721,8 @@ mod tests {
         assert!(allowed(&["cancel", "0d26110efa99"]));
         assert!(allowed(&["logs", "0d26110efa99", "--stderr"]));
         assert!(allowed(&["routes", "--json"]));
+        assert!(allowed(&["usage", "--json"]));
+        assert!(allowed(&["usage", "--json", "--limit", "50"]));
         assert!(allowed(&["config", "--json"]));
         assert!(allowed(&["test", "luna", "--json"]));
         assert!(allowed(&["config", "set", "maxConcurrent", "4"]));
@@ -730,6 +740,7 @@ mod tests {
         assert!(!allowed(&[]));
         assert!(!allowed(&["run", "codex", "--prompt", "x"]));
         assert!(!allowed(&["apply", "0d26110efa99"]));
+        assert!(!allowed(&["usage", "--json", "--limit", "5;x"]));
         assert!(!allowed(&["service", "stop", "--force"]));
         assert!(!allowed(&["status", r"..\..\evil", "--json"]));
         assert!(!allowed(&["status", "0d26110efa99", "--cwd", "C:/"]));

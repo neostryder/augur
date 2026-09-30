@@ -1,8 +1,9 @@
 // augurd: the local dispatch service. Jobs run in their own runner processes, so stopping or restarting this process never stops a job.
-import { appendFileSync, mkdirSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { LayaBackend, ServerPool, ShadowBackend, createBackend, DEFAULT_SERVERS } from '@augur/decision';
 import type { DecisionBackend } from '@augur/decision';
+import { parseRates } from './accounting.js';
 import { enabledAdapters } from './adapters/index.js';
 import { loadConfig } from './config.js';
 import { DecisionLog } from './decisions.js';
@@ -36,7 +37,8 @@ export async function startService(opts: ServiceOptions = {}) {
   const routes = routeSource(opts.routesPath ?? process.env.AUGURD_ROUTES ?? join(home, 'dispatch', 'routes.json'));
   const decision = buildDecision(config, dir), decisions = new DecisionLog(dir, config.learn);
   const supervisor = new Supervisor({ store, config, dir, adapters: enabledAdapters(config.adapters), ...(decision ? { decision } : {}), decisions, routes: () => routes.read(), policy: () => policy.read(), usage: () => usage.read() });
-  const server = new IpcServer(supervisor, store, token, () => routes.read());
+  const ratesPath = join(home, 'dispatch', 'rates.json');
+  const server = new IpcServer(supervisor, store, token, () => routes.read(), () => parseRates(existsSync(ratesPath) ? readFileSync(ratesPath, 'utf8') : null));
   try { await server.start(opts.pipe ?? pipeName(dir)); }
   catch (e) { store.close(); throw e; }
   supervisor.reconcile();

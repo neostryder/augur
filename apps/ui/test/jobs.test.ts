@@ -7,7 +7,7 @@ const job = (over: Partial<JobRecord> = {}): JobRecord => ({
   cwd: 'C:/work', createdAt: 1_000, startedAt: 2_000, endedAt: null, exitCode: null, reason: null, rootJobId: '0d26110efa99', parentJobId: null, depth: 0,
   caller: { kind: 'cli', label: 'claude' }, named: false, harnessVersion: null, usage: null, workspace: null, patch: null, ...over,
 });
-const model = (over: Partial<JobsModel> = {}): JobsModel => ({ service: { running: true, pid: 4242 }, serviceNote: '', unavailable: '', jobs: [], sel: null, detail: null, busy: false, ...over });
+const model = (over: Partial<JobsModel> = {}): JobsModel => ({ service: { running: true, pid: 4242 }, serviceNote: '', unavailable: '', jobs: [], accounted: {}, sel: null, detail: null, busy: false, ...over });
 
 describe('the jobs page', () => {
   it('offers Start when the service is stopped and Stop when it runs', () => {
@@ -37,6 +37,15 @@ describe('the jobs page', () => {
     const done = renderJobs(model({ jobs: [job({ state: 'completed' })], sel: job().id, detail: { job: job({ state: 'completed', exitCode: 0 }), result: 'all good', stdout: '', stderr: '' } }));
     expect(done).not.toContain('data-action="job-cancel"');
     expect(done).toContain('all good');
+  });
+
+  it('says how each token and cost figure is known, and shows an estimate with its error', () => {
+    const j = job({ state: 'completed' });
+    const html = renderJobs(model({ jobs: [j], sel: j.id, detail: { job: j, result: '', stdout: '', stderr: '' }, accounted: { [j.id]: {
+      inputTokens: { value: 1200, provenance: 'reported' }, outputTokens: { value: 300, provenance: 'imputed', error: 0.25 }, costUsd: { value: 0.0031, provenance: 'imputed', error: 0.25 } } } }));
+    expect(html).toContain('1,200 (reported) in, 300 (imputed, about 25% off) out');
+    expect(html).toContain('$0.00310 (imputed, about 25% off)');
+    expect(renderJobs(model({ jobs: [j], sel: j.id, detail: { job: j, result: '', stdout: '', stderr: '' } }))).not.toContain('Tokens');
   });
 
   it('measures a running job against now and a finished one against its end', () => {

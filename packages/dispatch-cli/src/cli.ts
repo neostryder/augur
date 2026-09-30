@@ -6,7 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES } from '@augur/core';
 import type { ActivityId, DataTier, OutputMode } from '@augur/core';
-import { EXIT_CODES, TOOL_TIERS, exitCodeForState, isTerminal } from '@augur/dispatch-protocol';
+import { EXIT_CODES, TOOL_TIERS, describeFigure, exitCodeForState, isTerminal } from '@augur/dispatch-protocol';
 import type { JobRecord, JobRequest, ToolTier } from '@augur/dispatch-protocol';
 import { ServiceError, call, configLines, dataDir, setConfigValue } from '@augur/augurd';
 
@@ -32,6 +32,7 @@ augur cancel <job>
 augur apply <job> [--check]
 augur pick (--task <description> | --activity <a> --data <tier>) [--named <model>] [--fit <model>=<0-1>,...]
 augur pressure
+augur usage                             tokens and cost per route, each labelled reported, derived or imputed
 augur note-prompt --session <id>     tell the service a person sent the message on standard input; it keeps only the models named
 augur routes
 augur test <route> [--wait]          send a fixed one-word prompt through a route to check it works
@@ -109,6 +110,17 @@ export async function main(argv: string[], io: Io): Promise<number> {
         const r = await call('pressure', undefined, opts);
         if (!r) { io.err('Pressure needs policy.json and usage.json.\n'); return EXIT_CODES.failed; }
         say(Object.entries(r.factors).map(([m, f]) => `${m.padEnd(22)} factor ${f.toFixed(2)}`).join('\n') + `\nscarcity ${r.scarcity}`, r); return 0;
+      }
+      case 'usage': {
+        const r = await call('accounting', { limit: opt('limit') ? Number(opt('limit')) : 20 }, opts);
+        const rows = Object.entries(r.routes).map(([route, x]) => {
+          const t = x.totals, cost = t.costJobs ? `$${t.costUsd.toFixed(t.costUsd < 0.01 ? 5 : 4)} over ${t.costJobs} of ${t.jobs} jobs (${t.byProvenance.reported} reported, ${t.byProvenance.derived} derived, ${t.byProvenance.imputed} imputed)`
+            : r.ratedModels.includes(x.model ?? '') ? 'no cost yet' : 'no rate set';
+          return `${route.padEnd(14)} ${t.inputTokens.toLocaleString('en-US')} in, ${t.outputTokens.toLocaleString('en-US')} out, ${cost}`;
+        });
+        const jobs = r.jobs.map(j => `${j.id}  ${j.route.padEnd(12)} in ${describeFigure(j.accounted.inputTokens, 'tokens')}, out ${describeFigure(j.accounted.outputTokens, 'tokens')}, cost ${describeFigure(j.accounted.costUsd, 'usd')}`);
+        const recent = jobs.length ? ['', 'Recent jobs', ...jobs] : [];
+        say((rows.length ? [...rows, ...recent] : ['No jobs yet.']).join('\n'), r); return 0;
       }
       case 'routes': { const r = await call('routes', undefined, opts); say(r.map(x => `${x.name.padEnd(14)} ${x.model.padEnd(16)} ${x.adapter}${x.problem ? `   cannot run: ${x.problem}` : ''}`).join('\n') || 'No routes.', r); return 0; }
       case 'test': return await testCmd(need(rest[0], 'route'), p, io, opts, say, json);

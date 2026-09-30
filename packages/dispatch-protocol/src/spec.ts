@@ -71,6 +71,9 @@ export interface JobRecord {
   named: boolean;
   harnessVersion: string | null;
   usage: UsageReport | null;
+  /** Length in characters of the prompt sent and of the answer received. Only the lengths are kept, so token counts can be estimated for a harness that reports none. */
+  promptChars?: number | null;
+  answerChars?: number | null;
   /** Folder the job ran in when the adapter works on a copy of the workspace. */
   workspace: string | null;
   /** Patch of what the job changed in that copy, and how many files it touches. */

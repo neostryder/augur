@@ -4,7 +4,8 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'n
 import net from 'node:net';
 import { join } from 'node:path';
 import { PROTOCOL_VERSION } from '@augur/dispatch-protocol';
-import type { JobRequest, MethodName, RouteConfig, RpcRequest, RpcResponse } from '@augur/dispatch-protocol';
+import type { JobRequest, MethodName, RateCard, RouteConfig, RpcRequest, RpcResponse } from '@augur/dispatch-protocol';
+import { buildAccounting } from './accounting.js';
 import type { Store } from './store.js';
 import type { Supervisor } from './supervisor.js';
 
@@ -25,7 +26,7 @@ export class IpcServer {
   private server: net.Server | null = null;
   private sockets = new Set<net.Socket>();
   private readonly startedAt = Date.now();
-  constructor(private sup: Supervisor, private store: Store, private token: string, private routes: () => Record<string, RouteConfig> | null) {}
+  constructor(private sup: Supervisor, private store: Store, private token: string, private routes: () => Record<string, RouteConfig> | null, private rates: () => RateCard = () => ({})) {}
 
   private handle(method: MethodName, params: unknown): unknown | Promise<unknown> {
     const p = (params ?? {}) as Record<string, unknown>;
@@ -43,6 +44,7 @@ export class IpcServer {
       case 'human_prompt': return this.sup.humanPrompt(String(p.session ?? ''), String(p.text ?? ''));
       case 'pressure': return this.sup.pressure();
       case 'routes': return Object.entries(this.routes() ?? {}).map(([name, r]) => ({ name, model: r.model, adapter: r.adapter, problem: this.sup.routeProblem(r as RouteConfig) }));
+      case 'accounting': { const limit = Math.min(Math.max(Number(p.limit ?? 100), 1), 500); return buildAccounting(this.store.list({ limit: 500 }), this.routes(), this.rates(), limit); }
       default: throw new Error(`unknown method ${String(method)}`);
     }
   }

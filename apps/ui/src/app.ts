@@ -11,7 +11,7 @@ import { renderService, type ConfigLine, type ServiceModel } from './views/servi
 import { BULK_FIELDS, previewBulk, type BulkPreview } from './rules-bulk';
 import { pauseValue, planDialBack, type DialBackPlan } from './dial-back';
 import { ROUTES_PATH, checkDraft, draftOf, emptyDraft, parseRoutesText, writeRoute } from './routes-model';
-import type { JobRecord } from '@augur/dispatch-protocol';
+import type { Accounted, JobRecord } from '@augur/dispatch-protocol';
 import { renderTrayIcon } from './trayicon';
 import { span, until } from './util';
 import qrcode from 'qrcode-generator';
@@ -81,7 +81,7 @@ export class App {
   private savedFlash: string | null = null;
   /** Set while the last policy.json write failed. Agents keep enforcing the older file until a write succeeds. */
   private policyError: string | null = null;
-  private jobs: JobsModel = { service: null, serviceNote: '', unavailable: '', jobs: null, sel: null, detail: null, busy: false };
+  private jobs: JobsModel = { service: null, serviceNote: '', unavailable: '', jobs: null, accounted: {}, sel: null, detail: null, busy: false };
   private jobsTimer: ReturnType<typeof setInterval> | undefined;
   private servicePage: ServiceModel = { lines: null, service: null, runJobs: false, note: '', error: '', busy: false, unavailable: '' };
   private routesPage: RoutesModel = { file: null, error: '', health: null, sel: null, draft: null, formError: '', note: '', models: [], confirmDelete: false, busy: false, canTest: false, testing: false, testNote: '' };
@@ -691,11 +691,13 @@ export class App {
       if (this.jobs.service.running) {
         const list = await this.augur<JobRecord[]>(['jobs', '--json', '--limit', '50']);
         this.jobs.jobs = Array.isArray(list.data) ? list.data : [];
+        const acc = await this.augur<{ jobs: Array<{ id: string; accounted: Accounted }> }>(['usage', '--json', '--limit', '50']).catch(() => null);
+        this.jobs.accounted = Object.fromEntries((acc?.data?.jobs ?? []).map((j) => [j.id, j.accounted]));
         if (this.jobs.sel) await this.loadDetail(this.jobs.sel);
       } else this.jobs.jobs = [];
     } catch (e) { this.jobs.unavailable = e instanceof Error ? e.message : String(e); }
     // The page is drawn again only when something on it changed, so a scrolled log is not sent back to the top every few seconds.
-    const sig = JSON.stringify([this.jobs.service, this.jobs.unavailable, this.jobs.serviceNote, this.jobs.jobs, this.jobs.detail, this.jobs.busy]);
+    const sig = JSON.stringify([this.jobs.service, this.jobs.unavailable, this.jobs.serviceNote, this.jobs.jobs, this.jobs.accounted, this.jobs.detail, this.jobs.busy]);
     if (this.view === 'jobs' && sig !== this.jobsSig) { this.jobsSig = sig; await this.render(); }
   }
 

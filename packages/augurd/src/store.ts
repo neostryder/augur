@@ -10,7 +10,7 @@ interface Row {
   created_at: number; started_at: number | null; ended_at: number | null; exit_code: number | null; reason: string | null;
   root_job_id: string; parent_job_id: string | null; depth: number; caller: string; named: number; harness_version: string | null;
   usage: string | null; runner_pid: number | null; child_pid: number | null; expect_file: string | null; timeout_s: number | null;
-  purged: number; workspace: string | null; patch_path: string | null; changed_files: number | null;
+  purged: number; workspace: string | null; patch_path: string | null; changed_files: number | null; prompt_chars: number | null; answer_chars: number | null;
 }
 
 const toRecord = (r: Row): JobRecord => ({
@@ -18,6 +18,7 @@ const toRecord = (r: Row): JobRecord => ({
   tools: r.tools as JobRecord['tools'], output: r.output as JobRecord['output'], cwd: r.cwd, createdAt: r.created_at, startedAt: r.started_at, endedAt: r.ended_at,
   exitCode: r.exit_code, reason: r.reason, rootJobId: r.root_job_id, parentJobId: r.parent_job_id, depth: r.depth, caller: JSON.parse(r.caller) as JobRecord['caller'],
   named: r.named === 1, harnessVersion: r.harness_version, usage: r.usage ? JSON.parse(r.usage) as UsageReport : null,
+  promptChars: r.prompt_chars, answerChars: r.answer_chars,
   workspace: r.workspace, patch: r.patch_path ? { path: r.patch_path, files: r.changed_files ?? 0 } : null,
 });
 
@@ -47,7 +48,7 @@ export class Store {
       create table if not exists picks(id integer primary key autoincrement, at integer not null, session text, model text not null, activity text not null, data_tier text not null, named text, cleared text not null);
       create table if not exists prompts(id integer primary key autoincrement, at integer not null, session text not null, models text not null);`);
     const have = new Set((this.db.prepare('pragma table_info(jobs)').all() as Array<{ name: string }>).map(c => c.name));
-    for (const [name, type] of [['workspace', 'text'], ['patch_path', 'text'], ['changed_files', 'integer']] as const) {
+    for (const [name, type] of [['workspace', 'text'], ['patch_path', 'text'], ['changed_files', 'integer'], ['prompt_chars', 'integer'], ['answer_chars', 'integer']] as const) {
       if (!have.has(name)) this.db.exec(`alter table jobs add column ${name} ${type}`);
     }
   }
@@ -97,6 +98,9 @@ export class Store {
     this.db.prepare('update jobs set runner_pid=coalesce(?,runner_pid), child_pid=coalesce(?,child_pid) where id=?').run(pids.runnerPid ?? null, pids.childPid ?? null, id);
   }
   setUsage(id: string, usage: UsageReport): void { this.db.prepare('update jobs set usage=? where id=?').run(JSON.stringify(usage), id); }
+  setChars(id: string, chars: { prompt?: number; answer?: number }): void {
+    this.db.prepare('update jobs set prompt_chars=coalesce(?,prompt_chars), answer_chars=coalesce(?,answer_chars) where id=?').run(chars.prompt ?? null, chars.answer ?? null, id);
+  }
   setVersion(id: string, version: string | null): void { this.db.prepare('update jobs set harness_version=? where id=?').run(version, id); }
   setPatch(id: string, path: string, files: number): void { this.db.prepare('update jobs set patch_path=?, changed_files=? where id=?').run(path, files, id); }
   addPick(p: PickRecord): void {

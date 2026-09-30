@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { call, readToken, ServiceError } from '../src/client.js';
@@ -51,6 +51,26 @@ describe('the control endpoint', () => {
     expect((await call('result', { id }, o))!.answer).toBe('final message');
     expect((await call('list', { limit: 5 }, o)).map(j => j.id)).toContain(id);
     expect(await call('status', { id: 'missing' }, o)).toBeNull();
+  });
+
+  it('records text lengths and labels each figure in the accounting answer, using the owner\'s rate card', async () => {
+    const { o, e } = await boot();
+    const text = 'WRITE out.txt\nENV CODEX_HOME';
+    const id = (await call('submit', request({ text, expectFile: 'out.txt', cwd: e.root }), o) as { id: string }).id;
+    const job = await finished(o, id);
+    expect(job).toMatchObject({ promptChars: text.length, answerChars: 'final message'.length });
+    const bare = await call('accounting', {}, o);
+    expect(bare.jobs[0]).toMatchObject({ id, model: 'test/fake', accounted: { inputTokens: { value: 1200, provenance: 'reported' }, costUsd: null } });
+    mkdirSync(join(e.home, 'dispatch'), { recursive: true });
+    writeFileSync(join(e.home, 'dispatch', 'rates.json'), JSON.stringify({ 'test/fake': { inputPerM: 1_000_000, outputPerM: 0 }, broken: { inputPerM: 'x' } }));
+    // The job's usage includes cached tokens, so a rate with no cached price gives no cost rather than a guess.
+    const unpriced = await call('accounting', {}, o);
+    expect(unpriced.ratedModels).toEqual(['test/fake']);
+    expect(unpriced.jobs[0]!.accounted.costUsd).toBeNull();
+    writeFileSync(join(e.home, 'dispatch', 'rates.json'), JSON.stringify({ 'test/fake': { inputPerM: 1_000_000, outputPerM: 0, cachedReadPerM: 0 } }));
+    const rated = await call('accounting', {}, o);
+    expect(rated.jobs[0]!.accounted.costUsd).toMatchObject({ value: 200, provenance: 'derived' });
+    expect(rated.routes.fake!.totals).toMatchObject({ jobs: 1, costJobs: 1 });
   });
 
   it('reports a rejection to the caller and lists routes without their options', async () => {

@@ -1,5 +1,6 @@
 import { ACTIVITY_LABELS, DATA_TIER_LABELS } from '@augur/core';
-import type { JobRecord, JobState } from '@augur/dispatch-protocol';
+import { describeFigure } from '@augur/dispatch-protocol';
+import type { Accounted, JobRecord, JobState } from '@augur/dispatch-protocol';
 import { ICON, ago, esc } from '../util';
 
 export interface JobsModel {
@@ -10,6 +11,8 @@ export interface JobsModel {
   /** Set when the app could not reach the bundled command at all. */
   unavailable: string;
   jobs: JobRecord[] | null;
+  /** Tokens and cost of the listed jobs, each figure labelled reported, derived or imputed. */
+  accounted: Record<string, Accounted>;
   sel: string | null;
   detail: { job: JobRecord; result: string; stdout: string; stderr: string } | null;
   busy: boolean;
@@ -64,7 +67,9 @@ function detail(m: JobsModel): string {
   const d = m.detail;
   if (!d) return `<div class="rempty big">${m.sel ? 'Loading the job.' : 'Pick a job to see its result and output.'}</div>`;
   const j = d.job;
-  const usage = j.usage ? `${j.usage.inputTokens.toLocaleString()} in, ${j.usage.outputTokens.toLocaleString()} out${j.usage.costUsd !== undefined ? `, $${j.usage.costUsd.toFixed(4)}` : ''}` : '';
+  const acc = m.accounted[j.id];
+  const usage = acc && (acc.inputTokens || acc.outputTokens) ? `${describeFigure(acc.inputTokens, 'tokens')} in, ${describeFigure(acc.outputTokens, 'tokens')} out` : '';
+  const cost = acc?.costUsd ? describeFigure(acc.costUsd, 'usd') : '';
   const block = (title: string, text: string) => text.trim() ? `<h3>${esc(title)}</h3><pre class="jlog" tabindex="0">${esc(text.length > 6000 ? '...' + text.slice(-6000) : text)}</pre>` : '';
   return `<div class="jdetail"><div class="jhead"><h2>${esc(j.route)}</h2>${chip(j.state)}
     ${isLive(j.state) ? `<button class="btn small" data-action="job-cancel" data-id="${esc(j.id)}" ${m.busy ? 'disabled' : ''}>Cancel</button>` : ''}</div>
@@ -72,7 +77,7 @@ function detail(m: JobsModel): string {
     <div class="jfields">${field('Activity', ACTIVITY_LABELS[j.activity] ?? j.activity)}${field('Data', DATA_TIER_LABELS[j.dataTier] ?? j.dataTier)}
       ${field('Tools', TOOL_LABELS[j.tools] ?? j.tools)}${field('Output', OUTPUT_LABELS[j.output] ?? j.output)}${field('Adapter', j.adapter)}
       ${field('Started by', j.caller.label ?? j.caller.kind)}${field('Folder', j.cwd)}
-      ${j.startedAt ? field('Took', duration(j)) : ''}${j.exitCode !== null ? field('Exit code', String(j.exitCode)) : ''}${usage ? field('Tokens', usage) : ''}
+      ${j.startedAt ? field('Took', duration(j)) : ''}${j.exitCode !== null ? field('Exit code', String(j.exitCode)) : ''}${usage ? field('Tokens', usage) : ''}${cost ? field('Cost', cost) : ''}
       ${j.patch ? field('Patch', `${j.patch.files} ${j.patch.files === 1 ? 'file' : 'files'}, apply with augur apply ${j.id}`) : ''}</div>
     ${block('Result', d.result)}${block('Output', d.stdout)}${block('Errors', d.stderr)}</div>`;
 }
