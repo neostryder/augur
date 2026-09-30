@@ -6,6 +6,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Added
 
+- [Internal] [Platform] **The service loads adapters from a folder beside it that no release includes.** One runs only when `config.json` lists its id, and neither the settings pages nor `augur config` offer it.
 - [Visible] [UI] **A route can have a budget.** On the Routes page or in `routes.json`, set dollars, jobs or both for a day, week or month. Once a limit is reached, new jobs on that route are refused with the limit named, and `augur usage` shows how much is used. Dollars count only jobs whose cost is known.
 - [Visible] [UI] **A route can list fallback routes.** When a job is refused because of a budget, a pause, plan usage or a missing key or adapter, Augur tries each fallback in order and checks it against every rule. The job records which route took it, and `augur run --no-failover` keeps a job where it was sent.
 - [Visible] [Security] **An API route can keep its key in the Windows credential store.** You save the key on the Routes page instead of naming an environment variable. It is never written to `routes.json` or a job record, and the route cannot run until a key is saved.

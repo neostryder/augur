@@ -18,6 +18,12 @@ const entries = {
   augur: join(root, 'packages/dispatch-cli/src/main.ts'),
   'augur-mcp': join(root, 'packages/mcp/src/main.ts'),
 };
+// Adapters kept on one computer are bundled beside the service when their folder is present, and are absent from every other build.
+const localDir = join(root, 'packages/augurd/src/adapters/private');
+if (existsSync(join(localDir, 'index.ts'))) {
+  entries['local-adapters'] = join(localDir, 'index.ts');
+  if (existsSync(join(localDir, 'web-chat-call.ts'))) entries['web-chat-call'] = join(localDir, 'web-chat-call.ts');
+}
 await build({
   entryPoints: entries, outdir: out, outExtension: { '.js': '.mjs' }, bundle: true, platform: 'node', format: 'esm', target: 'node24',
   // A bundled file that uses require() (a CommonJS dependency) needs one; nothing here does today, but a later dependency might.
