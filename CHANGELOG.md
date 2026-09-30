@@ -4,6 +4,8 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-09-29
+
 ### Added
 
 - [Internal] [Platform] **The service loads adapters from a folder beside it that no release includes.** One runs only when `config.json` lists its id, and neither the settings pages nor `augur config` offer it.

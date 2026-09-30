@@ -33,7 +33,7 @@ You can add any other provider whose usage endpoint returns JSON, without writin
 
 ## Install
 
-Every installer is on the [releases page](https://github.com/neostryder/augur/releases/latest).
+Every installer is on the [releases page](https://github.com/neostryder/augur/releases/latest). Augur is built and used mostly on Windows. The macOS and Linux apps come from the same code and the same release but get less testing, and running jobs for agents works only on Windows.
 
 **Windows:** download the installer and run it. No administrator rights are needed. The installer is not code-signed yet, so Windows SmartScreen may warn the first time; choose More info, then Run anyway. The icon may land in the hidden-icons area at first. Drag it onto the taskbar to keep it in view.
 
