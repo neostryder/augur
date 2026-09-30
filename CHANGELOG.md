@@ -6,6 +6,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Added
 
+- [Visible] [Platform] **An MCP server lets Claude Code, Claude Desktop and other MCP clients list models, pick one and run a job through Augur.** `augur-mcp.cmd` ships in the installer's `service` folder and offers eight tools: models, pick, run, job, jobs, cancel, pressure and routes. Each call goes through the dispatch service under the same rules as the `augur` command, so a run needs a pick from the same session and a stated data tier, and the server has no way to skip a check. `docs/mcp.md` covers registering it and each tool.
 - [Visible] [UI] **Test route on the Routes page checks that a route works.** It sends a fixed one-word prompt through the route and says whether the model answered. `augur test <route>` does the same from a terminal. The test picks an activity the rules allow for that model, and skips the pick check, since nobody chose the model for a task.
 - [Visible] [UI] **Dial back on the rules page pauses the high-cost models and favours the cheaper ones until a reset.** Pick when it ends from the resets ahead or enter a time, preview every model it would change, then apply. Models at high or very high cost stop, and the weights of free, very cheap and cheap ones rise one step. Each goes back to its own rules when the time passes.
 - [Visible] [UI] **First-run setup asks who classifies tasks when jobs are on.** Choose none, Laya or Jev, with a line on where task text goes for each. The choice restarts the service so it applies at once.
