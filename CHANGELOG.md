@@ -4,6 +4,10 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+### Added
+
+- [Visible] [UI] **The panel opens on the usage view when Augur starts.** Turn off Open the panel at launch in settings to keep Augur in the tray until you open it.
+
 ## [1.2.0] - 2026-09-30
 
 ### Added

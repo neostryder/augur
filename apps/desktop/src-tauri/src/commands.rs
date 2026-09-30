@@ -691,6 +691,11 @@ pub fn hide_popup(app: tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn show_popup(app: tauri::AppHandle) -> Result<(), String> {
+    crate::show_popup(&app)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{dispatch_args_allowed, dispatch_routes_path};

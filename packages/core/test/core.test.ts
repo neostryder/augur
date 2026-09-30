@@ -274,6 +274,11 @@ describe('engine, pace, history and alerts', () => {
     expect(migrateConfig({ dispatch: { runJobs: 'yes' } }).dispatch).toEqual({ runJobs: false });
     expect(migrateConfig({ dispatch: { runJobs: true } }).dispatch).toEqual({ runJobs: true });
   });
+  it('opens the panel at launch unless it was turned off', () => {
+    expect(migrateConfig({}).openOnLaunch).toBe(true);
+    expect(migrateConfig({ openOnLaunch: false }).openOnLaunch).toBe(false);
+    expect(migrateConfig({ openOnLaunch: 'no' }).openOnLaunch).toBe(true);
+  });
 });
 
 describe('changelog', () => {

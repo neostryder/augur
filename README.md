@@ -51,7 +51,7 @@ To count your Claude limit resets, open Claude in settings, turn on Read resets 
 
 ## Using it
 
-Click the icon to open the panel. The ring on the icon shows your most-used limit, and its color turns amber at 75% and red at 90%. Hover over it for one line per provider without opening the panel. Ctrl+Super+U opens and closes the panel from any app (Super is the Windows key, or Command on a Mac), and settings can change or turn off that shortcut.
+Click the icon to open the panel. The ring on the icon shows your most-used limit, and its color turns amber at 75% and red at 90%. Hover over it for one line per provider without opening the panel. Ctrl+Super+U opens and closes the panel from any app (Super is the Windows key, or Command on a Mac), and settings can change or turn off that shortcut. The panel also opens by itself each time Augur starts; turn off Open the panel at launch in settings to keep it in the tray until you open it.
 
 <p align="center">
   <img src="docs/images/tray-tooltip.jpg" alt="The tray tooltip listing each provider's usage on one line" width="185"><br>

@@ -175,6 +175,7 @@ export class App {
     await this.render();
     await this.updateTray();
     if (!this.firstRun) { this.schedule(); void this.refresh(); }
+    if (this.shell.kind === 'desktop' && !this.firstRun && this.config.openOnLaunch !== false) void this.shell.showPopup?.();
     if (this.shell.kind === 'desktop') void this.checkAsk(false);
   }
 
@@ -1336,6 +1337,7 @@ export class App {
       else if (kind === 'alerts') this.config.alerts.enabled = t.checked;
       else if (kind === 'autostart') { await this.shell.setAutostart?.(t.checked); this.autostart = t.checked; return; }
       else if (kind === 'sharekeys') { if (this.sync) this.sync = { ...this.sync, shareKeys: t.checked }; this.lastPush = 0; await this.saveConfig(); void this.refresh(); return; }
+      else if (kind === 'openonlaunch') { this.config.openOnLaunch = t.checked; await this.saveConfig(); return; }
       else if (kind === 'autoupdate') { this.config.autoUpdate = t.checked; await this.saveConfig(); if (t.checked) void this.autoInstall(); return; }
       await this.saveConfig(); if (kind === 'enabled' && !this.firstRun) void this.refresh(); await this.render(); return;
     }

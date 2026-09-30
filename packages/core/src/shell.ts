@@ -56,6 +56,8 @@ export interface Shell {
   /** Usable screen height in CSS pixels for the monitor the popup opens on. */
   maxPopupHeight?(): Promise<number>;
   hidePopup?(): Promise<void>;
+  /** Desktop only: shows the panel at the tray, as a click on the tray icon does. */
+  showPopup?(): Promise<void>;
   getAutostart?(): Promise<boolean>;
   setAutostart?(on: boolean): Promise<void>;
   /** Desktop only: the global shortcut that opens and closes the panel. Null turns it off; rejects if it cannot be registered. */

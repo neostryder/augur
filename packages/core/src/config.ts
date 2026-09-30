@@ -41,6 +41,7 @@ export function migrateConfig(value: unknown): AppConfig {
     exportPath: typeof source.exportPath === 'string' ? source.exportPath : null,
     hotkey: source.hotkey === null || source.hotkey === '' ? null : typeof source.hotkey === 'string' ? source.hotkey : DEFAULT_HOTKEY,
     autoUpdate: source.autoUpdate !== false,
+    openOnLaunch: source.openOnLaunch !== false,
     sync: syncConfig(source.sync), secretSources: secretSources(source.secretSources),
     policy: migratePolicy(source.policy), dispatch: { runJobs: obj(source.dispatch).runJobs === true } };
 }

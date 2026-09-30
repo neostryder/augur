@@ -156,6 +156,7 @@ export function renderSettings(m: SettingsModel): string {
     html += `<h2 class="sec">This computer</h2><div class="card">
       ${updateRows(m)}
       ${m.autostart != null ? `<div class="row"><label class="name">Start at login</label>${toggle('autostart', m.autostart, 'Start at login')}</div>` : ''}
+      <div class="row"><label class="name">Open the panel at launch<span class="desc">Shows the usage view each time Augur starts. Turn off to keep it in the tray until you open it.</span></label>${toggle('openonlaunch', m.config.openOnLaunch !== false, 'Open the panel at launch')}</div>
       ${m.config.exportPath ? `<div class="row"><label class="name">Usage data file<span class="desc">The file other tools read for your usage and limits.</span></label><button class="btn small" data-action="open-export">Open</button></div>` : ''}
       ${m.canHotkey ? `<div class="field"><label for="hotkey">Keyboard shortcut</label><input type="text" id="hotkey" data-hotkey value="${esc(c.hotkey ?? '')}" placeholder="Ctrl+Super+U" spellcheck="false" autocomplete="off">
       <span class="help">Opens and closes the panel from anywhere. Super is the Windows key, or Command on a Mac. Leave blank to turn it off.</span>${m.hotkeyError ? `<span class="bad-json">${esc(m.hotkeyError)}</span>` : ''}</div>` : ''}

@@ -204,7 +204,7 @@ pub fn anchor_popup(app: &tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-fn show_popup(app: &tauri::AppHandle) -> Result<(), String> {
+pub(crate) fn show_popup(app: &tauri::AppHandle) -> Result<(), String> {
     anchor_popup(app)?;
     let window = app.get_webview_window("popup").ok_or("Popup unavailable")?;
     app.state::<AppState>()
@@ -299,6 +299,7 @@ pub fn run() {
             commands::set_popup_size,
             commands::max_popup_height,
             commands::hide_popup,
+            commands::show_popup,
             websession::web_session_sign_in,
             websession::web_session_read
         ])
