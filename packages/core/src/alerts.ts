@@ -12,11 +12,28 @@ export interface Alert {
 }
 export type FiredState = Record<string, boolean>;
 
+/** A provider reports the same reset time to within a second or so from one refresh to the next, so two keys for one alert whose window ends this close together are one window. */
+const SAME_WINDOW_MS = 5000;
+const WINDOW_KEY = /^(.*\.)(\d{4}-\d\d-\d\dT[\d:.]+Z)$/;
+const KEEP_FIRED_MS = 30 * 86400000;
+
+function firedNearby(state: FiredState, key: string): boolean {
+  const own = WINDOW_KEY.exec(key);
+  if (!own) return false;
+  const end = Date.parse(own[2] as string);
+  return Object.keys(state).some(k => {
+    const other = WINDOW_KEY.exec(k);
+    return other !== null && other[1] === own[1] && Math.abs(Date.parse(other[2] as string) - end) <= SAME_WINDOW_MS;
+  });
+}
+
 export function evaluateAlerts(snapshot: Snapshot, history: HistoryRow[], config: AlertConfig, firedState: FiredState): { alerts: Alert[]; firedState: FiredState } {
   const state = { ...firedState }, alerts: Alert[] = [];
   if (!config.enabled) return { alerts, firedState: state };
+  // Windows that ended long ago cannot fire again, so their keys are dropped.
+  for (const k of Object.keys(state)) { const w = WINDOW_KEY.exec(k); if (w && Date.parse(w[2] as string) < Date.parse(snapshot.generatedAt) - KEEP_FIRED_MS) delete state[k]; }
   const fire = (key: string, providerId: string, meterId: string, kind: Alert['kind'], message: string) => {
-    if (state[key]) return;
+    if (state[key] || firedNearby(state, key)) return;
     state[key] = true; alerts.push({ key, providerId, meterId, kind, message });
   };
   const now = Date.parse(snapshot.generatedAt);

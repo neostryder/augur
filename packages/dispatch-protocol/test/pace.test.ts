@@ -297,9 +297,14 @@ describe('spending a provider in full before the models that wait on it', () => 
     expect(order(minor)).toEqual(['codex/sol']);
   });
 
-  it('says when a provider is spent with a limit reset still in hand', () => {
+  it('keeps a model held while its spent provider has a limit reset in hand, and says so', () => {
     const r = rank(policy2(), usage({ meters: [weekly(99, 0.4)], notes: { resets_available: 1 } }), write, now);
-    expect(r.notes.join(' ')).toMatch(/Codex is spent with 1 limit reset in hand, so copilot\/gpt-6-sol can run/);
+    expect(order(r)).not.toContain('copilot/gpt-6-sol');
+    expect(r.blocked).toContainEqual({ model: 'copilot/gpt-6-sol', why: expect.stringMatching(/^use codex\/sol first: its plan is spent but 1 limit reset is in hand/) });
+    expect(r.notes.join(' ')).toMatch(/Codex is spent with 1 limit reset in hand\. Use it to keep the work on codex\/sol; copilot\/gpt-6-sol stays held until then/);
+    const used = rank(policy2(), usage({ meters: [weekly(99, 0.4)], notes: { resets_available: 0 } }), write, now);
+    expect(order(used)).toContain('copilot/gpt-6-sol');
+    expect(used.notes).toEqual([]);
   });
 
   it('ignores a circle of waits and follows a chain to the model at its end', () => {

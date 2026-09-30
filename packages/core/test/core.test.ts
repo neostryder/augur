@@ -217,6 +217,19 @@ describe('engine, pace, history and alerts', () => {
     expect(first.alerts.map(alert => alert.kind).sort()).toEqual(['balance', 'pace', 'percent']);
     expect(evaluateAlerts(snapshot, [], config, first.firedState).alerts).toEqual([]);
   });
+  it('fires an alert once per window even when the provider reports the reset time a little differently each refresh', () => {
+    const base = Date.parse('2026-09-26T12:00:00Z'), end = base + 3 * 86400000;
+    const snap = (resetsAt: string, used: number) => ({ schema: 1 as const, generatedAt: new Date(base).toISOString(), providers: { p: { id: 'p', name: 'Provider', ok: true, stale: false, fetchedAt: new Date(base).toISOString(), error: null, money: [], meters: [{ id: 'weekly', label: 'Weekly', usedPct: used, resetsAt, windowSeconds: 7 * 86400, windowKind: 'weekly' as const }] } } }) as unknown as Snapshot;
+    const config = { ...defaultConfig().alerts, enabled: true, pctThresholds: [], paceRatio: { session: null, weekly: 0.8, other: null } };
+    const history = [{ t: new Date(base - 86400000).toISOString(), p: { weekly: 20 } }, { t: new Date(base - 60000).toISOString(), p: { weekly: 60 } }];
+    const first = evaluateAlerts(snap(new Date(end).toISOString(), 70), history, config, {});
+    expect(first.alerts).toHaveLength(1);
+    for (const jitter of [-900, 400, 1000, 4000]) expect(evaluateAlerts(snap(new Date(end + jitter).toISOString(), 70), history, config, first.firedState).alerts).toEqual([]);
+    // Keys from windows that ended long ago are dropped.
+    const pruned = evaluateAlerts(snap(new Date(end).toISOString(), 70), history, config, { ...first.firedState, 'p.weekly.pace.0.8.2026-07-01T00:00:00.000Z': true });
+    expect(Object.keys(pruned.firedState).some(k => k.includes('2026-07-01'))).toBe(false);
+    expect(pruned.alerts).toEqual([]);
+  });
   it('fills config defaults and drops unknown providers', () => {
     const config = migrateConfig({ providers: [{ id: 'unknown', enabled: true }, { id: 'claude', enabled: false }] });
     expect(config.providers.some(p => p.id === 'unknown')).toBe(false);
