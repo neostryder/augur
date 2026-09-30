@@ -167,7 +167,7 @@ The web app is `apps/ui`, and the relay is a Cloudflare Worker in `apps/relay` t
 
 ```bash
 pnpm --filter @augur/ui build
-pnpm --filter @augur/relay deploy
+pnpm --filter @augur/relay run deploy
 ```
 
 The desktop and web apps use `https://augur.rpgm.tools` until you enter another relay address in settings.

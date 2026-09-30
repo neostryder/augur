@@ -23,7 +23,7 @@ jobs:
         env:
           RELAY_WRANGLER_TOML: ${{ secrets.RELAY_WRANGLER_TOML }}
         run: printf '%s\n' "$RELAY_WRANGLER_TOML" > apps/relay/wrangler.toml
-      - run: pnpm --filter @augur/relay deploy
+      - run: pnpm --filter @augur/relay run deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
