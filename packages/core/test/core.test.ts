@@ -230,6 +230,39 @@ describe('engine, pace, history and alerts', () => {
     expect(Object.keys(pruned.firedState).some(k => k.includes('2026-07-01'))).toBe(false);
     expect(pruned.alerts).toEqual([]);
   });
+  it('repeats a pace alert once a day while it holds', () => {
+    const base = Date.parse('2026-09-26T12:00:00Z'), end = base + 3 * 86400000, hour = 3600000;
+    const snap = (now: number, used: number) => ({ schema: 1 as const, generatedAt: new Date(now).toISOString(), providers: { p: { id: 'p', name: 'Provider', ok: true, stale: false, fetchedAt: new Date(now).toISOString(), error: null, money: [], meters: [{ id: 'weekly', label: 'Weekly', usedPct: used, resetsAt: new Date(end).toISOString(), windowSeconds: 7 * 86400, windowKind: 'weekly' as const }] } } }) as unknown as Snapshot;
+    const config = { ...defaultConfig().alerts, enabled: true, pctThresholds: [], paceRatio: { session: null, weekly: 0.8, other: null } };
+    const history = Array.from({ length: 50 }, (_, i) => ({ t: new Date(base + (i - 24) * hour - 60000).toISOString(), p: { weekly: 20 + i } }));
+    const first = evaluateAlerts(snap(base, 70), history, config, {});
+    expect(first.alerts.map(a => a.kind)).toEqual(['pace']);
+    const at = (h: number, state: Record<string, boolean | number>) => evaluateAlerts(snap(base + h * hour, 70 + Math.min(h, 26)), history, config, state);
+    expect(at(6, first.firedState).alerts).toEqual([]);
+    expect(at(23, first.firedState).alerts).toEqual([]);
+    const next = at(25, first.firedState);
+    expect(next.alerts.map(a => a.kind)).toEqual(['pace']);
+    expect(at(30, next.firedState).alerts).toEqual([]);
+    // A plain true from an earlier build counts as fired at the first check, so the upgrade does not repeat it at once.
+    const old = Object.fromEntries(Object.keys(first.firedState).map(k => [k, true]));
+    expect(at(1, old).alerts).toEqual([]);
+    expect(at(26, at(1, old).firedState).alerts.map(a => a.kind)).toEqual(['pace']);
+  });
+  it('alerts once per window when a plan is spent and a limit reset is in hand', () => {
+    const base = Date.parse('2026-09-26T12:00:00Z'), end = base + 3 * 86400000;
+    const snap = (resetsAt: number, used: number, resets: number | null) => ({ schema: 1 as const, generatedAt: new Date(base).toISOString(), providers: { p: { id: 'p', name: 'Codex', ok: true, stale: false, fetchedAt: new Date(base).toISOString(), error: null, money: [], notes: resets === null ? {} : { resets_available: resets },
+      meters: [{ id: 'weekly', label: 'Weekly limit', usedPct: used, resetsAt: new Date(resetsAt).toISOString(), windowSeconds: 7 * 86400, windowKind: 'weekly' as const }] } } }) as unknown as Snapshot;
+    const config = { ...defaultConfig().alerts, enabled: true, pctThresholds: [], paceRatio: { session: null, weekly: null, other: null } };
+    const first = evaluateAlerts(snap(end, 99, 1), [], config, {});
+    expect(first.alerts).toMatchObject([{ kind: 'reset', message: 'Codex: Weekly limit is spent and 1 limit reset is in hand. Use it to keep working on Codex.' }]);
+    expect(evaluateAlerts(snap(end + 900, 99, 1), [], config, first.firedState).alerts).toEqual([]);
+    expect(evaluateAlerts(snap(end, 99, 0), [], config, {}).alerts).toEqual([]);
+    expect(evaluateAlerts(snap(end, 60, 1), [], config, {}).alerts).toEqual([]);
+    expect(evaluateAlerts(snap(end, null as unknown as number, null), [], config, {}).alerts).toEqual([]);
+    // The spent line follows the provider's own stop threshold.
+    expect(evaluateAlerts(snap(end, 92, 2), [], config, {}, { spentAt: { p: 90 } }).alerts[0]?.message).toMatch(/2 limit resets are in hand. Use one/);
+    expect(evaluateAlerts(snap(end, 92, 2), [], config, {}).alerts).toEqual([]);
+  });
   it('fills config defaults and drops unknown providers', () => {
     const config = migrateConfig({ providers: [{ id: 'unknown', enabled: true }, { id: 'claude', enabled: false }] });
     expect(config.providers.some(p => p.id === 'unknown')).toBe(false);

@@ -1,7 +1,7 @@
 // The one place the UI touches the core package, so a renamed export is a one-line fix.
 import {
   appendHistory as coreAppend, builtinProviders, calculatePace, collect as coreCollect, defaultConfig as coreDefault, dueProviders as coreDue,
-  evaluateAlerts as coreAlerts, genericProvider, migrateConfig as coreMigrate, RULES_ONLY_PROVIDERS,
+  evaluateAlerts as coreAlerts, genericProvider, migrateConfig as coreMigrate, resolveThresholds, RULES_ONLY_PROVIDERS,
 } from '@augur/core';
 import type { AppConfig, HistoryRow as CoreRow, Host, Meter, PaceResult, ProviderPlugin, Snapshot } from '@augur/core';
 
@@ -59,7 +59,8 @@ export function pace(meter: Meter, rows: HistoryRow[], providerId: string): Pace
 
 export function evaluateAlerts(snap: Snapshot, rows: HistoryRow[], config: AppConfig, state: Record<string, unknown>):
   { alerts: Alert[]; firedState: Record<string, unknown> } {
-  const r = coreAlerts(snap, rows, config.alerts, state as Record<string, boolean>);
+  const spentAt = Object.fromEntries(Object.entries(config.policy?.providers ?? {}).map(([id, p]) => [id, resolveThresholds(p).denyPct]));
+  const r = coreAlerts(snap, rows, config.alerts, state as Record<string, boolean | number>, { spentAt });
   return {
     alerts: r.alerts.map((a) => ({ key: a.key, title: snap.providers[a.providerId]?.name ?? 'Augur', body: a.message })),
     firedState: r.firedState,

@@ -4,13 +4,17 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+### Added
+
+- [Visible] [Alerts] **A notification says when a plan is spent and a limit reset is in hand.** It fires once per window for providers that report resets, such as Codex, and for Claude once its count is entered or read.
+
 ### Changed
 
 - [Visible] [Providers] **A spent provider with a limit reset in hand keeps the models waiting on it held.** Copilot's GPT-6 Sol stays out of picks while Codex is spent but has a reset left, and the pick says to use the reset. Once the resets are gone, the waiting model runs.
 
 ### Fixed
 
-- [Visible] [Alerts] **A pace or percent alert fires once per window.** Providers report a window's reset time a little differently on each refresh, and each new time counted as a new window, so the same alert repeated every few minutes. Alerts whose windows end within five seconds of each other now count as one, and keys older than 30 days are dropped.
+- [Visible] [Alerts] **Alerts stop repeating every few minutes.** Providers report a window's reset time a little differently on each refresh, and each new time counted as a new window. Alerts whose windows end within five seconds of each other now count as one, a pace alert repeats at most once a day while it holds, and keys older than 30 days are dropped.
 
 ## [1.1.1] - 2026-09-30
 

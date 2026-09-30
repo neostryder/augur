@@ -71,8 +71,9 @@ Augur can notify you when:
 - a limit passes a percentage you choose, such as 80% and 95%.
 - a limit is burning too fast, meaning the usage left divided by the time left in its window drops below a ratio you set. Session and weekly limits each get their own ratio. At 1.0 you run out right at the reset, and 0.8 warns earlier.
 - a credit balance drops below an amount you set.
+- a plan is spent and a limit reset is in hand, for providers that report resets such as Codex, so you can use the reset to keep working.
 
-Each alert fires once per window and waits for the next reset before it can fire again.
+A percentage, reset or balance alert fires once per window and waits for the next reset before it can fire again. A burn-rate alert repeats at most once a day while the limit keeps burning too fast.
 
 ## Model rules
 
