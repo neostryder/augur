@@ -5,6 +5,7 @@ import { claude, codex, grok, minimax, openrouter, fal, jev, copilot } from '../
 import { genericProvider, readPath, evaluate } from '../src/generic.js';
 import { calculatePace } from '../src/pace.js';
 import { appendHistory } from '../src/history.js';
+import { fetchStatus } from '../src/status.js';
 import { evaluateAlerts } from '../src/alerts.js';
 import { collect, dueProviders, refreshInterval, DEFAULT_REFRESH_SECONDS, RETRY_SECONDS } from '../src/engine.js';
 import { defaultConfig, migrateConfig } from '../src/config.js';
@@ -245,5 +246,28 @@ describe('changelog', () => {
     expect(compareVersions('0.10.0', '0.9.9')).toBe(1);
     expect(compareVersions('v0.5.1', '0.5.1')).toBe(0);
     expect(compareVersions('0.5.0', '0.5.1')).toBe(-1);
+  });
+});
+
+describe('provider status badge', () => {
+  const links = { status: 'https://status.example/', statusApi: 'https://status.example/api/v2/status.json', statusComponents: ['CLI', 'Codex API'] };
+  const page = (overall: string, components: Array<{ name: string; status: string; group?: boolean }>) => fakeHost(url => url.endsWith('/components.json') ? { components } : { status: { indicator: overall, description: 'Partial System Degradation' } });
+
+  it('follows only the components a provider depends on, so an unrelated incident shows nothing', async () => {
+    const host = page('minor', [{ name: 'Space', status: 'degraded_performance' }, { name: 'CLI', status: 'operational' }, { name: 'Codex API', status: 'operational' }]);
+    expect(await fetchStatus(host, links)).toEqual({ indicator: 'none', description: 'All Systems Operational', url: links.status });
+  });
+
+  it('reports the worst of the named components and says which are affected', async () => {
+    const host = page('none', [{ name: 'CLI', status: 'degraded_performance' }, { name: 'Codex API', status: 'partial_outage' }, { name: 'Space', status: 'major_outage' }]);
+    expect(await fetchStatus(host, links)).toMatchObject({ indicator: 'major', description: 'CLI, Codex API: a partial outage' });
+  });
+
+  it('falls back to the whole page when the list names none of the components or cannot be read', async () => {
+    expect(await fetchStatus(page('minor', [{ name: 'Other', status: 'operational' }]), links)).toMatchObject({ indicator: 'minor' });
+    const broken = fakeHost(() => ({}));
+    broken.http = async req => req.url.endsWith('/components.json') ? { status: 500, headers: {}, body: '' } : { status: 200, headers: {}, body: JSON.stringify({ status: { indicator: 'none', description: 'All Systems Operational' } }) };
+    expect(await fetchStatus(broken, links)).toMatchObject({ indicator: 'none' });
+    expect(await fetchStatus(page('minor', []), { ...links, statusComponents: undefined })).toMatchObject({ indicator: 'minor' });
   });
 });

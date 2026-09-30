@@ -136,6 +136,8 @@ export interface ProviderLinks {
   status?: string;
   /** Statuspage-style JSON endpoint (`/api/v2/status.json`). */
   statusApi?: string;
+  /** Names of the status page components this provider depends on. When set, the badge follows the worst of them instead of the whole page, so an incident in an unrelated product does not show. */
+  statusComponents?: string[];
 }
 
 export interface ProviderPlugin {
