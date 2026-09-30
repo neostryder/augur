@@ -391,6 +391,16 @@ fn dispatch_args_allowed(args: &[String]) -> bool {
             }
             true
         }
+        Some("test") => {
+            let route_ok = |s: &str| {
+                s.len() <= 40
+                    && s.starts_with(|c: char| c.is_ascii_lowercase())
+                    && s.bytes().all(|b| {
+                        b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_'
+                    })
+            };
+            rest.next().is_some_and(route_ok) && rest.all(|a| a == "--json")
+        }
         Some("status" | "result" | "cancel") => {
             rest.next().is_some_and(is_id) && rest.all(|a| a == "--json")
         }
@@ -704,6 +714,7 @@ mod tests {
         assert!(allowed(&["logs", "0d26110efa99", "--stderr"]));
         assert!(allowed(&["routes", "--json"]));
         assert!(allowed(&["config", "--json"]));
+        assert!(allowed(&["test", "luna", "--json"]));
         assert!(allowed(&["config", "set", "maxConcurrent", "4"]));
         assert!(allowed(&[
             "config",
@@ -729,5 +740,8 @@ mod tests {
         assert!(!allowed(&["config", "set", "adapters", "codex-exec,exec"]));
         assert!(!allowed(&["config", "set", "maxConcurrent", "4; calc"]));
         assert!(!allowed(&["config", "unset", "maxConcurrent"]));
+        assert!(!allowed(&["test", "Luna"]));
+        assert!(!allowed(&["test", "luna", "--prompt", "x"]));
+        assert!(!allowed(&["test"]));
     }
 }

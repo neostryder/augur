@@ -4,7 +4,7 @@ import { renderRoutes, type RoutesModel } from '../src/views/routes';
 
 const fileOf = (text: string) => { const p = parseRoutesText(text); if (!p.ok) throw new Error('bad fixture'); return p.file; };
 const model = (over: Partial<RoutesModel> = {}): RoutesModel => ({ file: fileOf(JSON.stringify({ routes: { luna: { model: 'codex/luna', adapter: 'codex-exec' }, Bad: { adapter: 'exec' } } })),
-  error: '', health: null, sel: null, draft: null, formError: '', note: '', models: ['codex/luna', 'codex/sol'], confirmDelete: false, busy: false, ...over });
+  error: '', health: null, sel: null, draft: null, formError: '', note: '', models: ['codex/luna', 'codex/sol'], confirmDelete: false, busy: false, canTest: true, testing: false, testNote: '', ...over });
 
 describe('the routes page', () => {
   it('lists routes with the adapter in plain words and names what the service skips', () => {
@@ -43,5 +43,14 @@ describe('the routes page', () => {
     const html = renderRoutes(model({ file: null, error: 'routes.json is not valid JSON: x' }));
     expect(html).toContain('cannot be used');
     expect(html).not.toContain('data-rt="name"');
+  });
+
+  it('offers Test route for a saved route only, and shows what the last test said', () => {
+    const saved = { ...emptyDraft(), name: 'luna', model: 'codex/luna' };
+    expect(renderRoutes(model({ sel: 'luna', draft: saved }))).toContain('data-action="route-test"');
+    expect(renderRoutes(model({ sel: '+', draft: saved }))).not.toContain('route-test');
+    expect(renderRoutes(model({ sel: 'luna', draft: saved, canTest: false }))).not.toContain('route-test');
+    expect(renderRoutes(model({ sel: 'luna', draft: saved, testing: true }))).toMatch(/route-test[^>]*disabled/);
+    expect(renderRoutes(model({ sel: 'luna', draft: saved, testNote: 'luna works. The model answered: ok' }))).toContain('luna works.');
   });
 });

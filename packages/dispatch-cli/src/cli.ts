@@ -1,6 +1,7 @@
 // The `augur` command: the canonical caller of the dispatch service. Every command takes --json. Exit codes come from the protocol package.
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES } from '@augur/core';
@@ -33,6 +34,7 @@ augur pick (--task <description> | --activity <a> --data <tier>) [--named <model
 augur pressure
 augur note-prompt --session <id>     tell the service a person sent the message on standard input; it keeps only the models named
 augur routes
+augur test <route> [--wait]          send a fixed one-word prompt through a route to check it works
 augur config [--json]                 the service's settings and what each is now
 augur config set <setting> <value>    change one; a running service needs augur service stop then start to read it
 augur service status | start | stop [--if-idle]     --if-idle stops the service only when no job is running, so an upgrade never cuts one off
@@ -109,6 +111,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
         say(Object.entries(r.factors).map(([m, f]) => `${m.padEnd(22)} factor ${f.toFixed(2)}`).join('\n') + `\nscarcity ${r.scarcity}`, r); return 0;
       }
       case 'routes': { const r = await call('routes', undefined, opts); say(r.map(x => `${x.name.padEnd(14)} ${x.model.padEnd(16)} ${x.adapter}${x.problem ? `   cannot run: ${x.problem}` : ''}`).join('\n') || 'No routes.', r); return 0; }
+      case 'test': return await testCmd(need(rest[0], 'route'), p, io, opts, say, json);
       case 'config': {
         if (rest[0] === 'set') {
           const r = setConfigValue(opts.dir, need(rest[1], 'setting'), need(rest[2], 'value'));
@@ -161,6 +164,30 @@ async function run(rest: string[], p: Parsed, io: Io, opts: Opts, say: (h: strin
   const code = await waitFor(res.id, req.timeoutS ? req.timeoutS + 60 : null, io, opts, json, true);
   const r = await call('result', { id: res.id }, opts);
   if (r) io.out(json ? JSON.stringify(r) + '\n' : (r.answer ?? '') + (r.answer?.endsWith('\n') ? '' : '\n'));
+  return code;
+}
+
+/**
+ * Sends one fixed prompt through a route, from an empty folder, as public read-only text. It answers whether the route can run at all: the harness starts,
+ * the model answers, and the rules allow this model to do so. It skips the pick check, since nobody chose this model for a task.
+ */
+async function testCmd(route: string, p: Parsed, io: Io, opts: Opts, say: (h: string, d: unknown) => void, json: boolean): Promise<number> {
+  const base = {
+    route, dataTier: 'public' as const, tools: 'read' as const, output: 'text_only' as const, cwd: mkdtempSync(join(tmpdir(), 'augur-route-test-')), timeoutS: 120,
+    prompt: { text: 'Reply with the single word ok and nothing else.' }, caller: { kind: 'cli' as const, label: 'route test' }, allow: ['unpicked' as const],
+  };
+  // The rules decide what a model may do, so the test uses the first activity they allow it. A refusal costs nothing, since no job starts.
+  let res: Awaited<ReturnType<typeof call<'submit'>>> | null = null;
+  for (const activity of ACTIVITIES) {
+    res = await call('submit', { ...base, activity }, opts);
+    if (!('rejected' in res) || res.rejected.code !== 'activity_not_permitted') break;
+  }
+  if (!res) return EXIT_CODES.failed;
+  if ('rejected' in res) { io.err(`Rejected (${res.rejected.code}): ${res.rejected.reason}\n`); if (json) io.out(JSON.stringify(res) + '\n'); return EXIT_CODES.rejected; }
+  if (!p.flags.has('wait')) { say(res.id, res); return EXIT_CODES.completed; }
+  const code = await waitFor(res.id, 180, io, opts, json, true);
+  const r = await call('result', { id: res.id }, opts);
+  if (r) io.out(json ? JSON.stringify(r) + '\n' : (r.answer ?? '') + '\n');
   return code;
 }
 

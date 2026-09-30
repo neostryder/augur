@@ -21,6 +21,11 @@ export interface RoutesModel {
   models: string[];
   confirmDelete: boolean;
   busy: boolean;
+  /** Set where the app carries the service, so a route can be tested. */
+  canTest: boolean;
+  /** True while a test job runs, and what the last one said. */
+  testing: boolean;
+  testNote: string;
 }
 
 const optionField = (spec: OptionSpec, value: string): string => {
@@ -49,8 +54,9 @@ function form(m: RoutesModel): string {
       <input type="text" id="rt-notes" data-rt="notes" value="${esc(d.notes)}" autocomplete="off"></div>
     <div class="row rtrow"><label for="rt-delegation"><span>May start more jobs</span><small>Lets a job on this route run <code>augur</code> itself, within the depth and count limits.</small></label>
       <input type="checkbox" id="rt-delegation" data-rt="delegation" ${d.delegation ? 'checked' : ''}></div>
-    ${m.formError ? `<div class="rnote bad" role="alert">${esc(m.formError)}</div>` : ''}
+    ${m.formError ? `<div class="rnote bad" role="alert">${esc(m.formError)}</div>` : ''}${m.testNote ? `<div class="rnote" role="status">${esc(m.testNote)}</div>` : ''}
     <div class="rtactions"><button class="btn small primary" data-action="route-save" ${m.busy ? 'disabled' : ''}>Save route</button>
+      ${isNew || !m.canTest ? '' : `<button class="btn small" data-action="route-test" data-id="${esc(d.name)}" ${m.testing || m.busy ? 'disabled' : ''}>${m.testing ? 'Testing' : 'Test route'}</button>`}
       <button class="btn small" data-action="route-close">Cancel</button>
       ${isNew ? '' : m.confirmDelete ? `<button class="btn small danger" data-action="route-delete" ${m.busy ? 'disabled' : ''}>Delete it for good</button>` : '<button class="btn small" data-action="route-ask-delete">Delete</button>'}</div></div>`;
 }

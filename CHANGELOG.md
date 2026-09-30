@@ -6,6 +6,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Added
 
+- [Visible] [UI] **Test route on the Routes page checks that a route works.** It sends a fixed one-word prompt through the route and says whether the model answered. `augur test <route>` does the same from a terminal. The test picks an activity the rules allow for that model, and skips the pick check, since nobody chose the model for a task.
 - [Visible] [UI] **Dial back on the rules page pauses the high-cost models and favours the cheaper ones until a reset.** Pick when it ends from the resets ahead or enter a time, preview every model it would change, then apply. Models at high or very high cost stop, and the weights of free, very cheap and cheap ones rise one step. Each goes back to its own rules when the time passes.
 - [Visible] [UI] **First-run setup asks who classifies tasks when jobs are on.** Choose none, Laya or Jev, with a line on where task text goes for each. The choice restarts the service so it applies at once.
 - [Visible] [UI] **The bulk bar on Model rules can set data tier, ask first, output, sandbox, cost and effort, and shows what would change first.** Preview lists each model that changes and how many already have the value, and Apply writes exactly that list. Choosing Provider default clears the field so the models follow their provider again.

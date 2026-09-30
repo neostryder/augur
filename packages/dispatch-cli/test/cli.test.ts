@@ -109,6 +109,21 @@ describe('the other commands', () => {
     expect((await run(['service', 'status'])).out).toContain('is running');
   });
 
+  it('tests a route with a fixed prompt and says when the rules or the route refuse it', async () => {
+    const { run } = await boot();
+    const ok = await run(['test', 'fake', '--wait']);
+    expect(ok.err).toBe('');
+    expect(ok.code).toBe(0);
+    expect(ok.out.trim()).toBe('final message');
+    const queued = await run(['test', 'fake', '--json']);
+    expect(queued.code).toBe(0);
+    expect(JSON.parse(queued.out)).toHaveProperty('id');
+    const missing = await run(['test', 'nowhere']);
+    expect(missing.code).toBe(2);
+    expect(missing.err).toContain('nowhere');
+    expect((await run(['test'])).code).toBe(1);
+  });
+
   it('shows the service settings and changes one, refusing a value the service would ignore', async () => {
     const { run } = await boot();
     const shown = JSON.parse((await run(['config', '--json'])).out) as Array<{ key: string; value: string }>;

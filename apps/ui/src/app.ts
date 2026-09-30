@@ -84,7 +84,7 @@ export class App {
   private jobs: JobsModel = { service: null, serviceNote: '', unavailable: '', jobs: null, sel: null, detail: null, busy: false };
   private jobsTimer: ReturnType<typeof setInterval> | undefined;
   private servicePage: ServiceModel = { lines: null, service: null, runJobs: false, note: '', error: '', busy: false, unavailable: '' };
-  private routesPage: RoutesModel = { file: null, error: '', health: null, sel: null, draft: null, formError: '', note: '', models: [], confirmDelete: false, busy: false };
+  private routesPage: RoutesModel = { file: null, error: '', health: null, sel: null, draft: null, formError: '', note: '', models: [], confirmDelete: false, busy: false, canTest: false, testing: false, testNote: '' };
   private timer: ReturnType<typeof setInterval> | undefined;
   private lastRun = 0;
   private sortables: Sortable[] = [];
@@ -797,12 +797,12 @@ export class App {
 
   // ------------------------------------------------------------------ routes
 
-  private closeRoute(): void { Object.assign(this.routesPage, { sel: null, draft: null, formError: '', confirmDelete: false }); }
+  private closeRoute(): void { Object.assign(this.routesPage, { sel: null, draft: null, formError: '', confirmDelete: false, testNote: '' }); }
 
   private openRoute(name: string): void {
     const r = this.routesPage.file?.routes.find((x) => x.name === name);
     if (!r) return;
-    Object.assign(this.routesPage, { sel: name, draft: draftOf(r), formError: '', note: '', confirmDelete: false });
+    Object.assign(this.routesPage, { sel: name, draft: draftOf(r), formError: '', note: '', confirmDelete: false, testNote: '' });
   }
 
   /** Model labels the rules already hold, as provider/model, for the model field to offer. */
@@ -813,6 +813,7 @@ export class App {
   private async loadRoutes(): Promise<void> {
     const read = this.shell.host.readHomeFile;
     const page = this.routesPage;
+    page.canTest = this.shell.dispatch !== undefined;
     page.models = this.knownModels();
     try {
       const parsed = parseRoutesText(read ? await read(ROUTES_PATH) : null);
@@ -845,6 +846,29 @@ export class App {
       page.formError = `routes.json was not written. ${e instanceof Error ? e.message : String(e)}`;
       await this.render();
     }
+  }
+
+  /** Sends the fixed test prompt through a saved route and waits for the job, reporting what came of it in a sentence. */
+  private async testRoute(name: string): Promise<void> {
+    const page = this.routesPage;
+    if (!name || page.testing) return;
+    page.testing = true; page.testNote = '';
+    await this.render();
+    const say = async (text: string) => { page.testNote = text; page.testing = false; await this.render(); };
+    try {
+      const sent = await this.augur<{ id?: string }>(['test', name, '--json']);
+      if (!sent.data?.id) return await say(sent.err || 'The service did not accept the test. Start it on the Jobs page first.');
+      const id = sent.data.id;
+      for (let i = 0; i < 75; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const r = await this.augur<{ job: JobRecord; answer: string | null }>(['result', id, '--json']);
+        const job = r.data?.job;
+        if (!job || !['completed', 'failed', 'artifact_validation_failed', 'cancelled', 'killed', 'lost'].includes(job.state)) continue;
+        if (job.state === 'completed') return await say(`${name} works. The model answered${r.data?.answer ? `: ${r.data.answer.trim().slice(0, 80)}` : '.'}`);
+        return await say(`${name} did not work. ${job.reason ?? `The job ended as ${job.state}.`}`);
+      }
+      await say(`${name} had not finished after 2.5 minutes. Its job is still on the Jobs page.`);
+    } catch (e) { await say(e instanceof Error ? e.message : String(e)); }
   }
 
   private async saveRoute(): Promise<void> {
@@ -943,6 +967,7 @@ export class App {
       case 'route-new': this.routesPage.sel = '+'; this.routesPage.draft = emptyDraft(); this.routesPage.formError = ''; this.routesPage.note = ''; this.routesPage.confirmDelete = false; await this.render(); break;
       case 'route-close': this.closeRoute(); await this.render(); break;
       case 'route-save': await this.saveRoute(); break;
+      case 'route-test': await this.testRoute(t.dataset.id ?? ''); break;
       case 'route-ask-delete': this.routesPage.confirmDelete = true; await this.render(); break;
       case 'route-delete': await this.deleteRoute(); break;
       case 'job-close': this.closeJob(); await this.render(); break;
