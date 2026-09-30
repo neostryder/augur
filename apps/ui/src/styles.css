@@ -286,6 +286,8 @@ input[type=color] { width: 26px; height: 22px; border: 0; padding: 0; background
 .rtrow label small { color: var(--muted); font-size: calc(11.5px * var(--fs)); }
 .rtrow label i { font-style: normal; color: var(--muted); font-weight: 400; }
 .rtrow input[type=text], .rtrow input[type=number], .rtrow select { width: auto; flex: 0 1 220px; max-width: 55%; }
+.rtbudget { display: flex; flex-wrap: wrap; gap: 6px; flex: 0 1 280px; max-width: 60%; }
+.rtrow .rtbudget input, .rtrow .rtbudget select { flex: 1 1 80px; max-width: none; min-width: 0; }
 .rtactions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
 .rnote.bad { color: var(--crit, #c0392b); }
 .btn.danger { border-color: var(--crit, #c0392b); }

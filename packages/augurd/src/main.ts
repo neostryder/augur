@@ -36,9 +36,9 @@ export async function startService(opts: ServiceOptions = {}) {
   const policy = policySource(join(home, 'policy.json')), usage = usageSource(join(home, 'usage.json'));
   const routes = routeSource(opts.routesPath ?? process.env.AUGURD_ROUTES ?? join(home, 'dispatch', 'routes.json'));
   const decision = buildDecision(config, dir), decisions = new DecisionLog(dir, config.learn);
-  const supervisor = new Supervisor({ store, config, dir, adapters: enabledAdapters(config.adapters), ...(decision ? { decision } : {}), decisions, routes: () => routes.read(), policy: () => policy.read(), usage: () => usage.read() });
-  const ratesPath = join(home, 'dispatch', 'rates.json');
-  const server = new IpcServer(supervisor, store, token, () => routes.read(), () => parseRates(existsSync(ratesPath) ? readFileSync(ratesPath, 'utf8') : null));
+  const ratesPath = join(home, 'dispatch', 'rates.json'), rates = () => parseRates(existsSync(ratesPath) ? readFileSync(ratesPath, 'utf8') : null);
+  const supervisor = new Supervisor({ rates, store, config, dir, adapters: enabledAdapters(config.adapters), ...(decision ? { decision } : {}), decisions, routes: () => routes.read(), policy: () => policy.read(), usage: () => usage.read() });
+  const server = new IpcServer(supervisor, store, token, () => routes.read(), rates);
   try { await server.start(opts.pipe ?? pipeName(dir)); }
   catch (e) { store.close(); throw e; }
   supervisor.reconcile();

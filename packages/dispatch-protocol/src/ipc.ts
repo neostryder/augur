@@ -1,5 +1,5 @@
 // Wire contract between the service and its callers. One JSON object per line over a named pipe, each request carrying the auth token.
-import type { Accounted, RouteCalibration, Totals } from './accounting.js';
+import type { Accounted, BudgetStatus, RouteCalibration, Totals } from './accounting.js';
 import type { Headroom } from './pace.js';
 import type { ActivityId, DataTier } from '@augur/core';
 import type { PickRequest, PickResult } from './pick.js';
@@ -56,7 +56,7 @@ export interface Methods {
 
 export interface AccountingAnswer {
   jobs: Array<{ id: string; route: string; model: string | null; accounted: Accounted }>;
-  routes: Record<string, { model: string | null; totals: Totals; calibration: RouteCalibration | null }>;
+  routes: Record<string, { model: string | null; totals: Totals; calibration: RouteCalibration | null; budget: BudgetStatus | null }>;
   /** Models with a rate set, so a page can say when a route's cost is missing for want of one. */
   ratedModels: string[];
 }

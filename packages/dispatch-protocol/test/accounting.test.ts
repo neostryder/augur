@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { account, calibrate, calibrateRoutes, costFor, describeFigure, totalOf } from '../src/accounting.js';
+import { account, budgetStatus, calibrate, calibrateRoutes, costFor, describeFigure, totalOf } from '../src/accounting.js';
 import type { JobRecord } from '../src/spec.js';
 
 const job = (o: Partial<JobRecord> & { id: string }): JobRecord => ({
@@ -83,5 +83,22 @@ describe('describeFigure and totalOf', () => {
       { inputTokens: null, outputTokens: null, costUsd: null },
     ]);
     expect(t).toMatchObject({ jobs: 2, inputTokens: 10, outputTokens: 5, costUsd: 1, costJobs: 1, byProvenance: { derived: 1 } });
+  });
+});
+
+describe('budgetStatus', () => {
+  const cost = (v: number) => ({ inputTokens: null, outputTokens: null, costUsd: { value: v, provenance: 'reported' as const } });
+  const none = { inputTokens: null, outputTokens: null, costUsd: null };
+
+  it('counts jobs against a job limit and names the limit reached', () => {
+    expect(budgetStatus('luna', { per: 'week', jobs: 2 }, [none]).exhausted).toBeNull();
+    expect(budgetStatus('luna', { per: 'week', jobs: 2 }, [none, none]).exhausted).toBe('luna has reached its week budget of 2 jobs.');
+  });
+  it('counts only the jobs with a known cost against a dollar limit, and says when none has one', () => {
+    const s = budgetStatus('luna', { per: 'day', usd: 5 }, [cost(3), cost(2.5), none]);
+    expect(s).toMatchObject({ jobs: { used: 3 }, usd: { used: 5.5, limit: 5, costJobs: 2 }, usdUnchecked: false });
+    expect(s.exhausted).toBe('luna has reached its day budget of $5, with $5.50 used.');
+    expect(budgetStatus('luna', { per: 'day', usd: 5 }, [none, none])).toMatchObject({ usdUnchecked: true, exhausted: null });
+    expect(budgetStatus('luna', { per: 'day', usd: 5 }, [])).toMatchObject({ usdUnchecked: false, exhausted: null });
   });
 });

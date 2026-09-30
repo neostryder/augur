@@ -22,6 +22,7 @@ const HELP = `augur run <route> --prompt-file <file|-> | --prompt <text> [option
   --timeout <s>      wall time limit in seconds
   --named            the route was named for this task by the person
   --allow <checks>   skip checks, comma separated: unpicked, exhausted (each use is recorded with the job)
+  --no-failover      keep the job on this route even if a fallback route could take it
   --wait             wait for the job and print its result
 augur jobs [--state <s>] [--root <id>] [--limit <n>]
 augur status <job>
@@ -43,7 +44,7 @@ Every command takes --json. Exit codes: 0 completed, 1 usage, 2 rejected, 3 need
 
 interface Parsed { cmd: string[]; flags: Map<string, string | true> }
 function parse(argv: string[]): Parsed {
-  const cmd: string[] = [], flags = new Map<string, string | true>(), boolean = new Set(['json', 'wait', 'named', 'follow', 'stderr', 'help', 'if-idle']);
+  const cmd: string[] = [], flags = new Map<string, string | true>(), boolean = new Set(['json', 'wait', 'named', 'follow', 'stderr', 'help', 'if-idle', 'no-failover']);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] as string;
     if (a === '-') { cmd.push(a); continue; }
@@ -116,7 +117,8 @@ export async function main(argv: string[], io: Io): Promise<number> {
         const rows = Object.entries(r.routes).map(([route, x]) => {
           const t = x.totals, cost = t.costJobs ? `$${t.costUsd.toFixed(t.costUsd < 0.01 ? 5 : 4)} over ${t.costJobs} of ${t.jobs} jobs (${t.byProvenance.reported} reported, ${t.byProvenance.derived} derived, ${t.byProvenance.imputed} imputed)`
             : r.ratedModels.includes(x.model ?? '') ? 'no cost yet' : 'no rate set';
-          return `${route.padEnd(14)} ${t.inputTokens.toLocaleString('en-US')} in, ${t.outputTokens.toLocaleString('en-US')} out, ${cost}`;
+          const b = x.budget, budget = !b ? '' : `; budget per ${b.per}: ${[b.jobs.limit !== null ? `${b.jobs.used} of ${b.jobs.limit} jobs` : '', b.usd.limit !== null ? `$${b.usd.used.toFixed(2)} of $${b.usd.limit}${b.usdUnchecked ? ' (cost unknown)' : ''}` : ''].filter(Boolean).join(', ')}`;
+          return `${route.padEnd(14)} ${t.inputTokens.toLocaleString('en-US')} in, ${t.outputTokens.toLocaleString('en-US')} out, ${cost}${budget}`;
         });
         const jobs = r.jobs.map(j => `${j.id}  ${j.route.padEnd(12)} in ${describeFigure(j.accounted.inputTokens, 'tokens')}, out ${describeFigure(j.accounted.outputTokens, 'tokens')}, cost ${describeFigure(j.accounted.costUsd, 'usd')}`);
         const recent = jobs.length ? ['', 'Recent jobs', ...jobs] : [];
@@ -166,7 +168,7 @@ async function run(rest: string[], p: Parsed, io: Io, opts: Opts, say: (h: strin
     ...(opt('expect-file') ? { expectFile: opt('expect-file') as string } : {}), ...(opt('timeout') ? { timeoutS: Number(opt('timeout')) } : {}),
     ...(p.flags.has('named') ? { named: true } : {}),
     caller: { kind: parentId ? 'job' : 'cli', ...(parentId ? { label: parentId } : {}), ...(io.env.CLAUDE_CODE_SESSION_ID ? { session: io.env.CLAUDE_CODE_SESSION_ID } : {}), ...(io.interactive ? { interactive: true } : {}) },
-    ...(allow.length ? { allow } : {}),
+    ...(allow.length ? { allow } : {}), ...(p.flags.has('no-failover') ? { failover: false } : {}),
     ...(parentId ? { parent: { jobId: parentId, rootJobId: io.env.AUGUR_ROOT_JOB_ID ?? parentId, depth: 0 } } : {}),
   };
   const res = await call('submit', req, opts);

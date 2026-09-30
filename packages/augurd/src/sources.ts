@@ -1,7 +1,8 @@
 // Readers for the files Augur writes (policy.json, usage.json) and the user's route registry, cached by modification time and size.
 import { readFileSync, statSync } from 'node:fs';
 import type { PolicyFile } from '@augur/core';
-import type { RouteConfig, UsageSnapshot } from '@augur/dispatch-protocol';
+import { BUDGET_PERIODS } from '@augur/dispatch-protocol';
+import type { RouteBudget, RouteConfig, UsageSnapshot } from '@augur/dispatch-protocol';
 
 class JsonSource<T> {
   /** Modification time and size together: two writes inside one timestamp tick still differ in length. */
@@ -36,6 +37,15 @@ export function validPolicyFile(v: unknown): boolean {
 export const policySource = (path: string) => new JsonSource<PolicyFile>(path, v => validPolicyFile(v) ? v as unknown as PolicyFile : null);
 export const usageSource = (path: string) => new JsonSource<UsageSnapshot>(path, v => isObj(v) && isObj(v.providers) ? v as unknown as UsageSnapshot : null);
 
+/** A budget with a known period and at least one positive limit; anything else is ignored rather than guessed at. */
+export function parseBudget(v: unknown): RouteBudget | null {
+  if (!isObj(v) || !(BUDGET_PERIODS as readonly unknown[]).includes(v.per)) return null;
+  const pos = (n: unknown): number | undefined => (typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : undefined);
+  const usd = pos(v.usd), jobs = pos(v.jobs);
+  if (usd === undefined && jobs === undefined) return null;
+  return { per: v.per as RouteBudget['per'], ...(usd !== undefined ? { usd } : {}), ...(jobs !== undefined ? { jobs: Math.floor(jobs) } : {}) };
+}
+
 /** routes.json: `{ "routes": { "<name>": { "model": "codex/sol", "adapter": "codex-exec", "options": { ... } } } }` */
 export function parseRoutes(v: unknown): Record<string, RouteConfig> | null {
   if (!isObj(v) || !isObj(v.routes)) return null;
@@ -44,7 +54,9 @@ export function parseRoutes(v: unknown): Record<string, RouteConfig> | null {
     if (!/^[a-z][a-z0-9_-]*$/.test(name) || !isObj(raw) || typeof raw.model !== 'string' || typeof raw.adapter !== 'string') continue;
     const options: Record<string, string | number | boolean> = {};
     if (isObj(raw.options)) for (const [k, val] of Object.entries(raw.options)) if (['string', 'number', 'boolean'].includes(typeof val)) options[k] = val as string | number | boolean;
-    out[name] = { model: raw.model, adapter: raw.adapter, options, ...(raw.delegation === true ? { delegation: true } : {}), ...(typeof raw.notes === 'string' ? { notes: raw.notes } : {}) };
+    const budget = parseBudget(raw.budget), fallback = Array.isArray(raw.fallback) ? raw.fallback.filter((n): n is string => typeof n === 'string' && n !== name) : [];
+    out[name] = { model: raw.model, adapter: raw.adapter, options, ...(raw.delegation === true ? { delegation: true } : {}), ...(typeof raw.notes === 'string' ? { notes: raw.notes } : {}),
+      ...(budget ? { budget } : {}), ...(fallback.length ? { fallback } : {}) };
   }
   return out;
 }

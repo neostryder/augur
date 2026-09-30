@@ -67,6 +67,12 @@ function form(m: RoutesModel): string {
     ${d.options.keySource === 'store' ? keyRow(m) : ''}
     <div class="row rtrow"><label for="rt-notes"><span>Notes</span><small>For you. Agents do not see them.</small></label>
       <input type="text" id="rt-notes" data-rt="notes" value="${esc(d.notes)}" autocomplete="off"></div>
+    <div class="row rtrow"><label for="rt-budget-usd"><span>Budget</span><small>Refuses new jobs on this route once it has used this much in the period. Leave a limit empty for none. Dollars count only jobs whose cost is known, which needs a rate for the model.</small></label>
+      <div class="rtbudget"><input type="number" min="0" step="any" id="rt-budget-usd" data-rt="budgetUsd" value="${esc(d.budgetUsd)}" placeholder="Dollars" aria-label="Dollar budget">
+        <input type="number" min="1" step="1" id="rt-budget-jobs" data-rt="budgetJobs" value="${esc(d.budgetJobs)}" placeholder="Jobs" aria-label="Job budget">
+        <select id="rt-budget-per" data-rt="budgetPer" aria-label="Budget period">${(['day', 'week', 'month'] as const).map((p) => `<option value="${p}" ${d.budgetPer === p ? 'selected' : ''}>per ${p}</option>`).join('')}</select></div></div>
+    <div class="row rtrow"><label for="rt-fallback"><span>Fallback routes</span><small>Route names separated by commas. When this route cannot take a job because of its budget, a pause, plan usage or a missing key, the next one is tried, and each is checked against every rule.</small></label>
+      <input type="text" id="rt-fallback" data-rt="fallback" value="${esc(d.fallback)}" spellcheck="false" autocomplete="off" placeholder="luna, grok"></div>
     <div class="row rtrow"><label for="rt-delegation"><span>May start more jobs</span><small>Lets a job on this route run <code>augur</code> itself, within the depth and count limits.</small></label>
       <input type="checkbox" id="rt-delegation" data-rt="delegation" ${d.delegation ? 'checked' : ''}></div>
     ${m.formError ? `<div class="rnote bad" role="alert">${esc(m.formError)}</div>` : ''}${m.testNote ? `<div class="rnote" role="status">${esc(m.testNote)}</div>` : ''}

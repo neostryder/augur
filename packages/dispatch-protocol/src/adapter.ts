@@ -27,7 +27,16 @@ export interface RouteConfig {
   /** Route may dispatch further jobs. Off unless set. */
   delegation?: boolean;
   notes?: string;
+  /** A ceiling on what the route may use in a rolling period. A submit past it is refused. Every job in the period counts toward a job limit, and a dollar limit counts the jobs whose cost is known. */
+  budget?: RouteBudget;
+  /** Routes tried in order when this one cannot take a job for a reason that may pass: its budget, a pause, plan usage, or a missing adapter or key. */
+  fallback?: string[];
 }
+
+export const BUDGET_PERIODS = ['day', 'week', 'month'] as const;
+export type BudgetPeriod = typeof BUDGET_PERIODS[number];
+/** Dollars and jobs are each optional; at least one is set. Dollars count only jobs whose cost is known. */
+export interface RouteBudget { per: BudgetPeriod; usd?: number; jobs?: number }
 
 export interface PlanContext {
   jobDir: string;

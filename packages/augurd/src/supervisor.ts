@@ -7,8 +7,8 @@ import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES } from '@augur/core';
 import type { PolicyFile } from '@augur/core';
 import { classifyTask, fitScores } from '@augur/decision';
 import type { DecisionBackend } from '@augur/decision';
-import { NAMED_PROMPT_WINDOW, PICK_WINDOW_MIN, TOOL_TIERS, checkLineage, credentialTarget, routeSecretName, checkNamed, checkPick, evaluate, isTerminal, matchNamedModels, pressure, rank, usageFactors } from '@augur/dispatch-protocol';
-import type { Adapter, JobRecord, JobRequest, LaunchPlan, PickAnswer, PickParams, Rejection, RouteConfig, UsageSnapshot } from '@augur/dispatch-protocol';
+import { BUDGET_WINDOW_MS, NAMED_PROMPT_WINDOW, PICK_WINDOW_MIN, TOOL_TIERS, account, budgetStatus, calibrateRoutes, checkLineage, credentialTarget, routeSecretName, checkNamed, checkPick, evaluate, isTerminal, matchNamedModels, pressure, rank, usageFactors } from '@augur/dispatch-protocol';
+import type { Adapter, BudgetStatus, JobRecord, JobRequest, LaunchPlan, PickAnswer, PickParams, RateCard, Rejection, RouteConfig, UsageSnapshot } from '@augur/dispatch-protocol';
 import { MAX_COMMAND_LINE } from './adapters/util.js';
 import type { ServiceConfig } from './config.js';
 import { buildEnv } from './env.js';
@@ -27,6 +27,8 @@ export interface SupervisorDeps {
   runnerPath?: string; now?: () => number; env?: NodeJS.ProcessEnv;
   /** Says whether a credential is stored. Tests stand in for the Windows credential store. */
   hasKey?: (target: string) => boolean;
+  /** The owner's rate card, read when a budget is checked. */
+  rates?: () => RateCard;
 }
 
 export type SubmitResult = { id: string; warnings: string[] } | { rejected: Rejection };
@@ -73,7 +75,35 @@ export class Supervisor {
     return (this.d.hasKey ?? hasStoredKey)(credentialTarget(routeSecretName(name))) ? null : 'No key is stored for this route. Add it on the Routes page.';
   }
 
+  /** Rejections that may pass, or that another route can get around. Only these send a job to a fallback route. */
+  private static readonly FAILOVER = new Set(['budget_exhausted', 'model_paused', 'pace_denied', 'quota_denied', 'adapter_unavailable']);
+
+  /** What a route has used in its budget window and whether a new job would be refused; null when the route has no budget. */
+  budget(name: string, route: RouteConfig): BudgetStatus | null {
+    if (!route.budget) return null;
+    const jobs = this.d.store.since(name, this.now() - BUDGET_WINDOW_MS[route.budget.per]), rates = this.d.rates?.() ?? {}, calibration = calibrateRoutes(this.d.store.list({ limit: 500 }))[name];
+    return budgetStatus(name, route.budget, jobs.map(j => account(j, route.model, rates, calibration)));
+  }
+
+  /**
+   * Submits to the route named. When that route cannot take the job for a reason that may pass, each fallback route is tried in order, and every one is
+   * checked against every rule as if it had been asked for, so a fallback never gets around a data tier, a pick or a pause. `failover: false` keeps the job put.
+   */
   submit(input: JobRequest): SubmitResult {
+    const first = this.submitTo(input);
+    if (!('rejected' in first) || input.failover === false || !Supervisor.FAILOVER.has(first.rejected.code)) return first;
+    for (const next of this.d.routes()?.[input.route]?.fallback ?? []) {
+      if (next === input.route) continue;
+      const r = this.submitTo({ ...input, route: next });
+      if ('rejected' in r) continue;
+      const note = `${input.route} could not take the job (${first.rejected.reason}), so ${next} did.`;
+      this.d.store.event(r.id, 'failover', `${input.route} to ${next}: ${first.rejected.code}`, this.now());
+      return { ...r, warnings: [note, ...r.warnings] };
+    }
+    return first;
+  }
+
+  private submitTo(input: JobRequest): SubmitResult {
     let req = input;
     const bad = this.validate(req);
     if (bad) return reject('bad_request', bad);
@@ -100,7 +130,10 @@ export class Supervisor {
     if (named.note) req = { ...req, named: named.value };
     const decision = evaluate(req, { policy: this.d.policy(), usage: this.d.usage(), route, capabilities: adapter.capabilities, now: new Date(this.now()) });
     if (!decision.allow) { this.d.store.event(null, 'policy_evaluated', `rejected ${decision.rejection.code}: ${req.route}`, this.now()); return { rejected: named.note && decision.rejection.code === 'ask_first' ? { ...decision.rejection, reason: `${decision.rejection.reason} ${named.note}` } : decision.rejection }; }
+    const spent = this.budget(req.route, route);
+    if (spent?.exhausted) { this.d.store.event(null, 'policy_evaluated', `rejected budget_exhausted: ${req.route}`, this.now()); return reject('budget_exhausted', spent.exhausted); }
     const warnings = [...decision.warnings];
+    if (spent?.usdUnchecked) warnings.push(`${req.route} has a dollar budget, but no job in its window has a known cost, so only its job count is checked. Set a rate for ${route.model} in rates.json.`);
     if (named.note) warnings.push(named.note);
     if (req.named) this.d.store.event(null, 'named_claim', `${route.model} ${named.via}`, this.now());
     if (this.d.config.requirePick && !req.allow?.includes('unpicked')) {

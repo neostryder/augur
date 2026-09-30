@@ -5,6 +5,7 @@
 // An imputed figure is only produced when the route's own finished jobs show the guess is close, and it carries the error measured there. A figure
 // that cannot be backed that way is left out, never filled in. There is no fit against plan quotas: a subscription's quota moves in units the provider
 // does not publish, so the quota meters stay as the providers report them.
+import type { BudgetPeriod, RouteBudget } from './adapter.js';
 import type { JobRecord } from './spec.js';
 
 export type Provenance = 'reported' | 'derived' | 'imputed';
@@ -96,4 +97,26 @@ export function totalOf(accounted: readonly Accounted[]): Totals {
     if (a.costUsd) { t.costUsd += a.costUsd.value; t.costJobs++; t.byProvenance[a.costUsd.provenance]++; }
   }
   return t;
+}
+
+// Budgets. A route's budget is checked over a rolling window ending now, so there is no calendar boundary to game.
+export const BUDGET_WINDOW_MS: Record<BudgetPeriod, number> = { day: 86_400_000, week: 7 * 86_400_000, month: 30 * 86_400_000 };
+
+export interface BudgetStatus {
+  per: BudgetPeriod;
+  jobs: { used: number; limit: number | null };
+  usd: { used: number; limit: number | null; /** Jobs in the window with a known cost, out of `jobs.used`. */ costJobs: number };
+  /** A dollar limit is set and no job in the window has a cost, so it cannot be checked. */
+  usdUnchecked: boolean;
+  exhausted: string | null;
+}
+
+/** What a route has used in its window, and the sentence to refuse a new job with when a limit is reached. `jobs` holds only the route's jobs in the window. */
+export function budgetStatus(name: string, budget: RouteBudget, accounted: readonly Accounted[]): BudgetStatus {
+  const t = totalOf(accounted);
+  const jobsLimit = budget.jobs ?? null, usdLimit = budget.usd ?? null;
+  let exhausted: string | null = null;
+  if (jobsLimit !== null && t.jobs >= jobsLimit) exhausted = `${name} has reached its ${budget.per} budget of ${jobsLimit} ${jobsLimit === 1 ? 'job' : 'jobs'}.`;
+  else if (usdLimit !== null && t.costJobs > 0 && t.costUsd >= usdLimit) exhausted = `${name} has reached its ${budget.per} budget of $${usdLimit}, with $${t.costUsd.toFixed(2)} used.`;
+  return { per: budget.per, jobs: { used: t.jobs, limit: jobsLimit }, usd: { used: t.costUsd, limit: usdLimit, costJobs: t.costJobs }, usdUnchecked: usdLimit !== null && t.jobs > 0 && t.costJobs === 0, exhausted };
 }

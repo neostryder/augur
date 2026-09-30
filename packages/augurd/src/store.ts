@@ -75,6 +75,11 @@ export class Store {
     return (this.db.prepare(sql).all(...args, filter.limit ?? 100) as unknown as Row[]).map(toRecord);
   }
 
+  /** Every job on a route created at or after `at`, newest first. Budgets are checked over these. */
+  since(route: string, at: number): JobRecord[] {
+    return (this.db.prepare('select * from jobs where route=? and created_at>=? order by created_at desc, rowid desc').all(route, at) as unknown as Row[]).map(toRecord);
+  }
+
   /** Jobs the supervisor still has to watch. */
   active(): JobRecord[] { return (this.db.prepare("select * from jobs where state in ('running','cancel_requested')").all() as unknown as Row[]).map(toRecord); }
   queued(limit: number): string[] { return (this.db.prepare("select id from jobs where state='queued' order by created_at, rowid limit ?").all(limit) as Array<{ id: string }>).map(r => r.id); }

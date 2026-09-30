@@ -31,6 +31,26 @@ describe('checking a route before it is saved', () => {
     expect(checkDraft({ ...api, options: { ...api.options, keySource: 'vault' } }, [], true)).toContain('one of env, store');
   });
 
+  it('checks the budget and fallback fields, and writes them beside the route', () => {
+    const d = { ...good(), name: 'luna', budgetUsd: '5', budgetJobs: '', budgetPer: 'week', fallback: 'sol, grok' };
+    expect(checkDraft({ ...d, budgetUsd: '-2' }, ['sol', 'grok'], true)).toContain('dollar budget');
+    expect(checkDraft({ ...d, budgetJobs: '2.5' }, ['sol', 'grok'], true)).toContain('job budget');
+    expect(checkDraft(d, ['sol'], true)).toContain('grok is not a route yet');
+    expect(checkDraft({ ...d, name: 'sol' }, ['sol', 'grok'], false)).toContain('its own fallback');
+    expect(checkDraft(d, ['sol', 'grok'], true)).toBeNull();
+    const file = parseRoutesText('{"routes":{"luna":{"model":"codex/luna","adapter":"codex-exec"}}}');
+    if (!file.ok) throw new Error('fixture');
+    const out = JSON.parse(writeRoute(file.file, 'luna', d)).routes.luna;
+    expect(out).toMatchObject({ budget: { per: 'week', usd: 5 }, fallback: ['sol', 'grok'] });
+    expect(out.budget.jobs).toBeUndefined();
+    const cleared = JSON.parse(writeRoute(file.file, 'luna', { ...d, budgetUsd: '', fallback: '' })).routes.luna;
+    expect(cleared.budget).toBeUndefined();
+    expect(cleared.fallback).toBeUndefined();
+    const again = parseRoutesText(writeRoute(file.file, 'luna', d));
+    if (!again.ok) throw new Error('fixture');
+    expect(draftOf(again.file.routes[0]!)).toMatchObject({ budgetUsd: '5', budgetJobs: '', budgetPer: 'week', fallback: 'sol, grok' });
+  });
+
   it('accepts a complete route', () => expect(checkDraft(good(), ['luna'], true)).toBeNull());
 
   it('rejects names the service would ignore, and a name that is taken', () => {

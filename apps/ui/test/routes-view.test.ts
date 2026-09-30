@@ -25,6 +25,15 @@ describe('the routes page', () => {
     expect(renderRoutes(model({ sel: '+', draft: apiDraft({ keySource: 'store' }), canTest: false }))).toContain('Keys are saved from the desktop app on Windows.');
   });
 
+  it('draws the budget and fallback fields with the values the route has', () => {
+    const html = renderRoutes(model({ sel: '+', draft: { ...emptyDraft(), name: 'sol', budgetUsd: '20', budgetJobs: '100', budgetPer: 'week', fallback: 'luna' } }));
+    expect(html).toContain('id="rt-budget-usd"');
+    expect(html).toContain('value="20"');
+    expect(html).toContain('<option value="week" selected>per week</option>');
+    expect(html).toContain('id="rt-fallback"');
+    expect(html).toContain('value="luna"');
+  });
+
   it('lists routes with the adapter in plain words and names what the service skips', () => {
     const html = renderRoutes(model());
     expect(html).toContain('data-route="luna"');

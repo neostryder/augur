@@ -262,3 +262,48 @@ describe('what a job may read and where it runs', () => {
     expect(e.sup.submit(request({ cwd: e.root }))).toMatchObject({ rejected: { code: 'adapter_unavailable' } });
   });
 });
+
+describe('route budgets and fallback routes', () => {
+  const withRoutes = (e: Env, fake: Record<string, unknown>) => {
+    const routes = JSON.parse(readFileSync(e.routesPath, 'utf8')).routes as Record<string, Record<string, unknown>>;
+    routes.fake = { ...routes.fake, ...fake };
+    e.writeRoutes(routes);
+  };
+
+  it('refuses a job once the route has used its job budget for the period, and says which limit', () => {
+    const e = setup();
+    withRoutes(e, { budget: { per: 'day', jobs: 1 } });
+    submitOk(e.sup, request({ text: 'SLEEP 0', cwd: e.root }));
+    const second = e.sup.submit(request({ text: 'SLEEP 0', cwd: e.root }));
+    expect(second).toMatchObject({ rejected: { code: 'budget_exhausted', reason: 'fake has reached its day budget of 1 job.' } });
+    expect(e.sup.budget('fake', JSON.parse(readFileSync(e.routesPath, 'utf8')).routes.fake)).toMatchObject({ jobs: { used: 1, limit: 1 } });
+  });
+
+  it('sends the job to a fallback route when the first cannot take it, and records that it did', () => {
+    const e = setup();
+    withRoutes(e, { budget: { per: 'day', jobs: 1 }, fallback: ['raw'] });
+    submitOk(e.sup, request({ text: 'SLEEP 0', cwd: e.root }));
+    const moved = e.sup.submit(request({ text: 'SLEEP 0', cwd: e.root }));
+    if ('rejected' in moved) throw new Error(moved.rejected.reason);
+    expect(moved.warnings[0]).toBe('fake could not take the job (fake has reached its day budget of 1 job.), so raw did.');
+    expect(e.store.get(moved.id)!.route).toBe('raw');
+    expect(kinds(e, moved.id)).toContain('failover');
+  });
+
+  it('keeps the job on its route with failover false, and never lets a fallback skip a rule', () => {
+    const e = setup();
+    withRoutes(e, { budget: { per: 'day', jobs: 1 }, fallback: ['ghost', 'ask'] });
+    submitOk(e.sup, request({ text: 'SLEEP 0', cwd: e.root }));
+    // ghost has no rules and ask must be named, so neither may take the job and the original refusal stands.
+    expect(e.sup.submit(request({ text: 'SLEEP 0', cwd: e.root }))).toMatchObject({ rejected: { code: 'budget_exhausted' } });
+    withRoutes(e, { budget: { per: 'day', jobs: 1 }, fallback: ['raw'] });
+    expect(e.sup.submit({ ...request({ text: 'SLEEP 0', cwd: e.root }), failover: false })).toMatchObject({ rejected: { code: 'budget_exhausted' } });
+  });
+
+  it('does not fail over for a refusal that another route cannot fix, such as a data tier that is too high', () => {
+    const e = setup();
+    withRoutes(e, { fallback: ['raw'] });
+    const tooHigh = e.sup.submit({ ...request({ text: 'x', cwd: e.root }), dataTier: 'regulated' });
+    expect(tooHigh).toMatchObject({ rejected: { code: 'data_tier_too_high' } });
+  });
+});

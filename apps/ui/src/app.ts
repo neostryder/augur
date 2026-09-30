@@ -932,6 +932,10 @@ export class App {
     else if (t.dataset.rt === 'name') d.name = t.value.trim();
     else if (t.dataset.rt === 'model') d.model = t.value.trim();
     else if (t.dataset.rt === 'notes') d.notes = t.value;
+    else if (t.dataset.rt === 'budgetUsd') d.budgetUsd = t.value;
+    else if (t.dataset.rt === 'budgetJobs') d.budgetJobs = t.value;
+    else if (t.dataset.rt === 'budgetPer') d.budgetPer = t.value;
+    else if (t.dataset.rt === 'fallback') d.fallback = t.value;
     else if (t.dataset.rt === 'delegation') d.delegation = t.checked;
     else if (t.dataset.rt === 'adapter') { d.adapter = t.value; this.routesPage.formError = ''; void this.render(); }
     return true;

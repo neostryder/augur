@@ -6,6 +6,8 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Added
 
+- [Visible] [UI] **A route can have a budget.** On the Routes page or in `routes.json`, set dollars, jobs or both for a day, week or month. Once a limit is reached, new jobs on that route are refused with the limit named, and `augur usage` shows how much is used. Dollars count only jobs whose cost is known.
+- [Visible] [UI] **A route can list fallback routes.** When a job is refused because of a budget, a pause, plan usage or a missing key or adapter, Augur tries each fallback in order and checks it against every rule. The job records which route took it, and `augur run --no-failover` keeps a job where it was sent.
 - [Visible] [Security] **An API route can keep its key in the Windows credential store.** You save the key on the Routes page instead of naming an environment variable. It is never written to `routes.json` or a job record, and the route cannot run until a key is saved.
 - [Visible] [UI] **A new provider starts with cautious rules that its models inherit.** Public data only, text output only and named before use, with no activity allowed and every model unreviewed. A model can be used only after you confirm it and allow what it needs, and setup says so. Providers already in your rules keep what they have.
 - [Visible] [Security] **Each release lists a SHA-256 checksum for every installer and attaches a bill of materials for its JavaScript and Rust dependencies.** The README shows how to compare a download against its checksum, which matters while the installers are unsigned.
