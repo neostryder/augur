@@ -34,6 +34,8 @@ export interface SettingsModel {
   classifier: string | null;
 }
 
+export const STARTER_RULES_TEXT = 'Each provider starts with cautious rules that its models inherit: public data only, text output only, and named before use. A model cannot be used until you confirm it on the model rules page and allow the activities it needs.';
+
 function agentsSection(m: SettingsModel, first: boolean): string {
   if (!m.canDispatch) return '';
   return `<h2 class="sec">Agents</h2><div class="card">${modeChooser(m.runJobs)}${first && m.runJobs && m.classifier !== null ? `<div class="rsec">Who classifies tasks</div>${classifierChooser(m.classifier)}` : ''}
@@ -118,6 +120,7 @@ export function renderSettings(m: SettingsModel): string {
 
   if (m.firstRun) {
     html += agentsSection(m, true);
+    html += `<h2 class="sec">Model rules</h2><div class="card"><p class="help">${esc(STARTER_RULES_TEXT)}</p></div>`;
     html += `<div class="actions"><button class="btn primary" data-action="finish-setup">Start tracking</button></div></div>`;
     return html;
   }

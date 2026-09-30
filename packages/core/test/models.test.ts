@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { latestOnly, listDue, modelFamily, syncModelList, setModelStatus } from '../src/models.js';
-import { emptyPolicy, fieldPath, mergePolicy, setField } from '../src/policy.js';
+import { emptyPolicy, fieldPath, mergePolicy, resolveModel, setField } from '../src/policy.js';
 import { parseGrokModels } from '../src/providers/grok.js';
 import { claude, codex, fal, openrouter } from '../src/providers/index.js';
 import type { Host } from '../src/types.js';
@@ -42,6 +42,23 @@ describe('syncing a model list into the rules', () => {
     expect(added).toEqual(['codex/gpt-6-luna']);
     expect(policy.providers.codex.models['codex/gpt-6-luna']).toMatchObject({ status: 'unreviewed', source: 'live', name: 'GPT-6-Luna', rule: {} });
     expect(syncModelList(policy, 'codex', 'codex', [{ id: 'gpt-6-luna' }], t0)).toEqual([]);
+  });
+
+  it('gives a new provider cautious defaults that its models inherit, and leaves an existing provider alone', () => {
+    const policy = emptyPolicy();
+    syncModelList(policy, 'grok', 'xai', [{ id: 'grok-4.7' }], t0);
+    expect(policy.providers.grok!.defaults).toEqual({ dataTier: 'public', askFirst: true, output: 'text_only', sandbox: false });
+    const r = resolveModel('grok', policy.providers.grok!.defaults, policy.providers.grok!.models['xai/grok-4.7']!);
+    expect(r).toMatchObject({ dataTier: 'public', askFirst: true, output: 'text_only', status: 'unreviewed', activities: {} });
+    expect(r.inherited).toEqual(expect.arrayContaining(['dataTier', 'askFirst', 'output']));
+    // Defaults are copied, so changing one provider's never changes the shared starter set.
+    policy.providers.grok!.defaults.dataTier = 'internal';
+    syncModelList(policy, 'codex', 'codex', [{ id: 'gpt-6-luna' }], t0);
+    expect(policy.providers.codex!.defaults.dataTier).toBe('public');
+    const existing = emptyPolicy();
+    existing.providers.codex = { defaults: {}, models: {} };
+    syncModelList(existing, 'codex', 'codex', [{ id: 'gpt-6-luna' }], t0);
+    expect(existing.providers.codex.defaults).toEqual({});
   });
 
   it('starts a newer version from the older one and hides the older one once confirmed', () => {

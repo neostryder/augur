@@ -1,7 +1,7 @@
 // Live model lists: which models a provider offers, reduced to the newest version of each, and merged into the rules.
 
 import type { ModelEntry, PolicyConfig } from './policy.js';
-import { fieldPath, setField } from './policy.js';
+import { fieldPath, newProvider, setField } from './policy.js';
 
 /** `created` is when the provider released or first listed the model, where it says. */
 export interface ListedModel { id: string; name?: string; created?: string }
@@ -71,7 +71,7 @@ export function latestOnly(models: ListedModel[]): ListedModel[] {
  * Returns the labels added.
  */
 export function syncModelList(policy: PolicyConfig, provider: string, prefix: string, listed: ListedModel[], now = new Date()): string[] {
-  const p = policy.providers[provider] ??= { defaults: {}, models: {} }, added: string[] = [];
+  const p = policy.providers[provider] ??= newProvider(), added: string[] = [];
   for (const m of latestOnly(listed)) {
     const entries = Object.entries(p.models);
     if (entries.some(([, e]) => e.id === m.id)) continue;

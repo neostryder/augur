@@ -134,8 +134,16 @@ function nextStamp(policy: PolicyConfig, device: string, now: Date): string {
 
 export function emptyPolicy(): PolicyConfig { return { providers: {}, stamps: {}, history: [] }; }
 
+/**
+ * The rules every new provider starts with, which its models inherit: public data only, text output, and named before use. No activity is allowed.
+ * Models also start unreviewed, so nothing runs until someone confirms a model and loosens what it needs.
+ */
+export const STARTER_DEFAULTS: Rule = { dataTier: 'public', askFirst: true, output: 'text_only', sandbox: false };
+
+export function newProvider(): ProviderPolicy { return { defaults: structuredClone(STARTER_DEFAULTS), models: {} }; }
+
 function providerPolicy(policy: PolicyConfig, id: string): ProviderPolicy {
-  return policy.providers[id] ??= { defaults: {}, models: {} };
+  return policy.providers[id] ??= newProvider();
 }
 
 function readField(rule: Rule, field: string): unknown {
