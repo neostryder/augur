@@ -31,6 +31,8 @@ When a caller says a person named a model, the service checks that model against
 
 A job that skips the pick or usage check says so in its record.
 
+The MCP server, `augur-mcp`, is a client of the same service. It sends its own random session id with each call, never asks the service to skip the pick or usage check, and never says a person named a model, so an agent using it is held to the rules like any other caller. It holds no keys of its own.
+
 Rules apply to jobs started through the service. A harness started directly from a shell is outside it.
 
 ## Supported versions

@@ -68,6 +68,51 @@ Augur can notify you when:
 
 Each alert fires once per window and waits for the next reset before it can fire again.
 
+## Model rules
+
+The rules page (the icon at the top of the panel) lists every model Augur has seen on your plans and lets you decide what agents may use each one for. Each model has a status, the activities it may do (write code, research, summarize and so on), the most sensitive data it may see (public, internal, sensitive or regulated), whether an agent has to be told to use it by name, whether it may write files or only text and patches, a cost step from free to very high, and how its provider handles prompts. A model can also be paused until a time you pick, either skipped or scored with replacement weights, and Dial back pauses every high-cost model until the next reset. Rules save to `policy.json` in `~/.augur`, and an agent or script reads that file. Each change goes into a history you can undo from, and a paired phone and desktop merge their edits, keeping the newer one for each field.
+
+## Running jobs for agents (Windows)
+
+Turn on Also run jobs in setup or on the Service page and Augur starts a service on your computer. An agent asks it which model to use with `augur pick`, then runs the task with `augur run`. The service checks your rules and how much of each plan is left before it starts anything, and a job that breaks a rule is refused with the reason. The `augur` command is `service\augur.cmd` inside the install folder (`%LOCALAPPDATA%\Augur`), which is not on your PATH.
+
+```bash
+augur pick --activity write_code --data internal
+augur run luna --activity write_code --data internal --prompt "Add tests for parse()" --wait
+augur usage
+```
+
+Here `luna` is a route you added on the Routes page. A run has to state its activity and data tier, and it has to follow a pick made for the same caller in the last hour. `augur --help` lists every command.
+
+- The Jobs page lists what agents started, with each job's result, output and errors, and lets you cancel one that is still going.
+- The Routes page joins a model to the program that runs it. A route is an entry in `dispatch/routes.json`, and Test route checks that it works.
+- The Service page holds the service's settings, and `augur config` shows the same list.
+- Tokens and cost appear with each job, labelled reported, derived or imputed. [docs/accounting.md](docs/accounting.md) explains how they are worked out and how to set a rate.
+- `augur-mcp.cmd`, beside `augur.cmd`, lets Claude Code, Claude Desktop and other MCP clients pick and run models under the same rules. See [docs/mcp.md](docs/mcp.md).
+
+Uninstalling Augur stops the service and removes the program, and leaves your job history in `%LOCALAPPDATA%\Augur\dispatch` and your rules in `~/.augur`. Delete those folders to remove everything.
+
+### Who classifies tasks
+
+`augur pick --task "..."` can work out the activity and data tier from a description. The setup screen and the Service page ask who does that.
+
+- **None** is the default. The agent gives the activity and data tier itself.
+- **Jev** is a hosted model from TypeSafe. The text of each task goes there with your API key, except text about students, which is checked on your computer first and never sent. Put the key in the `TYPESAFE_API_KEY` environment variable.
+- **Laya** is an open-weight model of the same kind that runs on your own computer, so task text never leaves your network. It needs Python 3.10 or newer, PowerShell 7 from the Microsoft Store, and about 6 GB of disk: 2.3 GB for the model and around 3 GB for PyTorch with GPU support. An NVIDIA GPU makes it faster and is not required. From a checkout of this repository, in PowerShell:
+
+```powershell
+$root = "$env:LOCALAPPDATA\Augur\laya"
+New-Item -ItemType Directory -Force "$root\logs" | Out-Null
+python -m venv "$root\venv"
+& "$root\venv\Scripts\pip" install laya
+$env:HF_HOME = "$root\hf"
+& "$root\venv\Scripts\python" -c "from huggingface_hub import snapshot_download; snapshot_download('convaiinnovations/laya', revision='55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851')"
+python packages\laya\deploy.py
+pwsh -NoProfile -File packages\laya\windows\install-task.ps1
+```
+
+The last line registers a logon task named Augur Laya that serves the model at `http://127.0.0.1:8010`. Then choose Laya on the Service page. To use several machines, list them in `~/.augur/laya.json`; Augur tries them in order and skips one that is busy or down.
+
 ## Phone app
 
 The web app works in any modern mobile browser. Open [augur.rpgm.tools](https://augur.rpgm.tools) on the phone and add it to your home screen: on iPhone, tap Share in Safari (on newer iPhones it is in the menu at the bottom) and then Add to Home Screen; on Android, use the install prompt. On its own it can track the providers that use API keys: the keys are encrypted on the phone and requests go through a relay that forwards them without storing anything.
@@ -133,7 +178,7 @@ A key saved in settings takes priority over the same key in the project.
 
 ## Privacy
 
-Augur has no accounts and no server that holds your data. The desktop app talks to each provider directly and keeps its settings and usage history on your computer. If you run the dispatch service (Windows only), it also keeps a job history in a SQLite file in your profile: each job's route, model, state, timing, usage and folder, and the prompt only if you turn that on. Job folders are deleted after 30 days by default, and the records stay until you delete the service's data folder. The relay the phone app uses passes each request, including the API key in it, to a fixed list of usage and status endpoints. Its code stores and logs none of it, though Cloudflare, which runs it, keeps its own request logs. Sync data on the relay is encrypted on your computer with a key only your paired phone has, so the relay holds ciphertext it cannot read, and it expires after 14 days. See SECURITY.md for what is stored where and how to report a problem.
+Augur has no accounts and no server that holds your data. The desktop app talks to each provider directly and keeps its settings and usage history on your computer. If you run the dispatch service (Windows only), it also keeps a job history in a SQLite file in your profile: each job's route, model, state, timing, usage, folder and the length of its prompt and answer, and the prompt itself only if you turn that on. Job folders are deleted after 30 days by default, and the records stay until you delete the service's data folder. The relay the phone app uses passes each request, including the API key in it, to a fixed list of usage and status endpoints. Its code stores and logs none of it, though Cloudflare, which runs it, keeps its own request logs. Sync data on the relay is encrypted on your computer with a key only your paired phone has, so the relay holds ciphertext it cannot read, and it expires after 14 days. See SECURITY.md for what is stored where and how to report a problem.
 
 ## License
 

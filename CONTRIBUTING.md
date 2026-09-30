@@ -23,7 +23,7 @@ The web app alone runs with `pnpm --filter @augur/ui dev`, and the relay with `p
 | `apps/desktop` | The Tauri shell: tray, popup window, keychain, updater |
 | `apps/relay` | The Cloudflare Worker that serves the web app and relays its requests |
 
-The dispatch service and its command line live in packages/augurd, packages/dispatch-protocol and packages/dispatch-cli, the classifier in packages/decision, and the local Laya model and its trainer in packages/laya. The dispatch service is Windows-only, and its tests run on Windows in CI after building the job host with Go (pnpm --filter @augur/augurd build:jobhost).
+The code that runs jobs for agents is in five packages. `packages/augurd` is the service, `packages/dispatch-protocol` holds what the service and its callers share, `packages/dispatch-cli` is the `augur` command, `packages/mcp` is the MCP server, and `packages/decision` classifies tasks. The local classifier model, Laya, and its trainer are in `packages/laya`. The service only runs on Windows, so CI tests it there after building the job host with Go (`pnpm --filter @augur/augurd build:jobhost`).
 
 A new provider with a JSON usage endpoint usually needs no code: describe it as a custom provider (see the README). One that needs a sign-in refresh or a command-line login goes in `packages/core/src/providers`, with a fixture and a test in `packages/core/test`. Fixtures use made-up numbers.
 
