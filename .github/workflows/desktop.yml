@@ -64,3 +64,36 @@ jobs:
           releaseBody: 'What changed is in [CHANGELOG.md](https://github.com/neostryder/augur/blob/main/CHANGELOG.md). The installers are not code-signed yet, so the first launch needs one extra step on Windows and macOS; the [README](https://github.com/neostryder/augur#install) shows it for each platform.'
           uploadUpdaterJson: true
           args: ${{ matrix.args }}
+
+  # Once every installer is on the release, attach a software bill of materials for the JavaScript and Rust dependencies and a checksum for each file.
+  integrity:
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - run: pnpm install --frozen-lockfile
+      - run: cargo install cargo-cyclonedx --locked
+      - name: Build the bills of materials
+        run: |
+          mkdir out
+          pnpm sbom --sbom-format cyclonedx --sbom-type application --lockfile-only --prod > out/augur-js.cdx.json
+          cargo cyclonedx --manifest-path apps/desktop/src-tauri/Cargo.toml --format json --override-filename augur-rust
+          mv apps/desktop/src-tauri/augur-rust.json out/augur-rust.cdx.json
+      - name: Checksum every file on the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir dl
+          gh release download "$GITHUB_REF_NAME" --dir dl --clobber
+          cp out/*.json dl/
+          (cd dl && sha256sum * > ../out/SHA256SUMS.txt)
+          gh release upload "$GITHUB_REF_NAME" out/* --clobber
