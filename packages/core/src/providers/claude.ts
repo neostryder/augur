@@ -97,6 +97,7 @@ export const claude: ProviderPlugin = {
     return { plan: obj(latest.data.claudeAiOauth).subscriptionType ?? null, meters, money,
       notes: { extra_usage_enabled: !!extra.is_enabled, spend_percent: spend.percent ?? null, ...(resets > 0 ? { resets_available: resets } : {}),
         ...(grants?.endsAt ? { resetsEndsAt: grants.endsAt } : {}),
+        ...(web?.signedIn === true ? { webSessions: { claude: true } } : {}),
         ...(web?.signedIn === false ? (web.reason === 'challenge' ? { resetsChallenge: true } : { resetsSignIn: true }) : {}) } };
   },
   async listModels(host) {

@@ -4,6 +4,14 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+### Added
+
+- [Visible] [UI] **Settings show when a claude.ai or TypeSafe session is signed in.** The Sign in button reads Sign in again and a Signed in label appears once the provider has read your account.
+
+### Changed
+
+- [Visible] [UI] **The panel always opens on the main usage view.** Opening Augur from the tray icon, the taskbar or the keyboard shortcut closes any settings page or detail left open, instead of returning to it.
+
 ## [1.1.2] - 2026-09-30
 
 ### Added

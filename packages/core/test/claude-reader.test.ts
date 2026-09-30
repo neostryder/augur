@@ -76,6 +76,7 @@ describe('Claude limit resets', () => {
     const n = await notes(session({ signedIn: true, grants: [row({}), row({ id: 'h', resetsLeft: 2, endsAt: '2026-10-10T00:00:00Z' }), row({ id: 'old', endsAt: '2026-09-01T00:00:00Z' }), row({ id: 'paused', paused: true }), row({ id: 'used', resetsLeft: 0 })] }), { web: true });
     expect(n.resets_available).toBe(3);
     expect(n.resetsEndsAt).toBe('2026-10-10T00:00:00.000Z');
+    expect(n.webSessions).toEqual({ claude: true });
   });
 
   it('uses the entered count when the reading is off, signed out or fails, and says what is missing', async () => {

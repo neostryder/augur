@@ -163,6 +163,7 @@ export class App {
     this.shell.on('settings-requested', () => { this.view = 'settings'; void this.render(); });
     if (this.shell.kind === 'desktop') this.resizeWatch.observe(this.root);
     this.shell.on('popup-shown', () => {
+      if (this.shell.kind === 'desktop' && !this.firstRun) this.goHome();
       void this.render();
       void this.syncRules();
       const age = this.snapshot ? (Date.now() - new Date(this.snapshot.generatedAt).getTime()) / 1000 : Infinity;
@@ -1254,6 +1255,14 @@ export class App {
   }
 
   /** Handles an edit on the rules page. Returns false for inputs the shared handler owns. */
+  /** Back to the main usage view, closing whatever page or detail was open. Every way of opening the panel starts here. */
+  private goHome(): void {
+    if (this.view === 'jobs') { if (this.jobs.sel) this.closeJob(); this.leaveJobs(); }
+    if (this.view === 'routes' && this.routesPage.sel) this.closeRoute();
+    this.rules.showHistory = false; this.rules.sel = null;
+    this.view = 'dashboard';
+  }
+
   private async onRulesChange(t: HTMLInputElement): Promise<boolean> {
     const d = t.dataset, policy = this.config.policy ??= emptyPolicy();
     if (d.wait) {

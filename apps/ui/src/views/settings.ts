@@ -74,7 +74,8 @@ function providerCard(m: SettingsModel, pid: string): string {
           ${has ? `<button class="btn small" data-secret-del="${esc(pid)}|${esc(f.key)}">Remove</button>` : ''}</div>
           ${f.help ? `<span class="help">${esc(f.help)}</span>` : ''}</div>`;
       } else if (f.kind === 'signin') {
-        if (m.shellKind === 'desktop') detail += `<div class="row"><label class="name">${esc(f.label)}${f.help ? `<span class="desc">${esc(f.help)}</span>` : ''}</label><button class="btn small" data-signin="${esc(f.site ?? pid)}">Sign in</button></div>`;
+        const signedIn = ((m.snapshot?.providers[pid]?.notes as { webSessions?: Record<string, boolean> } | null | undefined)?.webSessions ?? {})[f.site ?? pid] === true;
+        if (m.shellKind === 'desktop') detail += `<div class="row"><label class="name">${esc(f.label)} ${signedIn ? '<span class="saved">Signed in</span>' : ''}${f.help ? `<span class="desc">${esc(f.help)}</span>` : ''}</label><button class="btn small" data-signin="${esc(f.site ?? pid)}">${signedIn ? 'Sign in again' : 'Sign in'}</button></div>`;
       } else if (f.kind === 'toggle') {
         detail += `<div class="row"><label class="name">${esc(f.label)}${f.help ? `<span class="desc">${esc(f.help)}</span>` : ''}</label>${toggle(`setting:${pid}:${f.key}`, !!pc.settings[f.key], f.label)}</div>`;
       } else if (f.kind === 'select') {
