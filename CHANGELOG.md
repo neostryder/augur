@@ -4,6 +4,8 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-30
+
 ### Added
 
 - [Visible] [Providers] **A model can wait until other models are spent.** On the Model rules page, Use only after lists the models that must be spent, paused or down before this one is picked. Their providers are used up in full instead of paced, so Codex runs to its limit before Copilot's GPT-6 Sol is chosen. A major or critical outage on a provider's status page counts as down, and a minor incident does not.
