@@ -8,6 +8,7 @@ import { pauseResets, renderRules, type RulesFilter, type RulesModel } from './v
 import { renderJobs, type JobsModel } from './views/jobs';
 import { renderRoutes, type RoutesModel } from './views/routes';
 import { renderService, type ConfigLine, type ServiceModel } from './views/service';
+import { BULK_FIELDS, previewBulk, type BulkPreview } from './rules-bulk';
 import { ROUTES_PATH, checkDraft, draftOf, emptyDraft, parseRoutesText, writeRoute } from './routes-model';
 import type { JobRecord } from '@augur/dispatch-protocol';
 import { renderTrayIcon } from './trayicon';
@@ -94,8 +95,8 @@ export class App {
   private hotkeyError = '';
   private catalog: ModelCatalog = {};
   private listing = new Set<string>();
-  private rules: { sel: RulesModel['sel']; query: string; filter: RulesFilter; open: Set<string>; picked: Set<string>; showHistory: boolean; addError: string; note: string; bulkTier: string; pauseMode: 'off' | 'weights'; pauseWeights: Record<string, string> } =
-    { sel: null, query: '', filter: 'all', open: new Set(), picked: new Set(), showHistory: false, addError: '', note: '', bulkTier: '', pauseMode: 'off', pauseWeights: {} };
+  private rules: { sel: RulesModel['sel']; query: string; filter: RulesFilter; open: Set<string>; picked: Set<string>; showHistory: boolean; addError: string; note: string; bulkTier: string; bulkField: string; bulkValue: string; preview: BulkPreview | null; pauseMode: 'off' | 'weights'; pauseWeights: Record<string, string> } =
+    { sel: null, query: '', filter: 'all', open: new Set(), picked: new Set(), showHistory: false, addError: '', note: '', bulkTier: '', bulkField: 'cost', bulkValue: '', preview: null, pauseMode: 'off', pauseWeights: {} };
 
   private get sync(): SyncConfig | null {
     return this.config.sync ?? null;
@@ -1123,7 +1124,21 @@ export class App {
     if (d.bulk) {
       const picked = [...this.rules.picked].map((k) => k.split('|') as [string, string]);
       const n = picked.length, count = `${n} ${n === 1 ? 'model' : 'models'}`;
-      if (d.bulk === 'clear') { this.rules.picked.clear(); this.rules.note = ''; this.rules.bulkTier = ''; }
+      if (d.bulk === 'clear') { this.rules.picked.clear(); this.rules.note = ''; this.rules.bulkTier = ''; this.rules.preview = null; }
+      else if (d.bulk === 'preview') {
+        const r = previewBulk(policy, this.rules.picked, this.rules.bulkField as BulkPreview['field'], this.rules.bulkValue);
+        if ('error' in r) { this.rules.note = r.error; this.rules.preview = null; } else { this.rules.preview = r; this.rules.note = ''; }
+        await this.render(); return true;
+      }
+      else if (d.bulk === 'preview-cancel') { this.rules.preview = null; await this.render(); return true; }
+      else if (d.bulk === 'apply-field') {
+        const pv = this.rules.preview;
+        if (!pv) return true;
+        for (const c of pv.changes) setField(policy, c.path, pv.value, this.device);
+        const label = BULK_FIELDS.find((f) => f.field === pv.field)?.label ?? pv.field, k = pv.changes.length;
+        this.rules.note = `${label} changed on ${k} ${k === 1 ? 'model' : 'models'}.`;
+        this.rules.preview = null;
+      }
       else if (d.bulk === 'activity') {
         const act = (document.getElementById('r-bulk-act') as HTMLSelectElement).value, level = (document.getElementById('r-bulk-level') as HTMLSelectElement).value;
         for (const [pid, label] of picked) setFieldMany(policy, pid, [label], `activities.${act}`, level === '' ? undefined : level === 'none' ? null : level, this.device);
@@ -1141,11 +1156,13 @@ export class App {
   /** Handles an edit on the rules page. Returns false for inputs the shared handler owns. */
   private async onRulesChange(t: HTMLInputElement): Promise<boolean> {
     const d = t.dataset, policy = this.config.policy ??= emptyPolicy();
-    if (d.pick) { if (t.checked) this.rules.picked.add(d.pick); else this.rules.picked.delete(d.pick); this.rules.note = ''; this.rules.bulkTier = ''; await this.render(); return true; }
+    if (d.pick) { if (t.checked) this.rules.picked.add(d.pick); else this.rules.picked.delete(d.pick); this.rules.note = ''; this.rules.bulkTier = ''; this.rules.preview = null; await this.render(); return true; }
+    if (d.bulkField !== undefined) { this.rules.bulkField = t.value; this.rules.bulkValue = ''; this.rules.preview = null; await this.render(); return true; }
+    if (d.bulkValue !== undefined) { this.rules.bulkValue = t.value; this.rules.preview = null; await this.render(); return true; }
     if (d.pickAll) {
       const shown = [...document.querySelectorAll<HTMLInputElement>('[data-pick]')].map((x) => x.dataset.pick!).filter((k) => k.startsWith(`${d.pickAll}|`));
       for (const k of shown) if (t.checked) this.rules.picked.add(k); else this.rules.picked.delete(k);
-      this.rules.note = ''; this.rules.bulkTier = '';
+      this.rules.note = ''; this.rules.bulkTier = ''; this.rules.preview = null;
       await this.render(); return true;
     }
     if (d.bulkTier !== undefined) {

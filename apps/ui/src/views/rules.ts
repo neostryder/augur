@@ -3,6 +3,8 @@ import {
   fieldPath, latestOnly, pauseActive, resolveModel, resolveThresholds,
   type AppConfig, type ModelCatalog, type ModelEntry, type PolicyChange, type ProviderPlugin, type Rule, type Snapshot,
 } from '@augur/core';
+import { BULK_FIELDS } from '../rules-bulk';
+import type { BulkPreview } from '../rules-bulk';
 import { ICON, ago, esc } from '../util';
 
 export type RulesFilter = 'all' | 'needs' | 'imported' | 'confirmed' | 'hidden';
@@ -28,6 +30,10 @@ export interface RulesModel {
   note: string;
   /** The data tier last applied from the bulk bar. */
   bulkTier: string;
+  /** The field chosen for a bulk edit, the value typed or picked for it, and the list of changes it would make. */
+  bulkField: string;
+  bulkValue: string;
+  preview: BulkPreview | null;
   /** What a pause about to be set does: stop the model, or change its weights while it lasts. */
   pauseMode: 'off' | 'weights';
   /** Weights chosen for that pause, by activity. An empty value leaves the activity as it is. */
@@ -326,6 +332,34 @@ function historyView(m: RulesModel): string {
 
 // ------------------------------------------------------------------ page
 
+const BOOL_LABELS: Record<string, string> = { yes: 'Yes', no: 'No' };
+const VALUE_LABELS: Record<string, Record<string, string>> = { dataTier: DATA_TIER_LABELS, output: OUTPUT_LABELS, cost: COST_LABELS };
+
+/** How a stored value reads in a preview. */
+const shown = (field: string, v: unknown): string => v === undefined ? 'provider default' : typeof v === 'boolean' ? (v ? 'Yes' : 'No') : VALUE_LABELS[field]?.[String(v)] ?? String(v);
+
+function bulkFieldRow(m: RulesModel): string {
+  const def = BULK_FIELDS.find((f) => f.field === m.bulkField) ?? BULK_FIELDS[0]!;
+  const control = def.kind === 'text'
+    ? `<input type="text" id="r-bulk-value" data-bulk-value value="${esc(m.bulkValue)}" placeholder="Empty follows the provider" aria-label="${esc(def.label)}">`
+    : `<select id="r-bulk-value" data-bulk-value aria-label="${esc(def.label)}">${opt('', 'Provider default', m.bulkValue)}${def.kind === 'bool'
+      ? ['yes', 'no'].map((v) => opt(v, BOOL_LABELS[v]!, m.bulkValue)).join('') : (def.choices ?? []).map((c) => opt(c, VALUE_LABELS[def.field]?.[c] ?? c, m.bulkValue)).join('')}</select>`;
+  return `<span class="rbulkrow"><select id="r-bulk-field" data-bulk-field aria-label="Field to set">${BULK_FIELDS.map((f) => opt(f.field, f.label, def.field)).join('')}</select>${control}
+    <button class="btn small" data-bulk="preview">Preview</button></span>`;
+}
+
+function bulkPreview(m: RulesModel): string {
+  const p = m.preview;
+  if (!p) return '';
+  const label = BULK_FIELDS.find((f) => f.field === p.field)?.label ?? p.field;
+  const n = p.changes.length;
+  const list = p.changes.slice(0, 8).map((c) => `<li><b>${esc(c.label)}</b> ${esc(shown(p.field, c.from))} to ${esc(shown(p.field, c.to))}</li>`).join('');
+  const already = p.unchanged ? (n ? ` ${p.unchanged} already ${p.unchanged === 1 ? 'has' : 'have'} it.` : ` All ${p.unchanged} already ${p.unchanged === 1 ? 'has' : 'have'} this value.`) : '';
+  return `<div class="rpreview"><span><b>${esc(label)}:</b> ${n === 0 ? 'Nothing to change.' : `${n} ${n === 1 ? 'model changes' : 'models change'} to ${esc(shown(p.field, p.value))}.`}${already}</span>
+    ${n ? `<ul>${list}${n > 8 ? `<li>and ${n - 8} more</li>` : ''}</ul>` : ''}
+    <span class="rbulkrow">${n ? `<button class="btn small primary" data-bulk="apply-field">Apply</button>` : ''}<button class="btn small" data-bulk="preview-cancel">${n ? 'Cancel' : 'Close'}</button></span></div>`;
+}
+
 export function renderRules(m: RulesModel): string {
   const pending = pendingCount(m.config);
   let html = `<div class="rules-page ${m.sel ? 'has-sel' : ''}"><header class="top">
@@ -351,7 +385,9 @@ export function renderRules(m: RulesModel): string {
     <select id="r-bulk-act" aria-label="Activity">${ACTIVITIES.map((a) => opt(a, ACTIVITY_LABELS[a], '')).join('')}</select>
     <select id="r-bulk-level" aria-label="Weight">${opt('', 'Default', 'normal')}${opt('none', 'Not allowed', 'normal')}${WEIGHT_LEVELS.map((w) => opt(w, WEIGHT_LABELS[w], 'normal')).join('')}</select>
     <button class="btn small" data-bulk="activity">Apply</button>
+    ${bulkFieldRow(m)}
     <button class="btn small" data-bulk="clear">Clear</button>
+    ${bulkPreview(m)}
     ${m.note ? `<span class="rnote" role="status">${esc(m.note)}</span>` : ''}</div>`;
   return html + '</div>';
 }

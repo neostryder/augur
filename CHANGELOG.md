@@ -6,6 +6,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Added
 
+- [Visible] [UI] **The bulk bar on Model rules can set data tier, ask first, output, sandbox, cost and effort, and shows what would change first.** Preview lists each model that changes and how many already have the value, and Apply writes exactly that list. Choosing Provider default clears the field so the models follow their provider again.
 - [Visible] [Sync] **Model rules edited on the phone or the desktop reach the other one.** A paired pair compare rules about once a minute, and a local edit is sent a few seconds after you make it. Each field keeps the newer edit, and a device with a slow clock still orders its edits after ones it has already seen, so a wrong clock cannot bring back an older value. The rules travel encrypted on their own relay channel, under a name only the two devices can work out.
 - [Visible] [UI] **A Service page sets what Augur does for agents.** Usage only keeps Augur as it was, and Also run jobs starts the dispatch service whenever the app opens. The page lists the service's settings, saves each change as you make it, and says where task text goes for the classifier you pick. First-run setup offers the same choice.
 - [Internal] [Platform] **`augur config` shows and changes the service's settings.** Each setting has a type and a range, and a value the service would ignore is refused. The two settings that lower the service's checks, and the exec adapter, can be changed from the command line and never from the app.
