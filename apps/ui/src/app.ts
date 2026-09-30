@@ -1,5 +1,5 @@
 import Sortable from 'sortablejs';
-import { ACTIVITY_LABELS, DATA_TIER_LABELS, WEIGHT_LABELS, addModels, buildPolicyFile, emptyPolicy, importPolicy, listDue, policyFromFile, policyPathFor, releaseChanges, setField, setFieldMany, setModelStatus, syncModelList, undoChange, type AppConfig, type DataTier, type ModelCatalog, type ModelEntry, type ProviderPlugin, type ReleaseChanges, type Shell, type Snapshot, type UpdateInfo } from '@augur/core';
+import { ACTIVITY_LABELS, DATA_TIER_LABELS, WEIGHT_LABELS, addModels, buildPolicyFile, emptyPolicy, importPolicy, listDue, mergePolicy, policyDigest, policyFromFile, policyPathFor, releaseChanges, setField, setFieldMany, setModelStatus, syncModelList, undoChange, type AppConfig, type DataTier, type ModelCatalog, type ModelEntry, type ProviderPlugin, type ReleaseChanges, type Shell, type Snapshot, type UpdateInfo } from '@augur/core';
 import * as core from './core';
 import type { HistoryRow } from './core';
 import { renderDashboard, tightest, updateTip, type DashboardModel } from './views/dashboard';
@@ -14,7 +14,7 @@ import { renderTrayIcon } from './trayicon';
 import { span, until } from './util';
 import qrcode from 'qrcode-generator';
 import { HOSTED } from './hosted';
-import { acceptPairing, acceptPairingFromUrl, applySharedConfig, askDesktop, createPairing, mergeSynced, pairingUrl, parsePairing, pullSnapshot, pushSnapshot, readAsk, sharedConfig, SyncUploadError } from './sync';
+import { acceptPairing, acceptPairingFromUrl, applySharedConfig, askDesktop, createPairing, mergeSynced, pairingUrl, parsePairing, pullRules, pullSnapshot, pushRules, pushSnapshot, readAsk, sharedConfig, SyncUploadError } from './sync';
 import { scanQr } from './scan';
 import { relayUrl, setRelayUrl } from './shells/browser';
 
@@ -34,6 +34,9 @@ const DESKTOP_WAIT_MS = 4 * 60_000;
 const TICK_MS = 15_000;
 const ASK_CHECK_MS = 60_000;
 const PULL_MS = 5 * 60_000;
+// Rules are compared with the paired device's at most once a minute, and a local edit starts a comparison a few seconds after it.
+const RULES_SYNC_MS = 60_000;
+const RULES_EDIT_DELAY_MS = 4_000;
 const UPDATE_FIRST_CHECK_MS = 20_000;
 const UPDATE_INTERVAL_MS = 5 * 60_000;
 const CHANGELOG_URL = (version: string) => `https://raw.githubusercontent.com/neostryder/augur/v${version}/CHANGELOG.md`;
@@ -158,6 +161,7 @@ export class App {
     if (this.shell.kind === 'desktop') this.resizeWatch.observe(this.root);
     this.shell.on('popup-shown', () => {
       void this.render();
+      void this.syncRules();
       const age = this.snapshot ? (Date.now() - new Date(this.snapshot.generatedAt).getTime()) / 1000 : Infinity;
       if (age > 60) void this.refresh();
     });
@@ -206,6 +210,7 @@ export class App {
   }
 
   private async tick(): Promise<void> {
+    void this.syncRules();
     if (this.shell.kind === 'desktop' && Date.now() - this.lastAskCheck >= ASK_CHECK_MS && await this.checkAsk(true)) return;
     const due = core.dueProviders(this.runConfig(), this.snapshot).length > 0;
     // A paired phone also pulls the desktop's numbers on its own schedule.
@@ -1060,7 +1065,41 @@ export class App {
 
   private get device(): string { return this.shell.kind === 'desktop' ? 'desktop' : 'phone'; }
 
-  private async saveRules(): Promise<void> { await this.saveConfig(false); await this.render(); }
+  private async saveRules(): Promise<void> {
+    await this.saveConfig(false);
+    await this.render();
+    if (this.sync?.channel) { clearTimeout(this.rulesTimer); this.rulesTimer = setTimeout(() => void this.syncRules(true), RULES_EDIT_DELAY_MS); }
+  }
+
+  private rulesTimer: ReturnType<typeof setTimeout> | undefined;
+  private rulesSyncing = false;
+  private lastRulesSync = 0;
+
+  /**
+   * Merges the paired device's rules into this device's and uploads the result when it differs from what the relay holds. Each field keeps the newer
+   * edit, so the two devices end with the same rules whichever of them goes first and a lost upload is repaired by the next comparison.
+   */
+  private async syncRules(force = false): Promise<void> {
+    const link = this.sync;
+    if (!link?.channel || !this.config.policy || this.rulesSyncing) return;
+    if (!force && Date.now() - this.lastRulesSync < RULES_SYNC_MS) return;
+    this.rulesSyncing = true;
+    this.lastRulesSync = Date.now();
+    try {
+      const direct = this.shell.kind === 'pwa';
+      const remote = await pullRules(this.shell.host, link, direct);
+      const local = this.config.policy;
+      const merged = remote ? mergePolicy(local, remote) : local;
+      if (JSON.stringify(merged.stamps) !== JSON.stringify(local.stamps) || merged.clock !== local.clock || policyDigest(merged) !== policyDigest(local)) {
+        this.config.policy = merged;
+        await this.saveConfig(false);
+        if (this.view === 'rules' || this.view === 'routes') await this.render();
+      }
+      if (!remote || policyDigest(merged) !== policyDigest(remote)) await pushRules(this.shell.host, link, merged, direct);
+    } catch {
+      // The relay was unreachable or refused the write; the next comparison tries again.
+    } finally { this.rulesSyncing = false; }
+  }
 
   /** Handles a click on the rules page. Returns false when the click belongs to the shared handler. */
   private async onRulesClick(t: HTMLElement): Promise<boolean> {

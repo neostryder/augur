@@ -1,6 +1,7 @@
 // Desktop-to-phone sync. The desktop encrypts its snapshot with AES-GCM under a key that only
 // it and the paired phone know, then stores the ciphertext on the relay. The relay cannot read it.
-import type { AlertConfig, AppConfig, GenericProviderDef, Host, LayoutConfig, ProviderSettings, Shell, Snapshot } from '@augur/core';
+import { migratePolicy } from '@augur/core';
+import type { AlertConfig, AppConfig, GenericProviderDef, Host, HttpRequest, LayoutConfig, PolicyConfig, ProviderSettings, Shell, Snapshot } from '@augur/core';
 import type { HistoryRow } from './core';
 
 /** The desktop settings a newly paired phone starts from. No secrets: keys never leave the desktop. */
@@ -140,6 +141,53 @@ export async function pullSnapshot(host: Host, link: SyncLink): Promise<SyncPayl
   const box = (await r.json()) as { v?: number; iv: string; data: string };
   const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(box.iv) }, await aesKey(unb64(keyText)), unb64(box.data));
   return JSON.parse(box.v === 2 ? await gunzip(plain) : new TextDecoder().decode(plain));
+}
+
+/**
+ * Rules travel on a second relay channel that both devices can write. Its secret is derived from the pairing key, which only the two devices hold,
+ * so no extra secret is stored or sent, and the relay sees only ciphertext under an unguessable name.
+ */
+async function rulesChannel(host: Host): Promise<{ key: Uint8Array<ArrayBuffer>; secret: string; channel: string } | null> {
+  const keyText = await host.secret(KEY_SECRET);
+  if (!keyText) return null;
+  const key = unb64(keyText);
+  const mac = await crypto.subtle.importKey('raw', key, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const secret = b64(new Uint8Array(await crypto.subtle.sign('HMAC', mac, new TextEncoder().encode('augur rules channel v1'))));
+  return { key, secret, channel: await sha256Hex(secret) };
+}
+
+/**
+ * The phone talks to the relay directly, since the relay's own /fetch proxy only reaches the providers' hosts. The desktop goes through its shell.
+ * A 404 is an answer here, not a failure.
+ */
+async function relayCall(host: Host, direct: boolean, url: string, init: Omit<HttpRequest, 'url'>): Promise<{ status: number; body: string }> {
+  if (!direct) return host.http({ url, ...init });
+  const r = await fetch(url, { method: init.method ?? 'GET', ...(init.headers ? { headers: init.headers } : {}), ...(init.body !== undefined ? { body: init.body } : {}), cache: 'no-store' });
+  return { status: r.status, body: await r.text() };
+}
+
+/** Uploads this device's rules for the other device to merge. `direct` is true on the phone. */
+export async function pushRules(host: Host, link: SyncLink, policy: PolicyConfig, direct = false): Promise<void> {
+  const rc = await rulesChannel(host);
+  if (!rc) return;
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const data = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await aesKey(rc.key), await gzip(JSON.stringify({ policy }))));
+  const res = await relayCall(host, direct, `${link.relay}/sync/${rc.channel}`, { method: 'PUT', headers: { 'content-type': 'application/json', 'x-sync-secret': rc.secret },
+    body: JSON.stringify({ v: 2, iv: b64(iv), data: b64(data) }) });
+  if (res.status !== 200) throw new SyncUploadError(res.status);
+}
+
+/** The other device's rules: null when none have been uploaded yet, and a rejection when the relay could not be reached. */
+export async function pullRules(host: Host, link: SyncLink, direct = false): Promise<PolicyConfig | null> {
+  const rc = await rulesChannel(host);
+  if (!rc) return null;
+  const res = await relayCall(host, direct, `${link.relay}/sync/${rc.channel}`, { method: 'GET' });
+  if (res.status === 404) return null;
+  if (res.status !== 200) throw new Error(`Rules download failed (${res.status})`);
+  const box = JSON.parse(res.body) as { iv: string; data: string };
+  const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(box.iv) }, await aesKey(rc.key), unb64(box.data));
+  const parsed = JSON.parse(await gunzip(plain)) as { policy?: unknown };
+  return parsed.policy ? migratePolicy(parsed.policy) : null;
 }
 
 /** Phone side: asks the paired desktop to read every provider now. Returns the relay's time of the request. */

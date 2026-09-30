@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { addModels, buildPolicyFile, emptyPolicy, fieldPath, mergePolicy, migratePolicy, pauseActive, policyFromFile, policyPathFor, resolveModel, setField, setFieldMany, undoChange } from '../src/policy.js';
+import { addModels, buildPolicyFile, emptyPolicy, fieldPath, mergePolicy, migratePolicy, pauseActive, policyFromFile, policyPathFor, resolveModel, setField, setFieldMany, stampTime, undoChange } from '../src/policy.js';
 import { importPolicy } from '../src/policy-import.js';
 import type { PolicyConfig } from '../src/policy.js';
 import { defaultConfig, migrateConfig } from '../src/config.js';
@@ -82,8 +82,8 @@ describe('policy', () => {
   it('merges two devices field by field with the newer edit winning', () => {
     const desk = sample(), phone = structuredClone(desk);
     setField(desk, fieldPath('codex', 'codex/sol', 'cost'), 'cheap', 'desktop', t1);
-    setField(phone, fieldPath('codex', 'codex/sol', 'cost'), 'moderate', 'phone', t2);
     setField(phone, fieldPath('grok', 'xai/grok', 'activities.research'), 'preferred', 'phone', t1);
+    setField(phone, fieldPath('codex', 'codex/sol', 'cost'), 'moderate', 'phone', t2);
     setField(desk, fieldPath('grok', 'xai/grok', 'activities.research'), null, 'desktop', t2);
     addModels(phone, 'copilot', [{ label: 'copilot/claude-sonnet-5', id: 'claude-sonnet-5' }], 'live', t1);
     const merged = mergePolicy(desk, phone);
@@ -92,6 +92,65 @@ describe('policy', () => {
     expect(merged.providers.copilot!.models['copilot/claude-sonnet-5']!.status).toBe('unreviewed');
     expect(merged.history).toHaveLength(4);
     expect(mergePolicy(merged, merged).history).toHaveLength(4);
+  });
+
+  describe('clock stamps', () => {
+    const cost = fieldPath('codex', 'codex/sol', 'cost');
+    const same = (a: PolicyConfig, b: PolicyConfig) => { expect(a.providers).toEqual(b.providers); expect(a.stamps).toEqual(b.stamps); expect(a.clock).toEqual(b.clock); expect(a.history).toEqual(b.history); };
+
+    it('orders an edit after one it has merged, even when the device clock runs an hour slow', () => {
+      const desk = sample(), phone = structuredClone(desk);
+      setField(desk, cost, 'cheap', 'desktop', t2);
+      const behind = new Date(t2.getTime() - 3600_000);
+      const seen = mergePolicy(phone, desk);
+      setField(seen, cost, 'moderate', 'phone', behind);
+      expect(seen.stamps[cost]! > desk.stamps[cost]!).toBe(true);
+      expect(mergePolicy(desk, seen).providers.codex!.models['codex/sol']!.rule.cost).toBe('moderate');
+      expect(mergePolicy(seen, desk).providers.codex!.models['codex/sol']!.rule.cost).toBe('moderate');
+    });
+
+    it('counts edits made in the same millisecond and breaks a tie by device', () => {
+      const p = sample();
+      setField(p, cost, 'cheap', 'desktop', t1);
+      setField(p, cost, 'moderate', 'desktop', t1);
+      setField(p, fieldPath('codex', 'codex/luna', 'cost'), 'cheap', 'desktop', t1);
+      expect(p.stamps[cost]).toBe(`${t1.toISOString()}~0001~desktop`);
+      expect(p.stamps[fieldPath('codex', 'codex/luna', 'cost')]).toBe(`${t1.toISOString()}~0002~desktop`);
+      const a = sample(), b = sample();
+      setField(a, cost, 'cheap', 'desktop', t1);
+      setField(b, cost, 'moderate', 'phone', t1);
+      same(mergePolicy(a, b), mergePolicy(b, a));
+      expect(mergePolicy(a, b).providers.codex!.models['codex/sol']!.rule.cost).toBe('moderate');
+    });
+
+    it('reaches the same state whichever way two devices merge, and merging again changes nothing', () => {
+      const desk = sample(), phone = structuredClone(desk);
+      setField(desk, cost, 'cheap', 'desktop', t1);
+      setField(desk, fieldPath('grok', 'xai/grok', 'activities.research'), null, 'desktop', t2);
+      setField(phone, cost, 'moderate', 'phone', new Date(t1.getTime() - 60_000));
+      setField(phone, fieldPath('codex', null, 'dataTier'), 'public', 'phone', t2);
+      const ab = mergePolicy(desk, phone), ba = mergePolicy(phone, desk);
+      same(ab, ba);
+      same(mergePolicy(ab, ba), ab);
+      same(mergePolicy(ab, desk), ab);
+    });
+
+    it('still merges rules saved with plain time stamps, which sort before a clock stamp of the same instant', () => {
+      const old = sample();
+      old.stamps[cost] = t1.toISOString();
+      const fresh = structuredClone(old);
+      setField(fresh, cost, 'cheap', 'phone', t1);
+      expect(mergePolicy(old, fresh).providers.codex!.models['codex/sol']!.rule.cost).toBe('cheap');
+      expect(stampTime(fresh.stamps[cost]!)).toBe(t1.toISOString());
+    });
+
+    it('keeps policy.json updatedAt a plain time and the history readable', () => {
+      const p = sample();
+      setField(p, cost, 'cheap', 'desktop', t1);
+      expect(buildPolicyFile(p, meta).updatedAt).toBe(t1.toISOString());
+      expect(p.history.at(-1)!.at).toBe(t1.toISOString());
+      expect(migratePolicy(JSON.parse(JSON.stringify(p))).clock).toBe(p.clock);
+    });
   });
 
   it('drops malformed values on load', () => {

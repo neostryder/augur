@@ -80,13 +80,16 @@ export interface ProviderPolicy {
   models: Record<string, ModelEntry>;
 }
 
-export interface PolicyChange { at: string; device: string; path: string; from: unknown; to: unknown }
+/** `at` is the wall-clock time of the edit. `stamp` is its hybrid logical clock stamp, which orders edits across devices; changes saved before stamps existed have none. */
+export interface PolicyChange { at: string; device: string; path: string; from: unknown; to: unknown; stamp?: string }
 
 export interface PolicyConfig {
   /** Keyed by provider id. Models are keyed by their `<provider>/<model>` route label. */
   providers: Record<string, ProviderPolicy>;
-  /** Edit time per field path, so two devices merge field by field with the newer edit winning. */
+  /** Clock stamp of the newest edit per field path, so two devices merge field by field with the newer edit winning. */
   stamps: Record<string, string>;
+  /** The newest stamp this device has issued or seen. The next edit is stamped after it even when the device's own clock runs behind. */
+  clock?: string;
   /** Newest last. */
   history: PolicyChange[];
 }
@@ -108,6 +111,25 @@ const SEP = '|';
 export function fieldPath(provider: string, model: string | null, field: string): string { return [provider, model ?? '', field].join(SEP); }
 
 function splitPath(path: string): [string, string, string] { const [provider = '', model = '', field = ''] = path.split(SEP); return [provider, model, field]; }
+
+const CLOCK = '~';
+/** Stamps are `<ISO time>~<counter>~<device>`. Compared as plain strings they order by time, then counter, then device, and an older bare ISO time sorts before any stamp of the same instant. */
+export const stampTime = (stamp: string): string => stamp.split(CLOCK, 1)[0] as string;
+const later = (a: string | undefined, b: string | undefined): string | undefined => (a === undefined ? b : b === undefined ? a : a < b ? b : a);
+
+/**
+ * A hybrid logical clock: the wall clock, held forward past any stamp already seen, with a counter for edits in the same millisecond.
+ * A phone whose clock is an hour slow still stamps its next edit after the desktop's newest one it has merged.
+ */
+function nextStamp(policy: PolicyConfig, device: string, now: Date): string {
+  const parts = policy.clock?.split(CLOCK) ?? [];
+  const lastMs = parts[0] ? Date.parse(parts[0]) : 0;
+  const ms = Math.max(now.getTime(), Number.isFinite(lastMs) ? lastMs : 0);
+  const n = ms === lastMs ? Number(parts[1] ?? 0) + 1 : 0;
+  const stamp = `${new Date(ms).toISOString()}${CLOCK}${String(n).padStart(4, '0')}${CLOCK}${device}`;
+  policy.clock = stamp;
+  return stamp;
+}
 
 export function emptyPolicy(): PolicyConfig { return { providers: {}, stamps: {}, history: [] }; }
 
@@ -163,9 +185,9 @@ export function setField(policy: PolicyConfig, path: string, value: unknown, dev
   const from = getAt(policy, path);
   if (JSON.stringify(from) === JSON.stringify(value)) return;
   setAt(policy, path, value);
-  const at = now.toISOString();
-  policy.stamps[path] = at;
-  policy.history.push({ at, device, path, from: from ?? null, to: value ?? null });
+  const stamp = nextStamp(policy, device, now);
+  policy.stamps[path] = stamp;
+  policy.history.push({ at: stampTime(stamp), stamp, device, path, from: from ?? null, to: value ?? null });
   if (policy.history.length > HISTORY_LIMIT) policy.history.splice(0, policy.history.length - HISTORY_LIMIT);
 }
 
@@ -206,13 +228,24 @@ export function mergePolicy(local: PolicyConfig, remote: PolicyConfig): PolicyCo
     setAt(out, path, structuredClone(getAt(remote, path)));
     out.stamps[path] = at;
   }
+  out.clock = [remote.clock, ...Object.values(remote.stamps)].reduce(later, out.clock);
   const seen = new Set(out.history.map(key));
   for (const change of remote.history) if (!seen.has(key(change))) out.history.push(change);
-  out.history.sort((a, b) => a.at.localeCompare(b.at));
+  out.history.sort((a, b) => (order(a) < order(b) ? -1 : order(a) > order(b) ? 1 : 0));
   if (out.history.length > HISTORY_LIMIT) out.history.splice(0, out.history.length - HISTORY_LIMIT);
   return out;
 }
-const key = (c: PolicyChange) => `${c.at}${SEP}${c.device}${SEP}${c.path}`;
+/**
+ * What two devices must agree on to hold the same rules: every field's stamp and every model. The clock and the history are left out,
+ * since a device that has merged the other's edits ends with the same fields and possibly a later clock.
+ */
+export function policyDigest(policy: PolicyConfig): string {
+  const models = Object.entries(policy.providers).flatMap(([id, p]) => Object.keys(p.models).map(label => `${id}${SEP}${label}`)).sort();
+  return JSON.stringify([Object.entries(policy.stamps).sort(([a], [b]) => (a < b ? -1 : 1)), models]);
+}
+
+const order = (c: PolicyChange) => c.stamp ?? c.at;
+const key = (c: PolicyChange) => `${order(c)}${SEP}${c.device}${SEP}${c.path}`;
 
 // ------------------------------------------------------------------ resolution
 
@@ -288,7 +321,7 @@ export function buildPolicyFile(policy: PolicyConfig, providers: Array<{ id: str
     out[meta.id] = { name: meta.name, metered: meta.metered, thresholds: resolveThresholds(p), models };
   }
   const stamps = Object.values(policy.stamps).sort();
-  return { schema: 1, updatedAt: stamps.at(-1) ?? now.toISOString(), weights: WEIGHTS, dataTiers: DATA_TIERS, activities: ACTIVITIES, unreviewed: unreviewed.sort(), providers: out };
+  return { schema: 1, updatedAt: stamps.length ? stampTime(stamps.at(-1) as string) : now.toISOString(), weights: WEIGHTS, dataTiers: DATA_TIERS, activities: ACTIVITIES, unreviewed: unreviewed.sort(), providers: out };
 }
 
 /**
@@ -377,9 +410,10 @@ export function migratePolicy(value: unknown): PolicyConfig {
       ...(p.listMode === 'auto' || p.listMode === 'catalog' ? { listMode: p.listMode } : {}) };
   }
   for (const [path, at] of Object.entries(obj(s.stamps))) if (typeof at === 'string' && path.split(SEP).length === 3) policy.stamps[path] = at;
+  if (typeof s.clock === 'string' && /^\d{4}-\d\d-\d\dT[\d:.]+Z(~\d+~.*)?$/.test(s.clock)) policy.clock = s.clock;
   if (Array.isArray(s.history)) for (const c of s.history) {
     const e = obj(c);
-    if (typeof e.at === 'string' && typeof e.path === 'string' && typeof e.device === 'string') policy.history.push({ at: e.at, device: e.device, path: e.path, from: e.from ?? null, to: e.to ?? null });
+    if (typeof e.at === 'string' && typeof e.path === 'string' && typeof e.device === 'string') policy.history.push({ at: e.at, device: e.device, path: e.path, from: e.from ?? null, to: e.to ?? null, ...(typeof e.stamp === 'string' ? { stamp: e.stamp } : {}) });
   }
   policy.history.splice(0, Math.max(0, policy.history.length - HISTORY_LIMIT));
   return policy;
