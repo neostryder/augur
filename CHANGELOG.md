@@ -6,6 +6,8 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Added
 
+- [Visible] [UI] **The phone app refreshes when you pull down from the top.** A pull reads every provider again, pulls the desktop's latest numbers, checks for newer app files and reloads.
+- [Internal] [Platform] **Each release deploys the web app and relay.** A workflow builds the web app from the tag and runs the relay's deploy with a Cloudflare token and the relay config kept as repository secrets, so a phone that opens the app gets the release's files.
 - [Visible] [UI] **Settings show when a claude.ai or TypeSafe session is signed in.** The Sign in button reads Sign in again and a Signed in label appears once the provider has read your account.
 
 ### Changed

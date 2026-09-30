@@ -17,6 +17,7 @@ import { renderTrayIcon } from './trayicon';
 import { span, until } from './util';
 import qrcode from 'qrcode-generator';
 import { HOSTED } from './hosted';
+import { attachPullToRefresh } from './pull-refresh';
 import { acceptPairing, acceptPairingFromUrl, applySharedConfig, askDesktop, createPairing, mergeSynced, pairingUrl, parsePairing, pullRules, pullSnapshot, pushRules, pushSnapshot, readAsk, sharedConfig, SyncUploadError } from './sync';
 import { scanQr } from './scan';
 import { relayUrl, setRelayUrl } from './shells/browser';
@@ -158,6 +159,7 @@ export class App {
     this.applyTheme();
     this.systemDark.addEventListener('change', () => { this.applyTheme(); void this.render(); void this.updateTray(); });
     this.wireEvents();
+    if (this.shell.kind === 'pwa') attachPullToRefresh(() => this.pullRefresh());
     this.shell.on('refresh-requested', () => void this.refresh(true));
     this.shell.on('web-session-ready', () => void this.refresh(true, this.config.providers.filter((pc) => this.pluginMap().get(pc.id)?.fields.some((f) => f.kind === 'signin')).map((pc) => pc.id)));
     this.shell.on('settings-requested', () => { this.view = 'settings'; void this.render(); });
@@ -1255,6 +1257,13 @@ export class App {
   }
 
   /** Handles an edit on the rules page. Returns false for inputs the shared handler owns. */
+  /** Pulling the phone app down: read every provider again, pull the desktop's latest, look for newer app files, and reload on them. */
+  private async pullRefresh(): Promise<void> {
+    await this.refresh(true).catch(() => undefined);
+    try { await (await navigator.serviceWorker?.getRegistration())?.update(); } catch { /* offline: the saved files stay */ }
+    location.reload();
+  }
+
   /** Back to the main usage view, closing whatever page or detail was open. Every way of opening the panel starts here. */
   private goHome(): void {
     if (this.view === 'jobs') { if (this.jobs.sel) this.closeJob(); this.leaveJobs(); }
