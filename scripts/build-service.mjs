@@ -1,7 +1,7 @@
 // Builds the dispatch service for a packaged install: plain JavaScript files, a copy of the Node runtime and the job host, in dist/service.
 // Nothing in there needs tsx, node_modules or a source checkout. Run with `pnpm build:service`.
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
@@ -22,7 +22,8 @@ const entries = {
 const localDir = join(root, 'packages/augurd/src/adapters/private');
 if (existsSync(join(localDir, 'index.ts'))) {
   entries['local-adapters'] = join(localDir, 'index.ts');
-  if (existsSync(join(localDir, 'web-chat-call.ts'))) entries['web-chat-call'] = join(localDir, 'web-chat-call.ts');
+  // A local adapter that runs its work in a child process names that script `<something>-call.ts`.
+  for (const f of readdirSync(localDir)) if (f.endsWith('-call.ts')) entries[f.slice(0, -3)] = join(localDir, f);
 }
 await build({
   entryPoints: entries, outdir: out, outExtension: { '.js': '.mjs' }, bundle: true, platform: 'node', format: 'esm', target: 'node24',
