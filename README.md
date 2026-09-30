@@ -33,15 +33,17 @@ You can add any other provider whose usage endpoint returns JSON, without writin
 
 ## Install
 
-**Windows:** download the installer from the latest release and run it. No administrator rights are needed. The installer is not code-signed yet, so Windows SmartScreen may warn the first time; choose More info, then Run anyway. The icon may land in the hidden-icons area at first. Drag it onto the taskbar to keep it in view.
+Every installer is on the [releases page](https://github.com/neostryder/augur/releases/latest).
 
-**macOS:** download the `.dmg` from the latest release (one build runs on both Apple silicon and Intel) and drag Augur into Applications. The app is not signed with an Apple developer certificate yet, so macOS blocks it the first time you open it. Open System Settings, go to Privacy & Security, choose Open Anyway next to the message about Augur, and confirm. After that it opens normally.
+**Windows:** download the installer and run it. No administrator rights are needed. The installer is not code-signed yet, so Windows SmartScreen may warn the first time; choose More info, then Run anyway. The icon may land in the hidden-icons area at first. Drag it onto the taskbar to keep it in view.
+
+**macOS:** download the `.dmg` (one build runs on both Apple silicon and Intel) and drag Augur into Applications. The app is not signed with an Apple developer certificate yet, so macOS blocks it the first time you open it. Open System Settings, go to Privacy & Security, choose Open Anyway next to the message about Augur, and confirm. After that it opens normally.
 
 **Linux:** download the AppImage (runs on most distributions, including Arch, as long as WebKitGTK 4.1 is installed), or the `.deb` or `.rpm`. The tray icon needs an AppIndicator host: KDE Plasma has one built in, and GNOME needs the AppIndicator extension. On Linux the panel opens from the icon's menu rather than a click.
 
 Every release also carries `SHA256SUMS.txt`, with a checksum for each installer, and a bill of materials for the JavaScript and Rust dependencies. Since the installers are not signed, compare a download against its line in that file before you run it: `Get-FileHash <file>` on Windows, `shasum -a 256 <file>` on macOS, `sha256sum <file>` on Linux.
 
-The first launch shows a setup screen. Providers that are already signed in on the computer are turned on for you. For the others, paste an API key and turn them on. Keys are stored in the operating system's keychain (Windows Credential Manager, the macOS Keychain, or the Secret Service on Linux), and each one is sent only to its own provider.
+The first launch shows a setup screen. Providers that are already signed in on the computer are turned on for you. For the others, paste an API key and turn them on. The Claude, Codex and Grok cards need the matching app signed in on this computer. Without one of them, turn on a provider that takes an API key, such as OpenRouter. Keys are stored in the operating system's keychain (Windows Credential Manager, the macOS Keychain, or the Secret Service on Linux), and each one is sent only to its own provider.
 
 To see your TypeSafe balance, open Jev in settings and choose Sign in. Augur keeps that console session in its own window and uses it only to read your billing page.
 
@@ -84,7 +86,9 @@ augur run luna --activity write_code --data internal --prompt "Add tests for par
 augur usage
 ```
 
-Here `luna` is a route you added on the Routes page. A run has to state its activity and data tier, and it has to follow a pick made for the same caller in the last hour. `augur --help` lists every command.
+Here `luna` is a route you added on the Routes page. To add one, choose Add route, name it, pick the model it runs and the adapter that runs it (Codex CLI, Grok CLI, GitHub Copilot CLI, or an OpenAI-style or Anthropic-style API, among others), and fill in the options the form marks as required. Test route sends one word through it, so a bad path or a missing key shows up before an agent depends on the route.
+
+A run has to state its activity and data tier, and it has to follow a pick made for the same caller in the last hour. `--activity` takes one of `write_code`, `review_code`, `research`, `reason_critique`, `draft_prose`, `summarize_extract`, `long_context`, `bulk_tagging`, `typed_decisions`, `read_images`, `generate_images`, `generate_video` or `speech`. `--data` takes `public`, `internal`, `sensitive` or `regulated`, and a model is only offered for data at or below the tier its rules allow. A caller is whatever asks: the `augur` command, an MCP client or a script. `augur --help` lists every command.
 
 - The Jobs page lists what agents started, with each job's result, output and errors, and lets you cancel one that is still going.
 - The Routes page joins a model to the program that runs it. A route is an entry in `dispatch/routes.json`, and Test route checks that it works. An API route can keep its key in the Windows credential store: choose store as the key source and save the key on the page, and it never appears in `routes.json` or a job record.
@@ -180,7 +184,7 @@ A key saved in settings takes priority over the same key in the project.
 
 ## Privacy
 
-Augur has no accounts and no server that holds your data. The desktop app talks to each provider directly and keeps its settings and usage history on your computer. If you run the dispatch service (Windows only), it also keeps a job history in a SQLite file in your profile: each job's route, model, state, timing, usage, folder and the length of its prompt and answer, and the prompt itself only if you turn that on. Job folders are deleted after 30 days by default, and the records stay until you delete the service's data folder. The relay the phone app uses passes each request, including the API key in it, to a fixed list of usage and status endpoints. Its code stores and logs none of it, though Cloudflare, which runs it, keeps its own request logs. Sync data on the relay is encrypted on your computer with a key only your paired phone has, so the relay holds ciphertext it cannot read, and it expires after 14 days. See SECURITY.md for what is stored where and how to report a problem.
+Augur has no accounts, and the only server it uses is the optional relay behind the phone app. The desktop app talks to each provider directly and keeps its settings and usage history on your computer. If you run the dispatch service (Windows only), it also keeps a job history in a SQLite file in your profile: each job's route, model, state, timing, usage, folder and the length of its prompt and answer, and the prompt itself only if you turn that on. Job folders are deleted after 30 days by default, and the records stay until you delete the service's data folder. The relay the phone app uses passes each request, including the API key in it, to a fixed list of usage and status endpoints. Its code stores and logs none of it, though Cloudflare, which runs it, keeps its own request logs. Sync data on the relay is encrypted on your computer with a key only your paired phone has, so the relay holds ciphertext it cannot read, and it expires after 14 days. See SECURITY.md for what is stored where and how to report a problem.
 
 ## License
 
