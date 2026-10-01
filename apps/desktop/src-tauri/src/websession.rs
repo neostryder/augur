@@ -146,7 +146,13 @@ async fn read_site(
     let site = site.to_string();
     let spec = self::site(&site).ok_or("Unknown site")?;
     // A reading the user asked for skips the cache, so a change on the account page shows at once.
-    if let Some((at, value)) = state.cache.lock().map_err(|e| e.to_string())?.get(&site).filter(|_| !skip_cache) {
+    if let Some((at, value)) = state
+        .cache
+        .lock()
+        .map_err(|e| e.to_string())?
+        .get(&site)
+        .filter(|_| !skip_cache)
+    {
         let signed_in = value.get("signedIn") == Some(&Value::Bool(true));
         let keep = if signed_in {
             spec.cache_for
