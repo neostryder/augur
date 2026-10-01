@@ -4,6 +4,8 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-10-01
+
 ### Fixed
 
 - [Visible] [Platform] [Security] **Rule edits asked for through the MCP server now reach the app.** The app was refused when it read the edit inbox and wrote its results, so a queued edit was never applied or held for you. The two files are now on the list of files the app may use.
