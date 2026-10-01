@@ -6,6 +6,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Fixed
 
+- [Visible] [Platform] [Security] **Rule edits asked for through the MCP server now reach the app.** The app was refused when it read the edit inbox and wrote its results, so a queued edit was never applied or held for you. The two files are now on the list of files the app may use.
 - [Visible] [Platform] **A Windows update no longer stops on augur-node.exe.** The installer ends the MCP servers that open Claude sessions run from that file, once the service is stopped with no job running, so the update completes without closing them by hand.
 
 ## [1.2.1] - 2026-10-01

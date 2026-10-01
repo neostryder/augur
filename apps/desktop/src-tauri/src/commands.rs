@@ -58,7 +58,8 @@ async fn allowed_home_path(app: &tauri::AppHandle, path: &str) -> Result<PathBuf
     ) || path == ".codex/models_cache.json";
     let config = load_json(app.clone(), "config".into()).await?;
     // Besides the three login files and the Codex model list, only the exact export file named in settings (a .json file),
-    // the rules file and rules import file in the same folder, and the dispatch routes file in that folder's dispatch subfolder.
+    // the rules file and rules import file in the same folder, the rule-edit inbox and its results file there, and the dispatch routes file
+    // in that folder's dispatch subfolder.
     let export_file = config
         .as_deref()
         .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
@@ -73,6 +74,8 @@ async fn allowed_home_path(app: &tauri::AppHandle, path: &str) -> Result<PathBuf
     let allowed = export_file.as_deref() == Some(relative.as_path())
         || beside_export("policy.json").as_deref() == Some(relative.as_path())
         || beside_export("policy-import.json").as_deref() == Some(relative.as_path())
+        || beside_export("policy-edits.jsonl").as_deref() == Some(relative.as_path())
+        || beside_export("policy-edit-results.json").as_deref() == Some(relative.as_path())
         || export_file.as_deref().map(dispatch_routes_path).as_deref() == Some(relative.as_path());
     if !is_credential && !allowed {
         return Err("Home file path is not allowed".into());
