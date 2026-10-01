@@ -8,6 +8,10 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 - [Visible] [UI] **The panel opens on the usage view when Augur starts.** Turn off Open the panel at launch in settings to keep Augur in the tray until you open it.
 
+### Fixed
+
+- [Internal] [Platform] **A release can be published for a tag that adds a workflow file.** GitHub's automatic workflow token cannot create a release for the first tag that adds a workflow file, so the installer jobs failed with a 403 on v1.2.0. For such a tag, create the release first with `gh release create <tag> --verify-tag --prerelease`, re-run the failed jobs so they attach the installers, then mark the release as latest.
+
 ## [1.2.0] - 2026-09-30
 
 ### Added
