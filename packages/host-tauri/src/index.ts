@@ -50,7 +50,7 @@ export function createTauriShell(): Shell {
   const host: Host = {
     platform: platform(),
     copilotUsage: () => invoke<HttpResponse>('copilot_usage'),
-    webSession: (site: string) => invoke<Record<string, unknown> | null>('web_session_read', { site }),
+    webSession: (site: string, options?: { fresh?: boolean }) => invoke<Record<string, unknown> | null>('web_session_read', { site, fresh: options?.fresh === true }),
     http: (req: HttpRequest): Promise<HttpResponse> => invoke('http_request', {
       url: req.url,
       method: req.method ?? 'GET',

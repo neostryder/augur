@@ -72,6 +72,14 @@ describe('Claude limit resets', () => {
   const notes = async (host: Host, settings: Record<string, string | boolean | undefined>) => (await claude.fetch(host, settings)).notes as Record<string, unknown>;
   const row = (over: Record<string, unknown>) => ({ ...{ id: 'g', resetsLeft: 1, resetsTotal: 1, endsAt: '2026-10-22T16:00:00Z', paused: false, usableNow: true, clears: [] }, ...over });
 
+  it('asks the web reader to skip its cache only when the refresh was requested', async () => {
+    const seen: unknown[] = [];
+    const host = { ...session({ signedIn: true, grants: [] }), webSession: async (_site: string, o?: { fresh?: boolean }) => { seen.push(o?.fresh); return { signedIn: true, grants: [] }; } } as Host;
+    await claude.fetch(host, { web: true });
+    await claude.fetch(host, { web: true }, { force: true });
+    expect(seen).toEqual([false, true]);
+  });
+
   it('counts the resets still usable from the claude.ai reading and says when the first ends', async () => {
     const n = await notes(session({ signedIn: true, grants: [row({}), row({ id: 'h', resetsLeft: 2, endsAt: '2026-10-10T00:00:00Z' }), row({ id: 'old', endsAt: '2026-09-01T00:00:00Z' }), row({ id: 'paused', paused: true }), row({ id: 'used', resetsLeft: 0 })] }), { web: true });
     expect(n.resets_available).toBe(3);

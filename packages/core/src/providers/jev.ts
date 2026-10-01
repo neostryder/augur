@@ -7,7 +7,7 @@ export const jev: ProviderPlugin = {
   refreshSeconds: 7 * 86400,
   fields: [{ key: 'apiKey', label: 'API key', kind: 'secret', required: true },
     { key: 'console', label: 'TypeSafe console', kind: 'signin', site: 'typesafe', help: 'Sign in once to show your credit balance and last 7 days of usage.' }, { key: 'ledgerPath', label: 'Ledger path', kind: 'text', help: 'Home-relative JSONL path with ts and input_tokens' }],
-  async fetch(host, settings) {
+  async fetch(host, settings, options) {
     const key = await host.secret('jev.apiKey');
     if (!key) throw new Error('No API key yet. Add one in settings.');
     const start = (host.now?.() ?? new Date()).getTime();
@@ -39,7 +39,7 @@ export const jev: ProviderPlugin = {
     }
     const money: Money[] = [];
     // TypeSafe has no usage API for keys yet, so balance and usage come from the signed-in console.
-    const session = host.webSession ? await host.webSession('typesafe').catch(() => null) : null;
+    const session = host.webSession ? await host.webSession('typesafe', { fresh: options?.force === true }).catch(() => null) : null;
     if (session?.signedIn === true) {
       const balance = num(session.balance), week = num(session.spend7d);
       if (balance != null) money.push({ id: 'balance', label: 'Credit balance', amount: balance, currency: 'USD' });

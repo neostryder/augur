@@ -46,7 +46,7 @@ export async function collect(host: Host, config: AppConfig, previous?: Snapshot
     const attemptedAt = new Date(now).toISOString();
     const status = await fetchStatus(host, plugin.links);
     try {
-      const result = await plugin.fetch(host, row.settings);
+      const result = await plugin.fetch(host, row.settings, { force: options.force === true });
       const item: ProviderSnapshot = { ...result, id: plugin.id, name: plugin.name, ok: true, stale: false,
         fetchedAt: (host.now?.() ?? new Date()).toISOString(), attemptedAt, error: null, links: plugin.links, status };
       return [row.id, item] as const;

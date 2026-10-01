@@ -70,7 +70,7 @@ export const claude: ProviderPlugin = {
     { key: 'resets', label: 'Limit resets in hand', kind: 'text', placeholder: '0', help: 'The count to use when the claude.ai reading is off or unavailable.' },
   ],
   detect: async host => { try { await read(host); return true; } catch { return false; } },
-  async fetch(host, settings) {
+  async fetch(host, settings, options) {
     const data = await withLogin(host, token => json(host, { url: 'https://api.anthropic.com/api/oauth/usage', headers: headers(token) }));
     const meters: Meter[] = [];
     for (const row of Array.isArray(data.limits) ? data.limits : []) {
@@ -91,7 +91,7 @@ export const claude: ProviderPlugin = {
     const money = extra.is_enabled && num(used.amount_minor) !== null ? [{ id: 'extra', label: 'Extra usage spend',
       amount: round(Number(used.amount_minor) / 10 ** (num(used.exponent) ?? 2), 2), currency: String(used.currency ?? 'USD') }] : [];
     const manual = Math.max(0, Math.floor(Number(settings?.resets) || 0)), latest = await read(host);
-    const web = settings?.web === true && host.webSession ? await host.webSession('claude').catch(() => null) : null;
+    const web = settings?.web === true && host.webSession ? await host.webSession('claude', { fresh: options?.force === true }).catch(() => null) : null;
     const grants = web?.signedIn === true ? openGrants(web.grants, host.now?.() ?? new Date()) : null;
     const resets = grants ? grants.left : manual;
     return { plan: obj(latest.data.claudeAiOauth).subscriptionType ?? null, meters, money,

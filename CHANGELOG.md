@@ -4,6 +4,10 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+### Fixed
+
+- [Visible] [Providers] **Refresh now rereads your Claude limit resets.** The claude.ai reading is kept for six hours, and Refresh used to hand back that kept copy, so a reset you had just spent still showed as available. Refresh, F5 and a settings change now read the page again; the scheduled refresh still uses the kept copy. The TypeSafe balance behaves the same way.
+
 ## [1.2.2] - 2026-10-01
 
 ### Fixed

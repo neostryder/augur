@@ -101,7 +101,7 @@ pub async fn web_session_sign_in(app: tauri::AppHandle, site: String) -> Result<
             {
                 return;
             }
-            let reading = read_site(&watcher, &watched, true).await;
+            let reading = read_site(&watcher, &watched, true, false).await;
             if let Ok(Some(value)) = reading {
                 if value.get("signedIn") == Some(&Value::Bool(true)) {
                     if let Some(popup) = watcher.get_webview_window("popup") {
@@ -131,19 +131,22 @@ pub async fn web_session_sign_in(app: tauri::AppHandle, site: String) -> Result<
 pub async fn web_session_read(
     app: tauri::AppHandle,
     site: String,
+    fresh: Option<bool>,
 ) -> Result<Option<Value>, String> {
-    read_site(&app, &site, false).await
+    read_site(&app, &site, false, fresh.unwrap_or(false)).await
 }
 
 async fn read_site(
     app: &tauri::AppHandle,
     site: &str,
     fresh: bool,
+    skip_cache: bool,
 ) -> Result<Option<Value>, String> {
     let state = app.state::<WebSessions>();
     let site = site.to_string();
     let spec = self::site(&site).ok_or("Unknown site")?;
-    if let Some((at, value)) = state.cache.lock().map_err(|e| e.to_string())?.get(&site) {
+    // A reading the user asked for skips the cache, so a change on the account page shows at once.
+    if let Some((at, value)) = state.cache.lock().map_err(|e| e.to_string())?.get(&site).filter(|_| !skip_cache) {
         let signed_in = value.get("signedIn") == Some(&Value::Bool(true));
         let keep = if signed_in {
             spec.cache_for

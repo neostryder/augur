@@ -108,7 +108,7 @@ export interface Host {
   /** Reads Copilot usage for the GitHub CLI's signed-in account without handing the caller its token. Desktop only; other shells fall back to run. */
   copilotUsage?(): Promise<HttpResponse>;
   /** Reads an account page through a browser session the shell keeps signed in, for providers with no usage API. Resolves to null when there is no session. */
-  webSession?(site: string): Promise<Record<string, unknown> | null>;
+  webSession?(site: string, options?: { fresh?: boolean }): Promise<Record<string, unknown> | null>;
   now?(): Date;
   /** Optional environment lookup for local login paths and account names. */
   env?(name: string): string | null;
@@ -151,7 +151,8 @@ export interface ProviderPlugin {
   fields: FieldSpec[];
   /** First-run setup calls this to preselect providers already signed in on this computer. */
   detect?(host: Host): Promise<boolean>;
-  fetch(host: Host, settings: ProviderSettings): Promise<ProviderResult>;
+  /** `force` is set when the reading was asked for, so a provider that keeps a slow cache of its own should skip it. */
+  fetch(host: Host, settings: ProviderSettings, options?: { force?: boolean }): Promise<ProviderResult>;
   /** Default refresh interval in seconds, for providers that should be read less often than the app-wide interval. */
   refreshSeconds?: number;
   /** The models this account can use, for the rules page. */
