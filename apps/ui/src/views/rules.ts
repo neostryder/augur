@@ -167,15 +167,20 @@ function row(label: string, id: string, input: string, help = ''): string {
 }
 
 function enumSelect(pid: string, model: string | null, field: string, values: readonly string[], labels: Record<string, string>, own: unknown, inherited: unknown, unset: string): string {
-  const id = `r-${field}`, cur = own === undefined ? '' : String(own);
-  const first = model === null ? opt('', unset, cur) : opt('', `Default (${inherited === undefined ? unset : labels[String(inherited)] ?? String(inherited)})`, cur);
-  return control(id, fieldPath(pid, model, field), 'enum', [first, ...values.map((v) => opt(v, labels[v] ?? v, cur))]);
+  const id = `r-${field}`;
+  // A provider has nothing to inherit, so its unset value is the plain default and shows as that option instead of a duplicate of it.
+  const fallback = values.find((v) => (labels[v] ?? v) === unset) ?? '';
+  const cur = own === undefined ? (model === null ? fallback : '') : String(own);
+  const rest = values.map((v) => opt(v, labels[v] ?? v, cur));
+  if (model === null) return control(id, fieldPath(pid, model, field), 'enum', rest);
+  const first = opt('', `Default (${inherited === undefined ? unset : labels[String(inherited)] ?? String(inherited)})`, cur);
+  return control(id, fieldPath(pid, model, field), 'enum', [first, ...rest]);
 }
 
 function boolSelect(pid: string, model: string | null, field: string, own: boolean | undefined, inherited: boolean | undefined): string {
-  const cur = own === undefined ? '' : own ? 'yes' : 'no', yn = (b: boolean | undefined) => (b ? 'Yes' : 'No');
-  const first = model === null ? opt('', 'No', cur) : opt('', `Default (${yn(inherited)})`, cur);
-  return control(`r-${field}`, fieldPath(pid, model, field), 'bool', [first, opt('yes', 'Yes', cur), opt('no', 'No', cur)]);
+  const cur = own === undefined ? (model === null ? 'no' : '') : own ? 'yes' : 'no', yn = (b: boolean | undefined) => (b ? 'Yes' : 'No');
+  const rest = [opt('yes', 'Yes', cur), opt('no', 'No', cur)];
+  return control(`r-${field}`, fieldPath(pid, model, field), 'bool', model === null ? rest : [opt('', `Default (${yn(inherited)})`, cur), ...rest]);
 }
 
 function activityRows(pid: string, model: string | null, rule: Rule, defaults: Rule): string {

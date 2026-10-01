@@ -6,6 +6,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Fixed
 
+- [Visible] [UI] **A provider's defaults list each choice once.** Most sensitive data showed Public twice, and Output, Cost and the Yes/No fields repeated their default the same way. The default now shows as the selected choice. A model's own rules still offer "Default (...)", because a model inherits from its provider.
 - [Visible] [Providers] **Refresh now rereads your Claude limit resets.** The claude.ai reading is kept for six hours, and Refresh used to hand back that kept copy, so a reset you had just spent still showed as available. Refresh, F5 and a settings change now read the page again; the scheduled refresh still uses the kept copy. The TypeSafe balance behaves the same way.
 
 ## [1.2.2] - 2026-10-01
