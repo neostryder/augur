@@ -1,6 +1,6 @@
 # The Augur MCP server
 
-`augur-mcp` lets an MCP client, such as Claude Code or Claude Desktop, ask Augur which model should take a piece of work and then run it there. It is a thin layer over the dispatch service. Every tool goes through the same service and the same rules as the `augur` command, so the server cannot run a model the rules do not allow, and it has no way to switch a rule off.
+`augur-mcp` lets an MCP client, such as Claude Code or Claude Desktop, ask Augur which model should take a piece of work and then run it there. It is a thin layer over the dispatch service. Every tool goes through the same service and the same rules as the `augur` command, so the server cannot run a model the rules do not allow. It can ask for changes to the rules, but it cannot make one that widens what data a model may see or lets a model run; the owner accepts those in Augur.
 
 It needs the dispatch service running. Turn on "Also run jobs" on the Service page, or run `augur service start`. Windows only, like the service.
 
@@ -42,10 +42,21 @@ The data tier is required on every run and is never assumed. An agent has to say
 | `augur_cancel` | `id` | Asks a running job to stop. |
 | `augur_pressure` | none | How much room each model has under its provider's plan. |
 | `augur_routes` | none | Each route, its model and adapter, and any reason it cannot run. |
+| `augur_policy` | none | The full rules from `policy.json`: every model with its status, data tier, weights, pause, data handling, hold rules and notes, each provider's limits, the edits still queued, the ones waiting for the owner, and what became of recent ones. |
+| `augur_policy_edit` | `edits`: a list of `model`, `field`, `value` and an optional `reason` (a limit edit names its `provider` instead of a model) | Each edit with its value before the request, and whether it was queued, is waiting for the owner, or was rejected and why. |
+| `augur_pick_preview` | `activity`, `data_tier`; optional `edits`, `include_pending` | The ranking now and again with the given edits applied, so a change can be tried first. It records nothing and does not count as a pick for a run. |
 
 Each result has a text form for the model and, where there is structure, a `structuredContent` object with the same facts. A refusal, a failed job and a service that is not running all come back as an error result with the reason in the text. A refusal carries the service's code, such as `not_picked`, in `structuredContent.rejected`.
 
 A run that takes longer than `wait_s` returns its job id and leaves the job running. Read it later with `augur_job`.
+
+## Changing the rules
+
+The server never writes the rules. `augur_policy_edit` checks each edit against `policy.json`, then appends the valid ones to `policy-edits.jsonl` beside it. The running app reads that file within a minute, or as soon as its panel opens, and applies each edit with the same code the rules page uses, so every change is stamped, recorded under History and merged to the phone like one made by hand. The app records what it did with each edit in `policy-edit-results.json`, which `augur_policy` reads back. Augur has to be running for an edit to land.
+
+These edits apply at once: an activity weight (`activities.<activity>`, one of `last_resort`, `occasional`, `normal`, `often` or `preferred`, `null` to block the activity, or `"inherit"` to return to the provider's default), `pause`, `notes` and `useAfter`. These wait in Model rules for the owner to choose Accept or Dismiss: `dataTier`, `askFirst`, `output`, `sandbox`, `effort`, `cost`, `status`, `dataHandling.<part>` and `thresholds.<warnPct|denyPct|minBalance>`. Accepting runs the checks again against the rules as they are then. An edit that fails its checks, or names a model that is not in the rules, is rejected with the reason and never reaches the app.
+
+`augur_pick_preview` ranks with the edits applied to a copy of `policy.json`, using the current usage, so an agent can see what a change would do before it asks for it. With `include_pending` it also applies the edits that are queued or waiting for the owner. It cannot preview `"inherit"`, since `policy.json` no longer carries the provider's defaults.
 
 ## Changing the tools
 

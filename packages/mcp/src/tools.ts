@@ -3,10 +3,10 @@
 // check, claim that a person named a model, or turn a rule off.
 import { call as serviceCall } from '@augur/augurd/client';
 import type { ClientOptions } from '@augur/augurd/client';
-import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES } from '@augur/core';
-import type { ActivityId, DataTier, OutputMode } from '@augur/core';
-import { TOOL_TIERS, isTerminal } from '@augur/dispatch-protocol';
-import type { JobRecord, JobRequest, ToolTier } from '@augur/dispatch-protocol';
+import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES, checkEdit, editKind, parseEditState, parseInbox, previewEdits } from '@augur/core';
+import type { ActivityId, DataTier, OutputMode, PolicyEdit, PolicyFile } from '@augur/core';
+import { TOOL_TIERS, isTerminal, rank } from '@augur/dispatch-protocol';
+import type { JobRecord, JobRequest, ToolTier, UsageSnapshot } from '@augur/dispatch-protocol';
 
 export interface ToolResult { text: string; isError?: boolean; data?: Record<string, unknown> }
 
@@ -15,11 +15,21 @@ export interface McpDeps {
   opts: ClientOptions;
   /** The text of policy.json, or null when it is missing. */
   policyText: () => string | null;
+  /** The text of usage.json, or null when it is missing. Used by the dry-run pick. */
+  usageText?: () => string | null;
+  /** The edits agents have asked for, and what the app did with them. The app owns both files; the server only appends to the inbox. */
+  inboxText?: () => string | null;
+  editStateText?: () => string | null;
+  appendInbox?: (lines: string) => void;
   /** Names this server's calls to the service, so a pick and the run that follows it are matched. */
   session: string;
   cwd: string;
   sleep?: (ms: number) => Promise<void>;
 }
+
+export interface EditArg { model?: string; provider?: string; field: string; value: unknown; reason?: string }
+export interface PolicyEditArgs { edits: EditArg[]; by?: string }
+export interface PreviewArgs { activity: string; data_tier: string; edits?: EditArg[]; include_pending?: boolean }
 
 export interface RunArgs {
   route: string; prompt: string; activity: string; data_tier: string; tools?: string; output?: string; cwd?: string; timeout_s?: number; wait_s?: number;
@@ -121,7 +131,99 @@ export function createTools(d: McpDeps) {
     return guarded(() => d.call('routes', undefined, d.opts), r => ({ text: r.map(x => `${x.name.padEnd(14)} ${x.model.padEnd(20)} ${x.adapter}${x.problem ? `   cannot run: ${x.problem}` : ''}`).join('\n') || 'No routes.', data: { routes: r } }));
   }
 
-  return { models, pick, run, job, jobs, cancel, pressure, routes };
+  // ------------------------------------------------------------------ rules: read, ask for edits, and try them
+
+  const readJson = (text: string | null): unknown => { try { return text ? JSON.parse(text) : null; } catch { return null; } };
+  const policyFile = (): PolicyFile | null => { const v = readJson(d.policyText()); return isObj(v) && isObj(v.providers) ? v as unknown as PolicyFile : null; };
+  const labelProvider = (file: PolicyFile, model: string, provider?: string): string | null => {
+    const hits = Object.entries(file.providers).filter(([id, p]) => (!provider || id === provider) && p.models[model]).map(([id]) => id);
+    return hits.length === 1 ? hits[0] as string : null;
+  };
+  /** The value a field has in policy.json now. */
+  const current = (file: PolicyFile, e: PolicyEdit): unknown => {
+    const p = file.providers[e.provider];
+    if (e.field.startsWith('thresholds.')) return (p?.thresholds as unknown as Record<string, unknown> | undefined)?.[e.field.slice(11)] ?? null;
+    const m = p?.models[e.model] as unknown as Record<string, unknown> | undefined;
+    if (!m) return null;
+    if (e.field.startsWith('activities.')) return isObj(m.activities) ? m.activities[e.field.slice(11)] ?? null : null;
+    if (e.field.startsWith('dataHandling.')) return isObj(m.dataHandling) ? m.dataHandling[e.field.slice(13)] ?? null : null;
+    return m[e.field] ?? null;
+  };
+  const toEdit = (file: PolicyFile, a: EditArg, by: string, id: string, at: string): PolicyEdit | { problem: string } => {
+    if (!a.field) return { problem: 'An edit names a field.' };
+    const thresholds = a.field.startsWith('thresholds.');
+    const provider = thresholds ? a.provider ?? (a.model ? labelProvider(file, a.model) : null) ?? '' : labelProvider(file, a.model ?? '', a.provider);
+    if (!provider) return { problem: thresholds ? 'A thresholds edit names its provider.' : a.model ? `${a.model} is not in the rules, or more than one provider has it.` : 'An edit names a model.' };
+    return { id, at, by, provider, model: thresholds ? '' : a.model as string, field: a.field, value: a.value, ...(a.reason ? { reason: a.reason } : {}) };
+  };
+  const pending = (): PolicyEdit[] => {
+    const seen = new Set(parseEditState(d.editStateText?.() ?? null).seen);
+    return parseInbox(d.inboxText?.() ?? null).filter(e => !seen.has(e.id));
+  };
+
+  /** The full rules as policy.json holds them, with the edits still waiting and what became of the recent ones. */
+  async function policy(): Promise<ToolResult> {
+    const file = policyFile();
+    if (!file) return fail('policy.json was not found. Augur writes it when a rule is saved, so open Augur and confirm the rules for your models first.');
+    const state = parseEditState(d.editStateText?.() ?? null), queued = pending();
+    const count = Object.values(file.providers).reduce((n, p) => n + Object.keys(p.models).length, 0);
+    const lines = [`${count} models. ${queued.length} edit${queued.length === 1 ? '' : 's'} queued for the app, ${state.held.length} waiting for the owner.`,
+      ...state.held.map(h => `  waiting: ${h.model || h.provider} ${h.field} -> ${JSON.stringify(h.value)} (${h.by})`)];
+    return { text: lines.join('\n'), data: { updatedAt: file.updatedAt, weights: file.weights, dataTiers: file.dataTiers, activities: file.activities, unreviewed: file.unreviewed, providers: file.providers,
+      queued, held: state.held, recent: state.results.slice(-20) } };
+  }
+
+  /**
+   * Asks for edits to the rules. The server writes nothing but a line in the inbox: the running app checks each edit and applies it through the rules' own code.
+   * Weights, pauses, notes and hold rules apply at once. Data tier, ask first, output, sandbox, cost, status, data handling and thresholds wait in the app for the owner.
+   */
+  async function editPolicy(a: PolicyEditArgs): Promise<ToolResult> {
+    const file = policyFile();
+    if (!file) return fail('policy.json was not found. Augur writes it when a rule is saved.');
+    if (!d.appendInbox) return fail('This server cannot reach the edit inbox.');
+    if (!Array.isArray(a.edits) || !a.edits.length) return fail('Give at least one edit.');
+    const by = a.by ?? `augur-mcp ${d.session}`, at = new Date().toISOString();
+    const rows: Array<Record<string, unknown>> = [], lines: string[] = [];
+    for (const [i, arg] of a.edits.slice(0, 20).entries()) {
+      const e = toEdit(file, arg, by, `${at}-${d.session}-${i}`, at);
+      if ('problem' in e) { rows.push({ model: arg.model, field: arg.field, status: 'rejected', reason: e.problem }); continue; }
+      const bad = checkEdit(e, (p, m) => !!file.providers[p]?.models[m]);
+      if (bad) { rows.push({ model: e.model || e.provider, field: e.field, status: 'rejected', reason: bad }); continue; }
+      lines.push(JSON.stringify(e));
+      rows.push({ model: e.model || e.provider, field: e.field, before: current(file, e), value: e.value, status: editKind(e.field) === 'direct' ? 'queued' : 'needs-owner' });
+    }
+    if (lines.length) d.appendInbox(`${lines.join('\n')}\n`);
+    const queued = rows.filter(r => r.status === 'queued').length, held = rows.filter(r => r.status === 'needs-owner').length, rejected = rows.filter(r => r.status === 'rejected').length;
+    const text = [`${queued} queued, ${held} waiting for the owner to accept in Augur, ${rejected} rejected.`,
+      ...rows.map(r => `${String(r.model ?? '').padEnd(24)} ${String(r.field).padEnd(26)} ${r.status}${r.reason ? `: ${r.reason}` : ` (${JSON.stringify(r.before)} -> ${JSON.stringify(r.value)})`}`),
+      queued || held ? 'Augur applies queued edits within a minute while it is running, or when its panel opens. Read augur_policy afterwards for the result.' : ''].filter(Boolean).join('\n');
+    return { text, ...(rejected === rows.length ? { isError: true } : {}), data: { edits: rows } };
+  }
+
+  /** Ranks the models for an activity and data tier as the rules stand, and again with the given edits applied, without recording a pick. */
+  async function pickPreview(a: PreviewArgs): Promise<ToolResult> {
+    const file = policyFile();
+    if (!file) return fail('policy.json was not found.');
+    const activity = oneOf(ACTIVITIES, a.activity), dataTier = oneOf(DATA_TIERS, a.data_tier);
+    if (!activity || !dataTier) return fail(`Give an activity (${ACTIVITIES.join(', ')}) and a data tier (${DATA_TIERS.join(', ')}).`);
+    const usageValue = readJson(d.usageText?.() ?? null), usage = isObj(usageValue) && isObj(usageValue.providers) ? usageValue as unknown as UsageSnapshot : null;
+    const given: PolicyEdit[] = [], problems: string[] = [], at = new Date().toISOString();
+    for (const [i, arg] of (a.edits ?? []).entries()) {
+      const e = toEdit(file, arg, 'preview', `p${i}`, at);
+      if ('problem' in e) problems.push(`${arg.model ?? ''} ${arg.field}: ${e.problem}`); else given.push(e);
+    }
+    const waiting = a.include_pending ? [...pending(), ...parseEditState(d.editStateText?.() ?? null).held] : [];
+    const preview = previewEdits(file, [...waiting, ...given]);
+    problems.push(...preview.problems);
+    const show = (f: PolicyFile) => rank(f, usage, { activity, dataTier });
+    const before = show(file), after = show(preview.file);
+    const names = (r: ReturnType<typeof rank>) => r.ranking.map(x => `${x.model} ${x.score.toFixed(2)}`);
+    const text = [`${activity} on ${dataTier} data. Now: ${before.pick ?? 'no model is permitted'}. With ${preview.applied} edit${preview.applied === 1 ? '' : 's'}: ${after.pick ?? 'no model is permitted'}.`,
+      `Now:        ${names(before).join(', ') || '(none)'}`, `With edits: ${names(after).join(', ') || '(none)'}`, ...(problems.length ? ['Not applied:', ...problems.map(p => `  ${p}`)] : [])].join('\n');
+    return { text, data: { activity, dataTier, now: before, withEdits: after, applied: preview.applied, problems } };
+  }
+
+  return { models, pick, run, job, jobs, cancel, pressure, routes, policy, editPolicy, pickPreview };
 }
 
 export type Tools = ReturnType<typeof createTools>;

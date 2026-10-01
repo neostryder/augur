@@ -1,7 +1,7 @@
 import {
   ACTIVITIES, ACTIVITY_LABELS, COST_TIERS, DATA_TIERS, DATA_TIER_LABELS, OUTPUT_MODES, WEIGHT_LABELS, WEIGHT_LEVELS,
   fieldPath, latestOnly, pauseActive, resolveModel, resolveThresholds,
-  type AppConfig, type ModelCatalog, type ModelEntry, type PolicyChange, type ProviderPlugin, type Rule, type Snapshot,
+  type AppConfig, type EditState, type ModelCatalog, type ModelEntry, type PolicyChange, type ProviderPlugin, type Rule, type Snapshot,
 } from '@augur/core';
 import { BULK_FIELDS } from '../rules-bulk';
 import type { BulkPreview } from '../rules-bulk';
@@ -10,8 +10,30 @@ import { ICON, ago, esc } from '../util';
 
 export type RulesFilter = 'all' | 'needs' | 'imported' | 'confirmed' | 'hidden';
 
+/** A change an agent asked for that waits for the owner: what it would change, from what, and why. */
+export interface HeldRow { id: string; by: string; model: string; field: string; before: string; value: string; reason: string }
+
+const HELD_LABELS: Record<string, string> = { dataTier: 'the most sensitive data', askFirst: 'ask first', output: 'output', sandbox: 'sandbox', effort: 'effort', cost: 'cost', status: 'status' };
+const heldValue = (v: unknown): string => (v === null || v === undefined ? 'none' : typeof v === 'string' ? v : JSON.stringify(v));
+
+/** The held edits as rows for the rules page, each with the value the rules have now. */
+export function heldRows(state: EditState): HeldRow[] {
+  return state.held.map((h) => {
+    const before = [...state.results].reverse().find((r) => r.id === h.id)?.before;
+    const field = HELD_LABELS[h.field] ?? h.field.replace('dataHandling.', 'data handling: ').replace('thresholds.', 'limit: ');
+    return { id: h.id, by: h.by, model: h.model || h.provider, field, before: heldValue(before), value: heldValue(h.value), reason: h.reason ?? '' };
+  });
+}
+
+function heldCards(rows: HeldRow[]): string {
+  return rows.map((r) => `<div class="card rbanner held"><span class="grow"><b>${esc(r.by)}</b> asks to change ${esc(r.field)} on <b>${esc(r.model)}</b> from ${esc(r.before)} to <b>${esc(r.value)}</b>.${r.reason ? ` <span class="desc">${esc(r.reason)}</span>` : ''}</span>
+    <button class="btn small primary" data-action="edit-accept" data-edit="${esc(r.id)}">Accept</button><button class="btn small" data-action="edit-dismiss" data-edit="${esc(r.id)}">Dismiss</button></div>`).join('');
+}
+
 export interface RulesModel {
   config: AppConfig;
+  /** Changes agents asked for that wait for the owner's yes. */
+  held: HeldRow[];
   providers: Array<{ id: string; name: string; metered: boolean }>;
   plugins: Map<string, ProviderPlugin>;
   snapshot: Snapshot | null;
@@ -411,6 +433,7 @@ export function renderRules(m: RulesModel): string {
   if (m.showHistory) return html + historyView(m) + '</div>';
   if (m.policyError) html += `<div class="card rbanner bad"><span class="grow"><b>policy.json was not written.</b> Agents are still using the older file. ${esc(m.policyError)}</span><button class="btn small" data-action="retry-policy">Try again</button></div>`;
 
+  html += heldCards(m.held);
   if (pending) html += `<div class="card rbanner"><span class="grow">${pending} ${pending === 1 ? 'model needs' : 'models need'} review. Routers skip them until their rules are confirmed.</span>
     ${m.filter === 'needs' ? '' : '<button class="btn small" data-rfilter="needs">Show them</button>'}</div>`;
   html += `<div class="rtools"><input type="search" id="r-query" data-rules-query value="${esc(m.query)}" placeholder="Search models" spellcheck="false">

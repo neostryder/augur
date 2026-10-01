@@ -12,3 +12,4 @@ export * from './changelog.js';
 export * from './policy.js';
 export * from './policy-import.js';
 export * from './models.js';
+export * from './policy-edits.js';

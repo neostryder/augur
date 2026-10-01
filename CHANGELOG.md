@@ -6,6 +6,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Added
 
+- [Visible] [Platform] [Security] **The MCP server can read the rules and ask for changes to them.** `augur_policy` returns every model's fields, `augur_policy_edit` queues weight, pause, note and hold-rule edits that the running app applies within a minute, and `augur_pick_preview` ranks the models with edits applied first. Edits to data tier, ask first, output, sandbox, cost, status, data handling and limits wait in Model rules until you accept them.
 - [Visible] [UI] **The panel opens on the usage view when Augur starts.** Turn off Open the panel at launch in settings to keep Augur in the tray until you open it.
 
 ### Fixed

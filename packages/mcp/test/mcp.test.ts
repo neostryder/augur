@@ -114,13 +114,13 @@ describe('job, jobs, cancel, pressure, routes', () => {
 });
 
 describe('the server', () => {
-  it('offers eight tools with the rules in its instructions, and runs one through a client', async () => {
+  it('offers eleven tools with the rules in its instructions, and runs one through a client', async () => {
     const [a, b] = InMemoryTransport.createLinkedPair();
     const server = buildServer(createTools(deps({ routes: ROUTES })), 'test');
     const client = new Client({ name: 'test', version: '1' });
     await Promise.all([server.connect(a), client.connect(b)]);
     const { tools } = await client.listTools();
-    expect(tools.map(t => t.name).sort()).toEqual(['augur_cancel', 'augur_job', 'augur_jobs', 'augur_models', 'augur_pick', 'augur_pressure', 'augur_routes', 'augur_run']);
+    expect(tools.map(t => t.name).sort()).toEqual(['augur_cancel', 'augur_job', 'augur_jobs', 'augur_models', 'augur_pick', 'augur_pick_preview', 'augur_policy', 'augur_policy_edit', 'augur_pressure', 'augur_routes', 'augur_run']);
     expect(client.getInstructions()).toContain('data tier is never assumed');
     const run = tools.find(t => t.name === 'augur_run')!;
     expect(run.inputSchema.required).toEqual(expect.arrayContaining(['route', 'prompt', 'activity', 'data_tier']));

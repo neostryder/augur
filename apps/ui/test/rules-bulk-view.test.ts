@@ -4,7 +4,7 @@ import { renderRules, type RulesModel } from '../src/views/rules';
 import type { BulkPreview } from '../src/rules-bulk';
 
 const model = (over: Partial<RulesModel> = {}): RulesModel => ({
-  config: migrateConfig({}), providers: [], plugins: new Map(), snapshot: null, dark: false, policyError: null, sel: null, query: '', filter: 'all', open: new Set(),
+  config: migrateConfig({}), held: [], providers: [], plugins: new Map(), snapshot: null, dark: false, policyError: null, sel: null, query: '', filter: 'all', open: new Set(),
   picked: new Set(['codex|codex/sol']), showHistory: false, addError: '', note: '', bulkTier: '', bulkField: 'cost', bulkValue: '', preview: null, dialOpen: false, dialEnd: '', dialCustom: '', dialPlan: null, dialError: '', pauseMode: 'off', pauseWeights: {},
   catalog: {}, listing: new Set(), canList: false, ...over });
 

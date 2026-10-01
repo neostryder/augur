@@ -1,10 +1,10 @@
 import Sortable from 'sortablejs';
-import { ACTIVITY_LABELS, DATA_TIER_LABELS, WEIGHT_LABELS, addModels, buildPolicyFile, emptyPolicy, importPolicy, listDue, mergePolicy, policyDigest, policyFromFile, policyPathFor, releaseChanges, setField, setFieldMany, setModelStatus, syncModelList, undoChange, type AppConfig, type DataTier, type ModelCatalog, type ModelEntry, type ProviderPlugin, type ReleaseChanges, type Shell, type Snapshot, type UpdateInfo } from '@augur/core';
+import { ACTIVITY_LABELS, DATA_TIER_LABELS, WEIGHT_LABELS, addModels, buildPolicyFile, emptyEditState, parseEditState, parseInbox, processInbox, resolveHeld, INBOX_FILE, RESULTS_FILE, emptyPolicy, importPolicy, listDue, mergePolicy, policyDigest, policyFromFile, policyPathFor, releaseChanges, setField, setFieldMany, setModelStatus, syncModelList, undoChange, type AppConfig, type DataTier, type EditState, type ModelCatalog, type ModelEntry, type ProviderPlugin, type ReleaseChanges, type Shell, type Snapshot, type UpdateInfo } from '@augur/core';
 import * as core from './core';
 import type { HistoryRow } from './core';
 import { renderDashboard, tightest, updateTip, type DashboardModel } from './views/dashboard';
 import { CUSTOM_EXAMPLE, renderSettings, type SettingsModel } from './views/settings';
-import { dialEndChoices, pauseResets, renderRules, type RulesFilter, type RulesModel } from './views/rules';
+import { dialEndChoices, heldRows, pauseResets, renderRules, type RulesFilter, type RulesModel } from './views/rules';
 import { renderJobs, type JobsModel } from './views/jobs';
 import { renderRoutes, type RoutesModel } from './views/routes';
 import { renderService, type ConfigLine, type ServiceModel } from './views/service';
@@ -168,6 +168,7 @@ export class App {
       if (this.shell.kind === 'desktop' && !this.firstRun) this.goHome();
       void this.render();
       void this.syncRules();
+      void this.checkAgentEdits();
       const age = this.snapshot ? (Date.now() - new Date(this.snapshot.generatedAt).getTime()) / 1000 : Infinity;
       if (age > 60) void this.refresh();
     });
@@ -177,6 +178,7 @@ export class App {
     if (!this.firstRun) { this.schedule(); void this.refresh(); }
     if (this.shell.kind === 'desktop' && !this.firstRun && this.config.openOnLaunch !== false) void this.shell.showPopup?.();
     if (this.shell.kind === 'desktop') void this.checkAsk(false);
+    if (this.shell.kind === 'desktop') { void this.checkAgentEdits(); setInterval(() => { void this.checkAgentEdits(); }, 30000); }
   }
 
   /** Keeps one ProviderConfig per known plugin, preserving the user's order. */
@@ -445,7 +447,7 @@ export class App {
   }
 
   private rulesModel(): RulesModel {
-    return { config: this.config, providers: core.policyProviders(this.config), plugins: this.pluginMap(), snapshot: this.snapshot,
+    return { config: this.config, held: heldRows(this.editState), providers: core.policyProviders(this.config), plugins: this.pluginMap(), snapshot: this.snapshot,
       dark: document.documentElement.dataset.theme === 'dark', policyError: this.policyError, catalog: this.catalog, listing: this.listing, canList: this.shell.kind === 'desktop', ...this.rules };
   }
 
@@ -598,6 +600,51 @@ export class App {
         'Routers skip a new model until its rules are confirmed. Open Model rules to set them.').catch(() => undefined);
     }
     if (this.view === 'rules' || added.length) await this.render();
+  }
+
+  private editState: EditState = emptyEditState();
+  private checkingEdits = false;
+
+  /** Where the edit inbox and its results sit: beside policy.json. */
+  private editPath(name: string): string | null { return this.config.exportPath ? policyPathFor(this.config.exportPath).replace(/policy\.json$/, name) : null; }
+
+  private async saveEditState(): Promise<void> {
+    const path = this.editPath(RESULTS_FILE), write = this.shell.host.writeHomeFileAtomic;
+    if (path && write) await write(path, JSON.stringify({ updatedAt: new Date().toISOString(), ...this.editState })).catch(() => undefined);
+  }
+
+  /**
+   * Agents ask for rule changes through the MCP server, which appends them to an inbox file. Weights, pauses, notes and hold rules are applied here
+   * through the same functions the rules page uses. A change to data access, ask first, status or a limit waits for the owner to accept it.
+   */
+  private async checkAgentEdits(): Promise<void> {
+    const read = this.shell.host.readHomeFile, inbox = this.editPath(INBOX_FILE), results = this.editPath(RESULTS_FILE);
+    if (this.shell.kind !== 'desktop' || !read || !inbox || !results || !this.config.policy || this.checkingEdits) return;
+    this.checkingEdits = true;
+    try {
+      const text = await read(inbox).catch(() => null);
+      if (!this.editLoaded) { this.editState = parseEditState(await read(results).catch(() => null)); this.editLoaded = true; }
+      const edits = parseInbox(text);
+      if (!edits.some((e) => !this.editState.seen.includes(e.id))) return;
+      const r = processInbox(this.config.policy, edits, this.editState, 'desktop');
+      this.editState = r.state;
+      if (r.changed) await this.saveConfig(false);
+      await this.saveEditState();
+      if (r.newlyHeld.length && this.config.alerts.enabled) await this.shell.notify(`${r.newlyHeld.length} rule ${r.newlyHeld.length === 1 ? 'change' : 'changes'} to accept`,
+        'An agent asked for a change to what a model may see or whether it runs. Open Model rules to accept or dismiss it.').catch(() => undefined);
+      if (this.view === 'rules') await this.render();
+    } finally { this.checkingEdits = false; }
+  }
+
+  private editLoaded = false;
+
+  private async answerEdit(id: string, accept: boolean): Promise<void> {
+    if (!this.config.policy || !id) return;
+    const r = resolveHeld(this.config.policy, this.editState, id, accept, 'desktop');
+    this.editState = r.state;
+    if (r.changed) await this.saveConfig(false);
+    await this.saveEditState();
+    await this.render();
   }
 
   /** policy.json changes only when a rule does, so it is written with the config, never on a usage refresh. */
@@ -993,6 +1040,7 @@ export class App {
       case 'update-install': await this.installUpdate(); break;
       case 'settings': this.view = 'settings'; await this.render(); break;
       case 'retry-policy': await this.writePolicy(); await this.render(); break;
+      case 'edit-accept': case 'edit-dismiss': await this.answerEdit(t.dataset.edit ?? '', t.dataset.action === 'edit-accept'); break;
       case 'rules': this.view = 'rules'; this.rules.showHistory = false; if (t.dataset.value) this.rules.filter = t.dataset.value as RulesFilter; await this.render(); break;
       case 'rules-dial': this.rules.dialOpen = !this.rules.dialOpen; this.rules.dialPlan = null; this.rules.dialError = ''; await this.render(); break;
       case 'rules-history': this.rules.showHistory = !this.rules.showHistory; await this.render(); break;

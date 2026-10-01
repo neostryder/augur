@@ -10,6 +10,7 @@ export const INSTRUCTIONS = [
   'Every run needs an activity and a data tier, and the data tier is never assumed: say how sensitive the task is, and pick the highest tier the task touches. A model is only used for data at or below the tier its rules allow.',
   'Call augur_pick first, and run the route it points to. A run is refused if its model was not picked for this session in the last hour, or if the rules do not allow it. A refusal names the reason, and the rules cannot be argued with from here.',
   'A read job cannot change files. Ask for write tools or file output only when the task needs them.',
+  'To change the rules, use augur_policy_edit: weights and pauses apply within a minute, and anything that widens what data a model may see waits for the owner to accept it in Augur. Test a change first with augur_pick_preview.',
 ].join(' ');
 
 const out = (r: ToolResult) => ({ content: [{ type: 'text' as const, text: r.text }], ...(r.data ? { structuredContent: r.data } : {}), ...(r.isError ? { isError: true } : {}) });
@@ -76,6 +77,36 @@ export function buildServer(tools: Tools, version: string): McpServer {
     title: 'List routes', annotations: readOnly,
     description: 'Lists the routes, the model and adapter behind each, and any reason a route cannot run.',
   }, async () => out(await tools.routes()));
+
+  const editShape = z.object({
+    model: z.string().optional().describe('The route label as augur_policy lists it, such as codex/sol. Leave out for a provider thresholds edit.'),
+    provider: z.string().optional().describe('Only needed for a thresholds edit, or when two providers carry the same label.'),
+    field: z.string().describe('activities.<activity> (a weight, null to block it, or "inherit"), pause, notes, useAfter apply at once. dataTier, askFirst, output, sandbox, effort, cost, status, dataHandling.<part> and thresholds.<warnPct|denyPct|minBalance> wait for the owner to accept them in Augur.'),
+    value: z.any().describe('The new value. Weights are last_resort, occasional, normal, often or preferred. Use "inherit" to go back to the provider default.'),
+    reason: z.string().optional().describe('Why, shown to the owner next to a held edit.'),
+  });
+
+  server.registerTool('augur_policy', {
+    title: 'Read the rules', annotations: readOnly,
+    description: 'Returns the full rules from policy.json: every model with its status, data tier, weights, pause, data handling, hold rules and notes, each provider\'s thresholds, the edits queued for the app, the ones waiting for the owner, and what became of recent ones.',
+  }, async () => out(await tools.policy()));
+
+  server.registerTool('augur_policy_edit', {
+    title: 'Ask for rule edits', annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    description: 'Asks Augur to change rules. Nothing is written to the rules from here: each edit goes to an inbox that the running app checks, then applies through its own rules code, which stamps it and records it in the history. Weights, pauses, notes and hold rules apply within a minute. Anything that changes what data a model may see or whether it runs waits for the owner to accept it in Augur, so an agent cannot widen its own access. The result gives each edit\'s value before and after the request.',
+    inputSchema: { edits: z.array(editShape).min(1).max(20).describe('The edits, applied in order.') },
+  }, async (a) => out(await tools.editPolicy(a)));
+
+  server.registerTool('augur_pick_preview', {
+    title: 'Try a pick under edits', annotations: readOnly,
+    description: 'Ranks the models for an activity and data tier as the rules stand now and again with the given edits applied, so a change can be tested before it lands. It records nothing and does not count as a pick for running jobs. With include_pending it also applies the edits already queued or waiting for the owner.',
+    inputSchema: {
+      activity: z.enum(ACTIVITIES).describe('What the work is.'),
+      data_tier: z.enum(DATA_TIERS).describe('The most sensitive data the task touches.'),
+      edits: z.array(editShape).max(20).optional().describe('Edits to try. A preview cannot use "inherit".'),
+      include_pending: z.boolean().optional().describe('Also apply the edits queued or waiting for the owner.'),
+    },
+  }, async (a) => out(await tools.pickPreview(a)));
 
   return server;
 }
