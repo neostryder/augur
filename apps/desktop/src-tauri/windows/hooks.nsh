@@ -5,9 +5,15 @@
     nsExec::ExecToStack '"$INSTDIR\service\augur.cmd" service stop --if-idle'
     Pop $0
     Pop $1
-    StrCmp $0 "0" augur_skip_stop
+    StrCmp $0 "0" augur_stopped
     MessageBox MB_ICONEXCLAMATION|MB_OK "Augur is running a job, so this cannot replace its files yet. Let the job finish, or cancel it with: augur cancel <job>. Then run this again."
     Abort
+  augur_stopped:
+    ; With no job running, the only processes left on augur-node.exe are MCP servers that open Claude sessions started. They run from the same file and
+    ; block its replacement, and a client starts a fresh one the next time it needs the tools.
+    nsExec::ExecToStack 'taskkill /F /IM augur-node.exe'
+    Pop $0
+    Pop $1
   augur_skip_stop:
 !macroend
 
