@@ -4,6 +4,8 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-10-01
+
 ### Added
 
 - [Visible] [Platform] [Security] **The MCP server can read the rules and ask for changes to them.** `augur_policy` returns every model's fields, `augur_policy_edit` queues weight, pause, note and hold-rule edits that the running app applies within a minute, and `augur_pick_preview` ranks the models with edits applied first. Edits to data tier, ask first, output, sandbox, cost, status, data handling and limits wait in Model rules until you accept them.

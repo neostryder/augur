@@ -1,6 +1,6 @@
 {
   "name": "@augur/augurd",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": true,
   "type": "module",
   "exports": { ".": "./src/index.ts", "./client": "./src/client.ts" },
