@@ -4,6 +4,8 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+## [1.2.3] - 2026-10-01
+
 ### Fixed
 
 - [Visible] [UI] **A provider's defaults list each choice once.** Most sensitive data showed Public twice, and Output, Cost and the Yes/No fields repeated their default the same way. The default now shows as the selected choice. A model's own rules still offer "Default (...)", because a model inherits from its provider.
