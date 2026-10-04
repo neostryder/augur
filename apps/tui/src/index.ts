@@ -6,7 +6,7 @@ import { Link } from './link.js';
 import { openUrl } from './open.js';
 import type { Page } from './page.js';
 import { AlertsPage } from './screens/alerts.js';
-import { LaterPage } from './screens/later.js';
+import { DispatchPage, type DispatchDeps } from './screens/dispatch.js';
 import { RulesPage } from './screens/rules.js';
 import { SettingsPage, type LoginControl } from './screens/settings.js';
 import { UsagePage } from './screens/usage.js';
@@ -15,6 +15,7 @@ export { TuiApp } from './app.js';
 export { Link } from './link.js';
 export type { Ctx, Hint, Overlay, Page } from './page.js';
 export type { LoginControl } from './screens/settings.js';
+export type { DispatchDeps } from './screens/dispatch.js';
 
 export interface RunOptions {
   /** Starts the service when it is not running. */
@@ -23,13 +24,15 @@ export interface RunOptions {
   io?: TerminalIo;
   /** Starting the service at login, for the switch on the settings page. Left out where the copy cannot set it up. */
   login?: LoginControl;
+  /** What the dispatch page needs beyond the service's own calls. */
+  dispatch?: DispatchDeps;
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
 }
 
-export function pages(o: Pick<RunOptions, 'login' | 'env' | 'platform'> = {}): Page[] {
+export function pages(o: Pick<RunOptions, 'login' | 'env' | 'platform' | 'dispatch'> = {}): Page[] {
   const settings = new SettingsPage({ platform: o.platform ?? process.platform, env: o.env ?? process.env, ...(o.login ? { login: o.login } : {}) });
-  return [new UsagePage(), new AlertsPage(), new RulesPage(), new LaterPage('Dispatch'), settings];
+  return [new UsagePage(), new AlertsPage(), new RulesPage(), new DispatchPage({ env: o.env ?? process.env, ...o.dispatch }), settings];
 }
 
 /** Runs the app until the person quits. Resolves once the terminal is back as it was. */
@@ -46,6 +49,8 @@ export async function runTui(o: RunOptions = {}): Promise<void> {
   });
   // Times such as "5m ago" move on even when nothing changes.
   const tick = setInterval(() => term.redraw(), 30000);
+  // The dispatch page reads jobs and routes from the service while it is open.
+  const poll = setInterval(() => void app.poll(), 2500);
   void link.connect();
-  try { await term.run(app); } finally { clearInterval(tick); link.close(); }
+  try { await term.run(app); } finally { clearInterval(tick); clearInterval(poll); link.close(); }
 }

@@ -1,5 +1,8 @@
 import { dispatchTabs } from './jobs';
 import { ICON, esc } from '../util';
+import { CLASSIFIER_TEXT, MODE_TEXT } from '@augur/view-model';
+
+export { CLASSIFIER_TEXT, MODE_TEXT };
 
 /** One setting as `augur config --json` reports it. */
 export interface ConfigLine {
@@ -18,18 +21,6 @@ export interface ServiceModel {
   /** Set when the app could not reach the bundled command at all. */
   unavailable: string;
 }
-
-export const MODE_TEXT = {
-  usage: 'Augur shows your plan usage and keeps your model rules. It does not run jobs.',
-  jobs: 'Augur also runs a service on this computer. Agents start jobs with the augur command, and Augur picks the model from your rules and current usage.',
-};
-
-/** What each choice for the task classifier means for where task text goes. */
-export const CLASSIFIER_TEXT: Record<string, string> = {
-  none: 'Nothing classifies tasks. Agents give augur pick the activity and data tier themselves.',
-  laya: 'Laya runs on your own computers, so task text stays on your network. Installing it is optional; the README has the steps.',
-  jev: 'Jev is a hosted service from TypeSafe. With it on, the text of each task given to augur pick --task is sent there using your key. Text about students is checked on this computer first and never sent.',
-};
 
 /** The mode switch, used on the Service page and in first-run setup. */
 export function modeChooser(runJobs: boolean): string {

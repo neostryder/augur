@@ -74,7 +74,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
   // With no command at a terminal, `augur` opens the full-screen app; piped or scripted, it prints the help.
   if (!cmd && !p.flags.size && io.interactive) {
     const { runTui } = await import('@augur/tui');
-    await runTui({ launch: () => launchService(io.env, opts), opts, env: io.env, login: { state: loginState, enable: () => enableAtLogin(io), disable: disableLogin } });
+    await runTui({ launch: () => launchService(io.env, opts), opts, env: io.env, login: { state: loginState, enable: () => enableAtLogin(io), disable: disableLogin }, dispatch: { restart: () => restartService(io, opts) } });
     return EXIT_CODES.completed;
   }
   if (!cmd || p.flags.has('help')) { io.out(HELP + '\n'); return cmd ? EXIT_CODES.completed : EXIT_CODES.usage; }
@@ -286,6 +286,18 @@ async function enableAtLogin(io: Io): Promise<{ ok: boolean; message: string }> 
   const script = join(dirname(fileURLToPath(import.meta.url)), 'augurd.mjs');
   if (!existsSync(script)) return { ok: false, message: NOT_INSTALLED };
   return enableLogin({ node: process.execPath, script, path: io.env.PATH ?? '' });
+}
+
+/** Stops the service, waits for it to let go of its socket, and starts it again, for the Restart button on the terminal app's service screen. */
+async function restartService(io: Io, opts: Opts): Promise<string> {
+  const quiet: Io = { ...io, out: () => {}, err: () => {} };
+  await service('stop', quiet, opts, false);
+  for (let i = 0; i < 20; i++) {
+    try { await call('ping', undefined, { ...opts, timeoutMs: 500 }); } catch { break; }
+    await sleep(250);
+  }
+  if (!await launchService(io.env, opts)) throw new Error('The service did not start again. See service.log in its data folder.');
+  return 'Restarted. Jobs that were running kept going.';
 }
 
 async function service(action: string | undefined, io: Io, opts: Opts, json: boolean, ifIdle = false): Promise<number> {

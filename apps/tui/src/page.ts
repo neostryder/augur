@@ -35,6 +35,8 @@ export interface Page {
   hints(ctx: Ctx): Hint[];
   /** True while a text field has focus, so letters and digits go to it rather than to the app's own keys. */
   typing?(): boolean;
+  /** Reads what the page shows from the service, for a page whose data is not part of the engine state. Called every couple of seconds while the page is open. */
+  refresh?(ctx: Ctx): Promise<void>;
 }
 
 /** A panel drawn over the page, such as help or a chart. Escape closes it unless its key handler takes Escape itself. */

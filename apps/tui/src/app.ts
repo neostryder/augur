@@ -61,6 +61,12 @@ export class TuiApp implements App {
 
   get page(): Page { return this.o.pages[this.active]!; }
 
+  /** Lets the open page read its own data from the service. Pages guard against overlapping reads themselves. */
+  async poll(): Promise<void> {
+    const ctx = this.ctx();
+    if (ctx && this.page.refresh) await this.page.refresh(ctx).catch(() => {});
+  }
+
   draw(screen: Screen): void {
     const ctx = this.ctx();
     const full: Rect = { x: 0, y: 0, w: screen.width, h: screen.height };
@@ -122,10 +128,10 @@ export class TuiApp implements App {
     if (await this.page.key(key, ctx)) return true;
     // A focused text field keeps every key, so typing a digit or a q does not switch pages or quit.
     if (this.page.typing?.()) return key.label !== 'ctrl+c';
-    if (/^[1-9]$/.test(key.label) && Number(key.label) <= this.o.pages.length) { this.active = Number(key.label) - 1; return true; }
+    if (/^[1-9]$/.test(key.label) && Number(key.label) <= this.o.pages.length) { this.active = Number(key.label) - 1; void this.poll(); return true; }
     switch (key.label) {
-      case 'tab': this.active = (this.active + 1) % this.o.pages.length; return true;
-      case 'shift+tab': this.active = (this.active + this.o.pages.length - 1) % this.o.pages.length; return true;
+      case 'tab': this.active = (this.active + 1) % this.o.pages.length; void this.poll(); return true;
+      case 'shift+tab': this.active = (this.active + this.o.pages.length - 1) % this.o.pages.length; void this.poll(); return true;
       case 'r': void ctx.run('refresh', true); return true;
       case '?': this.overlays.push(helpOverlay(this.page.hints(ctx))); return true;
       case 'q': return 'quit';

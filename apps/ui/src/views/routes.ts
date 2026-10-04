@@ -1,6 +1,6 @@
 import { ADAPTER_INFO, adapterInfo } from '@augur/dispatch-protocol';
 import type { OptionSpec } from '@augur/dispatch-protocol';
-import type { RouteDraft, RoutesFile } from '../routes-model';
+import type { RouteDraft, RoutesFile } from '@augur/view-model';
 import { ICON, esc } from '../util';
 import { dispatchTabs } from './jobs';
 

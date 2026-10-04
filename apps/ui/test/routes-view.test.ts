@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { emptyDraft, parseRoutesText } from '../src/routes-model';
+import { emptyDraft, parseRoutesText } from '@augur/view-model';
 import { renderRoutes, type RoutesModel } from '../src/views/routes';
 
 const fileOf = (text: string) => { const p = parseRoutesText(text); if (!p.ok) throw new Error('bad fixture'); return p.file; };

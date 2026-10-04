@@ -32,9 +32,14 @@ export function state(): EngineState {
   };
 }
 
-export function setup(s: EngineState | null = state(), o: { pages?: Page[]; results?: Record<string, unknown> } = {}) {
+export function setup(s: EngineState | null = state(), o: { pages?: Page[]; results?: Record<string, unknown>; answers?: Record<string, unknown> } = {}) {
   const calls: Array<[string, unknown[]]> = [];
-  const link = new Link({ call: (async (_m: string, p: { method: string; args: unknown[] }) => { calls.push([p.method, p.args]); return o.results?.[p.method] ?? null; }) as never });
+  const link = new Link({ call: (async (m: string, p: { method: string; args: unknown[] }) => {
+    // Engine commands go through engine_call; the dispatch pages call the service's own methods directly, answered from `answers`.
+    if (m !== 'engine_call') { calls.push([m, [p]]); const a = o.answers?.[m]; return typeof a === 'function' ? a(p) : a ?? null; }
+    calls.push([p.method, p.args]);
+    return o.results?.[p.method] ?? null;
+  }) as never });
   link.state = s; link.status = s ? 'up' : 'down'; link.error = s ? '' : 'The service is not running (ENOENT).';
   const opened: string[] = [];
   const copied: string[] = [];

@@ -10,7 +10,7 @@ import { renderJobs, type JobsModel } from './views/jobs';
 import { renderRoutes, type RoutesModel } from './views/routes';
 import { renderService, type ConfigLine, type ServiceModel } from './views/service';
 import { renderStrip } from './views/strip';
-import { ROUTES_PATH, checkDraft, draftOf, emptyDraft, parseRoutesText, writeRoute } from './routes-model';
+import { ROUTES_PATH, checkDraft, draftOf, emptyDraft, parseRoutesText, writeRoute } from '@augur/view-model';
 import { routeSecretName } from '@augur/dispatch-protocol';
 import type { Accounted, JobRecord } from '@augur/dispatch-protocol';
 import { renderTrayIcon } from './trayicon';

@@ -1,6 +1,7 @@
 import { ACTIVITY_LABELS, DATA_TIER_LABELS } from '@augur/core';
 import { describeFigure } from '@augur/dispatch-protocol';
 import type { Accounted, JobRecord, JobState } from '@augur/dispatch-protocol';
+import { JOB_OUTPUT_LABELS, STATE_LABELS, TOOL_LABELS, duration, isBad, isLive } from '@augur/view-model';
 import { ICON, ago, esc } from '../util';
 
 export interface JobsModel {
@@ -18,14 +19,7 @@ export interface JobsModel {
   busy: boolean;
 }
 
-export const STATE_LABELS: Record<JobState, string> = {
-  queued: 'Queued', needs_approval: 'Needs approval', running: 'Running', cancel_requested: 'Cancelling', completed: 'Done', failed: 'Failed',
-  artifact_validation_failed: 'Output check failed', cancelled: 'Cancelled', killed: 'Stopped', lost: 'Lost',
-};
-const LIVE = new Set<JobState>(['queued', 'needs_approval', 'running', 'cancel_requested']);
-const BAD = new Set<JobState>(['failed', 'artifact_validation_failed', 'killed', 'lost']);
-const TOOL_LABELS: Record<string, string> = { read: 'Reads only', write: 'Can write', full: 'Full access' };
-const OUTPUT_LABELS: Record<string, string> = { write_files: 'Writes files', patch_only: 'Returns a patch', text_only: 'Text only' };
+export { STATE_LABELS, duration, isLive };
 
 /** Jobs and Routes are two pages of the same area, so both carry this switch. */
 const TAB_LABELS = { jobs: 'Jobs', routes: 'Routes', service: 'Service' } as const;
@@ -34,15 +28,7 @@ export function dispatchTabs(active: keyof typeof TAB_LABELS): string {
     `<button role="tab" aria-selected="${v === active}" class="${v === active ? 'on' : ''}" data-action="dispatch-tab" data-value="${v}">${TAB_LABELS[v]}</button>`).join('')}</div>`;
 }
 
-export const isLive = (state: JobState): boolean => LIVE.has(state);
-
-export function duration(job: JobRecord, now = Date.now()): string {
-  if (!job.startedAt) return '';
-  const s = Math.max(0, Math.round(((job.endedAt ?? now) - job.startedAt) / 1000));
-  return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
-}
-
-const chip = (state: JobState) => `<span class="jchip ${LIVE.has(state) ? 'live' : BAD.has(state) ? 'bad' : ''}">${esc(STATE_LABELS[state])}</span>`;
+const chip = (state: JobState) => `<span class="jchip ${isLive(state) ? 'live' : isBad(state) ? 'bad' : ''}">${esc(STATE_LABELS[state])}</span>`;
 
 function serviceCard(m: JobsModel): string {
   if (m.unavailable) return `<div class="card rbanner bad"><span class="grow"><b>The dispatch service is not available.</b> ${esc(m.unavailable)}</span></div>`;
@@ -74,7 +60,7 @@ function detail(m: JobsModel): string {
     ${isLive(j.state) ? `<button class="btn small" data-action="job-cancel" data-id="${esc(j.id)}" ${m.busy ? 'disabled' : ''}>Cancel</button>` : ''}</div>
     ${j.reason ? `<p class="jreason">${esc(j.reason)}</p>` : ''}
     <div class="jfields">${field('Activity', ACTIVITY_LABELS[j.activity] ?? j.activity)}${field('Data', DATA_TIER_LABELS[j.dataTier] ?? j.dataTier)}
-      ${field('Tools', TOOL_LABELS[j.tools] ?? j.tools)}${field('Output', OUTPUT_LABELS[j.output] ?? j.output)}${field('Adapter', j.adapter)}
+      ${field('Tools', TOOL_LABELS[j.tools] ?? j.tools)}${field('Output', JOB_OUTPUT_LABELS[j.output] ?? j.output)}${field('Adapter', j.adapter)}
       ${field('Started by', j.caller.label ?? j.caller.kind)}${field('Folder', j.cwd, true)}
       ${j.startedAt ? field('Took', duration(j)) : ''}${j.exitCode !== null ? field('Exit code', String(j.exitCode)) : ''}${usage ? field('Tokens', usage, true) : ''}${cost ? field('Cost', cost) : ''}
       ${j.patch ? field('Patch', `${j.patch.files} ${j.patch.files === 1 ? 'file' : 'files'}, apply with augur apply ${j.id}`) : ''}</div>
