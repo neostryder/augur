@@ -7,6 +7,9 @@ import type { FeedAlert } from './feed.js';
 import type { PushSubscriptionInfo } from './webpush.js';
 import type { HistoryRow } from './history.js';
 
+/** The shared relay and web app. It serves the phone app and forwards its requests, so a fresh install can pair a phone without setup. */
+export const HOSTED = 'https://augur.rpgm.tools';
+
 /** Stores a secret where the device keeps them: the keychain on the desktop, the browser's store on the phone. */
 export interface SecretWriter { setSecret(name: string, value: string): Promise<void> }
 

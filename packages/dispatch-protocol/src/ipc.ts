@@ -1,7 +1,7 @@
 // Wire contract between the service and its callers. One JSON object per line over a named pipe, each request carrying the auth token.
 import type { Accounted, BudgetStatus, RouteCalibration, Totals } from './accounting.js';
 import type { Headroom } from './pace.js';
-import type { ActivityId, DataTier } from '@augur/core';
+import type { ActivityId, DataTier, EngineKey, EngineState } from '@augur/core';
 import type { PickRequest, PickResult } from './pick.js';
 import type { JobEvent, JobRecord, JobRequest, Rejection } from './spec.js';
 import type { JobState } from './states.js';
@@ -52,7 +52,26 @@ export interface Methods {
   routes: { params: undefined; result: Array<{ name: string; model: string; adapter: string; problem: string | null }> };
   /** Tokens and cost of recent jobs and totals per route, each figure labelled reported, derived or imputed. */
   accounting: { params: { limit?: number }; result: AccountingAnswer };
+  /** The usage engine's state, whole or only the keys named. Refused when the engine is not running in this service. */
+  engine_state: { params: { keys?: EngineKey[] } | undefined; result: { state: Partial<EngineState>; views: ViewInfo[] } };
+  /** Runs one engine command (refresh, saveConfig, setProviderKey and the rest) and resolves to its answer. */
+  engine_call: { params: { method: string; args?: unknown[] }; result: unknown };
+  /**
+   * Keeps the connection open as a view. The first answer carries the whole state; after it the service sends `EngineEvent` lines, and the view
+   * answers each `request` event with one `ViewReply` line on the same connection.
+   */
+  engine_watch: { params: { hello: ViewHello }; result: { state: EngineState; views: ViewInfo[] } };
 }
+
+/** What a view can do for the engine: show a desktop notice, read a provider page through its signed-in browser, open a sign-in window. */
+export type ViewCapability = 'notify' | 'websession' | 'signin';
+export interface ViewHello { kind: 'window' | 'terminal'; caps?: ViewCapability[]; appExe?: string }
+export interface ViewInfo { kind: 'window' | 'terminal'; caps: ViewCapability[] }
+export type EngineEvent =
+  | { event: 'change'; keys: EngineKey[]; state: Partial<EngineState> }
+  | { event: 'views'; views: ViewInfo[] }
+  | { event: 'request'; rid: string; method: string; params: unknown };
+export interface ViewReply { reply: string; result?: unknown; error?: string }
 
 export interface AccountingAnswer {
   jobs: Array<{ id: string; route: string; model: string | null; accounted: Accounted }>;

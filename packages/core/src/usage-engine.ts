@@ -128,7 +128,7 @@ export class UsageEngine implements EngineApi {
   private alertState: Record<string, unknown> = {};
   private failedRefresh = new Set<string>();
   private listeners = new Set<(keys: EngineKey[]) => void>();
-  private timers: Array<ReturnType<typeof setInterval>> = [];
+  private timers: Array<ReturnType<typeof setInterval> | ReturnType<typeof setTimeout>> = [];
   private tickTimer: ReturnType<typeof setInterval> | undefined;
   private lastPush = 0;
   private pushRetry: ReturnType<typeof setTimeout> | undefined;
@@ -186,7 +186,7 @@ export class UsageEngine implements EngineApi {
     this.state.update.version = (await this.shell.appVersion?.().catch(() => null)) ?? null;
     this.emit('config', 'snapshot', 'history', 'feed', 'catalog', 'secrets', 'claude', 'update', 'firstRun');
     if (this.shell.checkUpdate) {
-      setTimeout(() => void this.checkUpdate(), UPDATE_FIRST_CHECK_MS);
+      this.timers.push(setTimeout(() => void this.checkUpdate(), UPDATE_FIRST_CHECK_MS));
       this.timers.push(setInterval(() => void this.checkUpdate(), UPDATE_INTERVAL_MS));
     }
     if (!this.state.firstRun) { this.schedule(); void this.refresh(); }

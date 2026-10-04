@@ -3,15 +3,18 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { LayaBackend, ServerPool, ShadowBackend, createBackend, DEFAULT_SERVERS } from '@augur/decision';
 import type { DecisionBackend } from '@augur/decision';
+import { HOSTED, UsageEngine } from '@augur/core';
 import { parseRates } from './accounting.js';
 import { enabledAdapters, loadLocalAdapters } from './adapters/index.js';
 import { loadConfig } from './config.js';
 import { DecisionLog } from './decisions.js';
+import { createEngineShell } from './engine-shell.js';
 import { IpcServer, ensureToken } from './ipc.js';
 import { augurHome, dataDir, pipeName } from './paths.js';
 import { policySource, routeSource, usageSource } from './sources.js';
 import { Store } from './store.js';
 import { Supervisor } from './supervisor.js';
+import { ViewHub } from './views.js';
 
 /** The backend behind `augur pick --task`, from the service settings. With a shadow set, its answers are compared and logged, never used. */
 export function buildDecision(config: ReturnType<typeof loadConfig>, dir: string, env: NodeJS.ProcessEnv = process.env): { primary: DecisionBackend; local?: DecisionBackend } | undefined {
@@ -26,7 +29,19 @@ export function buildDecision(config: ReturnType<typeof loadConfig>, dir: string
   return { primary, local };
 }
 
-export interface ServiceOptions { dir?: string; home?: string; pipe?: string; routesPath?: string }
+export interface ServiceOptions { dir?: string; home?: string; pipe?: string; routesPath?: string; engine?: boolean }
+
+/** Starts the usage engine and hands it to the control endpoint. A failure is logged and leaves the dispatch side running. */
+async function startEngine(server: IpcServer, log: (msg: string) => void): Promise<UsageEngine | null> {
+  try {
+    const views = new ViewHub();
+    const api = new UsageEngine(createEngineShell({ views, log }), { hosted: HOSTED });
+    await api.start();
+    server.attachEngine({ api, views });
+    log('usage engine started');
+    return api;
+  } catch (e) { log(`usage engine did not start: ${(e as Error).message}`); return null; }
+}
 
 export async function startService(opts: ServiceOptions = {}) {
   const dir = opts.dir ?? dataDir(), home = opts.home ?? augurHome();
@@ -41,15 +56,18 @@ export async function startService(opts: ServiceOptions = {}) {
   const ratesPath = join(home, 'dispatch', 'rates.json'), rates = () => parseRates(existsSync(ratesPath) ? readFileSync(ratesPath, 'utf8') : null);
   const supervisor = new Supervisor({ rates, store, config, dir, adapters: enabledAdapters(config.adapters, local.adapters), ...(decision ? { decision } : {}), decisions, routes: () => routes.read(), policy: () => policy.read(), usage: () => usage.read() });
   const server = new IpcServer(supervisor, store, token, () => routes.read(), rates);
+  // The engine is ready before the endpoint opens, so no caller ever finds the service half started.
+  const engine = (opts.engine ?? (config.engine || process.env.AUGURD_ENGINE === '1')) ? await startEngine(server, log) : null;
   try { await server.start(opts.pipe ?? pipeName(dir)); }
-  catch (e) { store.close(); throw e; }
+  catch (e) { engine?.stop(); store.close(); throw e; }
   supervisor.reconcile();
   const timer = setInterval(() => { try { supervisor.tick(); } catch (e) { log(`tick failed: ${(e as Error).message}`); } }, 500);
   const daily = setInterval(() => { try { supervisor.purge(); } catch (e) { log(`purge failed: ${(e as Error).message}`); } }, 86400000);
   log('started');
   return {
     supervisor, store, config,
-    async stop() { clearInterval(timer); clearInterval(daily); await server.close(); store.close(); log('stopped'); },
+    engine,
+    async stop() { engine?.stop(); clearInterval(timer); clearInterval(daily); await server.close(); store.close(); log('stopped'); },
   };
 }
 

@@ -33,10 +33,12 @@ export interface ServiceConfig {
   learn: LearnSettings;
   /** Seconds after which a runner with no heartbeat counts as gone. */
   runnerStaleS: number;
+  /** Run the usage engine (provider readings, alerts, phone sync) in the service. AUGURD_ENGINE=1 turns it on for one start. */
+  engine: boolean;
 }
 
 export const DEFAULT_CONFIG: ServiceConfig = { retentionDays: 30, persistPrompts: false, maxConcurrent: 8, maxDepth: 2, maxDescendants: 16,
-  jobhostPath: null, adapters: ['codex-exec'], requirePick: true, promptRoots: [], verifyNamed: 'enforce', decision: { backend: 'none' }, learn: { recordTasks: false }, runnerStaleS: 20 };
+  jobhostPath: null, adapters: ['codex-exec'], requirePick: true, promptRoots: [], verifyNamed: 'enforce', decision: { backend: 'none' }, learn: { recordTasks: false }, runnerStaleS: 20, engine: false };
 
 /** The launcher built by `pnpm build:jobhost` sits beside the package's sources, and a packaged install places it next to the service. */
 export function defaultJobhost(): string | null {
@@ -71,5 +73,6 @@ export function loadConfig(dir: string): ServiceConfig {
     decision: decisionSettings(raw.decision),
     learn: { recordTasks: (raw.learn as { recordTasks?: unknown } | undefined)?.recordTasks === true },
     runnerStaleS: num(raw.runnerStaleS, c.runnerStaleS, 5, 600),
+    engine: typeof raw.engine === 'boolean' ? raw.engine : c.engine,
   };
 }
