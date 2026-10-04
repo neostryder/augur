@@ -18,3 +18,5 @@ export * from './webpush.js';
 export * from './sync.js';
 export * from './feed-keeper.js';
 export * from './summary.js';
+export * from './registry.js';
+export * from './usage-engine.js';

@@ -1,10 +1,10 @@
 import Sortable from 'sortablejs';
-import { ACTIVITY_LABELS, DATA_TIER_LABELS, WEIGHT_LABELS, addModels, buildPolicyFile, emptyEditState, parseEditState, parseInbox, processInbox, resolveHeld, INBOX_FILE, RESULTS_FILE, emptyPolicy, importPolicy, listDue, mergePolicy, policyDigest, policyFromFile, policyPathFor, releaseChanges, setField, setFieldMany, setModelStatus, syncModelList, undoChange, type AppConfig, type DataTier, type EditState, type ModelCatalog, type ModelEntry, type ProviderPlugin, type ReleaseChanges, type Shell, type Snapshot, type UpdateInfo, feedFor, feedFromUsage, type AlertKind, type Outlet, type PushStatus, type ClaudeStatus, type ClaudeTarget } from '@augur/core';
+import { ACTIVITY_LABELS, DATA_TIER_LABELS, WEIGHT_LABELS, addModels, emptyEditState, emptyPolicy, mergePolicy, policyDigest, setField, setFieldMany, setModelStatus, undoChange, type AppConfig, type DataTier, type EditState, type ModelCatalog, type ModelEntry, type ProviderPlugin, type Shell, type Snapshot, feedFor, feedFromUsage, type AlertKind, type Outlet, type PushStatus, type ClaudeStatus } from '@augur/core';
 import * as core from './core';
 import type { HistoryRow } from './core';
 import { renderDashboard, tightest, updateTip, type DashboardModel } from './views/dashboard';
 import { CUSTOM_EXAMPLE, PUSH_TEXT, renderSettings, type SettingsModel } from './views/settings';
-import { dialEndChoices, heldRows, pauseResets, pendingCount, renderRules, type RulesFilter, type RulesModel } from './views/rules';
+import { dialEndChoices, heldRows, pauseResets, renderRules, type RulesFilter, type RulesModel } from './views/rules';
 import { renderJobs, type JobsModel } from './views/jobs';
 import { renderRoutes, type RoutesModel } from './views/routes';
 import { renderService, type ConfigLine, type ServiceModel } from './views/service';
@@ -15,12 +15,13 @@ import { ROUTES_PATH, checkDraft, draftOf, emptyDraft, parseRoutesText, writeRou
 import { routeSecretName } from '@augur/dispatch-protocol';
 import type { Accounted, JobRecord } from '@augur/dispatch-protocol';
 import { renderTrayIcon } from './trayicon';
-import { span, until } from './util';
 import qrcode from 'qrcode-generator';
 import { HOSTED } from './hosted';
 import { attachPullToRefresh } from './pull-refresh';
-import { acceptPairing, applySharedConfig, askDesktop, createPairing, mergeSynced, pairingUrl, parsePairing, pullPhoneState, pullRules, pullSnapshot, pushPhoneState, pushRules, pushSnapshot, readAsk, sharedConfig, SyncUploadError, type PhoneState, FeedKeeper, UPDATE_ALERT_TEXT, type Raise, summaryLine, tooltip } from '@augur/core';
+import { acceptPairing, applySharedConfig, askDesktop, mergeSynced, parsePairing, pullPhoneState, pullRules, pullSnapshot, pushPhoneState, pushRules, type PhoneState, FeedKeeper, type Raise, tooltip } from '@augur/core';
 import { acceptPairingFromUrl } from './pairing';
+import { connectEngine } from './engine-link';
+import type { EngineApi, EngineKey, EngineState, UpdateState, AlertFeed } from '@augur/core';
 import { scanQr } from './scan';
 import { relayUrl, setRelayUrl } from './shells/browser';
 
@@ -29,10 +30,6 @@ type SyncConfig = NonNullable<AppConfig['sync']>;
 const ONE_COL = 400;
 const TWO_COL = 780;
 
-// Each push is one KV write on the relay, so a paired phone gets a new copy at most every 10 minutes (144 writes a day).
-const SYNC_PUSH_MS = 10 * 60_000;
-// A refresh by hand uploads at once, up to once a minute, which matches the relay's own limit.
-const FORCED_PUSH_MS = 60_000;
 // After the phone asks for new numbers, it checks for the desktop's upload this often, for this long.
 const DESKTOP_POLL_MS = 15_000;
 const DESKTOP_WAIT_MS = 4 * 60_000;
@@ -41,24 +38,12 @@ const TICK_MS = 15_000;
 /** Dismissals on the phone wait this long before they upload, so several in a row go up together. After the relay refuses an upload, the phone tries again a minute later. */
 const PHONE_WRITE_DELAY_MS = 3000;
 const PHONE_RETRY_MS = 61_000;
-/** The usage file turned on for the Claude Code mod when no export path is set, under the home folder. */
-const DEFAULT_EXPORT = '.augur/usage.json';
-const ASK_CHECK_MS = 60_000;
 const PULL_MS = 5 * 60_000;
 // Rules are compared with the paired device's at most once a minute, and a local edit starts a comparison a few seconds after it.
 const RULES_SYNC_MS = 60_000;
 const RULES_EDIT_DELAY_MS = 4_000;
-const UPDATE_FIRST_CHECK_MS = 20_000;
-const UPDATE_INTERVAL_MS = 5 * 60_000;
-const CHANGELOG_URL = (version: string) => `https://raw.githubusercontent.com/neostryder/augur/v${version}/CHANGELOG.md`;
 
-export interface UpdateState {
-  version: string | null;
-  status: 'idle' | 'checking' | 'current' | 'available' | 'installing' | 'error';
-  available: UpdateInfo | null;
-  /** What the available update brings, newest release first; null until the changelog has loaded. */
-  changes: ReleaseChanges[] | null;
-}
+export type { UpdateState } from '@augur/core';
 
 type ModelEntryStatus = ModelEntry['status'];
 
@@ -75,11 +60,6 @@ export class App {
   private secrets = new Set<string>();
   private autostart: boolean | null = null;
   private failedRefresh = new Set<string>();
-  private lastPush = 0;
-  private pushRetry: ReturnType<typeof setTimeout> | undefined;
-  /** Relay time of the phone's latest refresh request that the desktop has seen; null until the first check. */
-  private askSeen: number | null = null;
-  private lastAskCheck = 0;
   /** When the snapshot the phone last pulled was made on the desktop. */
   private desktopAt: string | null = null;
   private desktopWait: 'waiting' | 'timeout' | null = null;
@@ -132,7 +112,6 @@ export class App {
   // The alert feed. The desktop keeps it, and a paired phone shows the copy the desktop last synced.
   private keeper!: FeedKeeper;
   private alertsOpen = false;
-  private lastPhoneCheck = 0;
   /** What the phone has dismissed and where it wants push, kept on its relay channel for the desktop to read. */
   private phoneState: PhoneState = { acks: [], push: null };
   private phoneWrite: ReturnType<typeof setTimeout> | undefined;
@@ -143,6 +122,13 @@ export class App {
   /** Desktop: where the Claude Code mod and the Claude Desktop MCP entry stand, and the last install error. */
   private claude: ClaudeStatus | null = null;
   private claudeError = '';
+  /** Desktop: the engine that does the work. The panel shows its state and sends it commands. */
+  private engine: EngineApi | null = null;
+  /** Desktop: the alert feed as the engine last reported it. */
+  private feed: AlertFeed | null = null;
+  /** Saves of this panel's own still on their way to the engine. Their echo needs no redraw. */
+  private ownSaves = 0;
+  private renderQueued = false;
 
   private pluginMap(): Map<string, ProviderPlugin> {
     return new Map(core.plugins(this.config).map((p) => [p.id, p]));
@@ -150,73 +136,101 @@ export class App {
 
   async start(): Promise<void> {
     document.body.classList.add(this.shell.kind);
-    const saved = await this.shell.loadConfig();
-    this.config = core.migrateConfig(saved ?? core.defaultConfig());
-    this.syncProviderList();
-    await this.importRulesOnce();
-    this.firstRun = !saved;
-    if (this.shell.kind === 'pwa') {
+    if (this.shell.kind === 'desktop') {
+      this.engine = await connectEngine(this.shell);
+      this.takeState(Object.keys(this.engine.state) as EngineKey[]);
+      this.engine.onChange((keys) => this.onEngine(keys));
+    } else {
+      const saved = await this.shell.loadConfig();
+      this.config = core.migrateConfig(saved ?? core.defaultConfig());
+      this.syncProviderList();
+      this.firstRun = !saved;
       const link = await acceptPairingFromUrl(this.shell);
       if (link) await this.pairWith(link, false);
-    }
-    [this.snapshot, this.history, this.alertState] = await Promise.all([
-      this.shell.loadSnapshot(), this.shell.loadHistory() as Promise<HistoryRow[]>, this.shell.loadAlertState(),
-    ]);
-    this.catalog = (await this.shell.loadModelCatalog?.().catch(() => null)) ?? {};
-    this.keeper = new FeedKeeper(this.shell, () => this.config, () => new URL(this.pwaUrl()).origin);
-    await this.keeper.load();
-    if (this.shell.kind === 'pwa' && this.sync?.channel) {
-      this.phoneState = (await pullPhoneState(this.shell.host, this.sync, true).catch(() => null)) ?? this.phoneState;
-      this.pushStatus = (await this.shell.pushStatus?.().catch(() => null)) ?? null;
+      [this.snapshot, this.history, this.alertState] = await Promise.all([
+        this.shell.loadSnapshot(), this.shell.loadHistory() as Promise<HistoryRow[]>, this.shell.loadAlertState(),
+      ]);
+      this.catalog = (await this.shell.loadModelCatalog?.().catch(() => null)) ?? {};
+      this.keeper = new FeedKeeper(this.shell, () => this.config, () => new URL(this.pwaUrl()).origin);
+      await this.keeper.load();
+      if (this.sync?.channel) {
+        this.phoneState = (await pullPhoneState(this.shell.host, this.sync, true).catch(() => null)) ?? this.phoneState;
+        this.pushStatus = (await this.shell.pushStatus?.().catch(() => null)) ?? null;
+      }
+      await this.refreshSecrets();
+      if (this.firstRun) await this.preselectDetected();
     }
     this.customDraft = JSON.stringify(this.config.custom ?? [], null, 2);
     this.autostart = this.shell.getAutostart ? await this.shell.getAutostart().catch(() => null) : null;
-    await this.loadClaude(true);
     await this.applyHotkey();
     if (this.shell.kind === 'desktop' && this.shell.setPopupPinned) this.pinned = (await this.shell.popupPinned?.().catch(() => false)) ?? false;
     this.ensureStrip();
-    if (this.shell.checkUpdate) {
-      this.update.version = await this.shell.appVersion?.().catch(() => null) ?? null;
-      setTimeout(() => void this.checkForUpdate(true), UPDATE_FIRST_CHECK_MS);
-      setInterval(() => void this.checkForUpdate(true), UPDATE_INTERVAL_MS);
-      // An automatic install waits for the panel to close, so it never restarts the app under the pointer.
-      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') void this.autoInstall(); });
-    }
-    await this.refreshSecrets();
+    // An automatic install waits for the panel to close, so it never restarts the app under the pointer.
+    if (this.shell.installUpdate) document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') void this.autoInstall(); });
     // With Also run jobs chosen, the service is up whenever the app is. A service that is already running answers and nothing changes.
     if (this.config.dispatch?.runJobs && this.shell.dispatch) void this.augur(['service', 'start', '--json']).then(() => this.loadService()).catch(() => undefined);
 
-    if (this.firstRun) {
-      this.view = 'settings';
-      await this.preselectDetected();
-    }
+    if (this.firstRun) this.view = 'settings';
     this.applyTheme();
     this.systemDark.addEventListener('change', () => { this.applyTheme(); void this.render(); void this.updateTray(); });
     this.wireEvents();
     if (this.shell.kind === 'pwa') attachPullToRefresh(() => this.pullRefresh());
     this.shell.on('refresh-requested', () => void this.refresh(true));
-    this.shell.on('web-session-ready', () => void this.refresh(true, this.config.providers.filter((pc) => this.pluginMap().get(pc.id)?.fields.some((f) => f.kind === 'signin')).map((pc) => pc.id)));
+    this.shell.on('web-session-ready', () => void this.engine?.refreshSignIns());
     this.shell.on('settings-requested', () => { this.view = 'settings'; void this.render(); });
     if (this.shell.kind === 'desktop') this.resizeWatch.observe(this.root);
     this.shell.on('popup-shown', () => {
       if (this.shell.kind === 'desktop' && !this.firstRun) this.goHome();
       void this.render();
-      void this.syncRules();
-      void this.checkAgentEdits();
-      const age = this.snapshot ? (Date.now() - new Date(this.snapshot.generatedAt).getTime()) / 1000 : Infinity;
-      if (age > 60) void this.refresh();
+      void this.engine?.viewShown();
     });
     setInterval(() => { if (this.view === 'dashboard' && document.visibilityState === 'visible') void this.render(); }, 30000);
     await this.render();
     await this.updateTray();
-    if (!this.firstRun) { this.schedule(); void this.refresh(); }
+    if (!this.firstRun && !this.engine) { this.schedule(); void this.refresh(); }
     // A panel pinned at the last exit comes back where it was, whatever Open at launch says.
     if (this.shell.kind === 'desktop' && !this.firstRun && (this.config.openOnLaunch !== false || this.pinned)) void this.shell.showPopup?.();
-    if (this.shell.kind === 'desktop') { void this.checkAsk(false); void this.checkPhone(); }
-    if (this.shell.kind === 'desktop') {
-      const check = () => this.checkAgentEdits().then(() => this.checkFeed());
-      void check(); setInterval(() => { void check(); }, 30000);
+  }
+
+  /** Copies the parts of the engine's state that changed. The panel edits its own copy of the config and sends the whole of it back to save. */
+  private takeState(keys: EngineKey[]): void {
+    const st = this.engine!.state as EngineState;
+    for (const k of keys) {
+      const v = structuredClone(st[k]);
+      switch (k) {
+        case 'config': this.config = v as AppConfig; break;
+        case 'snapshot': this.snapshot = v as Snapshot | null; break;
+        case 'history': this.history = v as HistoryRow[]; break;
+        case 'feed': this.feed = v as AlertFeed; break;
+        case 'catalog': this.catalog = v as ModelCatalog; break;
+        case 'listing': this.listing = new Set(v as string[]); break;
+        case 'editState': this.editState = v as EditState; break;
+        case 'policyError': this.policyError = v as string | null; break;
+        case 'busy': this.busy = v as boolean; document.body.classList.toggle('busy', this.busy); break;
+        case 'secrets': this.secrets = new Set(v as string[]); break;
+        case 'claude': this.claude = v as ClaudeStatus | null; break;
+        case 'claudeError': this.claudeError = v as string; break;
+        case 'update': this.update = v as UpdateState; break;
+        case 'firstRun': this.firstRun = v as boolean; break;
+      }
     }
+  }
+
+  private onEngine(keys: EngineKey[]): void {
+    this.takeState(keys);
+    if (keys.includes('feed')) this.drawStrip();
+    if (keys.includes('snapshot') || keys.includes('config')) void this.updateTray();
+    if (keys.includes('update') && this.update.status === 'available') void this.autoInstall();
+    // A save of this panel's own comes back as a config change; the page already shows it.
+    if (this.ownSaves > 0 && keys.every((k) => k === 'config' || k === 'policyError' || k === 'secrets')) return;
+    this.renderSoon();
+  }
+
+  /** Several engine changes in a row draw once. */
+  private renderSoon(): void {
+    if (this.renderQueued) return;
+    this.renderQueued = true;
+    queueMicrotask(() => { this.renderQueued = false; void this.render(); });
   }
 
   /** Keeps one ProviderConfig per known plugin, preserving the user's order. */
@@ -244,6 +258,7 @@ export class App {
   }
 
   private async refreshSecrets(): Promise<void> {
+    if (this.engine) return;
     const names: string[] = [];
     for (const p of core.plugins(this.config)) for (const f of p.fields) if (f.kind === 'secret') names.push(`${p.id}.${f.key}`);
     const has = await Promise.all(names.map((n) => this.shell.hasSecret(n).catch(() => false)));
@@ -258,44 +273,10 @@ export class App {
 
   private async tick(): Promise<void> {
     void this.syncRules();
-    if (this.shell.kind === 'desktop' && Date.now() - this.lastPhoneCheck >= ASK_CHECK_MS) void this.checkPhone();
-    if (this.shell.kind === 'desktop' && Date.now() - this.lastAskCheck >= ASK_CHECK_MS && await this.checkAsk(true)) return;
     const due = core.dueProviders(this.runConfig(), this.snapshot).length > 0;
     // A paired phone also pulls the desktop's numbers on its own schedule.
     const pull = this.shell.kind === 'pwa' && !!this.sync?.channel && Date.now() - this.lastRun >= PULL_MS;
     if (due || pull) await this.refresh();
-  }
-
-  /**
-   * Desktop side: whether the phone has asked for new numbers since the last check. With act set,
-   * a new request starts a full refresh, which uploads at once. The first check only records where things stand.
-   */
-  private async checkAsk(act: boolean): Promise<boolean> {
-    if (!this.sync?.channel) return false;
-    this.lastAskCheck = Date.now();
-    const at = await readAsk(this.shell.host, this.sync).catch(() => null);
-    if (at == null) return false;
-    const fresh = act && this.askSeen != null && at > this.askSeen;
-    // refresh() returns early while busy, so a request that lands mid-refresh stays unseen until the next check.
-    if (fresh && this.busy) return false;
-    this.askSeen = at;
-    if (fresh) await this.refresh(true);
-    return fresh;
-  }
-
-  /** Uploads the current snapshot for the phone. If the relay says it is too soon, it tries again once the gap has passed. */
-  private async push(): Promise<void> {
-    if (!this.sync?.channel || !this.snapshot) return;
-    clearTimeout(this.pushRetry);
-    this.pushRetry = undefined;
-    try {
-      const pushKey = await this.keeper.pushKey();
-      await pushSnapshot(this.shell.host, this.sync, this.snapshot, this.history, sharedConfig(this.config), await this.phoneSecrets(),
-        { alerts: feedFor(this.keeper.feed, 'augur'), ...(pushKey ? { pushKey } : {}) });
-      this.lastPush = Date.now();
-    } catch (err) {
-      if (err instanceof SyncUploadError && err.status === 429) this.pushRetry = setTimeout(() => void this.push(), FORCED_PUSH_MS);
-    }
   }
 
   /**
@@ -337,6 +318,7 @@ export class App {
 
   /** force refreshes every provider now, or only those listed in `only`; otherwise each waits out its own interval. */
   async refresh(force = false, only?: string[]): Promise<void> {
+    if (this.engine) { await this.engine.refresh(force, only); return; }
     if (this.busy) return;
     this.busy = true;
     document.body.classList.add('busy');
@@ -347,7 +329,7 @@ export class App {
       const got = await core.collect(this.shell.host, runConfig, this.snapshot, force);
       this.snapshot = only ? { ...got, providers: { ...this.snapshot?.providers, ...got.providers } } : got;
       this.history = core.appendHistory(this.history, this.snapshot);
-      if (this.shell.kind === 'pwa' && this.sync?.channel) {
+      if (this.sync?.channel) {
         await this.pullFromDesktop(full);
         const fromDesktop = this.config.providers.some((p) => p.enabled && !full.providers.find((r) => r.id === p.id)?.enabled);
         if (force && fromDesktop) void this.waitForDesktop();
@@ -357,17 +339,9 @@ export class App {
       const raisedAt = new Date();
       await this.raise(alerts.map((a) => { const { raisedAt: _at, outlets: _outlets, ...item } = feedFromUsage(a.usage, a.title, raisedAt, []); return item; }));
       await this.alertFailedRefreshes();
-      await this.clearFeed();
       await Promise.all([
         this.shell.saveSnapshot(this.snapshot), this.shell.saveHistory(this.history), this.shell.saveAlertState(this.alertState),
       ]);
-      if (this.shell.kind === 'desktop' && this.sync?.channel) {
-        const since = Date.now() - this.lastPush;
-        if (since >= (force ? FORCED_PUSH_MS : SYNC_PUSH_MS)) await this.push();
-        else if (force) { clearTimeout(this.pushRetry); this.pushRetry = setTimeout(() => void this.push(), FORCED_PUSH_MS - since); }
-      }
-      void this.refreshModelLists();
-      await this.exportUsage();
     } finally {
       this.busy = false;
       document.body.classList.remove('busy');
@@ -391,23 +365,6 @@ export class App {
     if (this.firstRun) { this.firstRun = false; this.view = 'dashboard'; }
     await this.shell.saveConfig(this.config);
     if (refreshNow) { this.schedule(); await this.refresh(true); }
-  }
-
-  /**
-   * The API keys a paired phone needs to read key-based providers itself. A provider that also
-   * needs a sign-in on this computer stays with the desktop, so it is left out.
-   */
-  private async phoneSecrets(): Promise<Record<string, string> | undefined> {
-    if (this.sync?.shareKeys !== true) return undefined;
-    const out: Record<string, string> = {};
-    for (const p of core.plugins(this.config)) {
-      if (!this.phoneCanRead(p)) continue;
-      for (const f of p.fields.filter((x) => x.kind === 'secret')) {
-        const v = await this.shell.host.secret(`${p.id}.${f.key}`).catch(() => null);
-        if (v) out[`${p.id}.${f.key}`] = v;
-      }
-    }
-    return out;
   }
 
   /** Whether the phone can produce a provider's full reading from an API key alone. */
@@ -597,123 +554,13 @@ export class App {
     }).catch(() => undefined);
   }
 
-  /**
-   * While no rules exist yet, an existing policy.json beside the export is adopted as it stands, so hand-kept rules and pauses survive.
-   * Without one, a policy-import.json is imported once, with every model left unconfirmed.
-   */
-  private async importRulesOnce(): Promise<void> {
-    const policy = this.config.policy ??= emptyPolicy();
-    const read = this.shell.host.readHomeFile;
-    if (Object.keys(policy.providers).length || !read || !this.config.exportPath) return;
-    const existing = await read(policyPathFor(this.config.exportPath)).catch(() => null);
-    if (existing) {
-      try {
-        const adopted = policyFromFile(JSON.parse(existing));
-        if (Object.values(adopted.providers).some((p) => Object.keys(p.models).length)) { policy.providers = adopted.providers; await this.saveConfig(false); return; }
-      } catch { /* an unreadable file falls through to the import file */ }
-    }
-    const text = await read(policyPathFor(this.config.exportPath, 'policy-import.json')).catch(() => null);
-    if (!text) return;
-    try { importPolicy(policy, JSON.parse(text)); } catch { return; }
-    await this.saveConfig(false);
-  }
-
-  /**
-   * Reads each provider's model list once a day, or one provider's list now when `only` names it. The desktop reads the lists,
-   * since several need a login on this computer, and the phone gets the resulting models with the rules.
-   */
-  private async refreshModelLists(only?: string): Promise<void> {
-    if (this.shell.kind !== 'desktop') return;
-    const policy = this.config.policy ??= emptyPolicy(), added: string[] = [];
-    for (const plugin of core.plugins(this.config)) {
-      const pc = this.config.providers.find((p) => p.id === plugin.id);
-      if (!plugin.listModels || !pc?.enabled || this.listing.has(plugin.id)) continue;
-      if (only ? only !== plugin.id : !listDue(this.catalog[plugin.id])) continue;
-      this.listing.add(plugin.id);
-      if (this.view === 'rules') await this.render();
-      const fetchedAt = new Date().toISOString();
-      try {
-        const models = await plugin.listModels(this.shell.host, pc.settings);
-        this.catalog[plugin.id] = { fetchedAt, models, error: null };
-        const mode = policy.providers[plugin.id]?.listMode ?? plugin.modelListMode ?? 'auto';
-        if (mode === 'auto') added.push(...syncModelList(policy, plugin.id, plugin.labelPrefix ?? plugin.id, models));
-      } catch (error) {
-        this.catalog[plugin.id] = { fetchedAt, models: this.catalog[plugin.id]?.models ?? [], error: error instanceof Error ? error.message : String(error) };
-      } finally {
-        this.listing.delete(plugin.id);
-      }
-    }
-    await this.shell.saveModelCatalog?.(this.catalog).catch(() => undefined);
-    if (added.length) {
-      await this.saveConfig(false);
-      await this.raise([{ id: `models.${Date.now()}`, kind: 'models', severity: 'info', group: 'models', clears: { when: 'flag', flag: 'models' },
-        title: `${added.length} new ${added.length === 1 ? 'model' : 'models'} to review`,
-        body: 'Routers skip a new model until its rules are confirmed. Open Model rules to set them.' }]);
-    }
-    if (this.view === 'rules' || added.length) await this.render();
-  }
-
   private editState: EditState = emptyEditState();
-  private checkingEdits = false;
-
-  /** Where the edit inbox and its results sit: beside policy.json. */
-  private editPath(name: string): string | null { return this.config.exportPath ? policyPathFor(this.config.exportPath).replace(/policy\.json$/, name) : null; }
-
-  private async saveEditState(): Promise<void> {
-    const path = this.editPath(RESULTS_FILE), write = this.shell.host.writeHomeFileAtomic;
-    if (path && write) await write(path, JSON.stringify({ updatedAt: new Date().toISOString(), ...this.editState })).catch(() => undefined);
-  }
-
-  /**
-   * Agents ask for rule changes through the MCP server, which appends them to an inbox file. Weights, pauses, notes and hold rules are applied here
-   * through the same functions the rules page uses. A change to data access, ask first, status or a limit waits for the owner to accept it.
-   */
-  private async checkAgentEdits(): Promise<void> {
-    const read = this.shell.host.readHomeFile, inbox = this.editPath(INBOX_FILE), results = this.editPath(RESULTS_FILE);
-    if (this.shell.kind !== 'desktop' || !read || !inbox || !results || !this.config.policy || this.checkingEdits) return;
-    this.checkingEdits = true;
-    try {
-      const text = await read(inbox).catch(() => null);
-      if (!this.editLoaded) { this.editState = parseEditState(await read(results).catch(() => null)); this.editLoaded = true; }
-      const edits = parseInbox(text);
-      if (!edits.some((e) => !this.editState.seen.includes(e.id))) return;
-      const r = processInbox(this.config.policy, edits, this.editState, 'desktop');
-      this.editState = r.state;
-      if (r.changed) await this.saveConfig(false);
-      await this.saveEditState();
-      if (r.newlyHeld.length) await this.raise([{ id: `rules.${Date.now()}`, kind: 'rules', severity: 'warn', group: 'rules', clears: { when: 'flag', flag: 'rules' },
-        title: `${this.editState.held.length} rule ${this.editState.held.length === 1 ? 'change' : 'changes'} to accept`,
-        body: 'An agent asked for a change to what a model may see or whether it runs. Open Model rules to accept or dismiss it.' }]);
-      if (this.view === 'rules') await this.render();
-    } finally { this.checkingEdits = false; }
-  }
-
-  private editLoaded = false;
-
-  private async answerEdit(id: string, accept: boolean): Promise<void> {
-    if (!this.config.policy || !id) return;
-    const r = resolveHeld(this.config.policy, this.editState, id, accept, 'desktop');
-    this.editState = r.state;
-    if (r.changed) await this.saveConfig(false);
-    await this.saveEditState();
-    await this.render();
-  }
-
-  /** policy.json changes only when a rule does, so it is written with the config, never on a usage refresh. */
-  private async writePolicy(): Promise<void> {
-    if (!this.shell.exportSnapshot || !this.config.exportPath || !this.config.policy) return;
-    const file = buildPolicyFile(this.config.policy, core.policyProviders(this.config));
-    try {
-      await this.shell.exportSnapshot(policyPathFor(this.config.exportPath), JSON.stringify(file, null, 2));
-      this.policyError = null;
-    } catch (e) {
-      this.policyError = e instanceof Error ? e.message : String(e);
-    }
-  }
 
   private async saveConfig(flash = true): Promise<void> {
-    await this.shell.saveConfig(this.config);
-    await this.writePolicy();
+    if (this.engine) {
+      this.ownSaves++;
+      try { await this.engine.saveConfig(structuredClone(this.config)); } finally { this.ownSaves--; }
+    } else await this.shell.saveConfig(this.config);
     if (flash) {
       this.savedFlash = this.policyError ? 'Saved, but policy.json was not written' : 'Saved';
       setTimeout(() => { this.savedFlash = null; if (this.view === 'settings') void this.render(); }, 1500);
@@ -746,7 +593,7 @@ export class App {
 
   private drawStrip(): void {
     if (!this.strip) return;
-    const html = renderStrip({ pinned: this.pinned, canPin: this.shell.kind === 'desktop', alerts: feedFor(this.keeper.feed, 'augur'), open: this.alertsOpen });
+    const html = renderStrip({ pinned: this.pinned, canPin: this.shell.kind === 'desktop', alerts: feedFor(this.currentFeed(), 'augur'), open: this.alertsOpen });
     this.strip.classList.toggle('pinned', this.pinned);
     if (html === this.stripHtml) return;
     this.stripHtml = html;
@@ -759,58 +606,22 @@ export class App {
       case 'pin': await this.togglePin(); break;
       case 'bell': this.alertsOpen = !this.alertsOpen; this.drawStrip(); break;
       case 'dismiss-alert': await this.dismissAlerts([b.dataset.value ?? '']); break;
-      case 'dismiss-all': await this.dismissAlerts(feedFor(this.keeper.feed, 'augur').map((a) => a.id)); break;
+      case 'dismiss-all': await this.dismissAlerts(feedFor(this.currentFeed(), 'augur').map((a) => a.id)); break;
     }
   }
 
-  /**
-   * On the desktop, alerts go through the feed and the outlet grid. An unpaired phone notifies on its own as before.
-   * A paired phone raises nothing, because the desktop pushes its alerts to it.
-   */
+  private currentFeed(): AlertFeed { return this.engine ? this.feed ?? { schema: 1, generatedAt: new Date(0).toISOString(), alerts: [] } : this.keeper.feed; }
+
+  /** An unpaired phone notifies on its own. A paired phone raises nothing, because the desktop pushes its alerts to it. */
   private async raise(items: Raise[]): Promise<void> {
-    if (this.shell.kind === 'desktop') { if (await this.keeper.raise(items)) this.feedChanged(); return; }
     if (this.sync?.channel || !this.config.alerts.enabled) return;
     for (const item of items) await this.shell.notify(item.title, item.body).catch(() => undefined);
-  }
-
-  /** Redraws the bell. When a phone is paired, the new feed reaches it within a minute. */
-  private feedChanged(): void {
-    this.drawStrip();
-    if (this.shell.kind !== 'desktop' || !this.sync?.channel) return;
-    const since = Date.now() - this.lastPush;
-    clearTimeout(this.pushRetry);
-    this.pushRetry = setTimeout(() => void this.push(), Math.max(0, FORCED_PUSH_MS - since));
-  }
-
-  /** Drops alerts that have stopped applying. A condition that has not been read yet counts as still holding. */
-  private async clearFeed(): Promise<void> {
-    if (this.shell.kind !== 'desktop') return;
-    const flags = {
-      models: pendingCount(this.config) > 0,
-      rules: !this.editLoaded || this.editState.held.length > 0,
-      update: this.update.status === 'idle' || this.update.status === 'checking' || !!this.update.available,
-    };
-    if (await this.keeper.clear(this.snapshot, flags)) this.feedChanged();
-  }
-
-  /** Applies dismissals from Claude Code, then drops alerts that have stopped applying. */
-  private async checkFeed(): Promise<void> {
-    if (await this.keeper.checkAcks()) this.feedChanged();
-    await this.clearFeed();
-  }
-
-  /** Reads what the phone has dismissed and where it wants push. */
-  private async checkPhone(): Promise<void> {
-    if (!this.sync?.channel) return;
-    this.lastPhoneCheck = Date.now();
-    const state = await pullPhoneState(this.shell.host, this.sync).catch(() => null);
-    if (state && await this.keeper.mergePhone(state)) this.feedChanged();
   }
 
   private async dismissAlerts(ids: string[]): Promise<void> {
     ids = ids.filter(Boolean);
     if (!ids.length) return;
-    if (this.shell.kind === 'desktop') { if (await this.keeper.dismiss(ids)) this.feedChanged(); return; }
+    if (this.engine) { await this.engine.dismiss(ids); return; }
     this.phoneState.acks = [...this.phoneState.acks.filter((a) => !ids.includes(a)), ...ids].slice(-200);
     await this.keeper.dismiss(ids);
     this.drawStrip();
@@ -827,43 +638,6 @@ export class App {
   }
 
   /** Turns push on or off for this browser on the phone. */
-  private async exportUsage() {
-    if (!this.shell.exportSnapshot || !this.config.exportPath || !this.snapshot) return;
-    const out = { ...this.snapshot, summary: summaryLine(this.snapshot, this.config) };
-    await this.shell.exportSnapshot(this.config.exportPath, JSON.stringify(out, null, 2)).catch(() => undefined);
-  }
-
-  /** Reads where the Claude installs stand. After an update, an installed mod older than the one this build carries is replaced. */
-  private async loadClaude(refresh: boolean) {
-    if (!this.shell.claudeStatus) return;
-    this.claude = await this.shell.claudeStatus().catch(() => null);
-    const c = this.claude;
-    if (refresh && c?.code && c.bundled && c.code !== c.bundled && this.config.exportPath) {
-      await this.shell.claudeInstall?.('code', this.config.exportPath).catch(() => undefined);
-      this.claude = await this.shell.claudeStatus().catch(() => null);
-    }
-  }
-
-  private async setClaude(target: ClaudeTarget, on: boolean) {
-    this.claudeError = '';
-    try {
-      if (!on) await this.shell.claudeRemove?.(target);
-      else {
-        // The mod reads the usage file, so turning it on also turns on the export when it is off.
-        if (target === 'code' && !this.config.exportPath) {
-          this.config.exportPath = DEFAULT_EXPORT;
-          await this.saveConfig();
-          await this.exportUsage();
-        }
-        await this.shell.claudeInstall?.(target, this.config.exportPath ?? DEFAULT_EXPORT);
-      }
-    } catch (e) {
-      this.claudeError = e instanceof Error ? e.message : String(e);
-    }
-    await this.loadClaude(false);
-    await this.render();
-  }
-
   private async togglePush(on: boolean): Promise<void> {
     this.pushError = '';
     if (on && !this.pushKey) this.pushError = PUSH_TEXT.noKey;
@@ -1073,7 +847,7 @@ export class App {
   private async refreshKeyState(): Promise<void> {
     const page = this.routesPage, d = page.draft;
     if (!d || d.options.keySource !== 'store' || !page.canTest || !/^[a-z][a-z0-9_-]*$/.test(d.name)) { page.keyStored = null; return; }
-    page.keyStored = await this.shell.hasSecret(routeSecretName(d.name)).catch(() => null);
+    page.keyStored = await (this.engine ?? this.shell).hasSecret(routeSecretName(d.name)).catch(() => null);
     await this.render();
   }
 
@@ -1084,9 +858,9 @@ export class App {
     const value = input.value.trim();
     if (!value) { page.keyNote = 'Paste the key first.'; await this.render(); return; }
     try {
-      await this.shell.setSecret(routeSecretName(d.name), value);
+      await (this.engine ?? this.shell).setSecret(routeSecretName(d.name), value);
       input.value = '';
-      page.keyStored = true; page.keyNote = 'The key is saved in the Windows credential store.';
+      page.keyStored = true; page.keyNote = "The key is saved in this computer's key store.";
     } catch (e) { page.keyNote = `The key was not saved. ${e instanceof Error ? e.message : String(e)}`; }
     await this.render();
   }
@@ -1095,7 +869,7 @@ export class App {
     const page = this.routesPage, d = page.draft;
     if (!d) return;
     try {
-      await this.shell.deleteSecret(routeSecretName(d.name));
+      await (this.engine ?? this.shell).deleteSecret(routeSecretName(d.name));
       page.keyStored = false; page.keyNote = 'The key was removed.';
     } catch (e) { page.keyNote = `The key was not removed. ${e instanceof Error ? e.message : String(e)}`; }
     await this.render();
@@ -1237,13 +1011,15 @@ export class App {
         const input = document.getElementById(`f-${pid}-${key}`) as HTMLInputElement | null;
         const value = input?.value.trim();
         if (!value) return;
-        await this.shell.setSecret(name, value);
+        if (this.engine) await this.engine.setProviderKey(pid, key, value);
+        else {
+          await this.shell.setSecret(name, value);
+          this.provider(pid).enabled = true;
+          await this.saveConfig(false);
+        }
         if (input) input.value = '';
-        this.provider(pid).enabled = true;
-        await this.saveConfig(false);
-      } else {
-        await this.shell.deleteSecret(name);
-      }
+      } else if (this.engine) await this.engine.deleteSecret(name);
+      else await this.shell.deleteSecret(name);
       await this.refreshSecrets();
       this.savedFlash = t.dataset.secretSave ? 'Key saved' : 'Key removed';
       await this.render();
@@ -1252,11 +1028,11 @@ export class App {
     }
     switch (t.dataset.action) {
       case 'refresh': await this.refresh(true); break;
-      case 'update-check': await this.checkForUpdate(false); break;
+      case 'update-check': await this.engine?.checkUpdate(); break;
       case 'update-install': await this.installUpdate(); break;
       case 'settings': this.view = 'settings'; await this.render(); break;
-      case 'retry-policy': await this.writePolicy(); await this.render(); break;
-      case 'edit-accept': case 'edit-dismiss': await this.answerEdit(t.dataset.edit ?? '', t.dataset.action === 'edit-accept'); break;
+      case 'retry-policy': await this.engine?.retryPolicy(); break;
+      case 'edit-accept': case 'edit-dismiss': await this.engine?.answerEdit(t.dataset.edit ?? '', t.dataset.action === 'edit-accept'); break;
       case 'rules': this.view = 'rules'; this.rules.showHistory = false; if (t.dataset.value) this.rules.filter = t.dataset.value as RulesFilter; await this.render(); break;
       case 'rules-dial': this.rules.dialOpen = !this.rules.dialOpen; this.rules.dialPlan = null; this.rules.dialError = ''; await this.render(); break;
       case 'rules-history': this.rules.showHistory = !this.rules.showHistory; await this.render(); break;
@@ -1295,6 +1071,7 @@ export class App {
       }
       case 'finish-setup':
         this.firstRun = false; this.view = 'dashboard';
+        if (this.engine) { await this.engine.finishSetup(structuredClone(this.config)); break; }
         await this.saveConfig(false); this.schedule(); await this.render(); await this.refresh(); break;
       case 'custom-example': {
         const cur = safeParse(this.customDraft);
@@ -1303,18 +1080,13 @@ export class App {
       }
       case 'custom-save': await this.saveCustom(); break;
       case 'sync-pair': {
-        const pwaUrl = this.pwaUrl();
-        const { link, pairUrl } = await createPairing(this.shell, this.relay(), pwaUrl);
-        this.sync = { ...link, pwaUrl, shareKeys: this.sync?.shareKeys };
-        this.lastPush = 0;
-        await this.saveConfig();
-        this.showPairCode(pairUrl);
-        void this.refresh();
+        const url = await this.engine?.pair();
+        if (url) this.showPairCode(url);
         break;
       }
       case 'sync-show': {
-        const key = await this.shell.host.secret('sync.key');
-        if (key && this.sync) this.showPairCode(pairingUrl(this.sync.pwaUrl, this.sync, key));
+        const url = await this.engine?.pairUrl();
+        if (url) this.showPairCode(url);
         break;
       }
       case 'sync-scan': {
@@ -1326,6 +1098,7 @@ export class App {
         break;
       }
       case 'sync-unpair':
+        if (this.engine) { this.pairQr = this.pairUrl = null; await this.engine.unpair(); break; }
         if (this.sync) this.sync = { ...this.sync, channel: '' };
         await Promise.all([this.shell.deleteSecret('sync.key'), this.shell.deleteSecret('sync.writeSecret')]);
         this.pairQr = this.pairUrl = null;
@@ -1371,34 +1144,6 @@ export class App {
     }
   }
 
-  private async checkForUpdate(auto: boolean): Promise<void> {
-    if (!this.shell.checkUpdate || this.update.status === 'checking' || this.update.status === 'installing') return;
-    const before = this.update.available?.version;
-    this.update.status = 'checking';
-    if (this.view === 'settings') await this.render();
-    try {
-      this.update.available = await this.shell.checkUpdate();
-      this.update.status = this.update.available ? 'available' : 'current';
-    } catch {
-      // A failed check keeps showing an update already found, so the button does not disappear.
-      this.update.status = this.update.available ? 'available' : 'error';
-    }
-    const found = this.update.available?.version;
-    if (found && found !== before) this.update.changes = await this.loadChanges(found);
-    if (found && found !== before) await this.raise([{ id: `update.${found}`, kind: 'update', severity: 'info', group: 'update', clears: { when: 'flag', flag: 'update' },
-      title: `Augur ${found} is ready`, body: this.config.autoUpdate !== false ? UPDATE_ALERT_TEXT.auto : UPDATE_ALERT_TEXT.manual }]);
-    if (!found) this.update.changes = null;
-    await this.render();
-    if (auto) await this.autoInstall();
-  }
-
-  private async loadChanges(to: string): Promise<ReleaseChanges[] | null> {
-    const from = this.update.version;
-    if (!from) return null;
-    const res = await this.shell.host.http({ url: CHANGELOG_URL(to), method: 'GET', timeoutMs: 15000 }).catch(() => null);
-    return res?.status === 200 ? releaseChanges(res.body, from, to) : null;
-  }
-
   private async autoInstall(): Promise<void> {
     if (this.update.status === 'available' && this.config.autoUpdate !== false && document.visibilityState === 'hidden') await this.installUpdate();
   }
@@ -1407,11 +1152,13 @@ export class App {
     if (!this.shell.installUpdate || this.update.status === 'installing') return;
     this.update.status = 'installing';
     this.tip.style.opacity = '0';
+    await this.engine?.setInstalling(true);
     await this.render();
     try {
       await this.shell.installUpdate();
     } catch {
       this.update.status = 'error';
+      await this.engine?.setInstalling(false);
       await this.render();
     }
   }
@@ -1421,7 +1168,7 @@ export class App {
   private async saveRules(): Promise<void> {
     await this.saveConfig(false);
     await this.render();
-    if (this.sync?.channel) { clearTimeout(this.rulesTimer); this.rulesTimer = setTimeout(() => void this.syncRules(true), RULES_EDIT_DELAY_MS); }
+    if (this.sync?.channel && !this.engine) { clearTimeout(this.rulesTimer); this.rulesTimer = setTimeout(() => void this.syncRules(true), RULES_EDIT_DELAY_MS); }
   }
 
   private rulesTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1461,7 +1208,7 @@ export class App {
     if (d.rprov) { const o = this.rules.open; if (o.has(d.rprov)) o.delete(d.rprov); else o.add(d.rprov); await this.render(); return true; }
     if (d.rfilter) { this.rules.filter = d.rfilter as RulesFilter; await this.render(); return true; }
     if (d.status) { const [pid = '', label = ''] = d.status.split('|'); setModelStatus(policy, pid, label, d.value as ModelEntryStatus, this.device); await this.saveRules(); return true; }
-    if (d.listNow) { void this.refreshModelLists(d.listNow); return true; }
+    if (d.listNow) { void this.engine?.listModels(d.listNow); return true; }
     if (d.pauseClear) { setField(policy, d.pauseClear, undefined, this.device); await this.saveRules(); return true; }
     if (d.undo) { const c = policy.history[Number(d.undo)]; if (c) undoChange(policy, c, this.device); await this.saveRules(); return true; }
     if (d.addModel) {
@@ -1604,11 +1351,11 @@ export class App {
       else if (kind === 'alerts') this.config.alerts.enabled = t.checked;
       else if (kind === 'push') { await this.togglePush(t.checked); return; }
       else if (kind === 'autostart') { await this.shell.setAutostart?.(t.checked); this.autostart = t.checked; return; }
-      else if (kind === 'claude-code' || kind === 'claude-desktop') { await this.setClaude(kind === 'claude-code' ? 'code' : 'desktop', t.checked); return; }
-      else if (kind === 'sharekeys') { if (this.sync) this.sync = { ...this.sync, shareKeys: t.checked }; this.lastPush = 0; await this.saveConfig(); void this.refresh(); return; }
+      else if (kind === 'claude-code' || kind === 'claude-desktop') { await this.engine?.setClaude(kind === 'claude-code' ? 'code' : 'desktop', t.checked); return; }
+      else if (kind === 'sharekeys') { if (this.sync) this.sync = { ...this.sync, shareKeys: t.checked }; await this.saveConfig(); return; }
       else if (kind === 'openonlaunch') { this.config.openOnLaunch = t.checked; await this.saveConfig(); return; }
       else if (kind === 'autoupdate') { this.config.autoUpdate = t.checked; await this.saveConfig(); if (t.checked) void this.autoInstall(); return; }
-      await this.saveConfig(); if (kind === 'enabled' && !this.firstRun) void this.refresh(); await this.render(); return;
+      await this.saveConfig(); if (kind === 'enabled' && !this.firstRun && !this.engine) void this.refresh(); await this.render(); return;
     }
     if (d.outlet) {
       const [kind, outlet] = d.outlet.split('.') as [AlertKind, Outlet];
@@ -1638,8 +1385,6 @@ export class App {
     if (t.matches('[data-export]')) {
       this.config.exportPath = t.value.trim() || null;
       await this.saveConfig();
-      // The installed mod reads the usage file from the path it was given, so it follows the change.
-      if (this.claude?.code && this.config.exportPath) await this.shell.claudeInstall?.('code', this.config.exportPath).catch(() => undefined);
       return;
     }
     if (d.alert) {

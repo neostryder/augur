@@ -1,5 +1,5 @@
 import {
-  ACTIVITIES, ACTIVITY_LABELS, COST_TIERS, DATA_TIERS, DATA_TIER_LABELS, OUTPUT_MODES, WEIGHT_LABELS, WEIGHT_LEVELS,
+  pendingCount, ACTIVITIES, ACTIVITY_LABELS, COST_TIERS, DATA_TIERS, DATA_TIER_LABELS, OUTPUT_MODES, WEIGHT_LABELS, WEIGHT_LEVELS,
   fieldPath, latestOnly, pauseActive, resolveModel, resolveThresholds,
   type AppConfig, type EditState, type ModelCatalog, type ModelEntry, type PolicyChange, type ProviderPlugin, type Rule, type Snapshot,
 } from '@augur/core';
@@ -99,9 +99,7 @@ function matches(m: RulesModel, label: string, model: ModelEntry): boolean {
 }
 
 /** Models waiting for a decision: new ones from a live list, and imported ones not yet confirmed. */
-export function pendingCount(config: AppConfig): number {
-  return Object.values(config.policy?.providers ?? {}).reduce((n, p) => n + Object.values(p.models).filter((x) => x.status === 'unreviewed' || x.status === 'imported').length, 0);
-}
+export { pendingCount };
 
 function summary(provider: string, defaults: Rule, model: ModelEntry): string {
   const r = resolveModel(provider, defaults, model);

@@ -1,45 +1,31 @@
 // The one place the UI touches the core package, so a renamed export is a one-line fix.
 import {
-  appendHistory as coreAppend, builtinProviders, calculatePace, collect as coreCollect, defaultConfig as coreDefault, dueProviders as coreDue,
-  evaluateAlerts as coreAlerts, genericProvider, migrateConfig as coreMigrate, resolveThresholds, RULES_ONLY_PROVIDERS,
+  appendHistoryRows, calculatePace, collectFor, defaultConfig as coreDefault, dueFor, migrateConfig as coreMigrate, usageAlerts,
 } from '@augur/core';
-import type { Alert as UsageAlert, AppConfig, HistoryRow as CoreRow, Host, Meter, PaceResult, ProviderPlugin, Snapshot } from '@augur/core';
+import type { AppConfig, HistoryRow as CoreRow, Host, Meter, PaceResult, Snapshot, UsageAlert } from '@augur/core';
 
 export type HistoryRow = CoreRow;
 export type Pace = PaceResult;
-export interface Alert { key: string; title: string; body: string; usage: UsageAlert }
+export type Alert = UsageAlert;
 
-export const HISTORY_KEEP_S = 8 * 86400;
-
-export function plugins(config: AppConfig): ProviderPlugin[] {
-  const custom = (config.custom ?? []).flatMap((def) => {
-    try { return [genericProvider(def)]; } catch { return []; }
-  });
-  return [...builtinProviders, ...custom];
-}
-
-/** Every provider the rules page lists: the ones Augur reads usage for, then the rules-only ones. */
-export function policyProviders(config: AppConfig): Array<{ id: string; name: string; metered: boolean }> {
-  const metered = plugins(config).map((p) => ({ id: p.id, name: p.name, metered: true }));
-  return [...metered, ...RULES_ONLY_PROVIDERS.filter((r) => !metered.some((m) => m.id === r.id)).map(({ id, name }) => ({ id, name, metered: false }))];
-}
+export { allPlugins as plugins, policyProviders, detectProvider as detect, HISTORY_KEEP_S } from '@augur/core';
 
 export const defaultConfig = (): AppConfig => coreDefault();
 export const migrateConfig = (raw: unknown): AppConfig => coreMigrate(raw);
 
 export function collect(host: Host, config: AppConfig, prev: Snapshot | null, force = false): Promise<Snapshot> {
-  return coreCollect(host, config, prev, plugins(config), { force });
+  return collectFor(host, config, prev, force);
 }
 
 /** The enabled providers whose own interval has passed. */
 export function dueProviders(config: AppConfig, prev: Snapshot | null): string[] {
-  return coreDue(config, prev, plugins(config));
+  return dueFor(config, prev);
 }
 
 export { DEFAULT_REFRESH_SECONDS } from '@augur/core';
 
 export function appendHistory(rows: HistoryRow[], snap: Snapshot): HistoryRow[] {
-  return coreAppend(rows, snap, HISTORY_KEEP_S);
+  return appendHistoryRows(rows, snap);
 }
 
 export function series(rows: HistoryRow[], providerId: string, meterId: string): Array<[number, number]> {
@@ -57,16 +43,6 @@ export function pace(meter: Meter, rows: HistoryRow[], providerId: string): Pace
   try { return calculatePace(meter, rows, providerId, new Date()); } catch { return null; }
 }
 
-export function evaluateAlerts(snap: Snapshot, rows: HistoryRow[], config: AppConfig, state: Record<string, unknown>):
-  { alerts: Alert[]; firedState: Record<string, unknown> } {
-  const spentAt = Object.fromEntries(Object.entries(config.policy?.providers ?? {}).map(([id, p]) => [id, resolveThresholds(p).denyPct]));
-  const r = coreAlerts(snap, rows, config.alerts, state as Record<string, boolean | number>, { spentAt });
-  return {
-    alerts: r.alerts.map((a) => ({ key: a.key, title: snap.providers[a.providerId]?.name ?? 'Augur', body: a.message, usage: a })),
-    firedState: r.firedState,
-  };
-}
-
-export async function detect(p: ProviderPlugin, h: Host): Promise<boolean> {
-  try { return p.detect ? await p.detect(h) : false; } catch { return false; }
+export function evaluateAlerts(snap: Snapshot, rows: HistoryRow[], config: AppConfig, state: Record<string, unknown>): { alerts: Alert[]; firedState: Record<string, unknown> } {
+  return usageAlerts(snap, rows, config, state);
 }
