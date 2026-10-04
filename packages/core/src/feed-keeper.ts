@@ -1,6 +1,14 @@
-import { addAlerts, applyAcks, buildPush, clearResolved, emptyFeed, generateVapidKeys, outletsFor, parseAcks, parseFeed, policyPathFor } from '@augur/core';
-import type { AlertFeed, AlertKind, AppConfig, FeedAlert, FeedFlag, Outlet, PushSubscriptionInfo, Shell, Snapshot, VapidKeys } from '@augur/core';
-import type { PhoneState } from './sync';
+import { addAlerts, applyAcks, clearResolved, emptyFeed, outletsFor, parseAcks, parseFeed } from './feed.js';
+import type { AlertFeed, AlertKind, FeedAlert, FeedFlag, Outlet } from './feed.js';
+import { buildPush, generateVapidKeys } from './webpush.js';
+import type { PushSubscriptionInfo, VapidKeys } from './webpush.js';
+import { policyPathFor } from './policy.js';
+import type { AppConfig, Snapshot } from './types.js';
+import type { Shell } from './shell.js';
+import type { PhoneState } from './sync.js';
+
+/** What the keeper needs from where it runs: the window app's shell, or the engine. */
+export type KeeperShell = Pick<Shell, 'host' | 'notify' | 'setSecret' | 'loadAlertFeed' | 'saveAlertFeed' | 'sendWebPush'>;
 
 /** An alert to raise. The keeper adds the time, and the outlet grid picks where it goes. */
 export type Raise = Omit<FeedAlert, 'raisedAt' | 'outlets'>;
@@ -31,7 +39,7 @@ export class FeedKeeper {
   phonePush: PushSubscriptionInfo | null = null;
   private vapid: VapidKeys | null = null;
 
-  constructor(private shell: Shell, private config: () => AppConfig, private pushSubject: () => string) {}
+  constructor(private shell: KeeperShell, private config: () => AppConfig, private pushSubject: () => string) {}
 
   async load(): Promise<void> {
     const saved = await this.shell.loadAlertFeed?.().catch(() => null);

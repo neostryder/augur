@@ -1,7 +1,7 @@
-import { emptyPolicy, fieldPath, mergePolicy, policyDigest, setField } from '@augur/core';
-import type { Host, HttpRequest, PolicyConfig } from '@augur/core';
+import { emptyPolicy, fieldPath, mergePolicy, policyDigest, setField } from '../src/index.js';
+import type { Host, HttpRequest, PolicyConfig } from '../src/index.js';
 import { describe, expect, it } from 'vitest';
-import { createPairing, pullRules, pushRules } from '../src/sync';
+import { createPairing, pullRules, pushRules } from '../src/sync.js';
 
 /** A relay in memory: PUT stores under the path when the secret hashes to the channel, GET returns it. */
 function relay() {

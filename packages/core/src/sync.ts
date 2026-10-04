@@ -1,8 +1,14 @@
 // Desktop-to-phone sync. The desktop encrypts its snapshot with AES-GCM under a key that only
 // it and the paired phone know, then stores the ciphertext on the relay. The relay cannot read it.
-import { isPushSubscription, migratePolicy } from '@augur/core';
-import type { AlertConfig, AppConfig, FeedAlert, PushSubscriptionInfo, GenericProviderDef, Host, HttpRequest, LayoutConfig, PolicyConfig, ProviderSettings, Shell, Snapshot } from '@augur/core';
-import type { HistoryRow } from './core';
+import { isPushSubscription } from './webpush.js';
+import { migratePolicy, type PolicyConfig } from './policy.js';
+import type { AlertConfig, AppConfig, GenericProviderDef, Host, HttpRequest, LayoutConfig, ProviderSettings, Snapshot } from './types.js';
+import type { FeedAlert } from './feed.js';
+import type { PushSubscriptionInfo } from './webpush.js';
+import type { HistoryRow } from './history.js';
+
+/** Stores a secret where the device keeps them: the keychain on the desktop, the browser's store on the phone. */
+export interface SecretWriter { setSecret(name: string, value: string): Promise<void> }
 
 /** The desktop settings a newly paired phone starts from. No secrets: keys never leave the desktop. */
 export interface SharedConfig {
@@ -71,7 +77,7 @@ async function aesKey(raw: Uint8Array<ArrayBuffer>): Promise<CryptoKey> {
 }
 
 /** Creates a new channel on the desktop and returns the link the phone opens. */
-export async function createPairing(shell: Shell, relay: string, pwaUrl: string): Promise<{ link: SyncLink; pairUrl: string }> {
+export async function createPairing(shell: SecretWriter, relay: string, pwaUrl: string): Promise<{ link: SyncLink; pairUrl: string }> {
   const key = crypto.getRandomValues(new Uint8Array(32));
   const writeSecret = b64(crypto.getRandomValues(new Uint8Array(32)));
   const channel = await sha256Hex(writeSecret);
@@ -123,16 +129,8 @@ export class SyncUploadError extends Error {
   constructor(readonly status: number) { super(`Sync upload failed (${status})`); }
 }
 
-/** Phone side: reads a `#pair=` fragment once, stores it, and clears it from the address bar. */
-export async function acceptPairingFromUrl(shell: Shell): Promise<SyncLink | null> {
-  if (!location.hash.startsWith('#pair')) return null;
-  const link = parsePairing(location.hash);
-  history.replaceState(null, '', location.pathname + location.search);
-  return link ? acceptPairing(shell, link) : null;
-}
-
 /** Stores the pairing key from a link the phone opened or scanned. */
-export async function acceptPairing(shell: Shell, link: SyncLink & { key: string }): Promise<SyncLink> {
+export async function acceptPairing(shell: SecretWriter, link: SyncLink & { key: string }): Promise<SyncLink> {
   await shell.setSecret(KEY_SECRET, link.key);
   return { relay: link.relay, channel: link.channel };
 }

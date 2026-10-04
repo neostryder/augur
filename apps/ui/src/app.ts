@@ -19,8 +19,8 @@ import { span, until } from './util';
 import qrcode from 'qrcode-generator';
 import { HOSTED } from './hosted';
 import { attachPullToRefresh } from './pull-refresh';
-import { acceptPairing, acceptPairingFromUrl, applySharedConfig, askDesktop, createPairing, mergeSynced, pairingUrl, parsePairing, pullPhoneState, pullRules, pullSnapshot, pushPhoneState, pushRules, pushSnapshot, readAsk, sharedConfig, SyncUploadError, type PhoneState } from './sync';
-import { FeedKeeper, UPDATE_ALERT_TEXT, type Raise } from './feed-keeper';
+import { acceptPairing, applySharedConfig, askDesktop, createPairing, mergeSynced, pairingUrl, parsePairing, pullPhoneState, pullRules, pullSnapshot, pushPhoneState, pushRules, pushSnapshot, readAsk, sharedConfig, SyncUploadError, type PhoneState, FeedKeeper, UPDATE_ALERT_TEXT, type Raise, summaryLine, tooltip } from '@augur/core';
+import { acceptPairingFromUrl } from './pairing';
 import { scanQr } from './scan';
 import { relayUrl, setRelayUrl } from './shells/browser';
 
@@ -1705,54 +1705,6 @@ function nearest(pts: Array<[number, number]>, t: number): [number, number] | nu
 
 function safeParse(s: string): unknown {
   try { return JSON.parse(s); } catch { return null; }
-}
-
-function shortWindow(kind: string | undefined): string {
-  return kind === 'session' ? '5h' : kind === 'weekly' ? 'wk' : kind === 'daily' ? 'day' : kind === 'monthly' ? 'mo' : '';
-}
-
-/** One line per provider for the tray tooltip (Windows caps tooltips at 127 characters). */
-function tooltip(snap: Snapshot, config: AppConfig): string {
-  const lines: string[] = [];
-  for (const pc of config.providers) {
-    const p = snap.providers[pc.id];
-    if (!pc.enabled || !p) continue;
-    const bits = p.meters.filter((m) => m.usedPct != null && m.windowKind !== 'credits').slice(0, 2).map((m) => `${Math.round(m.usedPct!)}% ${shortWindow(m.windowKind)}`.trim());
-    const bal = p.money.find((m) => m.id === 'balance');
-    if (bal?.amount != null) bits.push(`$${bal.amount.toFixed(2)}`);
-    lines.push(`${p.name.split(' /')[0]} ${bits.join(', ') || (p.error ? 'error' : '-')}`);
-  }
-  const text = lines.join('\n');
-  return text.length <= 127 ? text : text.slice(0, 127);
-}
-
-/** Compact one-line summary for other tools, such as a terminal hook that prints it on every prompt. */
-export function summaryLine(snap: Snapshot, config: AppConfig): string {
-  const parts: string[] = [];
-  const reset = (iso: string | null | undefined): string => {
-    if (!iso) return '';
-    const ms = new Date(iso).getTime() - Date.now();
-    if (ms <= 0) return ' (resetting)';
-    if (ms < 86400e3) return ` (resets ${span(ms).replace(' ', '')})`;
-    return ` (resets ${new Date(iso).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false })})`;
-  };
-  for (const pc of config.providers) {
-    const p = snap.providers[pc.id];
-    if (!pc.enabled || !p) continue;
-    const bits: string[] = [];
-    p.meters.forEach((m, i) => {
-      if (m.usedPct == null || !['session', 'weekly', 'monthly'].includes(m.windowKind ?? '')) return;
-      if (m.usedPct === 0 && i > 0) return;
-      const scope = m.label.includes(', ') && !/all models/i.test(m.label) ? m.label.split(', ')[1] + ' ' : '';
-      bits.push(`${scope}${Math.round(m.usedPct)}% ${shortWindow(m.windowKind)}${reset(m.resetsAt)}`);
-    });
-    for (const mo of p.money) if (mo.id === 'balance' && mo.amount != null) bits.push(`$${mo.amount.toFixed(2)} left`);
-    const n = (p.notes ?? {}) as Record<string, unknown>;
-    if (!bits.length && typeof n.latencyMs === 'number') bits.push(`answering, ${Math.round(n.latencyMs)} ms`);
-    if (!bits.length && p.error) bits.push(`unavailable: ${p.error}`);
-    parts.push(`${p.name.split(' /')[0]} ${bits.join(', ')}${p.stale && p.fetchedAt ? ` [stale, updated ${span(Date.now() - new Date(p.fetchedAt).getTime())} ago]` : ''}`);
-  }
-  return parts.join(' | ');
 }
 
 /** iPhone and iPad Safari have no install prompt, so the phone section explains Add to Home Screen. */

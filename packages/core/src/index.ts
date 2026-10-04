@@ -15,3 +15,6 @@ export * from './models.js';
 export * from './policy-edits.js';
 export * from './feed.js';
 export * from './webpush.js';
+export * from './sync.js';
+export * from './feed-keeper.js';
+export * from './summary.js';

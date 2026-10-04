@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { defaultConfig, migrateConfig, unb64url } from '@augur/core';
-import type { AppConfig, Shell } from '@augur/core';
-import { FeedKeeper, type Raise } from '../src/feed-keeper';
+import { defaultConfig, migrateConfig, unb64url } from '../src/index.js';
+import type { AppConfig, Shell } from '../src/index.js';
+import { FeedKeeper, type Raise } from '../src/feed-keeper.js';
 
 function fakeShell() {
   const files = new Map<string, string>(), secrets = new Map<string, string>();
