@@ -16,6 +16,10 @@ export interface Ctx {
   open(url: string): void;
   /** Runs an engine command and shows its error in the footer when it fails. Resolves to undefined after a failure. */
   run<T = unknown>(method: string, ...args: unknown[]): Promise<T | undefined>;
+  /** Gives the terminal to `fn` for as long as it runs, as for an editor, then draws the app again. */
+  pause<T>(fn: () => T | Promise<T>): Promise<T>;
+  /** Puts text on the clipboard, where the terminal allows it. */
+  copy(text: string): void;
 }
 
 /** A key and what it does, for the footer and the help page. */

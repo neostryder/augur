@@ -2,8 +2,10 @@ import { ALERT_KINDS } from '@augur/core';
 import type { AlertKind, AppConfig, ClaudeStatus, Outlet, Platform, ProviderPlugin, PushStatus, Snapshot } from '@augur/core';
 import type { UpdateState } from '../app';
 import { ICON, esc } from '../util';
-import { DEFAULT_REFRESH_SECONDS } from '../core';
+import { ALERT_TEXT, CLAUDE_TEXT, COMPUTER_TEXT, CUSTOM_TEXT, KIND_LABELS, PHONE_TEXT, PROVIDER_TEXT, REFRESH_CHOICES, STARTER_RULES_TEXT, refreshDefault } from '@augur/view-model';
 import { classifierChooser, modeChooser } from './service';
+
+export { ALERT_TEXT, CLAUDE_TEXT, CUSTOM_EXAMPLE, KIND_LABELS, STARTER_RULES_TEXT } from '@augur/view-model';
 
 export interface SettingsModel {
   config: AppConfig;
@@ -40,26 +42,6 @@ export interface SettingsModel {
   claude: { status: ClaudeStatus | null; error: string } | null;
 }
 
-export const KIND_LABELS: Record<AlertKind, string> = {
-  percent: 'Usage reaches a threshold',
-  pace: 'Pace warning',
-  reset: 'Limit spent with a reset in hand',
-  balance: 'Balance is low',
-  refresh: 'Refresh failed',
-  models: 'New models to review',
-  rules: 'Rule changes to accept',
-  update: 'Update available',
-};
-
-export const ALERT_TEXT = {
-  master: 'Each alert fires once per window, then waits for the next reset. The grid below picks where each kind goes.',
-  grid: 'Where each alert goes',
-  gridHelp: 'Keep in Augur holds an alert under the bell until you dismiss it or it stops applying. Claude Code shows it in sessions with the Augur mod. Phone sends a push once push is on in the phone app.',
-  keep: 'Keep in Augur',
-  claude: 'Claude Code',
-  phone: 'Phone',
-};
-
 export const PUSH_TEXT = {
   label: 'Push notifications',
   on: "Your computer's alerts arrive here even when Augur is closed.",
@@ -72,15 +54,6 @@ export const PUSH_TEXT = {
   where: 'Your computer picks which alerts reach this phone, in its own Alerts settings.',
 };
 
-export const CLAUDE_TEXT = {
-  code: 'Claude Code',
-  codeDesc: 'Shows your usage in the status line and Augur alerts above the prompt, in the terminal and the Code tab. New sessions pick it up.',
-  codeExport: 'Turning this on also saves your usage to .augur/usage.json, which the mod reads.',
-  desktop: 'Claude Desktop chat',
-  desktopDesc: 'Lets chats in Claude Desktop pick and run models through Augur. Restart Claude Desktop after turning this on or off.',
-  desktopMissing: 'This build does not include the MCP server that Claude Desktop needs.',
-};
-
 /** Desktop: turns the Claude Code mod and the Claude Desktop MCP entry on and off. */
 function claudeSection(m: SettingsModel): string {
   const st = m.claude?.status;
@@ -89,7 +62,7 @@ function claudeSection(m: SettingsModel): string {
   const desktop = st.desktopPossible
     ? toggle('claude-desktop', st.desktop, CLAUDE_TEXT.desktop)
     : '';
-  return `<h2 class="sec">Claude</h2><div class="card">
+  return `<h2 class="sec">${CLAUDE_TEXT.heading}</h2><div class="card">
     <div class="row"><label class="name">${CLAUDE_TEXT.code}<span class="desc">${codeDesc}</span></label>${toggle('claude-code', !!st.code, CLAUDE_TEXT.code)}</div>
     <div class="row"><label class="name">${CLAUDE_TEXT.desktop}<span class="desc">${st.desktopPossible ? CLAUDE_TEXT.desktopDesc : CLAUDE_TEXT.desktopMissing}</span></label>${desktop}</div>
     ${m.claude?.error ? `<div class="field"><span class="bad-json">${esc(m.claude.error)}</span></div>` : ''}
@@ -123,8 +96,6 @@ function phoneAlerts(m: SettingsModel): string {
     <div class="field"><span class="help">${PUSH_TEXT.where}</span></div></div>`;
 }
 
-export const STARTER_RULES_TEXT = 'Each provider starts with cautious rules that its models inherit: public data only, text output only, and named before use. A model cannot be used until you confirm it on the model rules page and allow the activities it needs.';
-
 function agentsSection(m: SettingsModel, first: boolean): string {
   if (!m.canDispatch) return '';
   return `<h2 class="sec">Agents</h2><div class="card">${modeChooser(m.runJobs)}${first && m.runJobs && m.classifier !== null ? `<div class="rsec">Who classifies tasks</div>${classifierChooser(m.classifier)}` : ''}
@@ -151,20 +122,20 @@ function providerCard(m: SettingsModel, pid: string): string {
     if (plugin.needsLocalLogin) {
       detail += `<div class="field"><span class="help">${m.shellKind === 'pwa'
         ? 'Reads the login of the command-line app on your computer, so it only works in the desktop app.'
-        : `Reads the login of the ${esc(plugin.name)} command-line app on this computer. Sign in there first. No key is needed here.`}</span></div>`;
+        : esc(PROVIDER_TEXT.localLogin(plugin.name))}</span></div>`;
     }
     for (const f of plugin.fields) {
       const id = `f-${pid}-${f.key}`;
       if (f.kind === 'secret') {
         const has = m.secrets.has(`${pid}.${f.key}`);
-        detail += `<div class="field"><label for="${id}">${esc(f.label)} ${has ? '<span class="saved">Saved</span>' : ''}</label>
-          <div class="row" style="padding:0;border:0"><input type="password" id="${id}" autocomplete="off" spellcheck="false" placeholder="${has ? 'Enter a new key to replace it' : esc(f.placeholder ?? '')}">
+        detail += `<div class="field"><label for="${id}">${esc(f.label)} ${has ? `<span class="saved">${PROVIDER_TEXT.keySaved}</span>` : ''}</label>
+          <div class="row" style="padding:0;border:0"><input type="password" id="${id}" autocomplete="off" spellcheck="false" placeholder="${has ? PROVIDER_TEXT.keyReplace : esc(f.placeholder ?? '')}">
           <button class="btn small" data-secret-save="${esc(pid)}|${esc(f.key)}">Save</button>
-          ${has ? `<button class="btn small" data-secret-del="${esc(pid)}|${esc(f.key)}">Remove</button>` : ''}</div>
+          ${has ? `<button class="btn small" data-secret-del="${esc(pid)}|${esc(f.key)}">${PROVIDER_TEXT.keyRemove}</button>` : ''}</div>
           ${f.help ? `<span class="help">${esc(f.help)}</span>` : ''}</div>`;
       } else if (f.kind === 'signin') {
         const signedIn = ((m.snapshot?.providers[pid]?.notes as { webSessions?: Record<string, boolean> } | null | undefined)?.webSessions ?? {})[f.site ?? pid] === true;
-        if (m.shellKind === 'desktop') detail += `<div class="row"><label class="name">${esc(f.label)} ${signedIn ? '<span class="saved">Signed in</span>' : ''}${f.help ? `<span class="desc">${esc(f.help)}</span>` : ''}</label><button class="btn small" data-signin="${esc(f.site ?? pid)}">${signedIn ? 'Sign in again' : 'Sign in'}</button></div>`;
+        if (m.shellKind === 'desktop') detail += `<div class="row"><label class="name">${esc(f.label)} ${signedIn ? `<span class="saved">${PROVIDER_TEXT.signedIn}</span>` : ''}${f.help ? `<span class="desc">${esc(f.help)}</span>` : ''}</label><button class="btn small" data-signin="${esc(f.site ?? pid)}">${signedIn ? 'Sign in again' : 'Sign in'}</button></div>`;
       } else if (f.kind === 'toggle') {
         detail += `<div class="row"><label class="name">${esc(f.label)}${f.help ? `<span class="desc">${esc(f.help)}</span>` : ''}</label>${toggle(`setting:${pid}:${f.key}`, !!pc.settings[f.key], f.label)}</div>`;
       } else if (f.kind === 'select') {
@@ -178,12 +149,12 @@ function providerCard(m: SettingsModel, pid: string): string {
     const items = [...(snap?.meters ?? []).map((x) => ({ id: x.id, label: x.label })), ...(snap?.money ?? []).map((x) => ({ id: '$' + x.id, label: x.label }))];
     if (items.length) {
       const hidden = m.config.layout.hiddenMeters[pid] ?? [];
-      detail += `<div class="field"><label>Show on the dashboard</label><div class="metersel">${items.map((x) =>
+      detail += `<div class="field"><label>${PROVIDER_TEXT.show}</label><div class="metersel">${items.map((x) =>
         `<label><input type="checkbox" data-meter-vis="${esc(pid)}|${esc(x.id)}" ${hidden.includes(x.id) ? '' : 'checked'}>${esc(x.label)}</label>`).join('')}</div></div>`;
     }
     detail += refreshRow(m, pid, plugin);
-    detail += `<div class="row"><label class="name" for="c-${pid}">Color</label><input type="color" id="c-${pid}" data-color="${esc(pid)}" value="${esc(color)}">
-      <button class="btn small" data-color-reset="${esc(pid)}">Default</button></div>`;
+    detail += `<div class="row"><label class="name" for="c-${pid}">${PROVIDER_TEXT.color}</label><input type="color" id="c-${pid}" data-color="${esc(pid)}" value="${esc(color)}">
+      <button class="btn small" data-color-reset="${esc(pid)}">${PROVIDER_TEXT.colorDefault}</button></div>`;
   }
   return `<section class="card" data-pid="${esc(pid)}"><div class="phead">
       <span class="handle" title="Drag to reorder" aria-label="Drag to reorder">${ICON.grip}</span>
@@ -206,7 +177,7 @@ export function renderSettings(m: SettingsModel): string {
     <span class="grow"></span>${m.savedFlash ? `<span class="saved">${esc(m.savedFlash)}</span>` : ''}</header>`;
 
   if (m.firstRun && m.shellKind === 'pwa') html += phoneSection(m);
-  html += `<h2 class="sec">Providers</h2><div id="provider-list">${c.providers.map((p) => providerCard(m, p.id)).join('')}</div>`;
+  html += `<h2 class="sec">${PROVIDER_TEXT.heading}</h2><div id="provider-list">${c.providers.map((p) => providerCard(m, p.id)).join('')}</div>`;
 
   if (m.firstRun) {
     html += agentsSection(m, true);
@@ -223,22 +194,22 @@ export function renderSettings(m: SettingsModel): string {
 
   if (m.push && m.sync?.channel) html += phoneAlerts(m);
   else html += `<h2 class="sec">Alerts</h2><div class="card">
-    <div class="row"><label class="name">Alerts<span class="desc">${m.shellKind === 'desktop' ? ALERT_TEXT.master : 'Each alert fires once per window, then waits for the next reset.'}</span></label>${toggle('alerts', a.enabled, 'Alerts')}</div>
+    <div class="row"><label class="name">${ALERT_TEXT.label}<span class="desc">${m.shellKind === 'desktop' ? ALERT_TEXT.master : ALERT_TEXT.masterPhone}</span></label>${toggle('alerts', a.enabled, 'Alerts')}</div>
     ${m.shellKind === 'desktop' ? outletGrid(m) : ''}
-    <div class="field"><label for="pct">Notify when a limit passes these percentages</label><input type="text" id="pct" data-alert="pct" value="${esc(a.pctThresholds.join(', '))}" placeholder="80, 95"></div>
-    <div class="field"><label>Burn-rate warning</label><span class="help">Warns when usage left divided by time left in the window drops below this number. 1 means you run out right at the reset; 0.8 warns a bit earlier than that. Leave blank to turn one off.</span>
+    <div class="field"><label for="pct">${ALERT_TEXT.pct}</label><input type="text" id="pct" data-alert="pct" value="${esc(a.pctThresholds.join(', '))}" placeholder="80, 95"></div>
+    <div class="field"><label>${ALERT_TEXT.burn}</label><span class="help">${ALERT_TEXT.burnHelp}</span>
       <div class="row" style="border:0;gap:14px">
-        <label>Session <input type="number" step="0.05" min="0" max="2" data-alert="ratio:session" value="${ratio('session')}"></label>
-        <label>Weekly <input type="number" step="0.05" min="0" max="2" data-alert="ratio:weekly" value="${ratio('weekly')}"></label>
-        <label>Other <input type="number" step="0.05" min="0" max="2" data-alert="ratio:other" value="${ratio('other')}"></label></div></div>
-    ${balances.length ? `<div class="field"><label>Notify when a balance drops below</label>${balances.map((b) =>
+        <label>${ALERT_TEXT.session} <input type="number" step="0.05" min="0" max="2" data-alert="ratio:session" value="${ratio('session')}"></label>
+        <label>${ALERT_TEXT.weekly} <input type="number" step="0.05" min="0" max="2" data-alert="ratio:weekly" value="${ratio('weekly')}"></label>
+        <label>${ALERT_TEXT.other} <input type="number" step="0.05" min="0" max="2" data-alert="ratio:other" value="${ratio('other')}"></label></div></div>
+    ${balances.length ? `<div class="field"><label>${ALERT_TEXT.balances}</label>${balances.map((b) =>
       `<div class="row" style="border:0;padding:2px 0"><label class="name">${esc(b.label)}</label>$ <input type="number" step="1" min="0" data-alert="bal:${esc(b.key)}" value="${a.balanceBelow[b.key] ?? ''}"></div>`).join('')}</div>` : ''}
   </div>`;
 
   if (m.shellKind === 'desktop') html += claudeSection(m);
 
-  html += `<h2 class="sec">Custom providers</h2><div class="card">
-    <div class="field"><span class="help">Track a provider that is not built in by pasting its definition as JSON: the address to call, how to send its key, and where each number sits in the answer. Once saved, it appears in the provider list above, where you add its key.</span>
+  html += `<h2 class="sec">${CUSTOM_TEXT.heading}</h2><div class="card">
+    <div class="field"><span class="help">${CUSTOM_TEXT.help}</span>
     <textarea data-custom spellcheck="false" aria-label="Custom provider definitions">${esc(m.customDraft)}</textarea>
     ${m.customError ? `<span class="bad-json">${esc(m.customError)}</span>` : ''}
     <div class="actions" style="margin-top:4px"><button class="btn small" data-action="custom-example">Insert example</button><button class="btn small primary" data-action="custom-save">Save definitions</button></div></div></div>`;
@@ -246,55 +217,45 @@ export function renderSettings(m: SettingsModel): string {
   html += phoneSection(m);
 
   if (m.shellKind === 'desktop') {
-    html += `<h2 class="sec">This computer</h2><div class="card">
+    html += `<h2 class="sec">${COMPUTER_TEXT.heading}</h2><div class="card">
       ${updateRows(m)}
       ${m.autostart != null ? `<div class="row"><label class="name">Start at login</label>${toggle('autostart', m.autostart, 'Start at login')}</div>` : ''}
       <div class="row"><label class="name">Open the panel at launch<span class="desc">Shows the usage view each time Augur starts. Turn off to keep it in the tray until you open it.</span></label>${toggle('openonlaunch', m.config.openOnLaunch !== false, 'Open the panel at launch')}</div>
-      ${m.config.exportPath ? `<div class="row"><label class="name">Usage data file<span class="desc">The file other tools read for your usage and limits.</span></label><button class="btn small" data-action="open-export">Open</button></div>` : ''}
+      ${m.config.exportPath ? `<div class="row"><label class="name">${COMPUTER_TEXT.exportFile}<span class="desc">${COMPUTER_TEXT.exportFileDesc}</span></label><button class="btn small" data-action="open-export">Open</button></div>` : ''}
       ${m.canHotkey ? `<div class="field"><label for="hotkey">Keyboard shortcut</label><input type="text" id="hotkey" data-hotkey value="${esc(c.hotkey ?? '')}" placeholder="Ctrl+Super+U" spellcheck="false" autocomplete="off">
       <span class="help">Opens and closes the panel from anywhere. Super is the Windows key, or Command on a Mac. Leave blank to turn it off.</span>${m.hotkeyError ? `<span class="bad-json">${esc(m.hotkeyError)}</span>` : ''}</div>` : ''}
-      <div class="field"><label for="export">Also save the latest numbers to this file</label><input type="text" id="export" data-export value="${esc(c.exportPath ?? '')}" placeholder=".augur/usage.json">
-      <span class="help">After each refresh, Augur writes the latest numbers to this file in your home folder, so scripts and coding assistants can read them. Leave blank to turn this off.</span></div></div>`;
+      <div class="field"><label for="export">${COMPUTER_TEXT.export}</label><input type="text" id="export" data-export value="${esc(c.exportPath ?? '')}" placeholder=".augur/usage.json">
+      <span class="help">${COMPUTER_TEXT.exportHelp}</span></div></div>`;
   }
   return html + '</div>';
 }
 
-const REFRESH_CHOICES: Array<[number, string]> = [[15, '15 seconds'], [300, '5 minutes'], [900, '15 minutes'], [3600, '1 hour'], [21600, '6 hours'], [86400, '1 day'], [604800, '1 week']];
-
 function refreshRow(m: SettingsModel, pid: string, plugin: ProviderPlugin): string {
   const pc = m.config.providers.find((p) => p.id === pid);
-  const name = (sec: number) => REFRESH_CHOICES.find(([s]) => s === sec)?.[1] ?? `${Math.round(sec / 60)} min`;
-  const fallback = `Default (${name(plugin.refreshSeconds ?? DEFAULT_REFRESH_SECONDS)})`;
+  const fallback = refreshDefault(plugin.refreshSeconds);
   const current = pc?.refreshSeconds ?? null;
   const options = [`<option value="" ${current == null ? 'selected' : ''}>${esc(fallback)}</option>`,
     ...REFRESH_CHOICES.map(([sec, label]) => `<option value="${sec}" ${current === sec ? 'selected' : ''}>${esc(label)}</option>`)].join('');
-  return `<div class="field"><label for="r-${esc(pid)}">Refresh every</label><select id="r-${esc(pid)}" data-provider-refresh="${esc(pid)}">${options}</select>
-      <span class="help">How often Augur reads this provider on its own. The refresh button reads every provider at once.</span></div>`;
+  return `<div class="field"><label for="r-${esc(pid)}">${PROVIDER_TEXT.refresh}</label><select id="r-${esc(pid)}" data-provider-refresh="${esc(pid)}">${options}</select>
+      <span class="help">${PROVIDER_TEXT.refreshHelp}</span></div>`;
 }
 
 function updateRows(m: SettingsModel): string {
   const u = m.update;
-  const status = {
-    idle: '',
-    checking: 'Checking for updates.',
-    current: 'This is the latest version.',
-    available: `Version ${u.available?.version ?? ''} is available.`,
-    installing: 'Installing the update.',
-    error: 'Could not check for updates. Try again later.',
-  }[u.status];
+  const status = u.status === 'available' ? COMPUTER_TEXT.available(u.available?.version ?? '') : COMPUTER_TEXT.status[u.status];
   const busy = u.status === 'checking' || u.status === 'installing';
   const button = u.status === 'available'
     ? '<button class="btn small primary" data-action="update-install">Install and restart</button>'
-    : `<button class="btn small" data-action="update-check" ${busy ? 'disabled' : ''}>Check for updates</button>`;
-  return `<div class="row"><label class="name">${u.version ? `Version ${esc(u.version)}` : 'Updates'}${status ? `<span class="desc">${esc(status)}</span>` : ''}</label>${button}</div>
+    : `<button class="btn small" data-action="update-check" ${busy ? 'disabled' : ''}>${COMPUTER_TEXT.check}</button>`;
+  return `<div class="row"><label class="name">${u.version ? esc(COMPUTER_TEXT.version(u.version)) : COMPUTER_TEXT.updates}${status ? `<span class="desc">${esc(status)}</span>` : ''}</label>${button}</div>
       <div class="row"><label class="name">Install updates automatically<span class="desc">Augur installs each new version while the panel is closed, then restarts.</span></label>${toggle('autoupdate', m.config.autoUpdate !== false, 'Install updates automatically')}</div>`;
 }
 
 function phoneSection(m: SettingsModel): string {
-  const relayField = `<div class="field"><label for="relay">Relay address</label><input type="text" id="relay" data-sync="relay" value="${esc(m.relay)}" placeholder="https://augur.rpgm.tools">
+  const relayField = `<div class="field"><label for="relay">${PHONE_TEXT.relay}</label><input type="text" id="relay" data-sync="relay" value="${esc(m.relay)}" placeholder="https://augur.rpgm.tools">
     <span class="help">${m.shellKind === 'pwa'
       ? 'Sends requests to providers that do not allow browser apps, and brings updates from your desktop. It keeps nothing it passes along.'
-      : "Carries updates to your phone, locked with a key only your devices have. You can run your own relay from the project's source."}</span></div>`;
+      : PHONE_TEXT.relayHelp}</span></div>`;
   if (m.shellKind === 'pwa') {
     const paired = !!m.sync?.channel;
     return `<h2 class="sec">Desktop sync</h2><div class="card">
@@ -308,30 +269,14 @@ function phoneSection(m: SettingsModel): string {
       ${relayField}</div>`;
   }
   const paired = !!m.sync?.channel;
-  return `<h2 class="sec">Phone</h2><div class="card">${relayField}
-    <div class="field"><label for="pwa">Web app address</label><input type="text" id="pwa" data-sync="pwaUrl" value="${esc(m.pwaUrl)}" placeholder="https://augur.rpgm.tools">
-      <span class="help">Where the phone opens Augur.</span></div>
-    <div class="row"><label class="name">${paired ? 'Phone paired' : 'Phone sync'}<span class="desc">${paired
-      ? 'Each refresh sends an encrypted copy to your phone.'
-      : 'Shows a code to scan with your phone. Needs both addresses above.'}</span></label>
-      ${paired ? '<button class="btn small" data-action="sync-show">Show code</button><button class="btn small" data-action="sync-unpair">Unpair</button>'
-        : `<button class="btn small primary" data-action="sync-pair" ${m.relay && m.pwaUrl ? '' : 'disabled'}>Pair a phone</button>`}</div>
-    ${paired ? `<div class="row"><label class="name">Send API keys to the phone<span class="desc">Lets the phone refresh key-based providers on its own by sending your API keys inside the encrypted sync. Off by default.</span></label>${toggle('sharekeys', m.sync?.shareKeys === true, "Send API keys to the phone")}</div>` : ''}
-    ${m.pairQr ? `<div class="field" style="align-items:center">${m.pairQr}<span class="help">Scan it with the phone's camera, or open the <a href="#" data-open="${esc(m.pairUrl ?? '')}">pairing link</a> on the phone. Anyone with the link can read everything the phone syncs, including your provider API keys if sending keys is on, so keep it private.</span></div>` : ''}
+  return `<h2 class="sec">${PHONE_TEXT.heading}</h2><div class="card">${relayField}
+    <div class="field"><label for="pwa">${PHONE_TEXT.pwa}</label><input type="text" id="pwa" data-sync="pwaUrl" value="${esc(m.pwaUrl)}" placeholder="https://augur.rpgm.tools">
+      <span class="help">${PHONE_TEXT.pwaHelp}</span></div>
+    <div class="row"><label class="name">${paired ? PHONE_TEXT.paired : PHONE_TEXT.sync}<span class="desc">${paired ? PHONE_TEXT.pairedDesc : PHONE_TEXT.syncDesc}</span></label>
+      ${paired ? `<button class="btn small" data-action="sync-show">${PHONE_TEXT.show}</button><button class="btn small" data-action="sync-unpair">${PHONE_TEXT.unpair}</button>`
+        : `<button class="btn small primary" data-action="sync-pair" ${m.relay && m.pwaUrl ? '' : 'disabled'}>${PHONE_TEXT.pair}</button>`}</div>
+    ${paired ? `<div class="row"><label class="name">${PHONE_TEXT.shareKeys}<span class="desc">${PHONE_TEXT.shareKeysDesc}</span></label>${toggle('sharekeys', m.sync?.shareKeys === true, PHONE_TEXT.shareKeys)}</div>` : ''}
+    ${m.pairQr ? `<div class="field" style="align-items:center">${m.pairQr}<span class="help">Scan it with the phone's camera, or open the <a href="#" data-open="${esc(m.pairUrl ?? '')}">pairing link</a> on the phone. ${PHONE_TEXT.private}</span></div>` : ''}
   </div>`;
 }
 
-export const CUSTOM_EXAMPLE = [
-  {
-    id: 'example',
-    name: 'Example provider',
-    color: { light: '#2a78d6', dark: '#3987e5' },
-    links: { usage: 'https://example.com/billing' },
-    auth: { type: 'bearer' },
-    requests: { main: { url: 'https://api.example.com/v1/usage' } },
-    meters: [
-      { id: 'monthly', label: 'Monthly quota', usedPct: '=100 * main:$.used / main:$.limit', resetsAt: 'main:$.reset_at', resetsAtFormat: 'iso', windowSeconds: 2592000, windowKind: 'monthly' },
-    ],
-    money: [{ id: 'balance', label: 'Credits left', amount: 'main:$.balance', currency: 'USD' }],
-  },
-];

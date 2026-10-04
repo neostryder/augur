@@ -74,7 +74,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
   // With no command at a terminal, `augur` opens the full-screen app; piped or scripted, it prints the help.
   if (!cmd && !p.flags.size && io.interactive) {
     const { runTui } = await import('@augur/tui');
-    await runTui({ launch: () => launchService(io.env, opts), opts });
+    await runTui({ launch: () => launchService(io.env, opts), opts, env: io.env, login: { state: loginState, enable: () => enableAtLogin(io), disable: disableLogin } });
     return EXIT_CODES.completed;
   }
   if (!cmd || p.flags.has('help')) { io.out(HELP + '\n'); return cmd ? EXIT_CODES.completed : EXIT_CODES.usage; }
@@ -278,6 +278,16 @@ export async function launchService(env: NodeJS.ProcessEnv, opts: Opts): Promise
   return null;
 }
 
+const NOT_INSTALLED = 'augur service enable works from an installed copy of Augur, where augurd.mjs sits next to this command.';
+
+/** Sets the service to start at login, for `augur service enable` and the switch in the terminal app. */
+async function enableAtLogin(io: Io): Promise<{ ok: boolean; message: string }> {
+  // The entry runs the packaged runtime on the packaged service, so a source checkout has nothing to point it at.
+  const script = join(dirname(fileURLToPath(import.meta.url)), 'augurd.mjs');
+  if (!existsSync(script)) return { ok: false, message: NOT_INSTALLED };
+  return enableLogin({ node: process.execPath, script, path: io.env.PATH ?? '' });
+}
+
 async function service(action: string | undefined, io: Io, opts: Opts, json: boolean, ifIdle = false): Promise<number> {
   const say = (text: string, data: unknown) => io.out(json ? JSON.stringify(data) + '\n' : text + '\n');
   if (action === 'status') {
@@ -286,11 +296,8 @@ async function service(action: string | undefined, io: Io, opts: Opts, json: boo
     catch { say(`augurd is not running${login.supported && login.enabled ? ', but it is set to start at login.' : atLogin}`, { running: false, login }); return EXIT_CODES.failed; }
   }
   if (action === 'enable' || action === 'disable') {
-    if (action === 'disable') { const r = await disableLogin(); say(r.message, r); return r.ok ? 0 : EXIT_CODES.failed; }
-    // The entry runs the packaged runtime on the packaged service, so a source checkout has nothing to point it at.
-    const script = join(dirname(fileURLToPath(import.meta.url)), 'augurd.mjs');
-    if (!existsSync(script)) { io.err('augur service enable works from an installed copy of Augur, where augurd.mjs sits next to this command.\n'); return EXIT_CODES.failed; }
-    const r = await enableLogin({ node: process.execPath, script, path: io.env.PATH ?? '' });
+    const r = action === 'disable' ? await disableLogin() : await enableAtLogin(io);
+    if (r.message === NOT_INSTALLED) { io.err(r.message + '\n'); return EXIT_CODES.failed; }
     say(r.message, r); return r.ok ? 0 : EXIT_CODES.failed;
   }
   if (action === 'start') {

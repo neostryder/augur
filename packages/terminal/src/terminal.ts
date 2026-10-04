@@ -69,6 +69,20 @@ export class Terminal {
     done?.();
   }
 
+  /** Gives the terminal back while `fn` runs, as when an editor opens a file, then takes it again and draws the whole screen. */
+  async pause<T>(fn: () => T | Promise<T>): Promise<T> {
+    const was = this.active;
+    this.leave();
+    try { return await fn(); } finally {
+      if (was && this.app && this.done) { this.enter(); this.redraw(); }
+    }
+  }
+
+  /** Puts text on the clipboard through the terminal's own clipboard sequence (OSC 52), which most current terminals honor, over SSH too. */
+  copy(text: string): void {
+    if (this.active) this.io.output.write(`\x1b]52;c;${Buffer.from(text, 'utf8').toString('base64')}\x07`);
+  }
+
   private frame(): void {
     if (!this.active || !this.app) return;
     try {

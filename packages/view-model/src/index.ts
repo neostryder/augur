@@ -2,3 +2,4 @@
 export * from './format.js';
 export * from './usage.js';
 export * from './alerts.js';
+export * from './settings.js';

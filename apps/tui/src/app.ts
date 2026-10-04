@@ -13,6 +13,8 @@ export interface TuiOptions {
   pages: Page[];
   redraw(): void;
   open(url: string): Promise<boolean>;
+  pause?<T>(fn: () => T | Promise<T>): Promise<T>;
+  copy?(text: string): void;
   now?: () => number;
 }
 
@@ -40,6 +42,8 @@ export class TuiApp implements App {
       flash: (text, bad) => this.flash(text, bad),
       overlay: (ov) => { if (ov) this.overlays.push(ov); else this.overlays.pop(); this.o.redraw(); },
       open: (url) => { void this.o.open(url).then((ok) => this.flash(ok ? `Opened ${url}` : `No browser to open it in. The address is ${url}`, !ok)); },
+      pause: (fn) => (this.o.pause ? this.o.pause(fn) : Promise.resolve().then(fn)),
+      copy: (text) => this.o.copy?.(text),
       run: async (method, ...args) => {
         try { return await this.o.link.run(method, ...args); }
         catch (e) { this.flash((e as Error).message || 'That did not work.', true); return undefined; }

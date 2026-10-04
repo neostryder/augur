@@ -116,4 +116,24 @@ describe('the terminal runtime', () => {
     await running;
     expect(seen).toEqual(['a', 'b', 'q']);
   });
+
+  it('gives the terminal back during pause and draws the whole screen after', async () => {
+    const f = fakeIo(), app = new Counter(), t = new Terminal(f.io);
+    const running = t.run(app);
+    await settle();
+    f.take();
+    const got = await t.pause(() => {
+      expect(f.input.raw).toBe(false);
+      expect(f.take()).toContain('\x1b[?1049l');
+      return 7;
+    });
+    expect(got).toBe(7);
+    await settle();
+    expect(f.input.raw).toBe(true);
+    const back = f.take();
+    expect(back.startsWith('\x1b[?1049h')).toBe(true);
+    expect(back).toContain('count 0');
+    f.input.write('q');
+    await running;
+  });
 });

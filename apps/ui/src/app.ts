@@ -3,6 +3,7 @@ import { ACTIVITY_LABELS, DATA_TIER_LABELS, WEIGHT_LABELS, addModels, emptyEditS
 import * as core from './core';
 import type { HistoryRow } from './core';
 import { renderDashboard, tightest, updateTip, type DashboardModel } from './views/dashboard';
+import { parseCustom, parsePercents } from '@augur/view-model';
 import { CUSTOM_EXAMPLE, PUSH_TEXT, renderSettings, type SettingsModel } from './views/settings';
 import { dialEndChoices, heldRows, pauseResets, renderRules, type RulesFilter, type RulesModel } from './views/rules';
 import { renderJobs, type JobsModel } from './views/jobs';
@@ -1131,14 +1132,10 @@ export class App {
   }
 
   private async saveCustom(): Promise<void> {
-    const parsed = safeParse(this.customDraft);
-    if (!Array.isArray(parsed)) { this.customError = 'Not a JSON list. Check the brackets and commas.'; await this.render(); return; }
-    const bad = parsed.find((d) => !d || typeof d.id !== 'string' || typeof d.name !== 'string' || !d.requests || !d.auth);
-    if (bad) { this.customError = 'Each definition needs id, name, auth and requests.'; await this.render(); return; }
-    const clash = parsed.find((d) => core.plugins({ ...this.config, custom: [] }).some((p) => p.id === d.id));
-    if (clash) { this.customError = `The id "${clash.id}" is already used by a built-in provider.`; await this.render(); return; }
+    const r = parseCustom(this.customDraft, this.config);
+    if ('error' in r) { this.customError = r.error; await this.render(); return; }
     this.customError = '';
-    this.config.custom = parsed;
+    this.config.custom = r.custom;
     this.syncProviderList();
     await this.refreshSecrets();
     await this.saveConfig();
@@ -1403,7 +1400,7 @@ export class App {
     }
     if (d.alert) {
       const a = this.config.alerts;
-      if (d.alert === 'pct') a.pctThresholds = t.value.split(/[,\s]+/).map(Number).filter((n) => n > 0 && n <= 100).sort((x, y) => x - y);
+      if (d.alert === 'pct') a.pctThresholds = parsePercents(t.value);
       else if (d.alert.startsWith('ratio:')) { const k = d.alert.slice(6) as 'session' | 'weekly' | 'other'; a.paceRatio[k] = t.value === '' ? null : Number(t.value); }
       else if (d.alert.startsWith('bal:')) { const k = d.alert.slice(4); if (t.value === '') delete a.balanceBelow[k]; else a.balanceBelow[k] = Number(t.value); }
       await this.saveConfig(); return;
