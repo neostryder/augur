@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { emptyEditState } from '@augur/core';
-import { heldRows } from '../src/views/rules';
+import { heldRows } from '../src/rules.js';
 
 describe('changes waiting for the owner', () => {
   it('lists each held edit with the value the rules have now, and says nothing when none wait', () => {

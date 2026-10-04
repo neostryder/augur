@@ -3,15 +3,13 @@ import { ACTIVITY_LABELS, DATA_TIER_LABELS, WEIGHT_LABELS, addModels, emptyEditS
 import * as core from './core';
 import type { HistoryRow } from './core';
 import { renderDashboard, tightest, updateTip, type DashboardModel } from './views/dashboard';
-import { parseCustom, parsePercents } from '@augur/view-model';
+import { BULK_FIELDS, RULES_TEXT, dialEndChoices, heldRows, parseCustom, parsePercents, pauseResets, pauseValue, planDialBack, previewBulk, validModelId, type BulkPreview, type DialBackPlan } from '@augur/view-model';
 import { CUSTOM_EXAMPLE, PUSH_TEXT, renderSettings, type SettingsModel } from './views/settings';
-import { dialEndChoices, heldRows, pauseResets, renderRules, type RulesFilter, type RulesModel } from './views/rules';
+import { renderRules, type RulesFilter, type RulesModel } from './views/rules';
 import { renderJobs, type JobsModel } from './views/jobs';
 import { renderRoutes, type RoutesModel } from './views/routes';
 import { renderService, type ConfigLine, type ServiceModel } from './views/service';
 import { renderStrip } from './views/strip';
-import { BULK_FIELDS, previewBulk, type BulkPreview } from './rules-bulk';
-import { pauseValue, planDialBack, type DialBackPlan } from './dial-back';
 import { ROUTES_PATH, checkDraft, draftOf, emptyDraft, parseRoutesText, writeRoute } from './routes-model';
 import { routeSecretName } from '@augur/dispatch-protocol';
 import type { Accounted, JobRecord } from '@augur/dispatch-protocol';
@@ -1224,27 +1222,26 @@ export class App {
     if (d.undo) { const c = policy.history[Number(d.undo)]; if (c) undoChange(policy, c, this.device); await this.saveRules(); return true; }
     if (d.addModel) {
       const input = document.getElementById('r-add') as HTMLInputElement | null, id = input?.value.trim() ?? '';
-      if (!/^[A-Za-z0-9][\w.:/-]*$/.test(id)) { this.rules.addError = 'Enter the model id as the provider writes it, with no spaces.'; await this.render(); return true; }
+      if (!validModelId(id)) { this.rules.addError = RULES_TEXT.badId; await this.render(); return true; }
       const prefix = this.pluginMap().get(d.addModel)?.labelPrefix ?? d.addModel, label = `${prefix}/${id}`;
       const name = this.catalog[d.addModel]?.models.find((x) => x.id === id)?.name;
-      if (!addModels(policy, d.addModel, [{ label, id, name }], 'manual').length) { this.rules.addError = `${id} is already listed.`; await this.render(); return true; }
+      if (!addModels(policy, d.addModel, [{ label, id, name }], 'manual').length) { this.rules.addError = RULES_TEXT.listed(id); await this.render(); return true; }
       this.rules.addError = ''; this.rules.open.add(d.addModel); this.rules.sel = { provider: d.addModel, model: label };
       await this.saveRules(); return true;
     }
     if (d.dial) {
       const r = this.rules;
       if (d.dial === 'close') { r.dialOpen = false; r.dialPlan = null; r.dialError = ''; await this.render(); return true; }
-      const choices = dialEndChoices({ snapshot: this.snapshot, providers: core.policyProviders(this.config) });
+      const choices = dialEndChoices(this.snapshot, core.policyProviders(this.config));
       const chosen = r.dialEnd === 'custom' || !choices.length ? null : choices.find((c) => c.value === r.dialEnd) ?? choices[0];
       const until = chosen ? chosen.until : r.dialCustom ? new Date(r.dialCustom).toISOString() : '';
       if (d.dial === 'preview') {
-        if (!until || Date.parse(until) <= Date.now()) { r.dialError = 'Pick a time in the future.'; r.dialPlan = null; } else { r.dialError = ''; r.dialPlan = planDialBack(policy, until); }
+        if (!until || Date.parse(until) <= Date.now()) { r.dialError = RULES_TEXT.future; r.dialPlan = null; } else { r.dialError = ''; r.dialPlan = planDialBack(policy, until); }
         await this.render(); return true;
       }
       if (d.dial === 'apply' && r.dialPlan) {
         for (const item of r.dialPlan.items) setField(policy, item.path, pauseValue(item, r.dialPlan.until), this.device);
-        const n = r.dialPlan.items.length;
-        this.rules.note = `Dialed back ${n} ${n === 1 ? 'model' : 'models'} until ${new Date(r.dialPlan.until).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}.`;
+        this.rules.note = RULES_TEXT.dialDone(r.dialPlan.items.length, r.dialPlan.until);
         r.dialOpen = false; r.dialPlan = null;
         await this.saveRules(); return true;
       }
@@ -1252,7 +1249,7 @@ export class App {
     }
     if (d.bulk) {
       const picked = [...this.rules.picked].map((k) => k.split('|') as [string, string]);
-      const n = picked.length, count = `${n} ${n === 1 ? 'model' : 'models'}`;
+      const n = picked.length;
       if (d.bulk === 'clear') { this.rules.picked.clear(); this.rules.note = ''; this.rules.bulkTier = ''; this.rules.preview = null; }
       else if (d.bulk === 'preview') {
         const r = previewBulk(policy, this.rules.picked, this.rules.bulkField as BulkPreview['field'], this.rules.bulkValue);
@@ -1264,18 +1261,16 @@ export class App {
         const pv = this.rules.preview;
         if (!pv) return true;
         for (const c of pv.changes) setField(policy, c.path, pv.value, this.device);
-        const label = BULK_FIELDS.find((f) => f.field === pv.field)?.label ?? pv.field, k = pv.changes.length;
-        this.rules.note = `${label} changed on ${k} ${k === 1 ? 'model' : 'models'}.`;
+        this.rules.note = RULES_TEXT.bulkChanged(BULK_FIELDS.find((f) => f.field === pv.field)?.label ?? pv.field, pv.changes.length);
         this.rules.preview = null;
       }
       else if (d.bulk === 'activity') {
         const act = (document.getElementById('r-bulk-act') as HTMLSelectElement).value, level = (document.getElementById('r-bulk-level') as HTMLSelectElement).value;
         for (const [pid, label] of picked) setFieldMany(policy, pid, [label], `activities.${act}`, level === '' ? undefined : level === 'none' ? null : level, this.device);
-        const shown = level === '' ? 'the provider default' : level === 'none' ? 'not allowed' : WEIGHT_LABELS[level as keyof typeof WEIGHT_LABELS];
-        this.rules.note = `${ACTIVITY_LABELS[act as keyof typeof ACTIVITY_LABELS]} set to ${shown} on ${count}.`;
+        this.rules.note = RULES_TEXT.bulkSet(ACTIVITY_LABELS[act as keyof typeof ACTIVITY_LABELS], RULES_TEXT.weightName(level), n);
       } else {
         for (const [pid, label] of picked) setModelStatus(policy, pid, label, d.bulk as ModelEntryStatus, this.device);
-        this.rules.note = `${d.bulk === 'confirmed' ? 'Confirmed' : 'Hid'} ${count}.`;
+        this.rules.note = RULES_TEXT.bulkStatus(d.bulk === 'hidden' ? 'hidden' : 'confirmed', n);
       }
       await this.saveRules(); return true;
     }
@@ -1323,7 +1318,7 @@ export class App {
         for (const k of this.rules.picked) { const [pid, label] = k.split('|') as [string, string]; setFieldMany(policy, pid, [label], 'dataTier', t.value, this.device); }
         const n = this.rules.picked.size;
         this.rules.bulkTier = t.value;
-        this.rules.note = `Most sensitive data set to ${DATA_TIER_LABELS[t.value as DataTier]} on ${n} ${n === 1 ? 'model' : 'models'}.`;
+        this.rules.note = RULES_TEXT.bulkSet(RULES_TEXT.dataTier, DATA_TIER_LABELS[t.value as DataTier], n);
       }
       await this.saveRules(); return true;
     }

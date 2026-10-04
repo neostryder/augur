@@ -1,7 +1,7 @@
 import { emptyPolicy, resolveModel, setField, fieldPath } from '@augur/core';
 import type { PolicyConfig } from '@augur/core';
 import { describe, expect, it } from 'vitest';
-import { pauseValue, planDialBack } from '../src/dial-back';
+import { pauseValue, planDialBack } from '../src/dial-back.js';
 
 const NOW = new Date('2026-09-29T20:00:00Z'), UNTIL = '2026-10-04T17:00:00.000Z';
 const entry = (id: string, status: 'confirmed' | 'imported' | 'hidden', rule: object) => ({ id, source: 'manual' as const, status, rule, firstSeen: '2026-09-01T00:00:00.000Z' });

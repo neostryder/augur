@@ -1,8 +1,8 @@
 import { emptyPolicy, setField, fieldPath } from '@augur/core';
 import type { PolicyConfig } from '@augur/core';
 import { describe, expect, it } from 'vitest';
-import { BULK_FIELDS, parseBulkValue, previewBulk } from '../src/rules-bulk';
-import type { BulkPreview } from '../src/rules-bulk';
+import { BULK_FIELDS, parseBulkValue, previewBulk } from '../src/rules-bulk.js';
+import type { BulkPreview } from '../src/rules-bulk.js';
 
 const policy = (): PolicyConfig => {
   const p = emptyPolicy();

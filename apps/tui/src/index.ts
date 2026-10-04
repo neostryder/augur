@@ -7,6 +7,7 @@ import { openUrl } from './open.js';
 import type { Page } from './page.js';
 import { AlertsPage } from './screens/alerts.js';
 import { LaterPage } from './screens/later.js';
+import { RulesPage } from './screens/rules.js';
 import { SettingsPage, type LoginControl } from './screens/settings.js';
 import { UsagePage } from './screens/usage.js';
 
@@ -28,7 +29,7 @@ export interface RunOptions {
 
 export function pages(o: Pick<RunOptions, 'login' | 'env' | 'platform'> = {}): Page[] {
   const settings = new SettingsPage({ platform: o.platform ?? process.platform, env: o.env ?? process.env, ...(o.login ? { login: o.login } : {}) });
-  return [new UsagePage(), new AlertsPage(), new LaterPage('Rules'), new LaterPage('Dispatch'), settings];
+  return [new UsagePage(), new AlertsPage(), new RulesPage(), new LaterPage('Dispatch'), settings];
 }
 
 /** Runs the app until the person quits. Resolves once the terminal is back as it was. */

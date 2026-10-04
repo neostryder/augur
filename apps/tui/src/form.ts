@@ -18,6 +18,10 @@ export type Row =
   | (Base & { kind: 'text'; value: string; placeholder?: string; mask?: boolean; badge?: string; save(value: string): Done })
   | (Base & { kind: 'action'; button: string; run(): Done; disabled?: boolean })
   | (Base & { kind: 'checks'; cells: ReadonlyArray<{ label?: string; on: boolean }>; set(index: number, on: boolean): Done; cellW?: number })
+  | (Base & { kind: 'buttons'; buttons: ReadonlyArray<{ button: string; run(): Done }> })
+  // A line of a list rather than a labelled control: a model or a provider on the rules page. It takes the whole width, with an optional
+  // tick box for picking it, a second line under it, and Enter doing `enter`.
+  | (Base & { kind: 'item'; sub?: string; pick?: boolean; setPick?(on: boolean): Done; dot?: Style; open?: boolean; chips?: ReadonlyArray<readonly [string, Style]>; right?: string; enter(): Done; enterLabel: string })
   | { kind: 'columns'; id: string; labels: string[]; cellW: number };
 
 type Focusable = Exclude<Row, { kind: 'heading' | 'note' | 'columns' }>;
@@ -37,6 +41,9 @@ export class Form {
 
   typing(): boolean { return this.editing !== null; }
 
+  /** Gives a text row focus and opens it for typing, as a search key does. */
+  edit(id: string, value: string): void { this.focus = id; this.editing = { id, state: fieldState(value) }; }
+
   private focused(rows: Row[]): Focusable | undefined {
     const list = rows.filter(focusable);
     return list.find((r) => r.id === this.focus) ?? list[0];
@@ -46,7 +53,7 @@ export class Form {
     const cur = this.focused(rows);
     if (cur) this.focus = cur.id;
     // The label column fits the longest label, up to half the width, so the controls line up in one column.
-    const longest = Math.max(0, ...rows.filter(focusable).map((x) => textWidth(x.label) + (x.kind === 'toggle' && x.dot ? 2 : 0) + (x.indent ? 2 : 0)));
+    const longest = Math.max(0, ...rows.filter(focusable).filter((x) => x.kind !== 'item').map((x) => textWidth(x.label) + (x.kind === 'toggle' && x.dot ? 2 : 0) + (x.indent ? 2 : 0)));
     const labelW = Math.max(12, Math.min(longest + 2, Math.floor(r.w * 0.5)));
     const lines = this.layout(rows, r.w, labelW, theme, cur);
     this.pageRows = Math.max(1, r.h - 1);
@@ -87,6 +94,7 @@ export class Form {
       }
       const on = row === cur, ind = row.indent ? 2 : 0;
       const labelStyle: Style = on ? theme.selected : {};
+      if (row.kind === 'item') { this.item(row, on, ind, theme, add); return; }
       add((s, x, y, cw) => {
         const pointer = on ? s.glyphs.pointer : ' ';
         s.put(x, y, pointer, theme.accent);
@@ -99,6 +107,22 @@ export class Form {
       if (row.desc) for (const text of wrap(row.desc, Math.max(10, w - 6 - ind))) add((s, x, y, cw) => spans(s, x + 4 + ind, y, cw - 4 - ind, text, theme.muted));
     });
     return out;
+  }
+
+  private item(row: Extract<Focusable, { kind: 'item' }>, on: boolean, ind: number, theme: Theme, add: (draw: Line['draw']) => void): void {
+    const box = row.pick === undefined ? 0 : 4;
+    add((s, x, y, cw) => {
+      s.put(x, y, on ? s.glyphs.pointer : ' ', theme.accent);
+      const end = x + cw, right = row.right ? textWidth(row.right) + 1 : 0;
+      let lx = x + 2 + ind;
+      if (row.open !== undefined) lx = s.put(lx, y, row.open ? '- ' : '+ ', theme.muted);
+      if (row.pick !== undefined) lx = s.put(lx, y, row.pick ? '[x] ' : '[ ] ', row.pick ? theme.good : theme.muted);
+      if (row.dot) lx = s.put(lx, y, s.glyphs.dot, row.dot) + 1;
+      lx = s.put(lx, y, truncate(row.label, Math.max(0, end - right - lx)), on ? theme.selected : theme.heading, Math.max(0, end - right - lx));
+      for (const [text, style] of row.chips ?? []) lx = s.put(lx + 1, y, text, style, Math.max(0, end - right - lx - 1));
+      if (row.right && end - right > lx) s.put(end - right + 1, y, row.right, theme.muted);
+    });
+    if (row.sub) { const sub = row.sub; add((s, x, y, cw) => s.put(x + 2 + ind + (row.open !== undefined ? 2 : 0) + box, y, truncate(sub, Math.max(0, cw - 4 - ind - box)), theme.muted)); }
   }
 
   private control(s: Screen, x: number, y: number, w: number, row: Focusable, on: boolean, theme: Theme): void {
@@ -129,6 +153,12 @@ export class Form {
       case 'action':
         s.put(x, y, `[ ${row.button} ]`, row.disabled ? theme.muted : on ? { ...theme.accent, bold: true } : theme.accent, w);
         return;
+      case 'buttons': {
+        let at = x;
+        row.buttons.forEach((b, i) => { at = s.put(at, y, `[ ${b.button} ]`, on && i === this.cell ? { ...theme.accent, bold: true, inverse: true } : theme.accent, Math.max(0, x + w - at)) + 1; });
+        return;
+      }
+      case 'item': return;
       case 'checks': {
         let at = x;
         row.cells.forEach((c, i) => {
@@ -152,6 +182,8 @@ export class Form {
       case 'text': return [move, ['Enter', 'Edit']];
       case 'action': return [move, ['Enter', cur.button]];
       case 'checks': return [move, ['Left/Right', 'Pick'], ['Space', 'Tick or untick']];
+      case 'buttons': return [move, ['Left/Right', 'Pick'], ['Enter', cur.buttons[this.cell]?.button ?? '']];
+      case 'item': return [move, ['Enter', cur.enterLabel], ...(cur.setPick ? [['Space', 'Select'] as Hint] : [])];
     }
   }
 
@@ -161,7 +193,7 @@ export class Form {
     const cur = this.focused(rows);
     if (!cur) return false;
     const i = list.indexOf(cur);
-    const go = (n: number) => { const next = list[Math.max(0, Math.min(list.length - 1, n))]; if (next) { this.focus = next.id; if (next.kind === 'checks') this.cell = Math.min(this.cell, next.cells.length - 1); } return true; };
+    const go = (n: number) => { const next = list[Math.max(0, Math.min(list.length - 1, n))]; if (next) { this.focus = next.id; if (next.kind === 'checks') this.cell = Math.min(this.cell, next.cells.length - 1); if (next.kind === 'buttons' && next !== cur) this.cell = 0; } return true; };
     switch (key.label) {
       case 'up': case 'k': return go(i - 1);
       case 'down': case 'j': return go(i + 1);
@@ -195,6 +227,14 @@ export class Form {
       case 'checks':
         if (side) { this.cell = Math.max(0, Math.min(cur.cells.length - 1, this.cell + side)); return true; }
         if (key.label === ' ' || key.label === 'enter') { const c = cur.cells[this.cell]; if (c) await cur.set(this.cell, !c.on); return true; }
+        return false;
+      case 'buttons':
+        if (side) { this.cell = Math.max(0, Math.min(cur.buttons.length - 1, this.cell + side)); return true; }
+        if (key.label === ' ' || key.label === 'enter') { await cur.buttons[Math.min(this.cell, cur.buttons.length - 1)]?.run(); return true; }
+        return false;
+      case 'item':
+        if (key.label === 'enter') { await cur.enter(); return true; }
+        if (key.label === ' ' && cur.setPick) { await cur.setPick(!cur.pick); return true; }
         return false;
     }
   }

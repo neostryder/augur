@@ -1,7 +1,7 @@
 import { migrateConfig } from '@augur/core';
 import { describe, expect, it } from 'vitest';
 import { renderRules, type RulesModel } from '../src/views/rules';
-import type { BulkPreview } from '../src/rules-bulk';
+import type { BulkPreview } from '@augur/view-model';
 
 const model = (over: Partial<RulesModel> = {}): RulesModel => ({
   config: migrateConfig({}), held: [], providers: [], plugins: new Map(), snapshot: null, dark: false, policyError: null, sel: null, query: '', filter: 'all', open: new Set(),

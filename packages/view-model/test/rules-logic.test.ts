@@ -1,6 +1,6 @@
 import type { Snapshot } from '@augur/core';
 import { describe, expect, it } from 'vitest';
-import { changeText, pauseResets, RESET_TRUST_MS, showValue } from '../src/views/rules';
+import { changeText, pauseResets, RESET_TRUST_MS, showValue } from '../src/rules.js';
 
 const NOW = Date.parse('2026-09-29T20:00:00Z');
 const iso = (ms: number) => new Date(ms).toISOString();
