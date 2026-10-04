@@ -1,4 +1,3 @@
-mod claude;
 mod commands;
 mod engine;
 mod websession;
@@ -407,30 +406,11 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             set_hotkey,
-            commands::http_request,
-            commands::web_push,
-            claude::claude_status,
-            claude::claude_code_install,
-            claude::claude_code_remove,
-            claude::claude_desktop_install,
-            claude::claude_desktop_remove,
             commands::read_home_file,
             commands::write_home_file_atomic,
-            commands::run_command,
             commands::dispatch_cli,
             engine::engine_start,
             engine::engine_send,
-            commands::copilot_usage,
-            commands::keychain_get,
-            commands::keychain_set,
-            commands::secret_get,
-            commands::secret_set,
-            commands::secret_delete,
-            commands::secret_has,
-            commands::load_json,
-            commands::save_json,
-            commands::load_history,
-            commands::save_history,
             commands::set_tray,
             commands::tray_icon_size,
             commands::set_popup_height,

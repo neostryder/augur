@@ -6,8 +6,7 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 import { check, type Update } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { getVersion } from '@tauri-apps/api/app';
-import type { AlertFeed, AppConfig, Host, HttpRequest, HttpResponse, ModelCatalog, Platform, Snapshot } from '@augur/core';
-import type { ClaudeStatus, ClaudeTarget, Shell, TrayUpdate, UpdateInfo } from '@augur/core';
+import type { Host, Platform, Shell, TrayUpdate, UpdateInfo } from '@augur/core';
 
 let pendingUpdate: Update | null = null;
 let engineListener: Promise<() => void> | null = null;
@@ -19,87 +18,37 @@ function platform(): Platform {
   return 'linux';
 }
 
-function parseJson<T>(text: string | null): T | null {
-  return text === null ? null : JSON.parse(text) as T;
-}
-
 let notificationPermission: Promise<boolean> | undefined;
 
-// Secrets missing from the keychain can come from a Bitwarden Secrets Manager project, when the
-// config maps them. The list is held in memory for a few minutes and never written anywhere.
-let bwsCache: { at: number; project: string; values: Record<string, string> } | null = null;
-const BWS_TTL_MS = 10 * 60 * 1000;
-
-async function bwsSecret(name: string): Promise<string | null> {
-  const config = parseJson<AppConfig>(await invoke<string | null>('load_json', { kind: 'config' }));
-  const source = config?.secretSources?.bws;
-  const key = source?.map[name];
-  if (!source || !key) return null;
-  if (!bwsCache || bwsCache.project !== source.projectId || Date.now() - bwsCache.at > BWS_TTL_MS) {
-    const out = await invoke<{ code: number; stdout: string }>('run_command', {
-      command: 'bws', args: ['secret', 'list', source.projectId, '-o', 'json'], timeoutMs: 30000,
-    });
-    if (out.code !== 0) return null;
-    const values: Record<string, string> = {};
-    for (const item of JSON.parse(out.stdout) as Array<{ key: string; value: string }>) values[item.key] = item.value;
-    bwsCache = { at: Date.now(), project: source.projectId, values };
-  }
-  return bwsCache.values[key] ?? null;
-}
+// The usage engine, with its settings, keys and readings, runs in the background service. The window app reaches it through engineLink, so these
+// parts of the shell are never called here.
+const serviceOnly = (): Promise<never> => Promise.reject(new Error('The Augur service handles this, not the window app.'));
 
 export function createTauriShell(): Shell {
   const host: Host = {
     platform: platform(),
-    copilotUsage: () => invoke<HttpResponse>('copilot_usage'),
     webSession: (site: string, options?: { fresh?: boolean }) => invoke<Record<string, unknown> | null>('web_session_read', { site, fresh: options?.fresh === true }),
-    http: (req: HttpRequest): Promise<HttpResponse> => invoke('http_request', {
-      url: req.url,
-      method: req.method ?? 'GET',
-      headers: req.headers ?? {},
-      body: req.body ?? null,
-      timeoutMs: req.timeoutMs ?? null,
-    }),
-    secret: async (name: string) => (await invoke<string | null>('secret_get', { name })) ?? bwsSecret(name).catch(() => null),
+    http: serviceOnly,
+    secret: serviceOnly,
     readHomeFile: (path: string) => invoke<string | null>('read_home_file', { path }),
     writeHomeFileAtomic: (path: string, text: string) => invoke<void>('write_home_file_atomic', { path, text }),
-    run: (command: string, args: string[], timeoutMs?: number) => invoke('run_command', { command, args, timeoutMs: timeoutMs ?? null }),
-    keychainGet: (service: string, account?: string) => invoke<string | null>('keychain_get', { service, account: account ?? null }),
-    keychainSet: (service: string, account: string, value: string) => invoke<void>('keychain_set', { service, account, value }),
     now: () => new Date(),
   };
-
-  const load = (kind: string) => invoke<string | null>('load_json', { kind });
-  const save = (kind: string, value: unknown) => invoke<void>('save_json', { kind, text: JSON.stringify(value) });
 
   return {
     kind: 'desktop',
     host,
-    loadConfig: async () => parseJson<AppConfig>(await load('config')),
-    saveConfig: (config: AppConfig) => save('config', config),
-    setSecret: (name: string, value: string) => invoke<void>('secret_set', { name, value }),
-    deleteSecret: (name: string) => invoke<void>('secret_delete', { name }),
-    hasSecret: async (name: string) => (await invoke<boolean>('secret_has', { name })) || (await bwsSecret(name).catch(() => null)) !== null,
-    loadSnapshot: async () => parseJson<Snapshot>(await load('snapshot')),
-    saveSnapshot: (snapshot: Snapshot) => save('snapshot', snapshot),
-    loadHistory: async () => {
-      const text = await invoke<string | null>('load_history');
-      return text?.split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line) as Record<string, unknown>) ?? [];
-    },
-    saveHistory: (rows: Record<string, unknown>[]) => invoke<void>('save_history', {
-      text: rows.map(row => JSON.stringify(row)).join('\n') + (rows.length ? '\n' : ''),
-    }),
-    loadAlertState: async () => parseJson<Record<string, unknown>>(await load('alert-state')) ?? {},
-    loadModelCatalog: async () => parseJson<ModelCatalog>(await load('model-catalog')),
-    saveModelCatalog: (catalog: ModelCatalog) => save('model-catalog', catalog),
-    saveAlertState: (state: Record<string, unknown>) => save('alert-state', state),
-    loadAlertFeed: async () => parseJson<AlertFeed>(await load('alert-feed')),
-    saveAlertFeed: (feed: AlertFeed) => save('alert-feed', feed),
-    sendWebPush: (endpoint: string, headers: Record<string, string>, body: Uint8Array) => {
-      let bin = '';
-      for (const b of body) bin += String.fromCharCode(b);
-      return invoke<number>('web_push', { endpoint, headers, body: btoa(bin) });
-    },
-    exportSnapshot: (homeRelativePath: string, json: string) => invoke<void>('write_home_file_atomic', { path: homeRelativePath, text: json }),
+    loadConfig: serviceOnly,
+    saveConfig: serviceOnly,
+    setSecret: serviceOnly,
+    deleteSecret: serviceOnly,
+    hasSecret: serviceOnly,
+    loadSnapshot: serviceOnly,
+    saveSnapshot: serviceOnly,
+    loadHistory: serviceOnly,
+    saveHistory: serviceOnly,
+    loadAlertState: serviceOnly,
+    saveAlertState: serviceOnly,
     notify: async (title: string, body: string) => {
       notificationPermission ??= (async () => (await isPermissionGranted()) || (await requestPermission()) === 'granted')();
       if (await notificationPermission) sendNotification({ title, body });
@@ -129,10 +78,6 @@ export function createTauriShell(): Shell {
     },
     getAutostart: () => isEnabled(),
     setAutostart: (on: boolean) => on ? enable() : disable(),
-    claudeStatus: () => invoke<ClaudeStatus>('claude_status'),
-    claudeInstall: (target: ClaudeTarget, exportPath: string) =>
-      target === 'code' ? invoke<void>('claude_code_install', { exportPath }) : invoke<void>('claude_desktop_install'),
-    claudeRemove: (target: ClaudeTarget) => invoke<void>(target === 'code' ? 'claude_code_remove' : 'claude_desktop_remove'),
     setHotkey: (accelerator: string | null) => invoke<void>('set_hotkey', { accelerator }),
     appVersion: () => getVersion(),
     openSignIn: (site: string) => invoke<void>('web_session_sign_in', { site }),

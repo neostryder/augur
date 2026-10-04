@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     path::{Component, Path, PathBuf},
     sync::atomic::Ordering,
     time::Duration,
@@ -10,13 +9,6 @@ use serde::Serialize;
 use tauri::{Manager, image::Image};
 
 use crate::{AppState, anchor_popup};
-
-#[derive(Serialize)]
-pub struct HttpResponse {
-    status: u16,
-    headers: HashMap<String, String>,
-    body: String,
-}
 
 #[derive(Serialize)]
 pub struct CommandOutput {
@@ -53,34 +45,24 @@ fn dispatch_routes_path(export: &Path) -> PathBuf {
 
 async fn allowed_home_path(app: &tauri::AppHandle, path: &str) -> Result<PathBuf, String> {
     let relative = relative_path(path)?;
-    let is_credential = matches!(
-        path,
-        ".claude/.credentials.json" | ".codex/auth.json" | ".grok/auth.json"
-    ) || path == ".codex/models_cache.json";
-    let config = load_json(app.clone(), "config".into()).await?;
-    // Besides the three login files and the Codex model list, only the exact export file named in settings (a .json file),
-    // the rules file and rules import file in the same folder, the rule-edit inbox and its results file there, the alert feed and its
-    // acks file there, and the dispatch routes file in that folder's dispatch subfolder.
+    let config_file = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| e.to_string())?
+        .join("config.json");
+    let config = match tokio::fs::read_to_string(config_file).await {
+        Ok(text) => Some(text),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.to_string()),
+    };
+    // Only the dispatch routes file, in the dispatch subfolder of the folder that holds the export file named in settings (a .json file).
     let export_file = config
         .as_deref()
         .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
         .and_then(|value| value.get("exportPath")?.as_str().map(str::to_owned))
         .and_then(|export| relative_path(&export).ok())
         .filter(|export| export.extension().is_some_and(|ext| ext == "json"));
-    let beside_export = |name: &str| {
-        export_file
-            .as_deref()
-            .map(|export| export.with_file_name(name))
-    };
-    let allowed = export_file.as_deref() == Some(relative.as_path())
-        || beside_export("policy.json").as_deref() == Some(relative.as_path())
-        || beside_export("policy-import.json").as_deref() == Some(relative.as_path())
-        || beside_export("policy-edits.jsonl").as_deref() == Some(relative.as_path())
-        || beside_export("policy-edit-results.json").as_deref() == Some(relative.as_path())
-        || beside_export("alerts.json").as_deref() == Some(relative.as_path())
-        || beside_export("alerts-acks.jsonl").as_deref() == Some(relative.as_path())
-        || export_file.as_deref().map(dispatch_routes_path).as_deref() == Some(relative.as_path());
-    if !is_credential && !allowed {
+    if export_file.as_deref().map(dispatch_routes_path).as_deref() != Some(relative.as_path()) {
         return Err("Home file path is not allowed".into());
     }
     let home = home_dir()?;
@@ -163,103 +145,6 @@ fn replace_file(from: &Path, to: &Path) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn http_request(
-    url: String,
-    method: String,
-    headers: HashMap<String, String>,
-    body: Option<String>,
-    timeout_ms: Option<u64>,
-) -> Result<HttpResponse, String> {
-    let parsed = reqwest::Url::parse(&url).map_err(|e| e.to_string())?;
-    if parsed.scheme() != "https" {
-        return Err("HTTPS is required".into());
-    }
-    let method = reqwest::Method::from_bytes(method.as_bytes()).map_err(|e| e.to_string())?;
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::custom(|attempt| {
-            if attempt.url().scheme() == "https" {
-                attempt.follow()
-            } else {
-                attempt.error("HTTPS is required")
-            }
-        }))
-        .timeout(Duration::from_millis(
-            timeout_ms.unwrap_or(30_000).clamp(1, 300_000),
-        ))
-        .build()
-        .map_err(|e| e.to_string())?;
-    let mut request = client.request(method, parsed);
-    for (name, value) in headers {
-        request = request.header(name, value);
-    }
-    if let Some(body) = body {
-        request = request.body(body);
-    }
-    let response = request
-        .send()
-        .await
-        .map_err(|_| "HTTP request failed".to_owned())?;
-    let status = response.status().as_u16();
-    let headers = response
-        .headers()
-        .iter()
-        .filter_map(|(key, value)| {
-            value
-                .to_str()
-                .ok()
-                .map(|value| (key.to_string(), value.to_owned()))
-        })
-        .collect();
-    let body = response
-        .text()
-        .await
-        .map_err(|_| "HTTP response decoding failed".to_owned())?;
-    Ok(HttpResponse {
-        status,
-        headers,
-        body,
-    })
-}
-
-/// The push services the phone's browser may hand out: Chrome and Android, Safari on iPhone and Mac, Firefox, and Edge.
-fn is_push_service(host: &str) -> bool {
-    host == "fcm.googleapis.com"
-        || host == "web.push.apple.com"
-        || host.ends_with(".push.apple.com")
-        || host == "updates.push.services.mozilla.com"
-        || host.ends_with(".push.services.mozilla.com")
-        || host.ends_with(".notify.windows.com")
-}
-
-/// Sends one encrypted alert to the phone's push service and returns its status. 404 and 410 mean the subscription is gone.
-#[tauri::command]
-pub async fn web_push(
-    endpoint: String,
-    headers: HashMap<String, String>,
-    body: String,
-) -> Result<u16, String> {
-    let parsed = reqwest::Url::parse(&endpoint).map_err(|e| e.to_string())?;
-    if parsed.scheme() != "https" || !parsed.host_str().is_some_and(is_push_service) {
-        return Err("Not a push service address".into());
-    }
-    let body = STANDARD.decode(body).map_err(|e| e.to_string())?;
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(20))
-        .build()
-        .map_err(|e| e.to_string())?;
-    let mut request = client.post(parsed).body(body);
-    for (name, value) in headers {
-        request = request.header(name, value);
-    }
-    let response = request
-        .send()
-        .await
-        .map_err(|_| "Push request failed".to_owned())?;
-    Ok(response.status().as_u16())
-}
-
-#[tauri::command]
 pub async fn read_home_file(app: tauri::AppHandle, path: String) -> Result<Option<String>, String> {
     let path = allowed_home_path(&app, &path).await?;
     match tokio::fs::read_to_string(path).await {
@@ -279,106 +164,6 @@ pub async fn write_home_file_atomic(
     atomic_write(&path, &text).await
 }
 
-fn executable_path(command: &str) -> Result<PathBuf, String> {
-    let exe = if cfg!(windows) {
-        format!("{command}.exe")
-    } else {
-        command.to_owned()
-    };
-    if let Some(path) = std::env::var_os("PATH").and_then(|paths| {
-        std::env::split_paths(&paths)
-            .map(|dir| dir.join(&exe))
-            .find(|path| path.is_file())
-    }) {
-        return Ok(path);
-    }
-    #[cfg(windows)]
-    {
-        let fallback = match command {
-            "grok" => home_dir()?.join(".grok/bin/grok.exe"),
-            "bws" => home_dir()?.join(".local/bin/bws.exe"),
-            "gh" => PathBuf::from("C:/Program Files/GitHub CLI/gh.exe"),
-            _ => return Err("Command is not allowed".into()),
-        };
-        if fallback.is_file() {
-            return Ok(fallback);
-        }
-    }
-    Err("Allowed command is unavailable".into())
-}
-
-#[tauri::command]
-pub async fn run_command(
-    command: String,
-    args: Vec<String>,
-    timeout_ms: Option<u64>,
-) -> Result<CommandOutput, String> {
-    let allowed = (command == "grok" && args == ["models"])
-        || (command == "bws"
-            && args.len() == 5
-            && args[0] == "secret"
-            && args[1] == "list"
-            && uuid::Uuid::parse_str(&args[2]).is_ok()
-            && args[3] == "-o"
-            && args[4] == "json");
-    if !allowed {
-        return Err("Command and arguments are not allowed".into());
-    }
-    let mut process = tokio::process::Command::new(executable_path(&command)?);
-    process.args(args).kill_on_drop(true);
-    #[cfg(windows)]
-    {
-        process.creation_flags(0x0800_0000);
-    }
-    let output = tokio::time::timeout(
-        Duration::from_millis(timeout_ms.unwrap_or(30_000).clamp(1, 300_000)),
-        process.output(),
-    )
-    .await
-    .map_err(|_| "Command timed out".to_owned())?
-    .map_err(|e| e.to_string())?;
-    Ok(CommandOutput {
-        code: output.status.code().unwrap_or(-1),
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-    })
-}
-
-/// Copilot usage for the GitHub CLI's signed-in account. The token is read and used here, so the page never holds it.
-#[tauri::command]
-pub async fn copilot_usage() -> Result<HttpResponse, String> {
-    let not_signed_in = || "Not signed in. Run gh auth login on this computer.".to_owned();
-    let mut process = tokio::process::Command::new(executable_path("gh")?);
-    process.args(["auth", "token"]).kill_on_drop(true);
-    #[cfg(windows)]
-    {
-        process.creation_flags(0x0800_0000);
-    }
-    let output = tokio::time::timeout(Duration::from_secs(15), process.output())
-        .await
-        .map_err(|_| "gh timed out".to_owned())?
-        .map_err(|_| not_signed_in())?;
-    let token = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    if !output.status.success() || token.is_empty() {
-        return Err(not_signed_in());
-    }
-    let headers = HashMap::from([
-        ("Authorization".to_owned(), format!("Bearer {token}")),
-        ("Accept".to_owned(), "application/json".to_owned()),
-        ("User-Agent".to_owned(), "augur".to_owned()),
-    ]);
-    http_request(
-        "https://api.github.com/copilot_internal/user".into(),
-        "GET".into(),
-        headers,
-        None,
-        Some(20_000),
-    )
-    .await
-}
-
-/// The service settings the page may change. The ones that lower what the service checks (requirePick, verifyNamed) and the exec adapter are left to
-/// the command line and the config file, so a page cannot switch them.
 fn dispatch_setting_allowed(key: &str, value: &str) -> bool {
     let plain = !value.is_empty()
         && value.len() <= 64
@@ -508,164 +293,6 @@ pub async fn dispatch_cli(
     })
 }
 
-fn keyring_entry(service: &str, account: &str) -> Result<keyring::Entry, String> {
-    keyring::Entry::new(service, account).map_err(|e| e.to_string())
-}
-
-/// The one keychain item outside Augur's own that the page may touch: Claude Code's login on macOS.
-const CLAUDE_KEYCHAIN_SERVICE: &str = "Claude Code-credentials";
-
-fn check_secret_name(name: &str) -> Result<(), String> {
-    let valid = name.split_once('.').is_some_and(|(provider, field)| {
-        !provider.is_empty()
-            && !field.is_empty()
-            && provider
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
-            && field
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'_')
-    });
-    if valid {
-        Ok(())
-    } else {
-        Err("Invalid secret name".into())
-    }
-}
-
-#[tauri::command]
-pub async fn keychain_get(
-    service: String,
-    account: Option<String>,
-) -> Result<Option<String>, String> {
-    if service != CLAUDE_KEYCHAIN_SERVICE {
-        return Err("Keychain item is not allowed".into());
-    }
-    keychain_read(service, account).await
-}
-
-#[tauri::command]
-pub async fn keychain_set(service: String, account: String, value: String) -> Result<(), String> {
-    if service != CLAUDE_KEYCHAIN_SERVICE {
-        return Err("Keychain item is not allowed".into());
-    }
-    keychain_write(service, account, value).await
-}
-
-async fn keychain_read(service: String, account: Option<String>) -> Result<Option<String>, String> {
-    tokio::task::spawn_blocking(move || {
-        let account = account.unwrap_or_else(|| {
-            std::env::var("USER")
-                .or_else(|_| std::env::var("USERNAME"))
-                .unwrap_or_default()
-        });
-        match keyring_entry(&service, &account)?.get_password() {
-            Ok(value) => Ok(Some(value)),
-            Err(keyring::Error::NoEntry) => Ok(None),
-            Err(error) => Err(error.to_string()),
-        }
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-async fn keychain_write(service: String, account: String, value: String) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || {
-        keyring_entry(&service, &account)?
-            .set_password(&value)
-            .map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-#[tauri::command]
-pub async fn secret_get(name: String) -> Result<Option<String>, String> {
-    check_secret_name(&name)?;
-    keychain_read("augur".into(), Some(name)).await
-}
-
-#[tauri::command]
-pub async fn secret_set(name: String, value: String) -> Result<(), String> {
-    check_secret_name(&name)?;
-    keychain_write("augur".into(), name, value).await
-}
-
-#[tauri::command]
-pub async fn secret_delete(name: String) -> Result<(), String> {
-    check_secret_name(&name)?;
-    tokio::task::spawn_blocking(
-        move || match keyring_entry("augur", &name)?.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(error) => Err(error.to_string()),
-        },
-    )
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-#[tauri::command]
-pub async fn secret_has(name: String) -> Result<bool, String> {
-    Ok(secret_get(name).await?.is_some())
-}
-
-fn json_path(app: &tauri::AppHandle, kind: &str) -> Result<PathBuf, String> {
-    let name = match kind {
-        "config" => "config.json",
-        "snapshot" => "snapshot.json",
-        "alert-state" => "alert-state.json",
-        "model-catalog" => "model-catalog.json",
-        "alert-feed" => "alert-feed.json",
-        _ => return Err("Unknown JSON kind".into()),
-    };
-    app.path()
-        .app_config_dir()
-        .map(|dir| dir.join(name))
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn load_json(app: tauri::AppHandle, kind: String) -> Result<Option<String>, String> {
-    match tokio::fs::read_to_string(json_path(&app, &kind)?).await {
-        Ok(text) => Ok(Some(text)),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error.to_string()),
-    }
-}
-
-#[tauri::command]
-pub async fn save_json(app: tauri::AppHandle, kind: String, text: String) -> Result<(), String> {
-    serde_json::from_str::<serde_json::Value>(&text).map_err(|e| e.to_string())?;
-    atomic_write(&json_path(&app, &kind)?, &text).await
-}
-
-#[tauri::command]
-pub async fn load_history(app: tauri::AppHandle) -> Result<Option<String>, String> {
-    let path = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("history.jsonl");
-    match tokio::fs::read_to_string(path).await {
-        Ok(text) => Ok(Some(text)),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error.to_string()),
-    }
-}
-
-#[tauri::command]
-pub async fn save_history(app: tauri::AppHandle, text: String) -> Result<(), String> {
-    for line in text.lines() {
-        serde_json::from_str::<serde_json::Value>(line).map_err(|e| e.to_string())?;
-    }
-    let path = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("history.jsonl");
-    atomic_write(&path, &text).await
-}
-
 #[tauri::command]
 pub fn set_tray(
     app: tauri::AppHandle,
@@ -789,7 +416,7 @@ pub fn start_popup_drag(
 
 #[cfg(test)]
 mod tests {
-    use super::{dispatch_args_allowed, dispatch_routes_path, is_push_service};
+    use super::{dispatch_args_allowed, dispatch_routes_path};
     use std::path::Path;
 
     #[test]
@@ -850,15 +477,5 @@ mod tests {
         assert!(!allowed(&["test", "Luna"]));
         assert!(!allowed(&["test", "luna", "--prompt", "x"]));
         assert!(!allowed(&["test"]));
-    }
-
-    #[test]
-    fn only_known_push_services_are_reachable() {
-        assert!(is_push_service("fcm.googleapis.com"));
-        assert!(is_push_service("web.push.apple.com"));
-        assert!(is_push_service("db5p.notify.windows.com"));
-        assert!(!is_push_service("evil-fcm.googleapis.com.example"));
-        assert!(!is_push_service("notify.windows.com.example"));
-        assert!(!is_push_service("augur.rpgm.tools"));
     }
 }
