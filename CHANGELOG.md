@@ -7,6 +7,9 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 ### Added
 
 - [Visible] [UI] **Pin the panel to keep it on screen.** The pin button in the new strip at the top of the panel keeps it open and on top when you click elsewhere. While it is pinned, drag the strip to move the panel. Augur remembers the pin and the spot after a restart, and opens the panel at the tray instead if that monitor is gone. Esc or a click on the tray icon hides a pinned panel without unpinning it, and a pinned panel keeps its top edge in place when its height changes.
+- [Visible] [Alerts] **Alerts stay under a bell until you dismiss them.** The bell in the panel's top strip shows how many alerts are waiting and opens a list of them. Each alert stays until you dismiss it or it stops applying, such as when its usage window resets or the models it named have been reviewed. Dismissing an alert clears it everywhere Augur shows it.
+- [Visible] [Alerts] **Choose where each kind of alert goes.** Settings has a grid of alert kinds against your computer's notifications, the bell, Claude Code and your phone. Updates and failed refreshes now go to the bell only by default, so they no longer raise a notification.
+- [Visible] [Sync] [Alerts] **A paired phone shows the same alerts and can get push notifications.** The phone app shows your computer's alerts under its own bell, and dismissing one there clears it on the computer too. Turn on Push notifications in the phone's Settings to get alerts while Augur is closed, on Android or on an iPhone with Augur added to the Home Screen. The computer encrypts each push for the phone, so the relay never sees an alert.
 
 ## [1.2.3] - 2026-10-01
 

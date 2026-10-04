@@ -3,6 +3,7 @@ import { builtinProviders } from './providers/index.js';
 import { obj } from './util.js';
 import { MIN_REFRESH_SECONDS } from './engine.js';
 import { emptyPolicy, migratePolicy } from './policy.js';
+import { defaultOutlets, migrateOutlets } from './feed.js';
 
 /** Super is the Windows key on Windows and Command on macOS. */
 export const DEFAULT_HOTKEY = 'Ctrl+Super+U';
@@ -10,7 +11,7 @@ export const DEFAULT_HOTKEY = 'Ctrl+Super+U';
 export function defaultConfig(): AppConfig {
   return { schema: 1, providers: builtinProviders.map(provider => ({ id: provider.id, enabled: true, settings: {} })), custom: [],
     layout: { theme: 'system', columns: 'auto', hiddenMeters: {}, collapsed: [] },
-    alerts: { enabled: false, pctThresholds: [50, 75, 90], paceRatio: { session: 0.8, weekly: 0.8, other: null }, balanceBelow: {} }, exportPath: null, policy: emptyPolicy() };
+    alerts: { enabled: false, pctThresholds: [50, 75, 90], paceRatio: { session: 0.8, weekly: 0.8, other: null }, balanceBelow: {}, outlets: defaultOutlets() }, exportPath: null, policy: emptyPolicy() };
 }
 
 export function migrateConfig(value: unknown): AppConfig {
@@ -37,7 +38,8 @@ export function migrateConfig(value: unknown): AppConfig {
       hiddenMeters: obj(layout.hiddenMeters), collapsed: Array.isArray(layout.collapsed) ? layout.collapsed.filter((id: unknown) => typeof id === 'string') : [] },
     alerts: { enabled: alerts.enabled === true, pctThresholds: Array.isArray(alerts.pctThresholds) ? alerts.pctThresholds.filter((n: unknown) => typeof n === 'number' && n >= 0 && n <= 100) : defaults.alerts.pctThresholds,
       paceRatio: { session: ratio(pace.session, defaults.alerts.paceRatio.session), weekly: ratio(pace.weekly, defaults.alerts.paceRatio.weekly), other: ratio(pace.other, defaults.alerts.paceRatio.other) },
-      balanceBelow: Object.fromEntries(Object.entries(obj(alerts.balanceBelow)).filter(([, n]) => typeof n === 'number' && Number.isFinite(n))) },
+      balanceBelow: Object.fromEntries(Object.entries(obj(alerts.balanceBelow)).filter(([, n]) => typeof n === 'number' && Number.isFinite(n))),
+      outlets: migrateOutlets(alerts.outlets) },
     exportPath: typeof source.exportPath === 'string' ? source.exportPath : null,
     hotkey: source.hotkey === null || source.hotkey === '' ? null : typeof source.hotkey === 'string' ? source.hotkey : DEFAULT_HOTKEY,
     autoUpdate: source.autoUpdate !== false,

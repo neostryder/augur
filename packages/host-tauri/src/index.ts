@@ -6,7 +6,7 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 import { check, type Update } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { getVersion } from '@tauri-apps/api/app';
-import type { AppConfig, Host, HttpRequest, HttpResponse, ModelCatalog, Platform, Snapshot } from '@augur/core';
+import type { AlertFeed, AppConfig, Host, HttpRequest, HttpResponse, ModelCatalog, Platform, Snapshot } from '@augur/core';
 import type { Shell, TrayUpdate, UpdateInfo } from '@augur/core';
 
 let pendingUpdate: Update | null = null;
@@ -91,6 +91,13 @@ export function createTauriShell(): Shell {
     loadModelCatalog: async () => parseJson<ModelCatalog>(await load('model-catalog')),
     saveModelCatalog: (catalog: ModelCatalog) => save('model-catalog', catalog),
     saveAlertState: (state: Record<string, unknown>) => save('alert-state', state),
+    loadAlertFeed: async () => parseJson<AlertFeed>(await load('alert-feed')),
+    saveAlertFeed: (feed: AlertFeed) => save('alert-feed', feed),
+    sendWebPush: (endpoint: string, headers: Record<string, string>, body: Uint8Array) => {
+      let bin = '';
+      for (const b of body) bin += String.fromCharCode(b);
+      return invoke<number>('web_push', { endpoint, headers, body: btoa(bin) });
+    },
     exportSnapshot: (homeRelativePath: string, json: string) => invoke<void>('write_home_file_atomic', { path: homeRelativePath, text: json }),
     notify: async (title: string, body: string) => {
       notificationPermission ??= (async () => (await isPermissionGranted()) || (await requestPermission()) === 'granted')();

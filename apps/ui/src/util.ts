@@ -17,6 +17,8 @@ export const ICON = {
   jobs: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h7"/><path d="m11.5 11.5 1.2 1.2 2-2.4"/></svg>',
   rules: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.8 13.5 4v4c0 3.2-2.4 5.4-5.5 6.2C4.9 13.4 2.5 11.2 2.5 8V4L8 1.8Z"/><path d="m5.6 8 1.7 1.7 3.2-3.4"/></svg>',
   pin: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9.8 1.9 14.1 6.2"/><path d="M11.4 3.5 8.6 6.3 5.2 6.6 3.9 7.9l4.2 4.2 1.3-1.3.3-3.4 2.8-2.8"/><path d="M6 10 2.2 13.8"/></svg>',
+  bell: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11.5V7a4 4 0 0 1 8 0v4.5"/><path d="M2.8 11.5h10.4"/><path d="M6.6 13.6a1.5 1.5 0 0 0 2.8 0"/></svg>',
+  close: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/></svg>',
   columns: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2.5" width="12" height="11" rx="2"/><path d="M8 2.5v11"/></svg>',
 };
 

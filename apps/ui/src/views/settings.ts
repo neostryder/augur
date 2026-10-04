@@ -1,4 +1,5 @@
-import type { AppConfig, ProviderPlugin, Snapshot } from '@augur/core';
+import { ALERT_KINDS } from '@augur/core';
+import type { AlertKind, AppConfig, Outlet, Platform, ProviderPlugin, PushStatus, Snapshot } from '@augur/core';
 import type { UpdateState } from '../app';
 import { ICON, esc } from '../util';
 import { DEFAULT_REFRESH_SECONDS } from '../core';
@@ -32,6 +33,68 @@ export interface SettingsModel {
   runJobs: boolean;
   /** The task classifier the service is set to, or null before the service settings have been read. */
   classifier: string | null;
+  platform: Platform;
+  /** Phone only: where push stands in this browser, the last error, and whether the desktop has sent its push key. */
+  push: { status: PushStatus | null; error: string; hasKey: boolean } | null;
+}
+
+export const KIND_LABELS: Record<AlertKind, string> = {
+  percent: 'Usage reaches a threshold',
+  pace: 'Pace warning',
+  reset: 'Limit spent with a reset in hand',
+  balance: 'Balance is low',
+  refresh: 'Refresh failed',
+  models: 'New models to review',
+  rules: 'Rule changes to accept',
+  update: 'Update available',
+};
+
+export const ALERT_TEXT = {
+  master: 'Each alert fires once per window, then waits for the next reset. The grid below picks where each kind goes.',
+  grid: 'Where each alert goes',
+  gridHelp: 'Keep in Augur holds an alert under the bell until you dismiss it or it stops applying. Claude Code shows it in sessions with the Augur mod. Phone sends a push once push is on in the phone app.',
+  keep: 'Keep in Augur',
+  claude: 'Claude Code',
+  phone: 'Phone',
+};
+
+export const PUSH_TEXT = {
+  label: 'Push notifications',
+  on: "Your computer's alerts arrive here even when Augur is closed.",
+  off: 'Turn this on to get alerts from your computer on this phone.',
+  needsInstall: 'On iPhone, push works only in the Home Screen app. Tap Share, then Add to Home Screen, open Augur from there, pair it, and turn this on.',
+  denied: 'Notifications are blocked for this site. Allow them in the browser settings, then turn this on.',
+  unsupported: 'This browser cannot receive push notifications.',
+  noKey: 'Your computer has not sent its push key yet. Open Augur on the computer, wait for it to sync, then try again.',
+  refused: 'The browser did not allow notifications, so push is still off.',
+  where: 'Your computer picks which alerts reach this phone, in its own Alerts settings.',
+};
+
+const SYSTEM_NAMES: Record<Platform, string> = { windows: 'Windows', macos: 'macOS', linux: 'Linux', browser: 'Browser' };
+
+/** The desktop's grid of alert kinds against the places an alert can go. The Phone column shows once a phone is paired. */
+function outletGrid(m: SettingsModel): string {
+  const cols: Array<[Outlet, string]> = [['system', SYSTEM_NAMES[m.platform]], ['augur', ALERT_TEXT.keep], ['claude', ALERT_TEXT.claude]];
+  if (m.sync?.channel) cols.push(['phone', ALERT_TEXT.phone]);
+  const o = m.config.alerts.outlets;
+  return `<div class="field"><label>${ALERT_TEXT.grid}</label><span class="help">${ALERT_TEXT.gridHelp}</span>
+    <table class="outlets"><thead><tr><th></th>${cols.map(([, label]) => `<th scope="col">${esc(label)}</th>`).join('')}</tr></thead><tbody>
+    ${ALERT_KINDS.map((k) => `<tr><th scope="row">${KIND_LABELS[k]}</th>${cols.map(([out, label]) =>
+      `<td><input type="checkbox" data-outlet="${k}.${out}" ${o[k][out] ? 'checked' : ''} aria-label="${esc(`${KIND_LABELS[k]}: ${label}`)}"></td>`).join('')}</tr>`).join('')}
+    </tbody></table></div>`;
+}
+
+/** A paired phone's alert settings: only push, since the computer raises every alert. */
+function phoneAlerts(m: SettingsModel): string {
+  const p = m.push!;
+  const blocked = p.status === 'needs-install' || p.status === 'denied' || p.status === 'unsupported';
+  const desc = p.status === 'needs-install' ? PUSH_TEXT.needsInstall : p.status === 'denied' ? PUSH_TEXT.denied : p.status === 'unsupported' ? PUSH_TEXT.unsupported
+    : p.status === 'on' ? PUSH_TEXT.on : PUSH_TEXT.off;
+  return `<h2 class="sec">Alerts</h2><div class="card">
+    <div class="row"><label class="name">${PUSH_TEXT.label}<span class="desc">${esc(desc)}</span></label>
+      <label class="switch"><input type="checkbox" data-toggle="push" ${p.status === 'on' ? 'checked' : ''} ${blocked ? 'disabled' : ''} aria-label="${PUSH_TEXT.label}"><span></span></label></div>
+    ${p.error ? `<span class="bad-json">${esc(p.error)}</span>` : ''}
+    <div class="field"><span class="help">${PUSH_TEXT.where}</span></div></div>`;
 }
 
 export const STARTER_RULES_TEXT = 'Each provider starts with cautious rules that its models inherit: public data only, text output only, and named before use. A model cannot be used until you confirm it on the model rules page and allow the activities it needs.';
@@ -132,8 +195,10 @@ export function renderSettings(m: SettingsModel): string {
     <div class="row"><label class="name">Theme</label>${seg('theme', c.layout.theme, [['system', 'System'], ['light', 'Light'], ['dark', 'Dark']])}</div>
     <div class="row"><label class="name">Columns<span class="desc">Auto uses two columns only when one column would run past the bottom of the screen.</span></label>${seg('columns', String(c.layout.columns), [['auto', 'Auto'], ['1', 'One'], ['2', 'Two']])}</div></div>`;
 
-  html += `<h2 class="sec">Alerts</h2><div class="card">
-    <div class="row"><label class="name">Notifications<span class="desc">Each alert fires once per window, then waits for the next reset.</span></label>${toggle('alerts', a.enabled, 'Notifications')}</div>
+  if (m.push && m.sync?.channel) html += phoneAlerts(m);
+  else html += `<h2 class="sec">Alerts</h2><div class="card">
+    <div class="row"><label class="name">Alerts<span class="desc">${m.shellKind === 'desktop' ? ALERT_TEXT.master : 'Each alert fires once per window, then waits for the next reset.'}</span></label>${toggle('alerts', a.enabled, 'Alerts')}</div>
+    ${m.shellKind === 'desktop' ? outletGrid(m) : ''}
     <div class="field"><label for="pct">Notify when a limit passes these percentages</label><input type="text" id="pct" data-alert="pct" value="${esc(a.pctThresholds.join(', '))}" placeholder="80, 95"></div>
     <div class="field"><label>Burn-rate warning</label><span class="help">Warns when usage left divided by time left in the window drops below this number. 1 means you run out right at the reset; 0.8 warns a bit earlier than that. Leave blank to turn one off.</span>
       <div class="row" style="border:0;gap:14px">

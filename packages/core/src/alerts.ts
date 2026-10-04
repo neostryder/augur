@@ -9,6 +9,10 @@ export interface Alert {
   meterId: string;
   kind: 'percent' | 'pace' | 'balance' | 'reset';
   message: string;
+  /** The percent or balance the alert crossed. */
+  threshold?: number;
+  /** When the meter's window ends, for alerts tied to one window. */
+  resetsAt?: string | null;
 }
 /** When each alert last fired, in epoch milliseconds. A plain true, written by earlier builds, counts as fired at the first check after the upgrade. */
 export type FiredState = Record<string, boolean | number>;
@@ -48,10 +52,10 @@ export function evaluateAlerts(snapshot: Snapshot, history: HistoryRow[], config
     if (w && Date.parse(w[2] as string) < now - KEEP_FIRED_MS) delete state[k];
     else if (state[k] === true) state[k] = now;
   }
-  const fire = (key: string, providerId: string, meterId: string, kind: Alert['kind'], message: string, repeatMs?: number) => {
+  const fire = (key: string, providerId: string, meterId: string, kind: Alert['kind'], message: string, repeatMs?: number, extra: Pick<Alert, 'threshold' | 'resetsAt'> = {}) => {
     const last = lastFired(state, key);
     if (last !== undefined && (repeatMs === undefined || now - last < repeatMs)) return;
-    state[key] = now; alerts.push({ key, providerId, meterId, kind, message });
+    state[key] = now; alerts.push({ key, providerId, meterId, kind, message, ...extra });
   };
   for (const [providerId, provider] of Object.entries(snapshot.providers)) {
     if (!provider.ok || provider.stale) continue;
@@ -63,7 +67,7 @@ export function evaluateAlerts(snapshot: Snapshot, history: HistoryRow[], config
       const prior = series.at(-1)?.value ?? 0;
       for (const threshold of config.pctThresholds) {
         if (prior < threshold && meter.usedPct >= threshold) fire(`${providerId}.${meter.id}.percent.${threshold}.${window}`, providerId, meter.id, 'percent',
-          `${provider.name}: ${meter.label} reached ${threshold}%`);
+          `${provider.name}: ${meter.label} reached ${threshold}%`, undefined, { threshold, resetsAt: meter.resetsAt ?? null });
       }
       const paceThreshold = meter.windowKind === 'session' ? config.paceRatio.session : meter.windowKind === 'weekly' ? config.paceRatio.weekly : config.paceRatio.other;
       if (paceThreshold === null || !meter.resetsAt || !meter.windowSeconds || meter.usedPct < 5) continue;
@@ -71,20 +75,20 @@ export function evaluateAlerts(snapshot: Snapshot, history: HistoryRow[], config
       if (elapsed < 0.1 || elapsed >= 1) continue;
       const pace = calculatePace(meter, history, providerId, new Date(now));
       if (pace.burnRatio !== null && pace.burnRatio < paceThreshold) fire(`${providerId}.${meter.id}.pace.${paceThreshold}.${window}`, providerId, meter.id, 'pace',
-        `${provider.name}: ${meter.label} may run out before reset`, PACE_REPEAT_MS);
+        `${provider.name}: ${meter.label} may run out before reset`, PACE_REPEAT_MS, { resetsAt: meter.resetsAt });
     }
     const resets = (provider.notes as { resets_available?: unknown } | null | undefined)?.resets_available;
     if (typeof resets === 'number' && resets > 0) {
       for (const meter of provider.meters) {
         if (meter.usedPct === null || (meter.windowKind !== 'weekly' && meter.windowKind !== 'session') || meter.usedPct < (options.spentAt?.[providerId] ?? DEFAULT_SPENT_PCT)) continue;
         fire(`${providerId}.${meter.id}.reset.${meter.resetsAt ?? 'none'}`, providerId, meter.id, 'reset',
-          `${provider.name}: ${meter.label} is spent and ${resets} limit ${resets === 1 ? 'reset is' : 'resets are'} in hand. Use ${resets === 1 ? 'it' : 'one'} to keep working on ${provider.name}.`);
+          `${provider.name}: ${meter.label} is spent and ${resets} limit ${resets === 1 ? 'reset is' : 'resets are'} in hand. Use ${resets === 1 ? 'it' : 'one'} to keep working on ${provider.name}.`, undefined, { resetsAt: meter.resetsAt ?? null });
       }
     }
     for (const money of provider.money) {
       const threshold = config.balanceBelow[`${providerId}.${money.id}`];
       if (threshold === undefined || money.amount === null || money.amount >= threshold) continue;
-      fire(`${providerId}.${money.id}.balance.${threshold}`, providerId, money.id, 'balance', `${provider.name}: ${money.label} is below ${threshold} ${money.currency}`);
+      fire(`${providerId}.${money.id}.balance.${threshold}`, providerId, money.id, 'balance', `${provider.name}: ${money.label} is below ${threshold} ${money.currency}`, undefined, { threshold });
     }
   }
   return { alerts, firedState: state };

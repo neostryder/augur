@@ -1,10 +1,10 @@
 import Sortable from 'sortablejs';
-import { ACTIVITY_LABELS, DATA_TIER_LABELS, WEIGHT_LABELS, addModels, buildPolicyFile, emptyEditState, parseEditState, parseInbox, processInbox, resolveHeld, INBOX_FILE, RESULTS_FILE, emptyPolicy, importPolicy, listDue, mergePolicy, policyDigest, policyFromFile, policyPathFor, releaseChanges, setField, setFieldMany, setModelStatus, syncModelList, undoChange, type AppConfig, type DataTier, type EditState, type ModelCatalog, type ModelEntry, type ProviderPlugin, type ReleaseChanges, type Shell, type Snapshot, type UpdateInfo } from '@augur/core';
+import { ACTIVITY_LABELS, DATA_TIER_LABELS, WEIGHT_LABELS, addModels, buildPolicyFile, emptyEditState, parseEditState, parseInbox, processInbox, resolveHeld, INBOX_FILE, RESULTS_FILE, emptyPolicy, importPolicy, listDue, mergePolicy, policyDigest, policyFromFile, policyPathFor, releaseChanges, setField, setFieldMany, setModelStatus, syncModelList, undoChange, type AppConfig, type DataTier, type EditState, type ModelCatalog, type ModelEntry, type ProviderPlugin, type ReleaseChanges, type Shell, type Snapshot, type UpdateInfo, feedFor, feedFromUsage, type AlertKind, type Outlet, type PushStatus } from '@augur/core';
 import * as core from './core';
 import type { HistoryRow } from './core';
 import { renderDashboard, tightest, updateTip, type DashboardModel } from './views/dashboard';
-import { CUSTOM_EXAMPLE, renderSettings, type SettingsModel } from './views/settings';
-import { dialEndChoices, heldRows, pauseResets, renderRules, type RulesFilter, type RulesModel } from './views/rules';
+import { CUSTOM_EXAMPLE, PUSH_TEXT, renderSettings, type SettingsModel } from './views/settings';
+import { dialEndChoices, heldRows, pauseResets, pendingCount, renderRules, type RulesFilter, type RulesModel } from './views/rules';
 import { renderJobs, type JobsModel } from './views/jobs';
 import { renderRoutes, type RoutesModel } from './views/routes';
 import { renderService, type ConfigLine, type ServiceModel } from './views/service';
@@ -19,7 +19,8 @@ import { span, until } from './util';
 import qrcode from 'qrcode-generator';
 import { HOSTED } from './hosted';
 import { attachPullToRefresh } from './pull-refresh';
-import { acceptPairing, acceptPairingFromUrl, applySharedConfig, askDesktop, createPairing, mergeSynced, pairingUrl, parsePairing, pullRules, pullSnapshot, pushRules, pushSnapshot, readAsk, sharedConfig, SyncUploadError } from './sync';
+import { acceptPairing, acceptPairingFromUrl, applySharedConfig, askDesktop, createPairing, mergeSynced, pairingUrl, parsePairing, pullPhoneState, pullRules, pullSnapshot, pushPhoneState, pushRules, pushSnapshot, readAsk, sharedConfig, SyncUploadError, type PhoneState } from './sync';
+import { FeedKeeper, UPDATE_ALERT_TEXT, type Raise } from './feed-keeper';
 import { scanQr } from './scan';
 import { relayUrl, setRelayUrl } from './shells/browser';
 
@@ -37,6 +38,9 @@ const DESKTOP_POLL_MS = 15_000;
 const DESKTOP_WAIT_MS = 4 * 60_000;
 // Matches the shortest refresh interval a provider can have.
 const TICK_MS = 15_000;
+/** Dismissals on the phone wait this long before they upload, so several in a row go up together. After the relay refuses an upload, the phone tries again a minute later. */
+const PHONE_WRITE_DELAY_MS = 3000;
+const PHONE_RETRY_MS = 61_000;
 const ASK_CHECK_MS = 60_000;
 const PULL_MS = 5 * 60_000;
 // Rules are compared with the paired device's at most once a minute, and a local edit starts a comparison a few seconds after it.
@@ -121,7 +125,19 @@ export class App {
   private resizeWatch = new ResizeObserver(() => { void this.sizePopup(); });
   // The desktop title strip, which carries the pin. It sits outside the root so page renders leave it alone.
   private strip: HTMLElement | null = null;
+  private stripHtml = '';
   private pinned = false;
+  // The alert feed. The desktop keeps it, and a paired phone shows the copy the desktop last synced.
+  private keeper!: FeedKeeper;
+  private alertsOpen = false;
+  private lastPhoneCheck = 0;
+  /** What the phone has dismissed and where it wants push, kept on its relay channel for the desktop to read. */
+  private phoneState: PhoneState = { acks: [], push: null };
+  private phoneWrite: ReturnType<typeof setTimeout> | undefined;
+  /** On the phone, the desktop's public push key from the last sync and where push stands in this browser. */
+  private pushKey: string | null = null;
+  private pushStatus: PushStatus | null = null;
+  private pushError = '';
 
   private pluginMap(): Map<string, ProviderPlugin> {
     return new Map(core.plugins(this.config).map((p) => [p.id, p]));
@@ -142,16 +158,17 @@ export class App {
       this.shell.loadSnapshot(), this.shell.loadHistory() as Promise<HistoryRow[]>, this.shell.loadAlertState(),
     ]);
     this.catalog = (await this.shell.loadModelCatalog?.().catch(() => null)) ?? {};
+    this.keeper = new FeedKeeper(this.shell, () => this.config, () => new URL(this.pwaUrl()).origin);
+    await this.keeper.load();
+    if (this.shell.kind === 'pwa' && this.sync?.channel) {
+      this.phoneState = (await pullPhoneState(this.shell.host, this.sync, true).catch(() => null)) ?? this.phoneState;
+      this.pushStatus = (await this.shell.pushStatus?.().catch(() => null)) ?? null;
+    }
     this.customDraft = JSON.stringify(this.config.custom ?? [], null, 2);
     this.autostart = this.shell.getAutostart ? await this.shell.getAutostart().catch(() => null) : null;
     await this.applyHotkey();
-    if (this.shell.kind === 'desktop' && this.shell.setPopupPinned) {
-      this.pinned = (await this.shell.popupPinned?.().catch(() => false)) ?? false;
-      this.strip = document.createElement('div');
-      this.strip.id = 'strip';
-      this.root.before(this.strip);
-      this.drawStrip();
-    }
+    if (this.shell.kind === 'desktop' && this.shell.setPopupPinned) this.pinned = (await this.shell.popupPinned?.().catch(() => false)) ?? false;
+    this.ensureStrip();
     if (this.shell.checkUpdate) {
       this.update.version = await this.shell.appVersion?.().catch(() => null) ?? null;
       setTimeout(() => void this.checkForUpdate(true), UPDATE_FIRST_CHECK_MS);
@@ -189,8 +206,11 @@ export class App {
     if (!this.firstRun) { this.schedule(); void this.refresh(); }
     // A panel pinned at the last exit comes back where it was, whatever Open at launch says.
     if (this.shell.kind === 'desktop' && !this.firstRun && (this.config.openOnLaunch !== false || this.pinned)) void this.shell.showPopup?.();
-    if (this.shell.kind === 'desktop') void this.checkAsk(false);
-    if (this.shell.kind === 'desktop') { void this.checkAgentEdits(); setInterval(() => { void this.checkAgentEdits(); }, 30000); }
+    if (this.shell.kind === 'desktop') { void this.checkAsk(false); void this.checkPhone(); }
+    if (this.shell.kind === 'desktop') {
+      const check = () => this.checkAgentEdits().then(() => this.checkFeed());
+      void check(); setInterval(() => { void check(); }, 30000);
+    }
   }
 
   /** Keeps one ProviderConfig per known plugin, preserving the user's order. */
@@ -232,6 +252,7 @@ export class App {
 
   private async tick(): Promise<void> {
     void this.syncRules();
+    if (this.shell.kind === 'desktop' && Date.now() - this.lastPhoneCheck >= ASK_CHECK_MS) void this.checkPhone();
     if (this.shell.kind === 'desktop' && Date.now() - this.lastAskCheck >= ASK_CHECK_MS && await this.checkAsk(true)) return;
     const due = core.dueProviders(this.runConfig(), this.snapshot).length > 0;
     // A paired phone also pulls the desktop's numbers on its own schedule.
@@ -262,7 +283,9 @@ export class App {
     clearTimeout(this.pushRetry);
     this.pushRetry = undefined;
     try {
-      await pushSnapshot(this.shell.host, this.sync, this.snapshot, this.history, sharedConfig(this.config), await this.phoneSecrets());
+      const pushKey = await this.keeper.pushKey();
+      await pushSnapshot(this.shell.host, this.sync, this.snapshot, this.history, sharedConfig(this.config), await this.phoneSecrets(),
+        { alerts: feedFor(this.keeper.feed, 'augur'), ...(pushKey ? { pushKey } : {}) });
       this.lastPush = Date.now();
     } catch (err) {
       if (err instanceof SyncUploadError && err.status === 429) this.pushRetry = setTimeout(() => void this.push(), FORCED_PUSH_MS);
@@ -325,8 +348,10 @@ export class App {
       }
       const { alerts, firedState } = core.evaluateAlerts(this.snapshot, this.history, this.config, this.alertState);
       this.alertState = firedState;
-      if (this.config.alerts.enabled) for (const a of alerts) await this.shell.notify(a.title, a.body).catch(() => undefined);
+      const raisedAt = new Date();
+      await this.raise(alerts.map((a) => { const { raisedAt: _at, outlets: _outlets, ...item } = feedFromUsage(a.usage, a.title, raisedAt, []); return item; }));
       await this.alertFailedRefreshes();
+      await this.clearFeed();
       await Promise.all([
         this.shell.saveSnapshot(this.snapshot), this.shell.saveHistory(this.history), this.shell.saveAlertState(this.alertState),
       ]);
@@ -406,6 +431,13 @@ export class App {
     if (this.desktopAt !== pulled.snapshot.generatedAt && this.desktopWait === 'timeout') this.desktopWait = null;
     this.desktopAt = pulled.snapshot.generatedAt;
     await this.storeSyncedSecrets(pulled.secrets);
+    if (pulled.pushKey) this.pushKey = pulled.pushKey;
+    if (pulled.alerts) {
+      const gone = new Set(this.phoneState.acks);
+      this.keeper.feed = { schema: 1, generatedAt: pulled.snapshot.generatedAt, alerts: pulled.alerts.filter((a) => !gone.has(a.id)) };
+      await this.keeper.save();
+      this.drawStrip();
+    }
     const own = new Set(runConfig.providers.filter((p) => p.enabled).map((p) => p.id));
     this.snapshot = mergeSynced(this.snapshot, pulled.snapshot, own);
     const synced = Object.keys(pulled.snapshot.providers).filter((id) => !own.has(id));
@@ -455,6 +487,7 @@ export class App {
       classifier: this.servicePage.lines?.find((l) => l.key === 'decision.backend')?.value ?? null,
       sync: this.sync, relay: this.relay(), pwaUrl: this.pwaUrl(), pairQr: this.pairQr, pairUrl: this.pairUrl,
       scanError: this.scanError, iosInstallHint: iosInstallHint(), hotkeyError: this.hotkeyError, canHotkey: !!this.shell.setHotkey,
+      platform: this.shell.host.platform, push: this.shell.kind === 'pwa' ? { status: this.pushStatus, error: this.pushError, hasKey: !!this.pushKey } : null,
     };
   }
 
@@ -464,6 +497,7 @@ export class App {
   }
 
   private async render(): Promise<void> {
+    this.ensureStrip();
     const active = document.activeElement as HTMLInputElement | null, focusId = active?.id, caret = active?.selectionStart ?? null;
     if (this.view === 'dashboard') {
       await this.chooseColumns();
@@ -608,8 +642,9 @@ export class App {
     await this.shell.saveModelCatalog?.(this.catalog).catch(() => undefined);
     if (added.length) {
       await this.saveConfig(false);
-      if (this.config.alerts.enabled) await this.shell.notify(`${added.length} new ${added.length === 1 ? 'model' : 'models'} to review`,
-        'Routers skip a new model until its rules are confirmed. Open Model rules to set them.').catch(() => undefined);
+      await this.raise([{ id: `models.${Date.now()}`, kind: 'models', severity: 'info', group: 'models', clears: { when: 'flag', flag: 'models' },
+        title: `${added.length} new ${added.length === 1 ? 'model' : 'models'} to review`,
+        body: 'Routers skip a new model until its rules are confirmed. Open Model rules to set them.' }]);
     }
     if (this.view === 'rules' || added.length) await this.render();
   }
@@ -642,8 +677,9 @@ export class App {
       this.editState = r.state;
       if (r.changed) await this.saveConfig(false);
       await this.saveEditState();
-      if (r.newlyHeld.length && this.config.alerts.enabled) await this.shell.notify(`${r.newlyHeld.length} rule ${r.newlyHeld.length === 1 ? 'change' : 'changes'} to accept`,
-        'An agent asked for a change to what a model may see or whether it runs. Open Model rules to accept or dismiss it.').catch(() => undefined);
+      if (r.newlyHeld.length) await this.raise([{ id: `rules.${Date.now()}`, kind: 'rules', severity: 'warn', group: 'rules', clears: { when: 'flag', flag: 'rules' },
+        title: `${this.editState.held.length} rule ${this.editState.held.length === 1 ? 'change' : 'changes'} to accept`,
+        body: 'An agent asked for a change to what a model may see or whether it runs. Open Model rules to accept or dismiss it.' }]);
       if (this.view === 'rules') await this.render();
     } finally { this.checkingEdits = false; }
   }
@@ -682,10 +718,124 @@ export class App {
 
   // ------------------------------------------------------------------ events
 
+  /** The desktop always shows the title strip. A phone shows it once paired, which is when the bell has something to show. */
+  private ensureStrip(): void {
+    const wanted = this.shell.kind === 'desktop' ? !!this.shell.setPopupPinned : !!this.sync?.channel;
+    if (wanted && !this.strip) {
+      const strip = this.strip = document.createElement('div');
+      strip.id = 'strip';
+      this.root.before(strip);
+      if (this.shell.kind === 'desktop') this.resizeWatch.observe(strip);
+      strip.addEventListener('click', (e) => void this.onStripClick(e));
+      // Only a press on the strip's row moves the window, so its buttons still get their clicks. The second press of a double-click is ignored.
+      strip.addEventListener('mousedown', (e) => {
+        const t = e.target as HTMLElement;
+        if (this.pinned && e.button === 0 && e.detail === 1 && t.closest('.strip-row') && !t.closest('button')) void this.shell.startPopupDrag?.();
+      });
+    } else if (!wanted && this.strip) {
+      this.strip.remove();
+      this.strip = null;
+      this.stripHtml = '';
+    }
+    this.drawStrip();
+  }
+
   private drawStrip(): void {
     if (!this.strip) return;
-    this.strip.innerHTML = renderStrip({ pinned: this.pinned });
+    const html = renderStrip({ pinned: this.pinned, canPin: this.shell.kind === 'desktop', alerts: feedFor(this.keeper.feed, 'augur'), open: this.alertsOpen });
     this.strip.classList.toggle('pinned', this.pinned);
+    if (html === this.stripHtml) return;
+    this.stripHtml = html;
+    this.strip.innerHTML = html;
+  }
+
+  private async onStripClick(e: Event): Promise<void> {
+    const b = (e.target as HTMLElement).closest<HTMLElement>('[data-action]');
+    switch (b?.dataset.action) {
+      case 'pin': await this.togglePin(); break;
+      case 'bell': this.alertsOpen = !this.alertsOpen; this.drawStrip(); break;
+      case 'dismiss-alert': await this.dismissAlerts([b.dataset.value ?? '']); break;
+      case 'dismiss-all': await this.dismissAlerts(feedFor(this.keeper.feed, 'augur').map((a) => a.id)); break;
+    }
+  }
+
+  /**
+   * On the desktop, alerts go through the feed and the outlet grid. An unpaired phone notifies on its own as before.
+   * A paired phone raises nothing, because the desktop pushes its alerts to it.
+   */
+  private async raise(items: Raise[]): Promise<void> {
+    if (this.shell.kind === 'desktop') { if (await this.keeper.raise(items)) this.feedChanged(); return; }
+    if (this.sync?.channel || !this.config.alerts.enabled) return;
+    for (const item of items) await this.shell.notify(item.title, item.body).catch(() => undefined);
+  }
+
+  /** Redraws the bell. When a phone is paired, the new feed reaches it within a minute. */
+  private feedChanged(): void {
+    this.drawStrip();
+    if (this.shell.kind !== 'desktop' || !this.sync?.channel) return;
+    const since = Date.now() - this.lastPush;
+    clearTimeout(this.pushRetry);
+    this.pushRetry = setTimeout(() => void this.push(), Math.max(0, FORCED_PUSH_MS - since));
+  }
+
+  /** Drops alerts that have stopped applying. A condition that has not been read yet counts as still holding. */
+  private async clearFeed(): Promise<void> {
+    if (this.shell.kind !== 'desktop') return;
+    const flags = {
+      models: pendingCount(this.config) > 0,
+      rules: !this.editLoaded || this.editState.held.length > 0,
+      update: this.update.status === 'idle' || this.update.status === 'checking' || !!this.update.available,
+    };
+    if (await this.keeper.clear(this.snapshot, flags)) this.feedChanged();
+  }
+
+  /** Applies dismissals from Claude Code, then drops alerts that have stopped applying. */
+  private async checkFeed(): Promise<void> {
+    if (await this.keeper.checkAcks()) this.feedChanged();
+    await this.clearFeed();
+  }
+
+  /** Reads what the phone has dismissed and where it wants push. */
+  private async checkPhone(): Promise<void> {
+    if (!this.sync?.channel) return;
+    this.lastPhoneCheck = Date.now();
+    const state = await pullPhoneState(this.shell.host, this.sync).catch(() => null);
+    if (state && await this.keeper.mergePhone(state)) this.feedChanged();
+  }
+
+  private async dismissAlerts(ids: string[]): Promise<void> {
+    ids = ids.filter(Boolean);
+    if (!ids.length) return;
+    if (this.shell.kind === 'desktop') { if (await this.keeper.dismiss(ids)) this.feedChanged(); return; }
+    this.phoneState.acks = [...this.phoneState.acks.filter((a) => !ids.includes(a)), ...ids].slice(-200);
+    await this.keeper.dismiss(ids);
+    this.drawStrip();
+    this.writePhoneState();
+  }
+
+  /** Uploads the phone's dismissals and push subscription. The relay accepts one write a minute per channel, so a refused upload is tried again. */
+  private writePhoneState(delay = PHONE_WRITE_DELAY_MS): void {
+    clearTimeout(this.phoneWrite);
+    this.phoneWrite = setTimeout(() => {
+      if (!this.sync?.channel) return;
+      pushPhoneState(this.shell.host, this.sync, this.phoneState).catch(() => this.writePhoneState(PHONE_RETRY_MS));
+    }, delay);
+  }
+
+  /** Turns push on or off for this browser on the phone. */
+  private async togglePush(on: boolean): Promise<void> {
+    this.pushError = '';
+    if (on && !this.pushKey) this.pushError = PUSH_TEXT.noKey;
+    else if (on) {
+      const sub = await this.shell.subscribePush?.(this.pushKey!).catch(() => null);
+      if (sub) { this.phoneState.push = sub; this.writePhoneState(); } else this.pushError = PUSH_TEXT.refused;
+    } else {
+      await this.shell.unsubscribePush?.().catch(() => undefined);
+      this.phoneState.push = null;
+      this.writePhoneState();
+    }
+    this.pushStatus = (await this.shell.pushStatus?.().catch(() => null)) ?? null;
+    await this.render();
   }
 
   private async togglePin(): Promise<void> {
@@ -696,13 +846,6 @@ export class App {
   }
 
   private wireEvents(): void {
-    this.strip?.addEventListener('click', (e) => {
-      if ((e.target as HTMLElement).closest('[data-action="pin"]')) void this.togglePin();
-    });
-    // Only a press on the strip itself moves the window; its buttons keep their clicks. A second press of a double-click is ignored.
-    this.strip?.addEventListener('mousedown', (e) => {
-      if (this.pinned && e.button === 0 && e.detail === 1 && !(e.target as HTMLElement).closest('button')) void this.shell.startPopupDrag?.();
-    });
     this.root.addEventListener('click', (e) => void this.onClick(e));
     this.root.addEventListener('change', (e) => void this.onChange(e));
     this.root.addEventListener('input', (e) => {
@@ -1182,7 +1325,8 @@ export class App {
       this.failedRefresh.add(p.id);
       if (!this.config.alerts.enabled) continue;
       const at = p.fetchedAt ? new Date(p.fetchedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
-      await this.shell.notify(`${p.name} did not refresh`, `Augur keeps showing the numbers from ${at} until a refresh works. ${p.error}`).catch(() => undefined);
+      await this.raise([{ id: `refresh.${p.id}.${p.attemptedAt ?? Date.now()}`, kind: 'refresh', severity: 'warn', group: `refresh.${p.id}`, clears: { when: 'refreshed', providerId: p.id },
+        title: `${p.name} did not refresh`, body: `Augur keeps showing the numbers from ${at} until a refresh works. ${p.error}` }]);
     }
   }
 
@@ -1200,6 +1344,8 @@ export class App {
     }
     const found = this.update.available?.version;
     if (found && found !== before) this.update.changes = await this.loadChanges(found);
+    if (found && found !== before) await this.raise([{ id: `update.${found}`, kind: 'update', severity: 'info', group: 'update', clears: { when: 'flag', flag: 'update' },
+      title: `Augur ${found} is ready`, body: this.config.autoUpdate !== false ? UPDATE_ALERT_TEXT.auto : UPDATE_ALERT_TEXT.manual }]);
     if (!found) this.update.changes = null;
     await this.render();
     if (auto) await this.autoInstall();
@@ -1415,11 +1561,17 @@ export class App {
       if (kind === 'enabled') this.provider(pid!).enabled = t.checked;
       else if (kind === 'setting') this.provider(pid!).settings[key!] = t.checked;
       else if (kind === 'alerts') this.config.alerts.enabled = t.checked;
+      else if (kind === 'push') { await this.togglePush(t.checked); return; }
       else if (kind === 'autostart') { await this.shell.setAutostart?.(t.checked); this.autostart = t.checked; return; }
       else if (kind === 'sharekeys') { if (this.sync) this.sync = { ...this.sync, shareKeys: t.checked }; this.lastPush = 0; await this.saveConfig(); void this.refresh(); return; }
       else if (kind === 'openonlaunch') { this.config.openOnLaunch = t.checked; await this.saveConfig(); return; }
       else if (kind === 'autoupdate') { this.config.autoUpdate = t.checked; await this.saveConfig(); if (t.checked) void this.autoInstall(); return; }
       await this.saveConfig(); if (kind === 'enabled' && !this.firstRun) void this.refresh(); await this.render(); return;
+    }
+    if (d.outlet) {
+      const [kind, outlet] = d.outlet.split('.') as [AlertKind, Outlet];
+      if (this.config.alerts.outlets[kind]) this.config.alerts.outlets[kind][outlet] = t.checked;
+      await this.saveConfig(); return;
     }
     if (d.providerRefresh) { this.provider(d.providerRefresh).refreshSeconds = t.value ? Number(t.value) : null; await this.saveConfig(); return; }
     if (d.field) { const [pid, key] = d.field.split('|') as [string, string]; this.provider(pid).settings[key] = t.value; await this.saveConfig(); return; }

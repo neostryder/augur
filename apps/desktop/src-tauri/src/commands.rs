@@ -59,8 +59,8 @@ async fn allowed_home_path(app: &tauri::AppHandle, path: &str) -> Result<PathBuf
     ) || path == ".codex/models_cache.json";
     let config = load_json(app.clone(), "config".into()).await?;
     // Besides the three login files and the Codex model list, only the exact export file named in settings (a .json file),
-    // the rules file and rules import file in the same folder, the rule-edit inbox and its results file there, and the dispatch routes file
-    // in that folder's dispatch subfolder.
+    // the rules file and rules import file in the same folder, the rule-edit inbox and its results file there, the alert feed and its
+    // acks file there, and the dispatch routes file in that folder's dispatch subfolder.
     let export_file = config
         .as_deref()
         .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
@@ -77,6 +77,8 @@ async fn allowed_home_path(app: &tauri::AppHandle, path: &str) -> Result<PathBuf
         || beside_export("policy-import.json").as_deref() == Some(relative.as_path())
         || beside_export("policy-edits.jsonl").as_deref() == Some(relative.as_path())
         || beside_export("policy-edit-results.json").as_deref() == Some(relative.as_path())
+        || beside_export("alerts.json").as_deref() == Some(relative.as_path())
+        || beside_export("alerts-acks.jsonl").as_deref() == Some(relative.as_path())
         || export_file.as_deref().map(dispatch_routes_path).as_deref() == Some(relative.as_path());
     if !is_credential && !allowed {
         return Err("Home file path is not allowed".into());
@@ -217,6 +219,44 @@ pub async fn http_request(
         headers,
         body,
     })
+}
+
+/// The push services the phone's browser may hand out: Chrome and Android, Safari on iPhone and Mac, Firefox, and Edge.
+fn is_push_service(host: &str) -> bool {
+    host == "fcm.googleapis.com"
+        || host == "web.push.apple.com"
+        || host.ends_with(".push.apple.com")
+        || host == "updates.push.services.mozilla.com"
+        || host.ends_with(".push.services.mozilla.com")
+        || host.ends_with(".notify.windows.com")
+}
+
+/// Sends one encrypted alert to the phone's push service and returns its status. 404 and 410 mean the subscription is gone.
+#[tauri::command]
+pub async fn web_push(
+    endpoint: String,
+    headers: HashMap<String, String>,
+    body: String,
+) -> Result<u16, String> {
+    let parsed = reqwest::Url::parse(&endpoint).map_err(|e| e.to_string())?;
+    if parsed.scheme() != "https" || !parsed.host_str().is_some_and(is_push_service) {
+        return Err("Not a push service address".into());
+    }
+    let body = STANDARD.decode(body).map_err(|e| e.to_string())?;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let mut request = client.post(parsed).body(body);
+    for (name, value) in headers {
+        request = request.header(name, value);
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|_| "Push request failed".to_owned())?;
+    Ok(response.status().as_u16())
 }
 
 #[tauri::command]
@@ -571,6 +611,7 @@ fn json_path(app: &tauri::AppHandle, kind: &str) -> Result<PathBuf, String> {
         "snapshot" => "snapshot.json",
         "alert-state" => "alert-state.json",
         "model-catalog" => "model-catalog.json",
+        "alert-feed" => "alert-feed.json",
         _ => return Err("Unknown JSON kind".into()),
     };
     app.path()
@@ -744,7 +785,7 @@ pub fn start_popup_drag(
 
 #[cfg(test)]
 mod tests {
-    use super::{dispatch_args_allowed, dispatch_routes_path};
+    use super::{dispatch_args_allowed, dispatch_routes_path, is_push_service};
     use std::path::Path;
 
     #[test]
@@ -805,5 +846,15 @@ mod tests {
         assert!(!allowed(&["test", "Luna"]));
         assert!(!allowed(&["test", "luna", "--prompt", "x"]));
         assert!(!allowed(&["test"]));
+    }
+
+    #[test]
+    fn only_known_push_services_are_reachable() {
+        assert!(is_push_service("fcm.googleapis.com"));
+        assert!(is_push_service("web.push.apple.com"));
+        assert!(is_push_service("db5p.notify.windows.com"));
+        assert!(!is_push_service("evil-fcm.googleapis.com.example"));
+        assert!(!is_push_service("notify.windows.com.example"));
+        assert!(!is_push_service("augur.rpgm.tools"));
     }
 }

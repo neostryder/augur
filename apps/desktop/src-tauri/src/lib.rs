@@ -405,6 +405,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             set_hotkey,
             commands::http_request,
+            commands::web_push,
             commands::read_home_file,
             commands::write_home_file_atomic,
             commands::run_command,

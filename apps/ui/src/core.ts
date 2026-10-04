@@ -3,11 +3,11 @@ import {
   appendHistory as coreAppend, builtinProviders, calculatePace, collect as coreCollect, defaultConfig as coreDefault, dueProviders as coreDue,
   evaluateAlerts as coreAlerts, genericProvider, migrateConfig as coreMigrate, resolveThresholds, RULES_ONLY_PROVIDERS,
 } from '@augur/core';
-import type { AppConfig, HistoryRow as CoreRow, Host, Meter, PaceResult, ProviderPlugin, Snapshot } from '@augur/core';
+import type { Alert as UsageAlert, AppConfig, HistoryRow as CoreRow, Host, Meter, PaceResult, ProviderPlugin, Snapshot } from '@augur/core';
 
 export type HistoryRow = CoreRow;
 export type Pace = PaceResult;
-export interface Alert { key: string; title: string; body: string }
+export interface Alert { key: string; title: string; body: string; usage: UsageAlert }
 
 export const HISTORY_KEEP_S = 8 * 86400;
 
@@ -62,7 +62,7 @@ export function evaluateAlerts(snap: Snapshot, rows: HistoryRow[], config: AppCo
   const spentAt = Object.fromEntries(Object.entries(config.policy?.providers ?? {}).map(([id, p]) => [id, resolveThresholds(p).denyPct]));
   const r = coreAlerts(snap, rows, config.alerts, state as Record<string, boolean | number>, { spentAt });
   return {
-    alerts: r.alerts.map((a) => ({ key: a.key, title: snap.providers[a.providerId]?.name ?? 'Augur', body: a.message })),
+    alerts: r.alerts.map((a) => ({ key: a.key, title: snap.providers[a.providerId]?.name ?? 'Augur', body: a.message, usage: a })),
     firedState: r.firedState,
   };
 }

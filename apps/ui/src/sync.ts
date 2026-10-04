@@ -1,7 +1,7 @@
 // Desktop-to-phone sync. The desktop encrypts its snapshot with AES-GCM under a key that only
 // it and the paired phone know, then stores the ciphertext on the relay. The relay cannot read it.
-import { migratePolicy } from '@augur/core';
-import type { AlertConfig, AppConfig, GenericProviderDef, Host, HttpRequest, LayoutConfig, PolicyConfig, ProviderSettings, Shell, Snapshot } from '@augur/core';
+import { isPushSubscription, migratePolicy } from '@augur/core';
+import type { AlertConfig, AppConfig, FeedAlert, PushSubscriptionInfo, GenericProviderDef, Host, HttpRequest, LayoutConfig, PolicyConfig, ProviderSettings, Shell, Snapshot } from '@augur/core';
 import type { HistoryRow } from './core';
 
 /** The desktop settings a newly paired phone starts from. No secrets: keys never leave the desktop. */
@@ -18,6 +18,10 @@ export interface SyncPayload {
   config?: SharedConfig;
   /** API keys for providers the phone can read itself, keyed `<providerId>.<fieldKey>`. */
   secrets?: Record<string, string>;
+  /** The desktop's alert feed: the alerts kept for the bell. */
+  alerts?: FeedAlert[];
+  /** The desktop's public VAPID key, which the phone subscribes to push with. */
+  pushKey?: string;
 }
 
 export function sharedConfig(config: AppConfig): SharedConfig {
@@ -99,11 +103,12 @@ export function parsePairing(text: string): (SyncLink & { key: string }) | null 
   return m ? { relay: m[1]!, channel: m[2]!, key: m[3]! } : null;
 }
 
-export async function pushSnapshot(host: Host, link: SyncLink, snapshot: Snapshot, history: HistoryRow[], config?: SharedConfig, secrets?: Record<string, string>): Promise<void> {
+export async function pushSnapshot(host: Host, link: SyncLink, snapshot: Snapshot, history: HistoryRow[], config?: SharedConfig, secrets?: Record<string, string>,
+  extra: Pick<SyncPayload, 'alerts' | 'pushKey'> = {}): Promise<void> {
   const [keyText, writeSecret] = await Promise.all([host.secret(KEY_SECRET), host.secret(WRITE_SECRET)]);
   if (!keyText || !writeSecret) return;
   const cut = Date.now() - 7 * 86400e3;
-  const payload = JSON.stringify({ snapshot, history: history.filter((r) => new Date(r.t).getTime() >= cut), config, secrets } satisfies SyncPayload);
+  const payload = JSON.stringify({ snapshot, history: history.filter((r) => new Date(r.t).getTime() >= cut), config, secrets, ...extra } satisfies SyncPayload);
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const data = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await aesKey(unb64(keyText)), await gzip(payload)));
   const res = await host.http({
@@ -144,17 +149,20 @@ export async function pullSnapshot(host: Host, link: SyncLink): Promise<SyncPayl
 }
 
 /**
- * Rules travel on a second relay channel that both devices can write. Its secret is derived from the pairing key, which only the two devices hold,
- * so no extra secret is stored or sent, and the relay sees only ciphertext under an unguessable name.
+ * Rules travel on a second relay channel that both devices can write, and the phone's dismissals and push subscription on a third.
+ * Their secrets are derived from the pairing key, which only the two devices hold, so no extra secret is stored or sent,
+ * and the relay sees only ciphertext under an unguessable name.
  */
-async function rulesChannel(host: Host): Promise<{ key: Uint8Array<ArrayBuffer>; secret: string; channel: string } | null> {
+async function derivedChannel(host: Host, label: string): Promise<{ key: Uint8Array<ArrayBuffer>; secret: string; channel: string } | null> {
   const keyText = await host.secret(KEY_SECRET);
   if (!keyText) return null;
   const key = unb64(keyText);
   const mac = await crypto.subtle.importKey('raw', key, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  const secret = b64(new Uint8Array(await crypto.subtle.sign('HMAC', mac, new TextEncoder().encode('augur rules channel v1'))));
+  const secret = b64(new Uint8Array(await crypto.subtle.sign('HMAC', mac, new TextEncoder().encode(label))));
   return { key, secret, channel: await sha256Hex(secret) };
 }
+const rulesChannel = (host: Host) => derivedChannel(host, 'augur rules channel v1');
+const phoneChannel = (host: Host) => derivedChannel(host, 'augur phone channel v1');
 
 /**
  * The phone talks to the relay directly, since the relay's own /fetch proxy only reaches the providers' hosts. The desktop goes through its shell.
@@ -188,6 +196,40 @@ export async function pullRules(host: Host, link: SyncLink, direct = false): Pro
   const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(box.iv) }, await aesKey(rc.key), unb64(box.data));
   const parsed = JSON.parse(await gunzip(plain)) as { policy?: unknown };
   return parsed.policy ? migratePolicy(parsed.policy) : null;
+}
+
+/** What the phone tells the desktop: the alerts dismissed on the phone, newest last, and where to send push notifications. */
+export interface PhoneState {
+  acks: string[];
+  push: PushSubscriptionInfo | null;
+}
+
+/** The phone keeps this many dismissals on its channel, far more than the feed ever holds. */
+const PHONE_ACKS_KEPT = 200;
+
+/** Phone side: uploads its dismissals and push subscription. The relay takes one write a minute per channel, so a 429 means try again later. */
+export async function pushPhoneState(host: Host, link: SyncLink, state: PhoneState): Promise<void> {
+  const pc = await phoneChannel(host);
+  if (!pc) return;
+  const body: PhoneState = { acks: state.acks.slice(-PHONE_ACKS_KEPT), push: state.push };
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const data = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await aesKey(pc.key), await gzip(JSON.stringify(body))));
+  const res = await relayCall(host, true, `${link.relay}/sync/${pc.channel}`, { method: 'PUT', headers: { 'content-type': 'application/json', 'x-sync-secret': pc.secret },
+    body: JSON.stringify({ v: 2, iv: b64(iv), data: b64(data) }) });
+  if (res.status !== 200) throw new SyncUploadError(res.status);
+}
+
+/** Either side: the phone's last upload, null when there is none yet, and a rejection when the relay could not be reached. */
+export async function pullPhoneState(host: Host, link: SyncLink, direct = false): Promise<PhoneState | null> {
+  const pc = await phoneChannel(host);
+  if (!pc) return null;
+  const res = await relayCall(host, direct, `${link.relay}/sync/${pc.channel}`, { method: 'GET' });
+  if (res.status === 404) return null;
+  if (res.status !== 200) throw new Error(`Phone state download failed (${res.status})`);
+  const box = JSON.parse(res.body) as { iv: string; data: string };
+  const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(box.iv) }, await aesKey(pc.key), unb64(box.data));
+  const raw = JSON.parse(await gunzip(plain)) as Partial<PhoneState>;
+  return { acks: Array.isArray(raw.acks) ? raw.acks.filter((a): a is string => typeof a === 'string') : [], push: isPushSubscription(raw.push) ? raw.push : null };
 }
 
 /** Phone side: asks the paired desktop to read every provider now. Returns the relay's time of the request. */

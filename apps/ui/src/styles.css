@@ -24,9 +24,10 @@ button, input, select, textarea { font: inherit; color: inherit; }
 body.pwa #app { padding: max(14px, env(safe-area-inset-top)) 14px max(16px, env(safe-area-inset-bottom)); }
 
 /* desktop title strip; while pinned the whole strip moves the window */
-#strip { display: flex; align-items: center; gap: 6px; min-height: calc(34px * var(--fs)); padding: 0 8px 0 12px; background: var(--surface); border-bottom: 1px solid var(--line); }
-#strip.pinned { cursor: move; }
-#strip > :not(button) { pointer-events: none; }
+#strip { background: var(--surface); border-bottom: 1px solid var(--line); }
+#strip .strip-row { display: flex; align-items: center; gap: 6px; min-height: calc(34px * var(--fs)); padding: 0 8px 0 12px; }
+#strip.pinned .strip-row { cursor: move; }
+#strip .strip-row > :not(button) { pointer-events: none; }
 #strip .grip { display: grid; place-items: center; color: var(--ink-2); }
 #strip .grip svg { width: 12px; height: 12px; }
 #strip .name { font-size: calc(12px * var(--fs)); font-weight: 600; color: var(--ink-2); letter-spacing: 0.2px; }
@@ -38,6 +39,37 @@ button.strip-btn svg { width: 15px; height: 15px; }
 button.strip-btn.pin svg { transform: rotate(45deg); transition: transform 120ms; }
 button.strip-btn.pin.on { background: var(--accent); border-color: var(--accent); color: #fff; }
 button.strip-btn.pin.on svg { transform: none; }
+button.strip-btn.bell.on { border-color: var(--accent); color: var(--accent); }
+/* The unread badge is amber with black text, which reads in both themes. */
+button.strip-btn .badge { position: absolute; top: -5px; right: -6px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--warn); color: #0b0b0b;
+  font-size: 10px; font-weight: 700; line-height: 16px; text-align: center; box-shadow: 0 0 0 2px var(--surface); }
+button.strip-btn.small { width: 24px; height: 22px; border-color: transparent; background: transparent; }
+button.strip-btn.small:hover { border-color: var(--line); }
+button.strip-btn.small svg { width: 13px; height: 13px; }
+#strip .alerts-panel { border-top: 1px solid var(--line); padding: 6px 8px 8px 12px; max-height: 320px; overflow-y: auto; }
+#strip .alerts-head { display: flex; align-items: center; font-size: calc(12px * var(--fs)); font-weight: 600; color: var(--ink-2); padding: 2px 0 4px; }
+#strip .alert-list { list-style: none; margin: 0; padding: 0; }
+#strip .alert-row { display: flex; align-items: flex-start; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+#strip .alert-row:last-child { border-bottom: 0; }
+#strip .alert-row .sev { flex: none; width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; background: var(--muted); }
+#strip .alert-row.warn .sev { background: var(--warn); }
+#strip .alert-row.crit .sev { background: var(--crit); }
+#strip .alert-row.info .sev { background: var(--accent); }
+#strip .alert-text { flex: 1; min-width: 0; }
+#strip .alert-title { display: flex; gap: 6px; font-size: calc(12.5px * var(--fs)); font-weight: 600; color: var(--ink); }
+#strip .alert-age { margin-left: auto; font-weight: 400; color: var(--ink-2); font-size: calc(11px * var(--fs)); }
+#strip .alert-body { font-size: calc(12px * var(--fs)); color: var(--ink-2); line-height: 1.35; overflow-wrap: anywhere; }
+#strip .alert-empty, #strip .alerts-foot { margin: 4px 0 0; font-size: calc(11.5px * var(--fs)); color: var(--ink-2); }
+#strip .text-btn { border: 0; background: none; color: var(--accent); font: inherit; font-size: calc(12px * var(--fs)); cursor: pointer; padding: 2px 4px; border-radius: 5px; }
+#strip .text-btn:hover { background: var(--hover); }
+/* On the phone the strip takes the notch inset, so the page under it no longer needs it. */
+body.pwa #strip .strip-row { padding-top: env(safe-area-inset-top); }
+body.pwa #strip + #app { padding-top: 14px; }
+table.outlets { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: calc(12px * var(--fs)); }
+table.outlets th { font-weight: 500; color: var(--ink-2); text-align: center; padding: 4px 2px; }
+table.outlets th[scope="row"] { text-align: left; color: var(--ink); font-weight: 400; }
+table.outlets td { text-align: center; padding: 3px 2px; }
+table.outlets tr + tr th, table.outlets tr + tr td { border-top: 1px solid var(--line); }
 
 /* header */
 header.top { display: flex; align-items: center; gap: 8px; margin: 0 2px 12px; }

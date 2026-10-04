@@ -3,6 +3,11 @@
 
 import type { AppConfig, Host, Snapshot } from './types.js';
 import type { ModelCatalog } from './models.js';
+import type { AlertFeed } from './feed.js';
+import type { PushSubscriptionInfo } from './webpush.js';
+
+/** Where push stands on this phone. needs-install means an iPhone browser tab, which can only get push after it is added to the Home Screen. */
+export type PushStatus = 'unsupported' | 'needs-install' | 'denied' | 'off' | 'on';
 
 export interface TrayUpdate {
   /** PNG of the tray icon at the requested size, base64 without a data: prefix. */
@@ -40,6 +45,15 @@ export interface Shell {
   /** The last model list read from each provider. */
   loadModelCatalog?(): Promise<ModelCatalog | null>;
   saveModelCatalog?(catalog: ModelCatalog): Promise<void>;
+  /** The alert feed. The desktop keeps its own, and a paired phone keeps the copy it last synced. */
+  loadAlertFeed?(): Promise<AlertFeed | null>;
+  saveAlertFeed?(feed: AlertFeed): Promise<void>;
+  /** Posts one encrypted alert to a phone's push service and resolves to the HTTP status. The desktop uses it. */
+  sendWebPush?(endpoint: string, headers: Record<string, string>, body: Uint8Array): Promise<number>;
+  /** Push for this browser, used on the phone. subscribePush asks for permission and returns the subscription the desktop sends to. */
+  pushStatus?(): Promise<PushStatus>;
+  subscribePush?(vapidPublicKey: string): Promise<PushSubscriptionInfo | null>;
+  unsubscribePush?(): Promise<void>;
   /** Writes the snapshot where other local tools can read it. Desktop only. */
   exportSnapshot?(homeRelativePath: string, json: string): Promise<void>;
 

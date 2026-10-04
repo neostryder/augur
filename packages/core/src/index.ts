@@ -13,3 +13,5 @@ export * from './policy.js';
 export * from './policy-import.js';
 export * from './models.js';
 export * from './policy-edits.js';
+export * from './feed.js';
+export * from './webpush.js';

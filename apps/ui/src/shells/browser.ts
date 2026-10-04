@@ -2,9 +2,10 @@
 // encrypted with a non-extractable AES key that never leaves IndexedDB. Provider calls go
 // through a stateless relay when one is configured, because most usage APIs do not allow
 // cross-origin browser requests.
-import type { AppConfig, HttpRequest, HttpResponse, ModelCatalog, Shell, Snapshot } from '@augur/core';
+import { unb64url } from '@augur/core';
+import type { AlertFeed, AppConfig, HttpRequest, HttpResponse, ModelCatalog, PushStatus, PushSubscriptionInfo, Shell, Snapshot } from '@augur/core';
 
-const LS = { config: 'augur.config', snapshot: 'augur.snapshot', history: 'augur.history', alerts: 'augur.alerts', relay: 'augur.relay', models: 'augur.models' };
+const LS = { config: 'augur.config', snapshot: 'augur.snapshot', history: 'augur.history', alerts: 'augur.alerts', relay: 'augur.relay', models: 'augur.models', feed: 'augur.feed' };
 
 function readLS<T>(key: string): T | null {
   try { const v = localStorage.getItem(key); return v ? (JSON.parse(v) as T) : null; } catch { return null; }
@@ -117,6 +118,29 @@ export function createBrowserShell(): Shell {
     async saveAlertState(s) { writeLS(LS.alerts, s); },
     async loadModelCatalog() { return readLS<ModelCatalog>(LS.models); },
     async saveModelCatalog(c) { writeLS(LS.models, c); },
+    async loadAlertFeed() { return readLS<AlertFeed>(LS.feed); },
+    async saveAlertFeed(f) { writeLS(LS.feed, f); },
+    async pushStatus(): Promise<PushStatus> {
+      const standalone = matchMedia('(display-mode: standalone)').matches || (navigator as { standalone?: boolean }).standalone === true;
+      if (/iPhone|iPad|iPod/.test(navigator.userAgent) && !standalone) return 'needs-install';
+      if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return 'unsupported';
+      if (Notification.permission === 'denied') return 'denied';
+      const reg = await navigator.serviceWorker.getRegistration();
+      return (await reg?.pushManager.getSubscription()) ? 'on' : 'off';
+    },
+    async subscribePush(vapidPublicKey: string): Promise<PushSubscriptionInfo | null> {
+      if ((await Notification.requestPermission()) !== 'granted') return null;
+      const reg = await navigator.serviceWorker.ready;
+      const old = await reg.pushManager.getSubscription();
+      // A subscription made for another desktop's key cannot be reused, so it is replaced.
+      if (old) await old.unsubscribe();
+      const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: unb64url(vapidPublicKey) });
+      return sub.toJSON() as PushSubscriptionInfo;
+    },
+    async unsubscribePush() {
+      const reg = await navigator.serviceWorker?.getRegistration();
+      await (await reg?.pushManager.getSubscription())?.unsubscribe();
+    },
     async notify(title, body) {
       if (!('Notification' in window)) return;
       if (Notification.permission === 'default') await Notification.requestPermission();
