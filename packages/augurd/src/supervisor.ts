@@ -52,7 +52,10 @@ const GIT = ['-c', 'core.autocrlf=false', '-c', 'core.safecrlf=false'];
 
 interface RunnerResult { exitCode: number | null; signal?: string | null; killedBy: 'cancel' | 'timeout' | null; endedAt: number; spawnError?: string }
 interface JobFile { command: string; args: string[]; cwd: string; stdin: 'prompt' | 'none'; timeoutS: number | null; jobhost: string | null; env: Record<string, string>;
-  files: NonNullable<LaunchPlan['files']>; promptArgs: number[]; redact: boolean; scope?: string | null }
+  files: NonNullable<LaunchPlan['files']>; promptArgs: number[]; redact: boolean; scope?: string | null; scopeEnv?: Record<string, string> }
+
+/** What systemd-run and systemctl need to reach the user's systemd. A job's own environment leaves these out, so the runner is handed them. */
+export const SCOPE_ENV = ['XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS'] as const;
 
 export class Supervisor {
   private adopted = new Set<string>();
@@ -165,7 +168,9 @@ export class Supervisor {
     mkdirSync(dir, { recursive: true });
     const file: JobFile = { command: plan.command, args: plan.args, cwd: plan.cwd, stdin: plan.stdin === null ? 'none' : 'prompt', timeoutS: req.timeoutS ?? null,
       jobhost: this.d.config.jobhostPath, env: plan.env, files: plan.files ?? [], promptArgs: plan.promptArgs ?? [], redact: !this.d.config.persistPrompts,
-      scope: (this.d.scopes ?? systemdScopes)() ? `augur-job-${id}` : null };
+      ...((this.d.scopes ?? systemdScopes)()
+        ? { scope: `augur-job-${id}`, scopeEnv: Object.fromEntries(SCOPE_ENV.flatMap(k => process.env[k] ? [[k, process.env[k] as string]] : [])) }
+        : { scope: null }) };
     writeFileSync(join(dir, 'job.json'), JSON.stringify(file));
     if (plan.stdin !== null) writeFileSync(join(dir, 'prompt.in'), plan.stdin);
     if (this.d.config.persistPrompts) writeFileSync(join(dir, 'prompt.txt'), prompt);

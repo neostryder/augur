@@ -5,7 +5,7 @@ import { closeSync, existsSync, openSync, readFileSync, renameSync, unlinkSync, 
 import { join } from 'node:path';
 
 interface JobFile { command: string; args: string[]; cwd: string; stdin: 'prompt' | 'none'; timeoutS: number | null; jobhost: string | null; files?: unknown[]; promptArgs?: number[]; redact?: boolean;
-  scope?: string | null }
+  scope?: string | null; scopeEnv?: Record<string, string> }
 
 const dir = process.argv[2];
 if (!dir) process.exit(64);
@@ -28,14 +28,18 @@ const viaHost = win && job.jobhost && existsSync(job.jobhost);
 if (win && !viaHost) { atomic('result.json', { exitCode: null, spawnError: 'The Windows job host was not found, so the job was not started.', killedBy: null, endedAt: Date.now() }); process.exit(0); }
 // On Linux with systemd, the job runs in its own user scope: systemd-run starts the scope and then becomes the command, so the child's pid is the
 // command's. Anything that leaves the process group stays in the scope, and stopping the scope ends it. Elsewhere the process group is the boundary.
+// systemd-run gets the variables that reach the user's systemd, and env takes back out the ones the job was not given before it runs the command.
 const scope = !win && job.scope ? job.scope : null;
+const scopeEnv = { ...process.env, ...(job.scopeEnv ?? {}) };
+const unset = Object.keys(job.scopeEnv ?? {}).filter(k => process.env[k] === undefined).flatMap(k => ['-u', k]);
 const argv = viaHost ? [job.jobhost as string, job.command, ...job.args]
-  : scope ? ['systemd-run', '--user', '--scope', '--quiet', '--collect', `--unit=${scope}`, '--', job.command, ...job.args]
+  : scope ? ['systemd-run', '--user', '--scope', '--quiet', '--collect', `--unit=${scope}`, '--', 'env', ...unset, job.command, ...job.args]
   : [job.command, ...job.args];
+const stopScope = () => { if (scope) spawnSync('systemctl', ['--user', 'kill', '--signal=SIGKILL', `${scope}.scope`], { stdio: 'ignore', timeout: 10000, env: scopeEnv }); };
 let killedBy: 'cancel' | 'timeout' | null = null;
 
 const child = spawn(argv[0] as string, argv.slice(1), {
-  cwd: job.cwd, env: process.env, windowsHide: true, detached: !win,
+  cwd: job.cwd, env: scope ? scopeEnv : process.env, windowsHide: true, detached: !win,
   stdio: [job.stdin === 'prompt' ? 'pipe' : 'ignore', out, err],
   shell: win && !viaHost && /\.(cmd|bat)$/i.test(job.command),
 });
@@ -54,7 +58,7 @@ function killTree(why: 'cancel' | 'timeout'): void {
   killedBy = why;
   if (win) spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true });
   else { try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch { /* gone */ } } }
-  if (scope) spawnSync('systemctl', ['--user', 'kill', '--signal=SIGKILL', `${scope}.scope`], { stdio: 'ignore', timeout: 10000 });
+  stopScope();
 }
 const cancelPoll = setInterval(() => { if (existsSync(join(dir, 'cancel.request'))) killTree('cancel'); }, 300);
 const timer = job.timeoutS ? setTimeout(() => killTree('timeout'), job.timeoutS * 1000) : null;
@@ -64,7 +68,7 @@ child.on('exit', (code, signal) => {
   // Whatever the job left running ends with it, as the job host's Job Object does on Windows: the rest of its process group, and its scope.
   if (!win && child.pid !== undefined) {
     try { process.kill(-child.pid, 'SIGKILL'); } catch { /* the group is already empty */ }
-    if (scope) spawnSync('systemctl', ['--user', 'kill', '--signal=SIGKILL', `${scope}.scope`], { stdio: 'ignore', timeout: 10000 });
+    stopScope();
   }
   try { closeSync(out); closeSync(err); } catch { /* already closed */ }
   atomic('result.json', { exitCode: code, signal, killedBy, endedAt: Date.now() });

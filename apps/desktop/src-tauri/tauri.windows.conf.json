@@ -1,6 +1,5 @@
 {
   "bundle": {
-    "resources": { "../../../dist/service/": "service/" },
     "windows": {
       "nsis": {
         "installMode": "currentUser",

@@ -36,14 +36,28 @@ jobs:
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
       - run: pnpm install --frozen-lockfile
-      # The Windows installer carries the dispatch service (see tauri.windows.conf.json), so it is built first.
+      # Every installer carries the background service, so it is built first. On Windows it includes the job host, which is written in Go.
       - if: startsWith(matrix.platform, 'windows')
         uses: actions/setup-go@v7
         with:
           go-version-file: packages/augurd/native/jobhost/go.mod
           cache-dependency-path: packages/augurd/native/jobhost/go.sum
-      - if: startsWith(matrix.platform, 'windows')
-        run: pnpm build:service
+      # The macOS app is universal, so the runtime it carries is too: the arm64 and x64 builds of this Node version, checked against the release's
+      # checksums, joined with lipo and signed ad hoc.
+      - if: matrix.platform == 'macos-latest'
+        shell: bash
+        run: |
+          v=$(node -v); cd "$RUNNER_TEMP"
+          curl -fsSLO "https://nodejs.org/dist/$v/SHASUMS256.txt"
+          for a in arm64 x64; do
+            curl -fsSLO "https://nodejs.org/dist/$v/node-$v-darwin-$a.tar.gz"
+            grep " node-$v-darwin-$a.tar.gz\$" SHASUMS256.txt | shasum -a 256 -c -
+            tar -xzf "node-$v-darwin-$a.tar.gz"
+          done
+          lipo -create "node-$v-darwin-arm64/bin/node" "node-$v-darwin-x64/bin/node" -output augur-node
+          codesign --force --sign - augur-node
+          echo "AUGUR_NODE=$RUNNER_TEMP/augur-node" >> "$GITHUB_ENV"
+      - run: pnpm build:service
       - if: github.ref_type == 'tag'
         shell: bash
         run: |

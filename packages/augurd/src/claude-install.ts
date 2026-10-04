@@ -39,7 +39,8 @@ export function desktopConfigPath(home: string, platform: NodeJS.Platform, env: 
 export function defaultClaudePaths(callerUrl: string, appExe = '', env: NodeJS.ProcessEnv = process.env): ClaudePaths {
   const here = env.AUGUR_SERVICE_DIR ?? dirname(fileURLToPath(callerUrl));
   const platform = process.platform;
-  const mods = [env.AUGUR_CLAUDE_MOD, join(here, 'claude-mod'), join(here, '..', '..', '..', 'apps', 'claude-mod')].filter((d): d is string => !!d);
+  // An installed app keeps claude-mod beside the service folder; a source checkout keeps it in apps.
+  const mods = [env.AUGUR_CLAUDE_MOD, join(here, 'claude-mod'), join(here, '..', 'claude-mod'), join(here, '..', '..', '..', 'apps', 'claude-mod')].filter((d): d is string => !!d);
   const launcher = join(here, platform === 'win32' ? 'augur-mcp.cmd' : 'augur-mcp');
   return {
     home: homedir(), platform, env, appExe,

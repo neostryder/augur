@@ -8,7 +8,7 @@ import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES } from '@augur/core';
 import type { ActivityId, DataTier, OutputMode } from '@augur/core';
 import { EXIT_CODES, TOOL_TIERS, describeFigure, exitCodeForState, isTerminal } from '@augur/dispatch-protocol';
 import type { JobRecord, JobRequest, ToolTier } from '@augur/dispatch-protocol';
-import { ServiceError, call, configLines, dataDir, setConfigValue } from '@augur/augurd';
+import { ServiceError, call, configLines, dataDir, disableLogin, enableLogin, loginState, setConfigValue, startViaLogin } from '@augur/augurd';
 
 export interface Io { out(text: string): void; err(text: string): void; stdin(): string; env: NodeJS.ProcessEnv; cwd: string; /** A person is at the terminal: input and output are both attached to it. */ interactive?: boolean }
 
@@ -40,6 +40,7 @@ augur test <route> [--wait]          send a fixed one-word prompt through a rout
 augur config [--json]                 the service's settings and what each is now
 augur config set <setting> <value>    change one; a running service needs augur service stop then start to read it
 augur service status | start | stop [--if-idle]     --if-idle stops the service only when no job is running, so an upgrade never cuts one off
+augur service enable | disable    start the service at each login (systemd on Linux, launchd on macOS), or stop that
 Every command takes --json. Exit codes: 0 completed, 1 usage, 2 rejected, 3 needs approval, 4 failed, 5 artifact check failed, 6 cancelled, 7 lost, 124 wait timed out.`;
 
 interface Parsed { cmd: string[]; flags: Map<string, string | true> }
@@ -254,17 +255,30 @@ async function logs(id: string, stream: 'stdout' | 'stderr', follow: boolean, io
 async function service(action: string | undefined, io: Io, opts: Opts, json: boolean, ifIdle = false): Promise<number> {
   const say = (text: string, data: unknown) => io.out(json ? JSON.stringify(data) + '\n' : text + '\n');
   if (action === 'status') {
-    try { const r = await call('ping', undefined, { ...opts, timeoutMs: 2000 }); say(`augurd is running (pid ${r.pid}).`, { running: true, ...r }); return 0; }
-    catch { say('augurd is not running.', { running: false }); return EXIT_CODES.failed; }
+    const login = loginState(), atLogin = !login.supported ? '.' : login.enabled ? ', and starts at login.' : '. To start it at login, run augur service enable.';
+    try { const r = await call('ping', undefined, { ...opts, timeoutMs: 2000 }); say(`augurd is running (pid ${r.pid})${atLogin}`, { running: true, ...r, login }); return 0; }
+    catch { say(`augurd is not running${login.supported && login.enabled ? ', but it is set to start at login.' : atLogin}`, { running: false, login }); return EXIT_CODES.failed; }
+  }
+  if (action === 'enable' || action === 'disable') {
+    if (action === 'disable') { const r = await disableLogin(); say(r.message, r); return r.ok ? 0 : EXIT_CODES.failed; }
+    // The entry runs the packaged runtime on the packaged service, so a source checkout has nothing to point it at.
+    const script = join(dirname(fileURLToPath(import.meta.url)), 'augurd.mjs');
+    if (!existsSync(script)) { io.err('augur service enable works from an installed copy of Augur, where augurd.mjs sits next to this command.\n'); return EXIT_CODES.failed; }
+    const r = await enableLogin({ node: process.execPath, script, path: io.env.PATH ?? '' });
+    say(r.message, r); return r.ok ? 0 : EXIT_CODES.failed;
   }
   if (action === 'start') {
     try { await call('ping', undefined, { ...opts, timeoutMs: 2000 }); say('augurd is already running.', { running: true }); return 0; } catch { /* start it */ }
-    // A packaged install has augurd.mjs beside this file; a source checkout runs the service from its package.
-    const here = dirname(fileURLToPath(import.meta.url)), bundled = join(here, 'augurd.mjs'), pkg = join(here, '..', '..', 'augurd');
-    const child = existsSync(bundled)
-      ? spawn(process.execPath, [bundled], { cwd: here, detached: true, windowsHide: true, stdio: 'ignore', env: io.env })
-      : spawn(process.execPath, ['--import', 'tsx', join(pkg, 'src', 'main.ts')], { cwd: pkg, detached: true, windowsHide: true, stdio: 'ignore', env: io.env });
-    child.unref();
+    // With a login entry, systemd or launchd starts it and owns it. A service pointed at other folders is always started here.
+    const own = !io.env.AUGURD_DATA && !io.env.AUGURD_PIPE && await startViaLogin();
+    if (!own) {
+      // A packaged install has augurd.mjs beside this file; a source checkout runs the service from its package.
+      const here = dirname(fileURLToPath(import.meta.url)), bundled = join(here, 'augurd.mjs'), pkg = join(here, '..', '..', 'augurd');
+      const child = existsSync(bundled)
+        ? spawn(process.execPath, [bundled], { cwd: here, detached: true, windowsHide: true, stdio: 'ignore', env: io.env })
+        : spawn(process.execPath, ['--import', 'tsx', join(pkg, 'src', 'main.ts')], { cwd: pkg, detached: true, windowsHide: true, stdio: 'ignore', env: io.env });
+      child.unref();
+    }
     for (let i = 0; i < 60; i++) { await sleep(250); try { const r = await call('ping', undefined, { ...opts, timeoutMs: 1000 }); say(`augurd started (pid ${r.pid}).`, { running: true, ...r }); return 0; } catch { /* not up yet */ } }
     io.err('augurd did not come up. See service.log in its data folder.\n'); return EXIT_CODES.failed;
   }
@@ -279,5 +293,5 @@ async function service(action: string | undefined, io: Io, opts: Opts, json: boo
       say('Stopping augurd. Running jobs keep going.', { stopping: true }); return 0;
     } catch { say('augurd is not running.', { running: false }); return 0; }
   }
-  io.err('Use: augur service status | start | stop\n'); return EXIT_CODES.usage;
+  io.err('Use: augur service status | start | stop | enable | disable\n'); return EXIT_CODES.usage;
 }

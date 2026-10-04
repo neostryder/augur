@@ -33,7 +33,8 @@
     "resources": {
       "../../claude-mod/.claude-plugin/plugin.json": "claude-mod/.claude-plugin/plugin.json",
       "../../claude-mod/hooks/": "claude-mod/hooks/",
-      "../../claude-mod/types/": "claude-mod/types/"
+      "../../claude-mod/types/": "claude-mod/types/",
+      "../../../dist/service/": "service/"
     },
     "targets": "all",
     "icon": [
