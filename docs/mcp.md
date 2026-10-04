@@ -14,7 +14,7 @@ Claude Code:
 claude mcp add augur -- "<install folder>\service\augur-mcp.cmd"
 ```
 
-Claude Desktop, in `claude_desktop_config.json`:
+Claude Desktop: turn on Claude Desktop chat under Claude in Augur's settings, which adds this entry to `claude_desktop_config.json` and removes it again when turned off. To add it by hand:
 
 ```json
 { "mcpServers": { "augur": { "command": "<install folder>\\service\\augur-mcp.cmd" } } }

@@ -61,7 +61,7 @@ describe('the Augur mod', () => {
     expect(w.toasts).toEqual([])
     files.set(FEED, feed(alert('new', ['claude'], '2026-10-03T19:30:00Z', 'Claude: Session reached 90%'), alert('old', ['claude'], '2026-10-03T19:00:00Z')))
     await w.clock.advance(30_000)
-    expect(w.toasts).toEqual(['Augur: Claude: Session reached 90%'])
+    expect(w.toasts).toEqual(['Claude: Session reached 90%'])
     await w.clock.advance(30_000)
     expect(w.toasts.length).toBe(1)
   })

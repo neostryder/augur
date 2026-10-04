@@ -42,7 +42,7 @@ async function poll($: EngineInterface) {
     const stored = await $.store.get('seen')
     const seen = Array.isArray(stored) ? (stored as string[]) : null
     // On the first run every alert already there counts as seen, so installing the mod does not set off a burst of toasts.
-    if (seen) for (const a of list.filter((x) => !seen.includes(x.id)).reverse()) $.ui.toast(`Augur: ${alertText(a)}`, { timeoutMs: 8000 })
+    if (seen) for (const a of list.filter((x) => !seen.includes(x.id)).reverse()) $.ui.toast(alertText(a), { timeoutMs: 8000 })
     await $.store.set('seen', [...new Set([...list.map((a) => a.id), ...(seen ?? [])])].slice(0, SEEN_KEEP))
     await $.state.set(ALERTS, list)
   }

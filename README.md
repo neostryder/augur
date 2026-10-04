@@ -75,6 +75,16 @@ Augur can notify you when:
 
 A percentage, reset or balance alert fires once per window and waits for the next reset before it can fire again. A burn-rate alert repeats at most once a day while the limit keeps burning too fast.
 
+An alert stays under the bell at the top of the panel until you dismiss it or it stops applying, for example when the window resets. The grid under Alerts in settings picks where each kind of alert goes: your computer's notifications, the bell, Claude Code, and a paired phone. Updates and failed refreshes go to the bell only, unless you change that. A paired phone shows the same alerts under its own bell, and with Push notifications turned on in the phone app it gets them even while Augur is closed there. Dismissing an alert in one place clears it in the others.
+
+## Claude
+
+Augur can show up inside Claude too. Settings has a Claude section with two switches.
+
+Turn on Claude Code and your next Claude Code session shows Claude's 5-hour and weekly use in the status line, along with any other provider past 70%. A new alert pops up once, then sits in a row above the prompt until you press D to dismiss it, which clears it in Augur and on your phone as well. Press O there to bring up Augur. This switch needs the usage file, so it turns that on at `.augur/usage.json` if you had it off. Augur updates the mod when it updates itself, and turning the switch off takes the mod back out.
+
+On Windows, Claude Desktop chat lets your chats in Claude Desktop pick and run models through Augur. Restart Claude Desktop after you flip it. Turning it off removes only what Augur added to Claude Desktop's settings.
+
 ## Model rules
 
 The rules page (the icon at the top of the panel) lists every model Augur has seen on your plans and lets you decide what agents may use each one for. Each model has a status, the activities it may do (write code, research, summarize and so on), the most sensitive data it may see (public, internal, sensitive or regulated), whether an agent has to be told to use it by name, whether it may write files or only text and patches, a cost step from free to very high, and how its provider handles prompts. A model can also be paused until a time you pick, either skipped or scored with replacement weights, and Dial back pauses every high-cost model until the next reset. A new provider starts with cautious defaults that its models inherit (public data only, text output, named before use), and every model starts unreviewed, so nothing can be used until you confirm it and allow its activities. Rules save to `policy.json` in `~/.augur`, and an agent or script reads that file. Each change goes into a history you can undo from, and a paired phone and desktop merge their edits, keeping the newer one for each field.
