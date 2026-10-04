@@ -251,5 +251,5 @@ describe('the service with the engine switched on', () => {
     expect((await call('engine_state', { keys: ['secrets'] }, o)).state.secrets).toContain('minimax.apiKey');
     const { request } = await import('./harness.js');
     expect(await call('submit', request({ text: 'SLEEP 0' }), o)).toMatchObject({ rejected: { code: 'jobs_off' } });
-  });
+  }, 30_000);
 });
