@@ -4,6 +4,10 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+### Fixed
+
+- [Visible] [Platform] **Updating on Windows no longer stops on augur-node.exe.** An open Claude session restarts Augur's MCP server right after the installer stops it, which locked the file and made the update ask to retry. The installer now moves the old file aside instead of overwriting it.
+
 ## [1.3.0] - 2026-10-03
 
 ### Added

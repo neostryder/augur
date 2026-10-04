@@ -14,6 +14,17 @@
     nsExec::ExecToStack 'taskkill /F /IM augur-node.exe'
     Pop $0
     Pop $1
+    ; An open Claude session starts its MCP server again within a second of the kill, so the file can be locked again by the time it is copied.
+    ; Windows lets a running program be renamed but not overwritten, so the old file moves aside and the copy lands in a free name.
+    ; Copies set aside by an earlier run go once nothing runs them.
+    Delete "$INSTDIR\service\augur-node.exe.old*"
+    StrCpy $R0 0
+  augur_aside:
+    IfFileExists "$INSTDIR\service\augur-node.exe.old$R0" 0 augur_rename
+      IntOp $R0 $R0 + 1
+      Goto augur_aside
+  augur_rename:
+    Rename "$INSTDIR\service\augur-node.exe" "$INSTDIR\service\augur-node.exe.old$R0"
   augur_skip_stop:
 !macroend
 
@@ -23,4 +34,11 @@
 
 !macro NSIS_HOOK_PREUNINSTALL
   !insertmacro AugurStopService
+!macroend
+
+!macro NSIS_HOOK_POSTUNINSTALL
+  ; A copy still running when Augur is removed goes at the next restart.
+  Delete /REBOOTOK "$INSTDIR\service\augur-node.exe.old*"
+  RMDir "$INSTDIR\service"
+  RMDir "$INSTDIR"
 !macroend
