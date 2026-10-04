@@ -4,6 +4,8 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-04
+
 ### Added
 
 - [Visible] [UI] [Platform] **A full-screen terminal app.** Run `augur` in a terminal to open it. It has Usage, Alerts, Rules, Dispatch and Settings pages that show the same things as the window app in the same words, and it needs no tray or taskbar. It runs on Linux, macOS and Windows, and it draws the phone pairing code in the terminal.
