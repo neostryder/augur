@@ -29,6 +29,8 @@ export interface SupervisorDeps {
   rates?: () => RateCard;
   /** Whether each job runs in its own systemd user scope. Defaults to asking systemd once; tests stand in for it. */
   scopes?: () => boolean;
+  /** Why jobs are refused right now (Augur set to usage only), or null when they run. */
+  jobsOff?: () => string | null;
 }
 
 let scopeProbe: boolean | undefined;
@@ -100,6 +102,8 @@ export class Supervisor {
    * checked against every rule as if it had been asked for, so a fallback never gets around a data tier, a pick or a pause. `failover: false` keeps the job put.
    */
   submit(input: JobRequest): SubmitResult {
+    const off = this.d.jobsOff?.() ?? null;
+    if (off) return reject('jobs_off', off);
     const first = this.submitTo(input);
     if (!('rejected' in first) || input.failover === false || !Supervisor.FAILOVER.has(first.rejected.code)) return first;
     for (const next of this.d.routes()?.[input.route]?.fallback ?? []) {

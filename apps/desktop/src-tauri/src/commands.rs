@@ -463,6 +463,21 @@ fn dispatch_args_allowed(args: &[String]) -> bool {
     }
 }
 
+/// The folder holding the packaged service, its runtime and the `augur` command. AUGUR_SERVICE_DIR points a dev build at a local one.
+pub(crate) fn service_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    std::env::var_os("AUGUR_SERVICE_DIR")
+        .map(PathBuf::from)
+        .or_else(|| app.path().resource_dir().ok().map(|d| d.join("service")))
+        .filter(|d| d.join("augur.mjs").is_file())
+        .ok_or_else(|| "The dispatch service is not installed with this build".to_owned())
+}
+
+pub(crate) const SERVICE_NODE: &str = if cfg!(windows) {
+    "augur-node.exe"
+} else {
+    "augur-node"
+};
+
 #[tauri::command]
 pub async fn dispatch_cli(
     app: tauri::AppHandle,
@@ -471,13 +486,8 @@ pub async fn dispatch_cli(
     if !dispatch_args_allowed(&args) {
         return Err("Command and arguments are not allowed".into());
     }
-    let dir = std::env::var_os("AUGUR_SERVICE_DIR")
-        .map(PathBuf::from)
-        .or_else(|| app.path().resource_dir().ok().map(|d| d.join("service")))
-        .filter(|d| d.join("augur.mjs").is_file())
-        .ok_or_else(|| "The dispatch service is not installed with this build".to_owned())?;
-    let node = if cfg!(windows) { "augur-node.exe" } else { "augur-node" };
-    let mut process = tokio::process::Command::new(dir.join(node));
+    let dir = service_dir(&app)?;
+    let mut process = tokio::process::Command::new(dir.join(SERVICE_NODE));
     process
         .arg(dir.join("augur.mjs"))
         .args(args)

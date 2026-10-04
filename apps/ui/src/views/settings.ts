@@ -78,7 +78,7 @@ export const CLAUDE_TEXT = {
   codeExport: 'Turning this on also saves your usage to .augur/usage.json, which the mod reads.',
   desktop: 'Claude Desktop chat',
   desktopDesc: 'Lets chats in Claude Desktop pick and run models through Augur. Restart Claude Desktop after turning this on or off.',
-  desktopMissing: 'Needs the dispatch service, which comes with the Windows app.',
+  desktopMissing: 'This build does not include the MCP server that Claude Desktop needs.',
 };
 
 /** Desktop: turns the Claude Code mod and the Claude Desktop MCP entry on and off. */

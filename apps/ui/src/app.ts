@@ -108,6 +108,8 @@ export class App {
   // The desktop title strip, which carries the pin. It sits outside the root so page renders leave it alone.
   private strip: HTMLElement | null = null;
   private stripHtml = '';
+  // Says the background service cannot be reached, above the page, until the link is back.
+  private linkNote: HTMLElement | null = null;
   private pinned = false;
   // The alert feed. The desktop keeps it, and a paired phone shows the copy the desktop last synced.
   private keeper!: FeedKeeper;
@@ -137,7 +139,7 @@ export class App {
   async start(): Promise<void> {
     document.body.classList.add(this.shell.kind);
     if (this.shell.kind === 'desktop') {
-      this.engine = await connectEngine(this.shell);
+      this.engine = await connectEngine(this.shell, (message) => this.setLinkDown(message));
       this.takeState(Object.keys(this.engine.state) as EngineKey[]);
       this.engine.onChange((keys) => this.onEngine(keys));
     } else {
@@ -167,8 +169,6 @@ export class App {
     this.ensureStrip();
     // An automatic install waits for the panel to close, so it never restarts the app under the pointer.
     if (this.shell.installUpdate) document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') void this.autoInstall(); });
-    // With Also run jobs chosen, the service is up whenever the app is. A service that is already running answers and nothing changes.
-    if (this.config.dispatch?.runJobs && this.shell.dispatch) void this.augur(['service', 'start', '--json']).then(() => this.loadService()).catch(() => undefined);
 
     if (this.firstRun) this.view = 'settings';
     this.applyTheme();
@@ -447,7 +447,7 @@ export class App {
       classifier: this.servicePage.lines?.find((l) => l.key === 'decision.backend')?.value ?? null,
       sync: this.sync, relay: this.relay(), pwaUrl: this.pwaUrl(), pairQr: this.pairQr, pairUrl: this.pairUrl,
       scanError: this.scanError, iosInstallHint: iosInstallHint(), hotkeyError: this.hotkeyError, canHotkey: !!this.shell.setHotkey,
-      claude: this.shell.claudeStatus ? { status: this.claude, error: this.claudeError } : null,
+      claude: this.engine ? { status: this.claude, error: this.claudeError } : null,
       platform: this.shell.host.platform, push: this.shell.kind === 'pwa' ? { status: this.pushStatus, error: this.pushError, hasKey: !!this.pushKey } : null,
     };
   }
@@ -503,7 +503,7 @@ export class App {
 
   private async sizePopup(): Promise<void> {
     if (this.shell.kind !== 'desktop') return;
-    const h = Math.ceil(this.root.getBoundingClientRect().height + (this.strip?.getBoundingClientRect().height ?? 0));
+    const h = Math.ceil(this.root.getBoundingClientRect().height + (this.strip?.getBoundingClientRect().height ?? 0) + (this.linkNote?.getBoundingClientRect().height ?? 0));
     const w = this.twoColumns ? TWO_COL : ONE_COL;
     if (this.shell.setPopupSize) await this.shell.setPopupSize(w, h).catch(() => undefined);
     else await this.shell.setPopupHeight?.(h).catch(() => undefined);
@@ -756,7 +756,7 @@ export class App {
     await this.loadJobs();
   }
 
-  private async controlService(action: 'start' | 'stop'): Promise<void> {
+  private async controlService(action: 'start'): Promise<void> {
     this.jobs.busy = true; this.jobs.serviceNote = '';
     await this.render();
     try {
@@ -791,21 +791,35 @@ export class App {
     if (this.view === 'service' || (this.view === 'settings' && this.firstRun)) await this.render();
   }
 
-  /** Usage only stops the service when nothing is running on it; Also run jobs starts it. */
+  /** The service runs whenever the app does, because it holds the engine; the mode decides whether it takes jobs. */
   private async setDispatchMode(runJobs: boolean): Promise<void> {
     this.config.dispatch = { runJobs };
+    this.servicePage.note = ''; this.servicePage.error = '';
     await this.saveConfig(false);
-    const page = this.servicePage;
-    page.note = ''; page.error = '';
-    if (this.shell.dispatch) {
-      try {
-        const r = await this.augur(['service', runJobs ? 'start' : 'stop', ...(runJobs ? [] : ['--if-idle']), '--json']);
-        if (r.code !== 0 && runJobs) page.error = r.err || 'The service did not start. It keeps a log in the dispatch data folder.';
-        if (r.code !== 0 && !runJobs) page.note = 'A job is still running, so the service was left running. It stops the next time you choose this with no job running.';
-      } catch (e) { page.error = e instanceof Error ? e.message : String(e); }
-    }
     await this.render();
     await this.loadService();
+  }
+
+  /** Shows why the service cannot be reached, or clears it. Before the first connection the message is the whole page. */
+  private setLinkDown(message: string | null): void {
+    if (!this.engine) {
+      if (message) {
+        const note = document.createElement('div');
+        note.className = 'card rbanner bad'; note.setAttribute('role', 'alert'); note.textContent = message;
+        this.root.replaceChildren(note);
+        void this.sizePopup();
+      }
+      return;
+    }
+    if (!message) { this.linkNote?.remove(); this.linkNote = null; void this.sizePopup(); return; }
+    if (!this.linkNote) {
+      this.linkNote = document.createElement('div');
+      this.linkNote.className = 'card rbanner bad';
+      this.linkNote.setAttribute('role', 'alert');
+      this.root.before(this.linkNote);
+    }
+    this.linkNote.textContent = message;
+    void this.sizePopup();
   }
 
   private async restartService(): Promise<void> {
@@ -1062,7 +1076,7 @@ export class App {
       case 'route-delete': await this.deleteRoute(); break;
       case 'job-close': this.closeJob(); await this.render(); break;
       case 'jobs-refresh': await this.loadJobs(); break;
-      case 'service-start': case 'service-stop': await this.controlService(t.dataset.action === 'service-start' ? 'start' : 'stop'); break;
+      case 'service-start': await this.controlService('start'); break;
       case 'job-cancel': await this.cancelJob(t.dataset.id!); break;
       case 'theme': {
         const order: AppConfig['layout']['theme'][] = ['system', 'light', 'dark'];

@@ -1,5 +1,6 @@
 mod claude;
 mod commands;
+mod engine;
 mod websession;
 
 use std::sync::Mutex;
@@ -391,6 +392,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(AppState::default())
         .manage(websession::WebSessions::default())
+        .manage(engine::EngineBridge::default())
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             let _ = show_popup(app);
         }))
@@ -416,6 +418,8 @@ pub fn run() {
             commands::write_home_file_atomic,
             commands::run_command,
             commands::dispatch_cli,
+            engine::engine_start,
+            engine::engine_send,
             commands::copilot_usage,
             commands::keychain_get,
             commands::keychain_set,

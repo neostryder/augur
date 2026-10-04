@@ -232,5 +232,7 @@ describe('the service with the engine switched on', () => {
     await call('engine_call', { method: 'setProviderKey', args: ['minimax', 'apiKey', '  sk-test  '] }, o);
     expect(JSON.parse(readFileSync(join(appDir, 'secrets.json'), 'utf8'))).toEqual({ 'minimax.apiKey': 'sk-test' });
     expect((await call('engine_state', { keys: ['secrets'] }, o)).state.secrets).toContain('minimax.apiKey');
+    const { request } = await import('./harness.js');
+    expect(await call('submit', request({ text: 'SLEEP 0' }), o)).toMatchObject({ rejected: { code: 'jobs_off' } });
   });
 });

@@ -10,10 +10,10 @@ const job = (over: Partial<JobRecord> = {}): JobRecord => ({
 const model = (over: Partial<JobsModel> = {}): JobsModel => ({ service: { running: true, pid: 4242 }, serviceNote: '', unavailable: '', jobs: [], accounted: {}, sel: null, detail: null, busy: false, ...over });
 
 describe('the jobs page', () => {
-  it('offers Start when the service is stopped and Stop when it runs', () => {
+  it('offers Start when the service is stopped and no way to stop it while it runs', () => {
     expect(renderJobs(model({ service: { running: false, pid: null } }))).toContain('data-action="service-start"');
     const running = renderJobs(model());
-    expect(running).toContain('data-action="service-stop"');
+    expect(running).not.toContain('data-action="service-');
     expect(running).toContain('process 4242');
   });
 

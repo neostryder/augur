@@ -14,7 +14,7 @@ async function boot() {
   const e: Env = makeEnv();
   const pipe = process.platform === 'win32' ? `\\\\.\\pipe\\augurd-test-${Date.now()}-${Math.floor(Math.random() * 1e6)}` : join(e.root, 'test.sock');
   writeFileSync(join(e.dir, 'config.json'), JSON.stringify({ requirePick: false, verifyNamed: 'record', adapters: ['codex-exec', 'exec'], jobhostPath: existsSync(JOBHOST) ? JOBHOST : null }));
-  const svc = await startService({ dir: e.dir, home: e.home, pipe, routesPath: e.routesPath });
+  const svc = await startService({ dir: e.dir, home: e.home, pipe, routesPath: e.routesPath, engine: false });
   cleanup.push(async () => { await svc.stop().catch(() => {}); e.dispose(); });
   const o = { dir: e.dir, pipe };
   return { e, svc, pipe, o, stopOnly: () => svc.stop() };
@@ -89,7 +89,7 @@ describe('the control endpoint', () => {
     await sleep(800);
     await stopOnly();
     await expect(call('ping', undefined, { ...o, timeoutMs: 2000 })).rejects.toBeInstanceOf(ServiceError);
-    const again = await startService({ dir: e.dir, home: e.home, pipe, routesPath: e.routesPath });
+    const again = await startService({ dir: e.dir, home: e.home, pipe, routesPath: e.routesPath, engine: false });
     cleanup.push(() => again.stop());
     const job = await finished(o, sub.id);
     expect(job.state).toBe('completed');
@@ -98,7 +98,7 @@ describe('the control endpoint', () => {
 
   it('refuses to start a second service on the same endpoint', async () => {
     const { e, pipe } = await boot();
-    await expect(startService({ dir: e.dir, home: e.home, pipe, routesPath: e.routesPath })).rejects.toMatchObject({ code: 'EADDRINUSE' });
+    await expect(startService({ dir: e.dir, home: e.home, pipe, routesPath: e.routesPath, engine: false })).rejects.toMatchObject({ code: 'EADDRINUSE' });
   });
 });
 
@@ -107,7 +107,7 @@ describe('the token file', () => {
     const { e, stopOnly, pipe } = await boot();
     const first = readFileSync(join(e.dir, 'token'), 'utf8');
     await stopOnly();
-    const again = await startService({ dir: e.dir, home: e.home, pipe, routesPath: e.routesPath });
+    const again = await startService({ dir: e.dir, home: e.home, pipe, routesPath: e.routesPath, engine: false });
     cleanup.push(() => again.stop());
     expect(readFileSync(join(e.dir, 'token'), 'utf8')).toBe(first);
   });

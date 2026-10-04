@@ -2,7 +2,7 @@
 
 `augur-mcp` lets an MCP client, such as Claude Code or Claude Desktop, ask Augur which model should take a piece of work and then run it there. It is a thin layer over the dispatch service. Every tool goes through the same service and the same rules as the `augur` command, so the server cannot run a model the rules do not allow. It can ask for changes to the rules, but it cannot make one that widens what data a model may see or lets a model run; the owner accepts those in Augur.
 
-It needs the dispatch service running. Turn on "Also run jobs" on the Service page, or run `augur service start`. Windows only, like the service.
+It needs the dispatch service, which runs whenever the Augur app is open; without the app, `augur service start` starts it. Tools that run a job also need "Also run jobs" turned on in Augur's settings, and the service refuses jobs with `jobs_off` until it is. Windows only, like the service.
 
 ## Registering it
 

@@ -14,7 +14,7 @@ async function boot() {
   const e: Env = makeEnv();
   const pipe = process.platform === 'win32' ? `\\\\.\\pipe\\augurd-cli-${Date.now()}-${Math.floor(Math.random() * 1e6)}` : join(e.root, 'cli.sock');
   writeFileSync(join(e.dir, 'config.json'), JSON.stringify({ requirePick: false, verifyNamed: 'record', adapters: ['codex-exec', 'exec'], jobhostPath: existsSync(JOBHOST) ? JOBHOST : null }));
-  const svc = await startService({ dir: e.dir, home: e.home, pipe, routesPath: e.routesPath });
+  const svc = await startService({ dir: e.dir, home: e.home, pipe, routesPath: e.routesPath, engine: false });
   cleanup.push(async () => { await svc.stop().catch(() => {}); e.dispose(); });
   // `run` has no default activity or data tier and defaults to read tools and text output, so most tests state the usual authority once here. `--bare` skips that.
   const withUsual = (args: string[]): string[] => {

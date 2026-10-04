@@ -54,10 +54,14 @@ export async function startService(opts: ServiceOptions = {}) {
   if (local.error) log(`local adapters were not loaded: ${local.error}`);
   const decision = buildDecision(config, dir), decisions = new DecisionLog(dir, config.learn);
   const ratesPath = join(home, 'dispatch', 'rates.json'), rates = () => parseRates(existsSync(ratesPath) ? readFileSync(ratesPath, 'utf8') : null);
-  const supervisor = new Supervisor({ rates, store, config, dir, adapters: enabledAdapters(config.adapters, local.adapters), ...(decision ? { decision } : {}), decisions, routes: () => routes.read(), policy: () => policy.read(), usage: () => usage.read() });
+  // With the engine here, the app's mode switch decides whether jobs run; without it, a running service runs them.
+  let engine: UsageEngine | null = null;
+  const jobsOff = () => engine && engine.state.config.dispatch?.runJobs !== true ? 'Augur is set to usage only, so it does not run jobs. Choose Also run jobs in its settings to turn them on.' : null;
+  const supervisor = new Supervisor({ rates, store, config, dir, adapters: enabledAdapters(config.adapters, local.adapters), ...(decision ? { decision } : {}), decisions, routes: () => routes.read(), policy: () => policy.read(), usage: () => usage.read(), jobsOff });
   const server = new IpcServer(supervisor, store, token, () => routes.read(), rates);
   // The engine is ready before the endpoint opens, so no caller ever finds the service half started.
-  const engine = (opts.engine ?? (config.engine || process.env.AUGURD_ENGINE === '1')) ? await startEngine(server, log) : null;
+  const override = process.env.AUGURD_ENGINE === '0' ? false : process.env.AUGURD_ENGINE === '1' ? true : undefined;
+  engine = (opts.engine ?? override ?? config.engine) ? await startEngine(server, log) : null;
   try { await server.start(opts.pipe ?? pipeName(dir)); }
   catch (e) { engine?.stop(); store.close(); throw e; }
   supervisor.reconcile();

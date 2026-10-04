@@ -48,9 +48,8 @@ function serviceCard(m: JobsModel): string {
   if (m.unavailable) return `<div class="card rbanner bad"><span class="grow"><b>The dispatch service is not available.</b> ${esc(m.unavailable)}</span></div>`;
   const s = m.service;
   const state = s === null ? 'Checking the service.' : s.running ? `Service running${s.pid ? ` (process ${s.pid})` : ''}.` : 'Service stopped. Agents cannot start jobs until you start it.';
-  const button = s === null ? '' : s.running
-    ? `<button class="btn small" data-action="service-stop" ${m.busy ? 'disabled' : ''}>Stop</button>`
-    : `<button class="btn small primary" data-action="service-start" ${m.busy ? 'disabled' : ''}>Start</button>`;
+  // The service holds the usage engine, so the app keeps it running and offers no way to stop it here.
+  const button = s === null || s.running ? '' : `<button class="btn small primary" data-action="service-start" ${m.busy ? 'disabled' : ''}>Start</button>`;
   return `<div class="card rbanner ${s?.running ? 'ok' : ''}"><span class="grow">${esc(state)}${m.serviceNote ? ` <span class="rnote" role="status">${esc(m.serviceNote)}</span>` : ''}</span>${button}</div>`;
 }
 

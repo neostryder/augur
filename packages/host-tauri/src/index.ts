@@ -10,6 +10,7 @@ import type { AlertFeed, AppConfig, Host, HttpRequest, HttpResponse, ModelCatalo
 import type { ClaudeStatus, ClaudeTarget, Shell, TrayUpdate, UpdateInfo } from '@augur/core';
 
 let pendingUpdate: Update | null = null;
+let engineListener: Promise<() => void> | null = null;
 
 function platform(): Platform {
   const agent = navigator.userAgent.toLowerCase();
@@ -119,6 +120,13 @@ export function createTauriShell(): Shell {
     setPopupPinned: (pinned: boolean) => invoke<void>('set_popup_pinned', { pinned }),
     startPopupDrag: () => invoke<void>('start_popup_drag'),
     dispatch: (args: string[]) => invoke<{ code: number; stdout: string; stderr: string }>('dispatch_cli', { args }),
+    async engineLink(onLine: (line: string) => void) {
+      void engineListener?.then((stop) => stop());
+      engineListener = listen<string>('engine-line', (e) => onLine(e.payload));
+      await engineListener;
+      await invoke<void>('engine_start');
+      return { send: (line: string) => invoke<void>('engine_send', { line }) };
+    },
     getAutostart: () => isEnabled(),
     setAutostart: (on: boolean) => on ? enable() : disable(),
     claudeStatus: () => invoke<ClaudeStatus>('claude_status'),

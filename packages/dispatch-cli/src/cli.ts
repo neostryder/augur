@@ -8,6 +8,7 @@ import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES } from '@augur/core';
 import type { ActivityId, DataTier, OutputMode } from '@augur/core';
 import { EXIT_CODES, TOOL_TIERS, describeFigure, exitCodeForState, isTerminal } from '@augur/dispatch-protocol';
 import type { JobRecord, JobRequest, ToolTier } from '@augur/dispatch-protocol';
+import { bridge, stdioBridge } from './bridge.js';
 import { ServiceError, call, configLines, dataDir, disableLogin, enableLogin, loginState, setConfigValue, startViaLogin } from '@augur/augurd';
 
 export interface Io { out(text: string): void; err(text: string): void; stdin(): string; env: NodeJS.ProcessEnv; cwd: string; /** A person is at the terminal: input and output are both attached to it. */ interactive?: boolean }
@@ -137,6 +138,8 @@ export async function main(argv: string[], io: Io): Promise<number> {
         say(lines.map(l => `${l.key.padEnd(20)} ${l.value.padEnd(24)} ${l.value === l.default ? '' : `(default ${l.default}) `}${l.weakens ? '[lowers checks] ' : ''}${l.label}`).join('\n'), lines); return 0;
       }
       case 'service': return await service(rest[0], io, opts, json, p.flags.has('if-idle'));
+      // The window app's link to the engine; it runs until the app closes its input.
+      case 'bridge': return await bridge(stdioBridge(io.env), opts, opt('app-exe'));
       default: io.err(`Unknown command ${cmd}.\n${HELP}\n`); return EXIT_CODES.usage;
     }
   } catch (e) {
@@ -252,6 +255,22 @@ async function logs(id: string, stream: 'stdout' | 'stderr', follow: boolean, io
   }
 }
 
+/** Starts the service and waits up to 15 seconds for it to answer. Resolves to its ping answer, or null when it did not come up. */
+export async function launchService(env: NodeJS.ProcessEnv, opts: Opts): Promise<{ pid: number; version: number; startedAt: number } | null> {
+  // With a login entry, systemd or launchd starts it and owns it. A service pointed at other folders is always started here.
+  const own = !env.AUGURD_DATA && !env.AUGURD_PIPE && await startViaLogin();
+  if (!own) {
+    // A packaged install has augurd.mjs beside this file; a source checkout runs the service from its package.
+    const here = dirname(fileURLToPath(import.meta.url)), bundled = join(here, 'augurd.mjs'), pkg = join(here, '..', '..', 'augurd');
+    const child = existsSync(bundled)
+      ? spawn(process.execPath, [bundled], { cwd: here, detached: true, windowsHide: true, stdio: 'ignore', env })
+      : spawn(process.execPath, ['--import', 'tsx', join(pkg, 'src', 'main.ts')], { cwd: pkg, detached: true, windowsHide: true, stdio: 'ignore', env });
+    child.unref();
+  }
+  for (let i = 0; i < 60; i++) { await sleep(250); try { return await call('ping', undefined, { ...opts, timeoutMs: 1000 }); } catch { /* not up yet */ } }
+  return null;
+}
+
 async function service(action: string | undefined, io: Io, opts: Opts, json: boolean, ifIdle = false): Promise<number> {
   const say = (text: string, data: unknown) => io.out(json ? JSON.stringify(data) + '\n' : text + '\n');
   if (action === 'status') {
@@ -269,17 +288,8 @@ async function service(action: string | undefined, io: Io, opts: Opts, json: boo
   }
   if (action === 'start') {
     try { await call('ping', undefined, { ...opts, timeoutMs: 2000 }); say('augurd is already running.', { running: true }); return 0; } catch { /* start it */ }
-    // With a login entry, systemd or launchd starts it and owns it. A service pointed at other folders is always started here.
-    const own = !io.env.AUGURD_DATA && !io.env.AUGURD_PIPE && await startViaLogin();
-    if (!own) {
-      // A packaged install has augurd.mjs beside this file; a source checkout runs the service from its package.
-      const here = dirname(fileURLToPath(import.meta.url)), bundled = join(here, 'augurd.mjs'), pkg = join(here, '..', '..', 'augurd');
-      const child = existsSync(bundled)
-        ? spawn(process.execPath, [bundled], { cwd: here, detached: true, windowsHide: true, stdio: 'ignore', env: io.env })
-        : spawn(process.execPath, ['--import', 'tsx', join(pkg, 'src', 'main.ts')], { cwd: pkg, detached: true, windowsHide: true, stdio: 'ignore', env: io.env });
-      child.unref();
-    }
-    for (let i = 0; i < 60; i++) { await sleep(250); try { const r = await call('ping', undefined, { ...opts, timeoutMs: 1000 }); say(`augurd started (pid ${r.pid}).`, { running: true, ...r }); return 0; } catch { /* not up yet */ } }
+    const r = await launchService(io.env, opts);
+    if (r) { say(`augurd started (pid ${r.pid}).`, { running: true, ...r }); return 0; }
     io.err('augurd did not come up. See service.log in its data folder.\n'); return EXIT_CODES.failed;
   }
   if (action === 'stop') {

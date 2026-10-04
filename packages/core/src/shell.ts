@@ -96,9 +96,14 @@ export interface Shell {
   openSignIn?(site: string): Promise<void>;
   /**
    * Runs one allowed `augur` command against the dispatch service the installer carries, with --json where the command has it.
-   * Only on the Windows desktop app; undefined elsewhere. It rejects a command outside the read, cancel and service-control set.
+   * Desktop only; undefined on the phone. It rejects a command outside the read, cancel and service-control set.
    */
   dispatch?(args: string[]): Promise<{ code: number; stdout: string; stderr: string }>;
+  /**
+   * Desktop only: starts the link to the usage engine in the background service, replacing one already running. Each JSON line the link
+   * prints goes to onLine, and send writes one line to it.
+   */
+  engineLink?(onLine: (line: string) => void): Promise<{ send(line: string): Promise<void> }>;
   /** The running app's version. */
   appVersion?(): Promise<string>;
   /** Looks for a newer release; null means this is the latest. */
