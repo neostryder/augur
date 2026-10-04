@@ -1,0 +1,12 @@
+{
+  "name": "@augur/terminal",
+  "version": "1.3.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p .",
+    "test": "vitest run"
+  },
+  "devDependencies": { "@types/node": "26.6.3", "typescript": "7.0.2", "vitest": "5.0.2" }
+}
