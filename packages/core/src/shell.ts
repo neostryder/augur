@@ -58,6 +58,12 @@ export interface Shell {
   hidePopup?(): Promise<void>;
   /** Desktop only: shows the panel at the tray, as a click on the tray icon does. */
   showPopup?(): Promise<void>;
+  /** Desktop only: whether the panel is pinned, so it stays up when it loses focus. */
+  popupPinned?(): Promise<boolean>;
+  /** Desktop only: pins the panel where it is, or unpins it. The pin and the spot survive a restart. */
+  setPopupPinned?(pinned: boolean): Promise<void>;
+  /** Desktop only: starts moving the pinned panel with the mouse. */
+  startPopupDrag?(): Promise<void>;
   getAutostart?(): Promise<boolean>;
   setAutostart?(on: boolean): Promise<void>;
   /** Desktop only: the global shortcut that opens and closes the panel. Null turns it off; rejects if it cannot be registered. */

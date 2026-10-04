@@ -4,6 +4,10 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+### Added
+
+- [Visible] [UI] **Pin the panel to keep it on screen.** The pin button in the new strip at the top of the panel keeps it open and on top when you click elsewhere. While it is pinned, drag the strip to move the panel. Augur remembers the pin and the spot after a restart, and opens the panel at the tray instead if that monitor is gone. Esc or a click on the tray icon hides a pinned panel without unpinning it, and a pinned panel keeps its top edge in place when its height changes.
+
 ## [1.2.3] - 2026-10-01
 
 ### Fixed

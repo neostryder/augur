@@ -2,7 +2,7 @@ mod commands;
 mod websession;
 
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use tauri::{
@@ -38,6 +38,14 @@ pub struct AppState {
     // enlarges CSS pixels without changing the monitor scale, so sizes in CSS
     // pixels need this extra factor to become physical pixels.
     zoom: Mutex<f64>,
+    // A pinned popup stays up when it loses focus and opens where it was last dragged.
+    pinned: AtomicBool,
+    // Top-left corner of the pinned popup in physical pixels.
+    pin_pos: Mutex<Option<(i32, i32)>>,
+    // The last corner Augur placed the popup at, so its own moves are not saved as a drag.
+    placed_at: Mutex<Option<(i32, i32)>>,
+    // Bumped on each drag; a save runs only when no later drag has bumped it.
+    pin_save: AtomicU64,
 }
 
 impl Default for AppState {
@@ -49,6 +57,10 @@ impl Default for AppState {
             hidden_at: Mutex::new(None),
             focused: AtomicBool::new(false),
             zoom: Mutex::new(1.0),
+            pinned: AtomicBool::new(false),
+            pin_pos: Mutex::new(None),
+            placed_at: Mutex::new(None),
+            pin_save: AtomicU64::new(0),
         }
     }
 }
@@ -101,9 +113,110 @@ pub fn platform_tray_icon_size() -> u32 {
     24
 }
 
-/// The monitor the popup opens on: where the tray was last clicked, else the taskbar's monitor.
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+struct PinFile {
+    pinned: bool,
+    x: Option<i32>,
+    y: Option<i32>,
+}
+
+fn pin_path(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|dir| dir.join("popup.json"))
+}
+
+/// Reads the pin and its spot from the last run.
+fn load_pin(app: &tauri::AppHandle) {
+    let Some(file) = pin_path(app)
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|text| serde_json::from_str::<PinFile>(&text).ok())
+    else {
+        return;
+    };
+    let state = app.state::<AppState>();
+    state.pinned.store(file.pinned, Ordering::SeqCst);
+    if let (Some(x), Some(y), Ok(mut pos)) = (file.x, file.y, state.pin_pos.lock()) {
+        *pos = Some((x, y));
+    }
+}
+
+pub(crate) fn save_pin(app: &tauri::AppHandle) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let pos = *state.pin_pos.lock().map_err(|e| e.to_string())?;
+    let file = PinFile {
+        pinned: state.pinned.load(Ordering::SeqCst),
+        x: pos.map(|p| p.0),
+        y: pos.map(|p| p.1),
+    };
+    let path = pin_path(app).ok_or("Config folder unavailable")?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let text = serde_json::to_string(&file).map_err(|e| e.to_string())?;
+    let temp = path.with_extension("json.tmp");
+    std::fs::write(&temp, text).map_err(|e| e.to_string())?;
+    std::fs::rename(&temp, &path).map_err(|e| e.to_string())
+}
+
+/// Saves the dragged spot once the drag has been still for half a second.
+fn save_pin_soon(app: &tauri::AppHandle) {
+    let ticket = app
+        .state::<AppState>()
+        .pin_save
+        .fetch_add(1, Ordering::SeqCst)
+        + 1;
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(500));
+        if app.state::<AppState>().pin_save.load(Ordering::SeqCst) == ticket {
+            let _ = save_pin(&app);
+        }
+    });
+}
+
+/// The pinned spot and the monitor it is on. None when not pinned, or when that monitor is gone.
+fn pinned_spot(
+    app: &tauri::AppHandle,
+    window: &tauri::WebviewWindow,
+) -> Option<(tauri::Monitor, (i32, i32))> {
+    let state = app.state::<AppState>();
+    if !state.pinned.load(Ordering::SeqCst) {
+        return None;
+    }
+    let (x, y) = (*state.pin_pos.lock().ok()?)?;
+    let monitor = window
+        .monitor_from_point(x as f64 + 8.0, y as f64 + 8.0)
+        .ok()
+        .flatten()?;
+    let at = monitor.position();
+    let size = monitor.size();
+    let inside = x + 8 >= at.x
+        && y + 8 >= at.y
+        && x + 8 < at.x + size.width as i32
+        && y + 8 < at.y + size.height as i32;
+    inside.then_some((monitor, (x, y)))
+}
+
+/// Keeps a window of the given size inside the work area, moving it no more than it must.
+fn clamp_into(
+    (x, y): (i32, i32),
+    (width, height): (u32, u32),
+    work_at: (i32, i32),
+    work_size: (u32, u32),
+) -> (i32, i32) {
+    let right = work_at.0 + work_size.0 as i32 - width as i32;
+    let bottom = work_at.1 + work_size.1 as i32 - height as i32;
+    (x.min(right).max(work_at.0), y.min(bottom).max(work_at.1))
+}
+
+/// The monitor the popup opens on: the pinned spot's, else where the tray was last clicked, else the taskbar's monitor.
 fn popup_monitor(app: &tauri::AppHandle) -> Result<tauri::Monitor, String> {
     let window = app.get_webview_window("popup").ok_or("Popup unavailable")?;
+    if let Some((monitor, _)) = pinned_spot(app, &window) {
+        return Ok(monitor);
+    }
     let state = app.state::<AppState>();
     let anchor = state.anchor.lock().map_err(|e| e.to_string())?;
     let point = anchor
@@ -174,6 +287,19 @@ pub fn anchor_popup(app: &tauri::AppHandle) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
         outer = window.outer_size().map_err(|e| e.to_string())?;
     }
+    if let Some((_, spot)) = pinned_spot(app, &window) {
+        // A pinned popup keeps its top edge when its height changes, and moves only to stay on screen.
+        let (x, y) = clamp_into(
+            spot,
+            (outer.width, outer.height),
+            (work.position.x, work.position.y),
+            (work.size.width, work.size.height),
+        );
+        *state.placed_at.lock().map_err(|e| e.to_string())? = Some((x, y));
+        return window
+            .set_position(PhysicalPosition::new(x, y))
+            .map_err(|e| e.to_string());
+    }
     let right = work.position.x + work.size.width as i32;
     let bottom = work.position.y + work.size.height as i32;
     #[cfg(target_os = "macos")]
@@ -198,6 +324,7 @@ pub fn anchor_popup(app: &tauri::AppHandle) -> Result<(), String> {
         right - outer.width as i32 - gap,
         bottom - outer.height as i32 - gap,
     );
+    *state.placed_at.lock().map_err(|e| e.to_string())? = Some((x, y));
     window
         .set_position(PhysicalPosition::new(x, y))
         .map_err(|e| e.to_string())?;
@@ -300,12 +427,16 @@ pub fn run() {
             commands::max_popup_height,
             commands::hide_popup,
             commands::show_popup,
+            commands::popup_pinned,
+            commands::set_popup_pinned,
+            commands::start_popup_drag,
             websession::web_session_sign_in,
             websession::web_session_read
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            load_pin(app.handle());
             let autostart_item = CheckMenuItem::with_id(
                 app,
                 "autostart",
@@ -415,10 +546,27 @@ pub fn run() {
                     {
                         return;
                     }
+                    if window.state::<AppState>().pinned.load(Ordering::SeqCst) {
+                        return;
+                    }
                     let _ = window.hide();
                     if let Ok(mut hidden) = window.state::<AppState>().hidden_at.lock() {
                         *hidden = Some(Instant::now());
                     }
+                }
+                WindowEvent::Moved(position) => {
+                    let state = window.state::<AppState>();
+                    if !state.pinned.load(Ordering::SeqCst) {
+                        return;
+                    }
+                    let spot = (position.x, position.y);
+                    if state.placed_at.lock().ok().and_then(|at| *at) == Some(spot) {
+                        return;
+                    }
+                    if let Ok(mut pos) = state.pin_pos.lock() {
+                        *pos = Some(spot);
+                    }
+                    save_pin_soon(window.app_handle());
                 }
                 WindowEvent::CloseRequested { api, .. } => {
                     api.prevent_close();
@@ -429,4 +577,41 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("Augur failed to start");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clamp_into;
+
+    #[test]
+    fn a_spot_on_screen_stays_put() {
+        assert_eq!(
+            clamp_into((100, 50), (400, 560), (0, 0), (1920, 1040)),
+            (100, 50)
+        );
+    }
+
+    #[test]
+    fn a_taller_popup_moves_up_only_as_far_as_it_must() {
+        assert_eq!(
+            clamp_into((100, 700), (400, 560), (0, 0), (1920, 1040)),
+            (100, 480)
+        );
+    }
+
+    #[test]
+    fn a_spot_past_the_left_or_top_edge_comes_back_inside() {
+        assert_eq!(
+            clamp_into((-50, -20), (400, 560), (0, 0), (1920, 1040)),
+            (0, 0)
+        );
+    }
+
+    #[test]
+    fn a_second_monitor_keeps_its_own_offset() {
+        assert_eq!(
+            clamp_into((3700, 10), (400, 560), (1920, 0), (1920, 1040)),
+            (3440, 10)
+        );
+    }
 }

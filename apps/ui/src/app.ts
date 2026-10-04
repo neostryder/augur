@@ -8,6 +8,7 @@ import { dialEndChoices, heldRows, pauseResets, renderRules, type RulesFilter, t
 import { renderJobs, type JobsModel } from './views/jobs';
 import { renderRoutes, type RoutesModel } from './views/routes';
 import { renderService, type ConfigLine, type ServiceModel } from './views/service';
+import { renderStrip } from './views/strip';
 import { BULK_FIELDS, previewBulk, type BulkPreview } from './rules-bulk';
 import { pauseValue, planDialBack, type DialBackPlan } from './dial-back';
 import { ROUTES_PATH, checkDraft, draftOf, emptyDraft, parseRoutesText, writeRoute } from './routes-model';
@@ -118,6 +119,9 @@ export class App {
 
   // A render measures the page before late data or an opened 7-day chart can make it taller, so the popup resizes whenever the content height changes.
   private resizeWatch = new ResizeObserver(() => { void this.sizePopup(); });
+  // The desktop title strip, which carries the pin. It sits outside the root so page renders leave it alone.
+  private strip: HTMLElement | null = null;
+  private pinned = false;
 
   private pluginMap(): Map<string, ProviderPlugin> {
     return new Map(core.plugins(this.config).map((p) => [p.id, p]));
@@ -141,6 +145,13 @@ export class App {
     this.customDraft = JSON.stringify(this.config.custom ?? [], null, 2);
     this.autostart = this.shell.getAutostart ? await this.shell.getAutostart().catch(() => null) : null;
     await this.applyHotkey();
+    if (this.shell.kind === 'desktop' && this.shell.setPopupPinned) {
+      this.pinned = (await this.shell.popupPinned?.().catch(() => false)) ?? false;
+      this.strip = document.createElement('div');
+      this.strip.id = 'strip';
+      this.root.before(this.strip);
+      this.drawStrip();
+    }
     if (this.shell.checkUpdate) {
       this.update.version = await this.shell.appVersion?.().catch(() => null) ?? null;
       setTimeout(() => void this.checkForUpdate(true), UPDATE_FIRST_CHECK_MS);
@@ -176,7 +187,8 @@ export class App {
     await this.render();
     await this.updateTray();
     if (!this.firstRun) { this.schedule(); void this.refresh(); }
-    if (this.shell.kind === 'desktop' && !this.firstRun && this.config.openOnLaunch !== false) void this.shell.showPopup?.();
+    // A panel pinned at the last exit comes back where it was, whatever Open at launch says.
+    if (this.shell.kind === 'desktop' && !this.firstRun && (this.config.openOnLaunch !== false || this.pinned)) void this.shell.showPopup?.();
     if (this.shell.kind === 'desktop') void this.checkAsk(false);
     if (this.shell.kind === 'desktop') { void this.checkAgentEdits(); setInterval(() => { void this.checkAgentEdits(); }, 30000); }
   }
@@ -496,7 +508,7 @@ export class App {
 
   private async sizePopup(): Promise<void> {
     if (this.shell.kind !== 'desktop') return;
-    const h = Math.ceil(this.root.getBoundingClientRect().height);
+    const h = Math.ceil(this.root.getBoundingClientRect().height + (this.strip?.getBoundingClientRect().height ?? 0));
     const w = this.twoColumns ? TWO_COL : ONE_COL;
     if (this.shell.setPopupSize) await this.shell.setPopupSize(w, h).catch(() => undefined);
     else await this.shell.setPopupHeight?.(h).catch(() => undefined);
@@ -670,7 +682,27 @@ export class App {
 
   // ------------------------------------------------------------------ events
 
+  private drawStrip(): void {
+    if (!this.strip) return;
+    this.strip.innerHTML = renderStrip({ pinned: this.pinned });
+    this.strip.classList.toggle('pinned', this.pinned);
+  }
+
+  private async togglePin(): Promise<void> {
+    const next = !this.pinned;
+    try { await this.shell.setPopupPinned?.(next); } catch { return; }
+    this.pinned = next;
+    this.drawStrip();
+  }
+
   private wireEvents(): void {
+    this.strip?.addEventListener('click', (e) => {
+      if ((e.target as HTMLElement).closest('[data-action="pin"]')) void this.togglePin();
+    });
+    // Only a press on the strip itself moves the window; its buttons keep their clicks. A second press of a double-click is ignored.
+    this.strip?.addEventListener('mousedown', (e) => {
+      if (this.pinned && e.button === 0 && e.detail === 1 && !(e.target as HTMLElement).closest('button')) void this.shell.startPopupDrag?.();
+    });
     this.root.addEventListener('click', (e) => void this.onClick(e));
     this.root.addEventListener('change', (e) => void this.onChange(e));
     this.root.addEventListener('input', (e) => {

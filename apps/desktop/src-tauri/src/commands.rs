@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     path::{Component, Path, PathBuf},
+    sync::atomic::Ordering,
     time::Duration,
 };
 
@@ -697,6 +698,48 @@ pub fn hide_popup(app: tauri::AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn show_popup(app: tauri::AppHandle) -> Result<(), String> {
     crate::show_popup(&app)
+}
+
+#[tauri::command]
+pub fn popup_pinned(state: tauri::State<'_, AppState>) -> bool {
+    state.pinned.load(Ordering::SeqCst)
+}
+
+/// Pins the popup where it is now, or unpins it so a click elsewhere hides it again.
+#[tauri::command]
+pub fn set_popup_pinned(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    pinned: bool,
+) -> Result<(), String> {
+    let window = app.get_webview_window("popup").ok_or("Popup unavailable")?;
+    let spot = if pinned {
+        let at = window.outer_position().map_err(|e| e.to_string())?;
+        Some((at.x, at.y))
+    } else {
+        None
+    };
+    *state.pin_pos.lock().map_err(|e| e.to_string())? = spot;
+    if spot.is_some() {
+        *state.placed_at.lock().map_err(|e| e.to_string())? = spot;
+    }
+    state.pinned.store(pinned, Ordering::SeqCst);
+    crate::save_pin(&app)
+}
+
+/// Starts moving the pinned popup with the mouse. Does nothing while it is not pinned.
+#[tauri::command]
+pub fn start_popup_drag(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    if !state.pinned.load(Ordering::SeqCst) {
+        return Ok(());
+    }
+    app.get_webview_window("popup")
+        .ok_or("Popup unavailable")?
+        .start_dragging()
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
