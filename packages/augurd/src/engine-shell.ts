@@ -10,24 +10,16 @@ import type { AlertFeed, AppConfig, EngineShell, Host, HttpRequest, HttpResponse
 import { claudeInstall, claudeRemove, claudeStatus, defaultClaudePaths, type ClaudePaths } from './claude-install.js';
 import { atomicWrite, readText, resolveHomePath } from './home-files.js';
 import { createKeyStore, runHelper, type KeyStore } from './keystore.js';
+import { appDirs } from './paths.js';
 import type { ViewHub } from './views.js';
 
 const execute = promisify(execFile);
-const APP_ID = 'com.neostryder.augur';
 const LATEST_URL = 'https://github.com/neostryder/augur/releases/latest/download/latest.json';
 const CLAUDE_KEYCHAIN_SERVICE = 'Claude Code-credentials';
 const BWS_TTL_MS = 10 * 60 * 1000;
 
 declare const __AUGUR_VERSION__: string | undefined;
 export const SERVICE_VERSION = typeof __AUGUR_VERSION__ === 'string' ? __AUGUR_VERSION__ : '0.0.0-dev';
-
-/** The window app's settings and data folders (Tauri's app_config_dir and app_data_dir for Augur). AUGUR_APP_DIR puts both in one folder. */
-export function appDirs(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform, home = homedir()): { config: string; data: string } {
-  if (env.AUGUR_APP_DIR) return { config: env.AUGUR_APP_DIR, data: env.AUGUR_APP_DIR };
-  if (platform === 'win32') { const d = join(env.APPDATA ?? join(home, 'AppData', 'Roaming'), APP_ID); return { config: d, data: d }; }
-  if (platform === 'darwin') { const d = join(home, 'Library', 'Application Support', APP_ID); return { config: d, data: d }; }
-  return { config: join(env.XDG_CONFIG_HOME ?? join(home, '.config'), APP_ID), data: join(env.XDG_DATA_HOME ?? join(home, '.local', 'share'), APP_ID) };
-}
 
 /** The push services a phone's browser hands out: Chrome and Android, Safari on iPhone and Mac, Firefox, and Edge. */
 export function isPushService(host: string): boolean {

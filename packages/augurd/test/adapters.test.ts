@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import type { IncomingHttpHeaders, Server } from 'node:http';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -228,6 +228,28 @@ describe('an API connector', () => {
       for (const text of files) expect(text).not.toContain('stored-key-value');
     } finally {
       try { execFileSync('cmdkey', [`/delete:${target}`], { windowsHide: true, stdio: 'ignore' }); } catch { /* nothing was stored */ }
+    }
+  });
+
+  it('reads a route\'s key from the user-only key file on any platform when the key store is the file', async () => {
+    const appDir = join(tmpdir(), `augur-keyfile-${process.pid}-${Math.floor(Math.random() * 1e9)}`), name = 'filed';
+    vi.stubEnv('AUGUR_APP_DIR', appDir);
+    vi.stubEnv('AUGUR_KEYSTORE', 'file');
+    try {
+      const m = await mock(() => ({ json: { choices: [{ message: { content: 'pong' } }], usage: { prompt_tokens: 5, completion_tokens: 1 } } }));
+      const e = setup({ adapters: ['openai-api'] }, { ...process.env });
+      e.writeRoutes({ [name]: { model: 'test/text', adapter: 'openai-api', options: { baseUrl: `${m.url}/v1`, model: 'cheap-1', keySource: 'store' } } });
+      expect(e.sup.submit({ ...textReq(name), cwd: e.root })).toMatchObject({ rejected: { reason: expect.stringContaining('No key is stored') } });
+      mkdirSync(appDir, { recursive: true });
+      writeFileSync(join(appDir, 'secrets.json'), JSON.stringify({ [routeSecretName(name)]: 'filed-key-value' }));
+      const id = submitOk(e.sup, { ...textReq(name), cwd: e.root });
+      expect(await terminal(e.sup, e.store, id)).toMatchObject({ state: 'completed' });
+      expect(m.seen[0]!.headers.authorization).toBe('Bearer filed-key-value');
+      const files = readdirSync(join(e.dir, 'jobs', id)).map(f => readFileSync(join(e.dir, 'jobs', id, f), 'utf8'));
+      for (const text of files) expect(text).not.toContain('filed-key-value');
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(appDir, { recursive: true, force: true });
     }
   });
 

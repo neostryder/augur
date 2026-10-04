@@ -1,29 +1,44 @@
 // One text request to an OpenAI-style or Anthropic-style HTTP API, run as a job by the API adapters. Plain node, erasable TypeScript only.
-// The prompt arrives on standard input. The key is read from the environment variable named by --key-env, or from the Windows credential store when
-// --key-target names a credential, and is never printed.
+// The prompt arrives on standard input. The key is read from the environment variable named by --key-env, or from the key store when --key-name
+// names a secret (the Windows credential store, the macOS keychain, the Secret Service, or the user-only file named by --key-file), and is never printed.
 // Standard output is one JSON object: { answer, usage }. A failure exits non-zero with a short message on standard error.
 
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const args = process.argv.slice(2);
 const opt = (name: string): string | undefined => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
-const shape = opt('--shape'), url = opt('--url'), model = opt('--model'), keyEnv = opt('--key-env'), keyTarget = opt('--key-target');
+const shape = opt('--shape'), url = opt('--url'), model = opt('--model'), keyEnv = opt('--key-env');
+// --key-target is the Windows credential name that jobs queued before --key-name carried; it is read the same way.
+const keyName = opt('--key-name') ?? opt('--key-target')?.replace(/\.augur$/, ''), keyFile = opt('--key-file'), fileOnly = args.includes('--key-file-only');
 const maxTokens = Number(opt('--max-tokens') ?? '4096'), timeoutS = Number(opt('--timeout-s') ?? '900');
-if (!shape || !url || !model || (!keyEnv && !keyTarget)) { console.error('missing --shape, --url, --model or --key-env'); process.exit(64); }
+if (!shape || !url || !model || (!keyEnv && !keyName)) { console.error('missing --shape, --url, --model or --key-env'); process.exit(64); }
 
-/** The credential reader sits beside this file in an install, and in native/bin in the source tree. */
-function storedKey(target: string): string | null {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const helper = [join(here, 'credread.exe'), join(here, '..', '..', 'native', 'bin', 'credread.exe')].find(existsSync);
-  if (!helper) return null;
-  try { return execFileSync(helper, [target], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }); } catch { return null; }
+const read = (command: string, argv: string[]): string | null => {
+  try { return execFileSync(command, argv, { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'], timeout: 15000 }); } catch { return null; }
+};
+
+function fromFile(name: string): string | null {
+  if (!keyFile || !existsSync(keyFile)) return null;
+  try { const v = (JSON.parse(readFileSync(keyFile, 'utf8')) as Record<string, unknown>)[name]; return typeof v === 'string' && v ? v : null; } catch { return null; }
 }
 
-const key = keyTarget ? storedKey(keyTarget) : process.env[keyEnv as string];
-if (!key) { console.error(keyTarget ? 'no key is stored for this route in the Windows credential store' : `environment variable ${keyEnv} is not set for this job`); process.exit(65); }
+/** The credential reader sits beside this file in an install, and in native/bin in the source tree. */
+function storedKey(name: string): string | null {
+  if (fileOnly) return fromFile(name);
+  if (process.platform === 'win32') {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const helper = [join(here, 'credread.exe'), join(here, '..', '..', 'native', 'bin', 'credread.exe')].find(existsSync);
+    return helper ? read(helper, [`${name}.augur`]) : null;
+  }
+  if (process.platform === 'darwin') return read('security', ['find-generic-password', '-s', 'augur', '-a', name, '-w'])?.replace(/\n$/, '') || null;
+  return read('secret-tool', ['lookup', 'service', 'augur', 'username', name]) || fromFile(name);
+}
+
+const key = keyName ? storedKey(keyName) : process.env[keyEnv as string];
+if (!key) { console.error(keyName ? 'no key is stored for this route in the key store' : `environment variable ${keyEnv} is not set for this job`); process.exit(65); }
 
 let promptText = '';
 process.stdin.setEncoding('utf8');

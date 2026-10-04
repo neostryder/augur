@@ -1,6 +1,7 @@
 import type { Adapter, AdapterCapabilities, ExtractInput, Extraction, JobRequest, LaunchPlan, PlanContext, RouteConfig, UsageReport } from '@augur/dispatch-protocol';
-import { credentialTarget, routeSecretName } from '@augur/dispatch-protocol';
+import { routeSecretName } from '@augur/dispatch-protocol';
 import { scriptPath } from '../paths.js';
+import { keyFileOnly, keyFilePath } from '../secrets.js';
 import { optNum, optStr } from './util.js';
 
 const SCRIPT = scriptPath(import.meta.url, 'api-call');
@@ -27,7 +28,9 @@ function make(id: string, shape: 'openai' | 'anthropic'): Adapter {
       if (request.tools !== 'read' || request.output !== 'text_only') throw new Error('an API route returns text only. Use tools read and output text_only.');
       const o = route.options;
       const args = [SCRIPT, '--shape', shape, '--url', optStr(o, 'baseUrl') as string, '--model', optStr(o, 'model') as string,
-        ...(optStr(o, 'keySource') === 'store' ? ['--key-target', credentialTarget(routeSecretName(request.route))] : ['--key-env', optStr(o, 'apiKeyEnv') as string]),
+        ...(optStr(o, 'keySource') === 'store'
+          ? ['--key-name', routeSecretName(request.route), '--key-file', keyFilePath(), ...(keyFileOnly() ? ['--key-file-only'] : [])]
+          : ['--key-env', optStr(o, 'apiKeyEnv') as string]),
         '--max-tokens', String(optNum(o, 'maxTokens') ?? 4096), '--timeout-s', String(optNum(o, 'timeoutS') ?? request.timeoutS ?? 900)];
       return { command: process.execPath, args, cwd: request.cwd, env: {}, stdin: ctx.prompt };
     },

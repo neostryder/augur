@@ -18,8 +18,8 @@ describe('the routes page', () => {
     expect(none).toContain('type="password"');
     expect(none).toContain('No key is saved yet.');
     expect(none).not.toContain('data-action="route-key-clear"');
-    const saved = renderRoutes(model({ sel: '+', draft: apiDraft({ keySource: 'store' }), keyStored: true, keyNote: 'The key is saved in the Windows credential store.' }));
-    expect(saved).toContain('A key is saved in the Windows credential store.');
+    const saved = renderRoutes(model({ sel: '+', draft: apiDraft({ keySource: 'store' }), keyStored: true, keyNote: "The key is saved in this computer's key store." }));
+    expect(saved).toMatch(/A key is saved in this computer(&#39;|')s key store\./);
     expect(saved).toContain('data-action="route-key-clear"');
     expect(/<input type="password"[^>]*>/.exec(saved)![0]).not.toContain('value=');
     expect(renderRoutes(model({ sel: '+', draft: apiDraft({ keySource: 'store' }), canTest: false }))).toContain('Keys are saved from the desktop app on Windows.');

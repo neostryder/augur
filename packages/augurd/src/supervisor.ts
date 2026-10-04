@@ -7,7 +7,7 @@ import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES } from '@augur/core';
 import type { PolicyFile } from '@augur/core';
 import { classifyTask, fitScores } from '@augur/decision';
 import type { DecisionBackend } from '@augur/decision';
-import { BUDGET_WINDOW_MS, NAMED_PROMPT_WINDOW, PICK_WINDOW_MIN, TOOL_TIERS, account, budgetStatus, calibrateRoutes, checkLineage, credentialTarget, routeSecretName, checkNamed, checkPick, evaluate, isTerminal, matchNamedModels, pressure, rank, usageFactors } from '@augur/dispatch-protocol';
+import { BUDGET_WINDOW_MS, NAMED_PROMPT_WINDOW, PICK_WINDOW_MIN, TOOL_TIERS, account, budgetStatus, calibrateRoutes, checkLineage, routeSecretName, checkNamed, checkPick, evaluate, isTerminal, matchNamedModels, pressure, rank, usageFactors } from '@augur/dispatch-protocol';
 import type { Adapter, BudgetStatus, JobRecord, JobRequest, LaunchPlan, PickAnswer, PickParams, RateCard, Rejection, RouteConfig, UsageSnapshot } from '@augur/dispatch-protocol';
 import { MAX_COMMAND_LINE } from './adapters/util.js';
 import type { ServiceConfig } from './config.js';
@@ -25,8 +25,6 @@ export interface SupervisorDeps {
   /** Where picks and their outcomes are recorded for training. */
   decisions?: DecisionLog;
   runnerPath?: string; now?: () => number; env?: NodeJS.ProcessEnv;
-  /** Says whether a credential is stored. Tests stand in for the Windows credential store. */
-  hasKey?: (target: string) => boolean;
   /** The owner's rate card, read when a budget is checked. */
   rates?: () => RateCard;
 }
@@ -62,7 +60,7 @@ export class Supervisor {
   // ------------------------------------------------------------------ submit
 
   /** Why a route cannot start a job right now, in the words a job would be refused with, or null when it can. */
-  /** Why a route cannot run, or null. `name` is the route's name in routes.json; a route whose key is kept in the credential store needs it to look the key up. */
+  /** Why a route cannot run, or null. `name` is the route's name in routes.json; a route whose key is kept in the key store needs it to look the key up. */
   routeProblem(route: RouteConfig, name?: string): string | null {
     const adapter = this.d.adapters.get(route.adapter);
     if (!adapter) return `Adapter ${route.adapter} is not enabled.`;
@@ -71,8 +69,7 @@ export class Supervisor {
 
   private keyProblem(route: RouteConfig, name?: string): string | null {
     if (route.options?.keySource !== 'store' || !name) return null;
-    if (process.platform !== 'win32') return 'A key kept in the credential store needs Windows.';
-    return (this.d.hasKey ?? hasStoredKey)(credentialTarget(routeSecretName(name))) ? null : 'No key is stored for this route. Add it on the Routes page.';
+    return hasStoredKey(routeSecretName(name)) ? null : 'No key is stored for this route. Add it on the Routes page.';
   }
 
   /** Rejections that may pass, or that another route can get around. Only these send a job to a fallback route. */

@@ -10,6 +10,16 @@ export function dataDir(env: NodeJS.ProcessEnv = process.env): string {
   return join(env.XDG_DATA_HOME ?? join(homedir(), '.local', 'share'), 'augur', 'dispatch');
 }
 
+const APP_ID = 'com.neostryder.augur';
+
+/** The window app's settings and data folders (Tauri's app_config_dir and app_data_dir for Augur). AUGUR_APP_DIR puts both in one folder. */
+export function appDirs(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform, home = homedir()): { config: string; data: string } {
+  if (env.AUGUR_APP_DIR) return { config: env.AUGUR_APP_DIR, data: env.AUGUR_APP_DIR };
+  if (platform === 'win32') { const d = join(env.APPDATA ?? join(home, 'AppData', 'Roaming'), APP_ID); return { config: d, data: d }; }
+  if (platform === 'darwin') { const d = join(home, 'Library', 'Application Support', APP_ID); return { config: d, data: d }; }
+  return { config: join(env.XDG_CONFIG_HOME ?? join(home, '.config'), APP_ID), data: join(env.XDG_DATA_HOME ?? join(home, '.local', 'share'), APP_ID) };
+}
+
 /** Augur's own folder, where usage.json and policy.json are written and where the user's routes live. */
 export function augurHome(env: NodeJS.ProcessEnv = process.env): string { return env.AUGUR_HOME ?? join(homedir(), '.augur'); }
 
