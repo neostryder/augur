@@ -48,7 +48,9 @@ fn desktop_config_path(home: &Path) -> PathBuf {
 
 fn bundled_mod(app: &tauri::AppHandle) -> Option<PathBuf> {
     let dir = app.path().resource_dir().ok()?.join("claude-mod");
-    dir.join(".claude-plugin/plugin.json").is_file().then_some(dir)
+    dir.join(".claude-plugin/plugin.json")
+        .is_file()
+        .then_some(dir)
 }
 
 fn mcp_command(app: &tauri::AppHandle) -> Option<PathBuf> {
@@ -61,7 +63,11 @@ fn mcp_command(app: &tauri::AppHandle) -> Option<PathBuf> {
 
 fn plugin_version(dir: &Path) -> Option<String> {
     let text = std::fs::read_to_string(dir.join(".claude-plugin/plugin.json")).ok()?;
-    serde_json::from_str::<Value>(&text).ok()?.get("version")?.as_str().map(str::to_owned)
+    serde_json::from_str::<Value>(&text)
+        .ok()?
+        .get("version")?
+        .as_str()
+        .map(str::to_owned)
 }
 
 /// Reads a JSON settings file. A missing file reads as an empty object; one that does not parse is an error, so it is never overwritten.
@@ -70,7 +76,10 @@ fn read_json(path: &Path) -> Result<Value, String> {
         Ok(text) if text.trim().is_empty() => Ok(json!({})),
         Ok(text) => match serde_json::from_str::<Value>(&text) {
             Ok(value) if value.is_object() => Ok(value),
-            _ => Err(format!("{} is not valid JSON, so Augur left it alone", path.display())),
+            _ => Err(format!(
+                "{} is not valid JSON, so Augur left it alone",
+                path.display()
+            )),
         },
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(json!({})),
         Err(e) => Err(e.to_string()),
@@ -89,7 +98,11 @@ fn write_json(path: &Path, value: &Value) -> Result<(), String> {
 }
 
 fn same_path(a: &str, b: &str) -> bool {
-    if cfg!(windows) { a.eq_ignore_ascii_case(b) } else { a == b }
+    if cfg!(windows) {
+        a.eq_ignore_ascii_case(b)
+    } else {
+        a == b
+    }
 }
 
 fn object<'a>(parent: &'a mut Value, key: &str) -> Option<&'a mut Map<String, Value>> {
@@ -99,9 +112,14 @@ fn object<'a>(parent: &'a mut Value, key: &str) -> Option<&'a mut Map<String, Va
 
 /// Adds `dir` to the plugin folder list in a settings.json value. Returns whether anything changed.
 fn add_plugin_dir(settings: &mut Value, dir: &str) -> bool {
-    let Some(env) = object(settings, "env") else { return false };
+    let Some(env) = object(settings, "env") else {
+        return false;
+    };
     let current = env.get(PLUGIN_DIRS).and_then(Value::as_str).unwrap_or("");
-    let mut dirs: Vec<&str> = current.split(LIST_SEP).filter(|d| !d.trim().is_empty()).collect();
+    let mut dirs: Vec<&str> = current
+        .split(LIST_SEP)
+        .filter(|d| !d.trim().is_empty())
+        .collect();
     if dirs.iter().any(|d| same_path(d.trim(), dir)) {
         return false;
     }
@@ -113,17 +131,31 @@ fn add_plugin_dir(settings: &mut Value, dir: &str) -> bool {
 
 /// Takes `dir` out of the plugin folder list, dropping the variable and the env block when they end up empty.
 fn remove_plugin_dir(settings: &mut Value, dir: &str) -> bool {
-    let Some(env) = settings.get_mut("env").and_then(Value::as_object_mut) else { return false };
-    let Some(current) = env.get(PLUGIN_DIRS).and_then(Value::as_str) else { return false };
-    let dirs: Vec<&str> = current.split(LIST_SEP).filter(|d| !d.trim().is_empty()).collect();
-    let kept: Vec<&str> = dirs.iter().copied().filter(|d| !same_path(d.trim(), dir)).collect();
+    let Some(env) = settings.get_mut("env").and_then(Value::as_object_mut) else {
+        return false;
+    };
+    let Some(current) = env.get(PLUGIN_DIRS).and_then(Value::as_str) else {
+        return false;
+    };
+    let dirs: Vec<&str> = current
+        .split(LIST_SEP)
+        .filter(|d| !d.trim().is_empty())
+        .collect();
+    let kept: Vec<&str> = dirs
+        .iter()
+        .copied()
+        .filter(|d| !same_path(d.trim(), dir))
+        .collect();
     if kept.len() == dirs.len() {
         return false;
     }
     if kept.is_empty() {
         env.remove(PLUGIN_DIRS);
     } else {
-        env.insert(PLUGIN_DIRS.into(), Value::String(kept.join(&LIST_SEP.to_string())));
+        env.insert(
+            PLUGIN_DIRS.into(),
+            Value::String(kept.join(&LIST_SEP.to_string())),
+        );
     }
     if env.is_empty() {
         settings.as_object_mut().map(|s| s.remove("env"));
@@ -139,7 +171,9 @@ fn has_plugin_dir(settings: &Value, dir: &str) -> bool {
 }
 
 fn set_mcp(config: &mut Value, command: &str) -> bool {
-    let Some(servers) = object(config, "mcpServers") else { return false };
+    let Some(servers) = object(config, "mcpServers") else {
+        return false;
+    };
     let entry = json!({ "command": command });
     if servers.get("augur") == Some(&entry) {
         return false;
@@ -182,7 +216,8 @@ fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
 pub fn claude_status(app: tauri::AppHandle) -> Result<ClaudeStatus, String> {
     let home = home_dir()?;
     let dir = mod_dir(&home);
-    let loaded = read_json(&settings_path(&home)).is_ok_and(|s| has_plugin_dir(&s, &dir.to_string_lossy()));
+    let loaded =
+        read_json(&settings_path(&home)).is_ok_and(|s| has_plugin_dir(&s, &dir.to_string_lossy()));
     let command = mcp_command(&app);
     let desktop = command.as_ref().is_some_and(|c| {
         read_json(&desktop_config_path(&home)).is_ok_and(|cfg| mcp_is(&cfg, &c.to_string_lossy()))
@@ -245,7 +280,9 @@ pub fn claude_desktop_install(app: tauri::AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub fn claude_desktop_remove(app: tauri::AppHandle) -> Result<(), String> {
-    let Some(command) = mcp_command(&app) else { return Ok(()) };
+    let Some(command) = mcp_command(&app) else {
+        return Ok(());
+    };
     let path = desktop_config_path(&home_dir()?);
     let mut config = read_json(&path)?;
     if remove_mcp(&mut config, &command.to_string_lossy()) {
@@ -268,7 +305,10 @@ mod tests {
         assert_eq!(settings["env"][PLUGIN_DIRS], format!("/a{SEP}/m"));
         assert!(has_plugin_dir(&settings, "/m"));
         assert!(remove_plugin_dir(&mut settings, "/m"));
-        assert_eq!(settings, json!({ "model": "opus", "env": { "OTHER": "1", PLUGIN_DIRS: "/a" } }));
+        assert_eq!(
+            settings,
+            json!({ "model": "opus", "env": { "OTHER": "1", PLUGIN_DIRS: "/a" } })
+        );
     }
 
     #[test]
@@ -284,7 +324,11 @@ mod tests {
     fn settings_keep_their_key_order() {
         let mut settings: Value = serde_json::from_str(r#"{"z": 1, "a": 2}"#).unwrap();
         add_plugin_dir(&mut settings, "/m");
-        assert!(serde_json::to_string(&settings).unwrap().starts_with(r#"{"z":1,"a":2,"env""#));
+        assert!(
+            serde_json::to_string(&settings)
+                .unwrap()
+                .starts_with(r#"{"z":1,"a":2,"env""#)
+        );
     }
 
     #[test]
@@ -293,7 +337,10 @@ mod tests {
         assert!(set_mcp(&mut config, "C:/augur/augur-mcp.cmd"));
         assert!(!set_mcp(&mut config, "C:/augur/augur-mcp.cmd"));
         assert!(remove_mcp(&mut config, "C:/augur/augur-mcp.cmd"));
-        assert_eq!(config, json!({ "mcpServers": { "other": { "command": "x" } } }));
+        assert_eq!(
+            config,
+            json!({ "mcpServers": { "other": { "command": "x" } } })
+        );
         let mut own = json!({ "mcpServers": { "augur": { "command": "my-own.cmd" } } });
         assert!(!remove_mcp(&mut own, "C:/augur/augur-mcp.cmd"));
     }
