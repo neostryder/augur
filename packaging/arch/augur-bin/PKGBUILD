@@ -15,7 +15,8 @@ options=('!strip' '!debug')
 noextract=("Augur_${pkgver}_amd64.deb" "LICENSE-${pkgver}")
 source=("Augur_${pkgver}_amd64.deb::${url}/releases/download/v${pkgver}/Augur_${pkgver}_amd64.deb"
         "LICENSE-${pkgver}::https://raw.githubusercontent.com/neostryder/augur/v${pkgver}/LICENSE")
-sha256sums=('SKIP' 'SKIP')
+sha256sums=('0f6c756db434746cf618863df2ff660efc75139dced5a258124232af8680a40a'
+            'ce1dd14135d1822bf50c38f91709f5ca866dc6ce5510eaa954b617a29de8718c')
 
 package() {
   bsdtar -xf "${srcdir}/Augur_${pkgver}_amd64.deb" -C "${srcdir}" data.tar.gz
