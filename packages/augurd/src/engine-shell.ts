@@ -190,10 +190,10 @@ export function createEngineShell(opts: EngineShellOptions): NodeEngineShell {
 }
 
 /** A desktop notice with no window app to show it: notify-send on Linux, Notification Center through osascript on macOS. Nothing on Windows. */
-export async function desktopNotice(title: string, body: string): Promise<void> {
-  if (process.platform === 'linux') await runHelper('notify-send', ['--app-name=Augur', title, body], undefined, 5000);
-  else if (process.platform === 'darwin') {
+export async function desktopNotice(title: string, body: string, platform: NodeJS.Platform = process.platform, run: typeof runHelper = runHelper): Promise<void> {
+  if (platform === 'linux') await run('notify-send', ['--app-name=Augur', title, body], undefined, 5000);
+  else if (platform === 'darwin') {
     const s = (t: string) => `"${t.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
-    await runHelper('osascript', ['-e', `display notification ${s(body)} with title ${s(title)}`], undefined, 5000);
+    await run('osascript', ['-e', `display notification ${s(body)} with title ${s(title)}`], undefined, 5000);
   }
 }

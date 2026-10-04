@@ -8,3 +8,4 @@ export * from './rules-bulk.js';
 export * from './dial-back.js';
 export * from './dispatch.js';
 export * from './routes-model.js';
+export * from './status.js';

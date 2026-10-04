@@ -6,7 +6,7 @@ import type { EngineApi, EngineKey } from '@augur/core';
 import { addPluginDir, claudeInstall, claudeRemove, claudeStatus, hasPluginDir, readJson, removeMcp, removePluginDir, setMcp, type ClaudePaths } from '../src/claude-install.js';
 import { call } from '../src/client.js';
 import { watchEngine } from '../src/client.js';
-import { isPushService } from '../src/engine-shell.js';
+import { desktopNotice, isPushService } from '../src/engine-shell.js';
 import { allowedPaths, homeRelative, resolveHomePath } from '../src/home-files.js';
 import { IpcServer } from '../src/ipc.js';
 import { checkSecretName, createKeyStore, fileStore, runHelper } from '../src/keystore.js';
@@ -101,6 +101,23 @@ describe('home files', () => {
   it('knows the push services a phone hands out and nothing else', () => {
     for (const ok of ['fcm.googleapis.com', 'web.push.apple.com', 'api.push.apple.com', 'updates.push.services.mozilla.com', 'wns2-by3p.notify.windows.com']) expect(isPushService(ok)).toBe(true);
     for (const bad of ['example.com', 'fcm.googleapis.com.evil.net', 'push.apple.com.evil.net']) expect(isPushService(bad)).toBe(false);
+  });
+});
+
+describe('the desktop notice', () => {
+  it('uses notify-send on Linux, with the text as separate arguments', async () => {
+    const { run, calls } = fakeRun(() => ({ code: 0 }));
+    await desktopNotice('Claude at 90%', 'Session "5h" is nearly used.', 'linux', run);
+    expect(calls).toEqual([{ command: 'notify-send', args: ['--app-name=Augur', 'Claude at 90%', 'Session "5h" is nearly used.'] }]);
+  });
+
+  it('uses osascript on macOS with quotes and backslashes escaped, and does nothing on Windows', async () => {
+    const { run, calls } = fakeRun(() => ({ code: 0 }));
+    await desktopNotice('T "x"', 'a\\b', 'darwin', run);
+    expect(calls[0]!.command).toBe('osascript');
+    expect(calls[0]!.args[1]).toBe('display notification "a\\\\b" with title "T \\"x\\""');
+    await desktopNotice('t', 'b', 'win32', run);
+    expect(calls).toHaveLength(1);
   });
 });
 

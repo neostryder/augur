@@ -4,10 +4,11 @@ import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES } from '@augur/core';
-import type { ActivityId, DataTier, OutputMode } from '@augur/core';
+import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES, feedFor } from '@augur/core';
+import type { ActivityId, DataTier, EngineState, OutputMode } from '@augur/core';
 import { EXIT_CODES, TOOL_TIERS, describeFigure, exitCodeForState, isTerminal } from '@augur/dispatch-protocol';
 import type { JobRecord, JobRequest, ToolTier } from '@augur/dispatch-protocol';
+import { STATUS_TEXT, statusLine } from '@augur/view-model';
 import { bridge, stdioBridge } from './bridge.js';
 import { ServiceError, call, configLines, dataDir, disableLogin, enableLogin, loginState, setConfigValue, startViaLogin } from '@augur/augurd';
 
@@ -27,6 +28,7 @@ augur run <route> --prompt-file <file|-> | --prompt <text> [options]
   --no-failover      keep the job on this route even if a fallback route could take it
   --wait             wait for the job and print its result
 augur jobs [--state <s>] [--root <id>] [--limit <n>]
+augur status                          one line: Claude's use, anything running hot, and the alert count (--waybar for a status bar's JSON)
 augur status <job>
 augur wait <job> [--timeout <s>]
 augur result <job>
@@ -38,6 +40,9 @@ augur pressure
 augur usage                             tokens and cost per route, each labelled reported, derived or imputed
 augur note-prompt --session <id>     tell the service a person sent the message on standard input; it keeps only the models named
 augur routes
+augur refresh                         read every provider's usage now
+augur alerts [dismiss <id>|--all]     list the alerts, or dismiss one or all of them
+augur claude status | install | remove <code|desktop>     add or take out Augur's part of Claude Code or Claude Desktop
 augur test <route> [--wait]          send a fixed one-word prompt through a route to check it works
 augur config [--json]                 the service's settings and what each is now
 augur config set <setting> <value>    change one; a running service needs augur service stop then start to read it
@@ -47,7 +52,7 @@ Every command takes --json. Exit codes: 0 completed, 1 usage, 2 rejected, 3 need
 
 interface Parsed { cmd: string[]; flags: Map<string, string | true> }
 function parse(argv: string[]): Parsed {
-  const cmd: string[] = [], flags = new Map<string, string | true>(), boolean = new Set(['json', 'wait', 'named', 'follow', 'stderr', 'help', 'if-idle', 'no-failover']);
+  const cmd: string[] = [], flags = new Map<string, string | true>(), boolean = new Set(['json', 'wait', 'named', 'follow', 'stderr', 'help', 'if-idle', 'no-failover', 'waybar', 'all']);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] as string;
     if (a === '-') { cmd.push(a); continue; }
@@ -87,6 +92,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
         say(list.map(describe).join('\n') || 'No jobs.', list); return 0;
       }
       case 'status': {
+        if (!rest[0]) return await statusCmd(p.flags.has('waybar'), io, opts, say);
         const j = await call('status', { id: need(rest[0], 'job id') }, opts);
         if (!j) { io.err('No such job.\n'); return EXIT_CODES.usage; }
         say(describe(j), j); return 0;
@@ -133,6 +139,9 @@ export async function main(argv: string[], io: Io): Promise<number> {
         const recent = jobs.length ? ['', 'Recent jobs', ...jobs] : [];
         say((rows.length ? [...rows, ...recent] : ['No jobs yet.']).join('\n'), r); return 0;
       }
+      case 'refresh': { await engineCall('refresh', [true], io, opts); say(STATUS_TEXT.refreshed, { ok: true }); return 0; }
+      case 'alerts': return await alertsCmd(rest, p.flags.has('all'), io, opts, say);
+      case 'claude': return await claudeCmd(rest, io, opts, say);
       case 'routes': { const r = await call('routes', undefined, opts); say(r.map(x => `${x.name.padEnd(14)} ${x.model.padEnd(16)} ${x.adapter}${x.problem ? `   cannot run: ${x.problem}` : ''}`).join('\n') || 'No routes.', r); return 0; }
       case 'test': return await testCmd(need(rest[0], 'route'), p, io, opts, say, json);
       case 'config': {
@@ -153,6 +162,61 @@ export async function main(argv: string[], io: Io): Promise<number> {
     if (e instanceof ServiceError) { io.err(`${e.message}\n`); return e.code === 'usage' ? EXIT_CODES.usage : EXIT_CODES.failed; }
     io.err(`${(e as Error).message}\n`); return EXIT_CODES.usage;
   }
+}
+
+type Say = (human: string, data: unknown) => void;
+
+/** Returns null when no service is running. It does not start one, because a status bar polls this. */
+async function engineState(opts: Opts): Promise<EngineState | null> {
+  try { return (await call('engine_state', undefined, opts)).state as EngineState; }
+  catch (e) { if (e instanceof ServiceError && (e.code === 'unreachable' || e.code === 'no_token')) return null; throw e; }
+}
+
+/** A command that changes the engine. The service is started first when it is not running. */
+async function engineCall(method: string, args: unknown[], io: Io, opts: Opts): Promise<unknown> {
+  const up = await call('ping', undefined, { ...opts, timeoutMs: 1000 }).then(() => true, () => false);
+  if (!up && !await launchService(io.env, opts)) throw new Error('The service did not start. See service.log in its data folder.');
+  return call('engine_call', { method, args }, opts);
+}
+
+async function statusCmd(waybar: boolean, io: Io, opts: Opts, say: Say): Promise<number> {
+  const s = await engineState(opts);
+  if (!s) {
+    if (waybar) { io.out(JSON.stringify({ text: 'Augur off', tooltip: STATUS_TEXT.noService, class: 'off' }) + '\n'); return 0; }
+    io.err(STATUS_TEXT.noService + '\n'); return EXIT_CODES.failed;
+  }
+  const line = statusLine(s.config, s.snapshot, feedFor(s.feed, 'augur'), Date.now());
+  if (waybar) io.out(JSON.stringify({ text: line.text, tooltip: line.tooltip, class: line.level }) + '\n');
+  else say(line.text, line);
+  return 0;
+}
+
+async function alertsCmd(rest: string[], all: boolean, io: Io, opts: Opts, say: Say): Promise<number> {
+  const s = await engineState(opts);
+  if (!s) { io.err(STATUS_TEXT.noService + '\n'); return EXIT_CODES.failed; }
+  const list = [...feedFor(s.feed, 'augur')].sort((a, b) => b.raisedAt.localeCompare(a.raisedAt));
+  if (rest[0] !== 'dismiss') {
+    say(list.map(a => `${a.id.padEnd(28)} ${a.severity.padEnd(5)} ${a.title}`).join('\n') || STATUS_TEXT.noAlerts, list); return 0;
+  }
+  const ids = all ? list.map(a => a.id) : list.filter(a => a.id === rest[1]).map(a => a.id);
+  if (!all) need(rest[1], 'alert id');
+  if (!ids.length) { io.err(STATUS_TEXT.dismissNone + '\n'); return EXIT_CODES.usage; }
+  await engineCall('dismiss', [ids], io, opts);
+  say(STATUS_TEXT.dismissed(ids.length), { dismissed: ids }); return 0;
+}
+
+async function claudeCmd(rest: string[], io: Io, opts: Opts, say: Say): Promise<number> {
+  const [action, target] = rest;
+  if (action === 'status') {
+    const c = (await engineState(opts))?.claude ?? null;
+    if (!c) { io.err(STATUS_TEXT.noService + '\n'); return EXIT_CODES.failed; }
+    say(`Claude Code: ${c.code ? `installed (version ${c.code})` : 'not installed'}\nClaude Desktop: ${c.desktopPossible ? (c.desktop ? 'installed' : 'not installed') : 'not found on this computer'}`, c); return 0;
+  }
+  if ((action !== 'install' && action !== 'remove') || (target !== 'code' && target !== 'desktop')) { io.err('Use augur claude status, or augur claude install|remove code|desktop.\n'); return EXIT_CODES.usage; }
+  await engineCall('setClaude', [target, action === 'install'], io, opts);
+  const s = await engineState(opts);
+  if (s?.claudeError) { io.err(s.claudeError + '\n'); return EXIT_CODES.failed; }
+  say(`Claude ${target === 'code' ? 'Code' : 'Desktop'}: ${action === 'install' ? 'installed' : 'removed'}.`, { target, installed: action === 'install' }); return 0;
 }
 
 function need(v: string | undefined, what: string): string { if (!v) throw new Error(`Missing ${what}.`); return v; }
@@ -296,7 +360,8 @@ async function restartService(io: Io, opts: Opts): Promise<string> {
     try { await call('ping', undefined, { ...opts, timeoutMs: 500 }); } catch { break; }
     await sleep(250);
   }
-  if (!await launchService(io.env, opts)) throw new Error('The service did not start again. See service.log in its data folder.');
+  const up = await call('ping', undefined, { ...opts, timeoutMs: 1000 }).then(() => true, () => false);
+  if (!up && !await launchService(io.env, opts)) throw new Error('The service did not start again. See service.log in its data folder.');
   return 'Restarted. Jobs that were running kept going.';
 }
 

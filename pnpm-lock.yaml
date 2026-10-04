@@ -323,6 +323,9 @@ importers:
       '@augur/tui':
         specifier: workspace:*
         version: link:../../apps/tui
+      '@augur/view-model':
+        specifier: workspace:*
+        version: link:../view-model
     devDependencies:
       '@types/node':
         specifier: 26.6.3
