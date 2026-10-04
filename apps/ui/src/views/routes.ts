@@ -42,7 +42,7 @@ const optionField = (spec: OptionSpec, value: string): string => {
 
 /** Write-only: the key goes to this computer's key store when saved and is never read back into the page. */
 function keyRow(m: RoutesModel): string {
-  if (!m.canTest) return '<div class="rnote">Keys are saved from the desktop app on Windows.</div>';
+  if (!m.canTest) return '<div class="rnote">Keys are saved from the desktop app.</div>';
   const state = m.keyStored === null ? 'Checking the key store.' : m.keyStored ? "A key is saved in this computer's key store. A new one replaces it, and the route file never holds it." : 'No key is saved yet.';
   return `<div class="row rtrow"><label for="rt-key"><span>Key</span><small>${esc(state)}</small></label>
     <div class="rtkey"><input type="password" id="rt-key" data-rt-key autocomplete="off" spellcheck="false" placeholder="${m.keyStored ? 'Enter a new key to replace it' : 'Paste the key'}">

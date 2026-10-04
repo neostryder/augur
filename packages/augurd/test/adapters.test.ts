@@ -94,7 +94,7 @@ describe('command lines', () => {
   it('grok: prompt from a file, JSON envelope, write approves all tools and read denies Edit and Bash', () => {
     const r = route('grok-exec', { model: 'grok-4.7', command: 'C:/g/grok.exe', effort: 'high' });
     const w = grokExec.plan(req({ tools: 'write' }), r, ctx('go', 'C:/jobs/j1'));
-    expect(w.args).toEqual(expect.arrayContaining(['--prompt-file', 'C:\\jobs\\j1\\prompt.md', '--output-format', 'json', '--always-approve', '--reasoning-effort', 'high']));
+    expect(w.args).toEqual(expect.arrayContaining(['--prompt-file', join('C:/jobs/j1', 'prompt.md'), '--output-format', 'json', '--always-approve', '--reasoning-effort', 'high']));
     expect(w.files).toEqual([{ name: 'prompt.md', content: 'go' }]);
     const rd = grokExec.plan(req({ tools: 'read' }), r, ctx('go'));
     expect(rd.args).toEqual(expect.arrayContaining(['--allow', 'Read', '--deny', 'Edit']));

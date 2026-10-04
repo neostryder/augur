@@ -118,7 +118,7 @@ export function createTauriShell(): Shell {
     popupPinned: () => invoke<boolean>('popup_pinned'),
     setPopupPinned: (pinned: boolean) => invoke<void>('set_popup_pinned', { pinned }),
     startPopupDrag: () => invoke<void>('start_popup_drag'),
-    ...(platform() === 'windows' ? { dispatch: (args: string[]) => invoke<{ code: number; stdout: string; stderr: string }>('dispatch_cli', { args }) } : {}),
+    dispatch: (args: string[]) => invoke<{ code: number; stdout: string; stderr: string }>('dispatch_cli', { args }),
     getAutostart: () => isEnabled(),
     setAutostart: (on: boolean) => on ? enable() : disable(),
     claudeStatus: () => invoke<ClaudeStatus>('claude_status'),

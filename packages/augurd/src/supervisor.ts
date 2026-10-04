@@ -27,6 +27,16 @@ export interface SupervisorDeps {
   runnerPath?: string; now?: () => number; env?: NodeJS.ProcessEnv;
   /** The owner's rate card, read when a budget is checked. */
   rates?: () => RateCard;
+  /** Whether each job runs in its own systemd user scope. Defaults to asking systemd once; tests stand in for it. */
+  scopes?: () => boolean;
+}
+
+let scopeProbe: boolean | undefined;
+/** Whether systemd can give a job its own user scope here, so cancelling it also ends processes that left its process group. Asked once. */
+export function systemdScopes(): boolean {
+  scopeProbe ??= process.platform === 'linux'
+    && spawnSync('systemd-run', ['--user', '--scope', '--quiet', '--collect', 'true'], { stdio: 'ignore', timeout: 10000 }).status === 0;
+  return scopeProbe;
 }
 
 export type SubmitResult = { id: string; warnings: string[] } | { rejected: Rejection };
@@ -42,7 +52,7 @@ const GIT = ['-c', 'core.autocrlf=false', '-c', 'core.safecrlf=false'];
 
 interface RunnerResult { exitCode: number | null; signal?: string | null; killedBy: 'cancel' | 'timeout' | null; endedAt: number; spawnError?: string }
 interface JobFile { command: string; args: string[]; cwd: string; stdin: 'prompt' | 'none'; timeoutS: number | null; jobhost: string | null; env: Record<string, string>;
-  files: NonNullable<LaunchPlan['files']>; promptArgs: number[]; redact: boolean }
+  files: NonNullable<LaunchPlan['files']>; promptArgs: number[]; redact: boolean; scope?: string | null }
 
 export class Supervisor {
   private adopted = new Set<string>();
@@ -154,7 +164,8 @@ export class Supervisor {
     }
     mkdirSync(dir, { recursive: true });
     const file: JobFile = { command: plan.command, args: plan.args, cwd: plan.cwd, stdin: plan.stdin === null ? 'none' : 'prompt', timeoutS: req.timeoutS ?? null,
-      jobhost: this.d.config.jobhostPath, env: plan.env, files: plan.files ?? [], promptArgs: plan.promptArgs ?? [], redact: !this.d.config.persistPrompts };
+      jobhost: this.d.config.jobhostPath, env: plan.env, files: plan.files ?? [], promptArgs: plan.promptArgs ?? [], redact: !this.d.config.persistPrompts,
+      scope: (this.d.scopes ?? systemdScopes)() ? `augur-job-${id}` : null };
     writeFileSync(join(dir, 'job.json'), JSON.stringify(file));
     if (plan.stdin !== null) writeFileSync(join(dir, 'prompt.in'), plan.stdin);
     if (this.d.config.persistPrompts) writeFileSync(join(dir, 'prompt.txt'), prompt);
@@ -347,6 +358,9 @@ export class Supervisor {
     if (!gone) return;
     const child = state?.childPid ?? inner.childPid, orphan = alive(child);
     if (orphan) this.killTree(child as number);
+    // A scope can hold processes that outlived the child, so it is stopped whether or not the child is still there.
+    const scope = readJson<JobFile>(join(dir, 'job.json'))?.scope;
+    if (scope) spawnSync('systemctl', ['--user', 'kill', '--signal=SIGKILL', `${scope}.scope`], { stdio: 'ignore', timeout: 10000 });
     store.transition(rec.id, rec.state === 'cancel_requested' ? 'cancelled' : 'lost', { reason: `runner gone, child ${orphan ? 'orphaned and killed' : 'not running'}` }, this.now());
     this.collectPatch(rec);
     this.cleanup(rec.id);

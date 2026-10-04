@@ -12,6 +12,7 @@ import { enabledAdapters } from '../src/adapters/index.js';
 import { policySource, routeSource, usageSource } from '../src/sources.js';
 import { Store } from '../src/store.js';
 import { Supervisor } from '../src/supervisor.js';
+import type { SupervisorDeps } from '../src/supervisor.js';
 
 export const FAKE = fileURLToPath(new URL('./fixtures/fake-harness.mjs', import.meta.url));
 export const JOBHOST = fileURLToPath(new URL('../native/bin/jobhost.exe', import.meta.url));
@@ -44,14 +45,14 @@ export const ROUTES = {
   ghost: { model: 'test/none', adapter: 'codex-exec', options: nodeRoute() },
 };
 
-export function makeEnv(over: Partial<ServiceConfig> = {}, env: NodeJS.ProcessEnv = { ...process.env }): Env {
+export function makeEnv(over: Partial<ServiceConfig> = {}, env: NodeJS.ProcessEnv = { ...process.env }, deps: Pick<SupervisorDeps, 'scopes'> = {}): Env {
   const root = mkdtempSync(join(tmpdir(), 'augurd-')), dir = join(root, 'data'), home = join(root, 'home');
   mkdirSync(dir, { recursive: true }); mkdirSync(join(home, 'dispatch'), { recursive: true });
   const routesPath = join(home, 'dispatch', 'routes.json');
   const config: ServiceConfig = { ...DEFAULT_CONFIG, requirePick: false, verifyNamed: 'record', adapters: ['codex-exec', 'exec'], jobhostPath: existsSync(JOBHOST) ? JOBHOST : null, ...over };
   const store = new Store(dir), policy = policySource(join(home, 'policy.json')), usage = usageSource(join(home, 'usage.json')), routes = routeSource(routesPath);
   const stores: Store[] = [store];
-  const build = (st: Store, cfg: ServiceConfig, e: NodeJS.ProcessEnv) => new Supervisor({ store: st, config: cfg, dir, adapters: enabledAdapters(cfg.adapters), routes: () => routes.read(), policy: () => policy.read(), usage: () => usage.read(), env: e });
+  const build = (st: Store, cfg: ServiceConfig, e: NodeJS.ProcessEnv) => new Supervisor({ store: st, config: cfg, dir, adapters: enabledAdapters(cfg.adapters), routes: () => routes.read(), policy: () => policy.read(), usage: () => usage.read(), env: e, ...deps });
   const e: Env = {
     root, dir, home, store, config, routesPath, sup: build(store, config, env),
     writePolicy(confirm = true) {
@@ -69,13 +70,19 @@ export function makeEnv(over: Partial<ServiceConfig> = {}, env: NodeJS.ProcessEn
 }
 
 /** Ends any process whose command line names the test folder or a marker, so a failed test leaves nothing behind. */
+/** Processes whose command line carries the marker: from Win32_Process on Windows, from ps elsewhere. */
+function pidsWith(marker: string): number[] {
+  if (process.platform === 'win32') {
+    const r = spawnSync('pwsh', ['-NoProfile', '-Command', `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*${marker.replace(/'/g, "''")}*' -and $_.Name -notmatch 'pwsh' } | ForEach-Object { $_.ProcessId }`], { encoding: 'utf8', windowsHide: true });
+    return (r.stdout ?? '').split(/\s+/).filter(Boolean).map(Number);
+  }
+  const r = spawnSync('ps', ['-A', '-o', 'pid=', '-o', 'command='], { encoding: 'utf8' });
+  return (r.stdout ?? '').split('\n').filter(l => l.includes(marker)).map(l => Number(l.trim().split(/\s+/)[0])).filter(pid => pid && pid !== process.pid);
+}
 export function killEverything(marker: string): void {
-  spawnSync('pwsh', ['-NoProfile', '-Command', `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*${marker.replace(/'/g, "''")}*' -and $_.Name -notmatch 'pwsh' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`], { windowsHide: true });
+  for (const pid of pidsWith(marker)) { try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ } }
 }
-export function processesWith(marker: string): number {
-  const r = spawnSync('pwsh', ['-NoProfile', '-Command', `(Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*${marker}*' -and $_.Name -notmatch 'pwsh' } | Measure-Object).Count`], { encoding: 'utf8', windowsHide: true });
-  return Number(r.stdout.trim());
-}
+export const processesWith = (marker: string): number => pidsWith(marker).length;
 
 export const request = (over: Partial<JobRequest> & { text?: string } = {}, cwd = tmpdir()): JobRequest => {
   const { text, ...rest } = over;

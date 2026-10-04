@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { JOBHOST, killEverything, makeEnv, processesWith, request, sleep, submitOk, terminal, until } from './harness.js';
 import type { Env } from './harness.js';
+import { systemdScopes } from '../src/supervisor.js';
 
 vi.setConfig({ testTimeout: 90000 });
 const envs: Env[] = [];
@@ -186,7 +187,8 @@ describe('the service goes away and comes back', () => {
     const id = submitOk(e.sup, request({ text: `GRANDCHILD ${marker}\nHANG`, cwd: e.root }));
     await until(e.sup, () => processesWith(marker) > 0 && e.store.internal(id)?.childPid);
     const runner = e.store.internal(id)!.runnerPid!;
-    spawnSync('taskkill', ['/PID', String(runner), '/F'], { windowsHide: true });
+    if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(runner), '/F'], { windowsHide: true });
+    else process.kill(runner, 'SIGKILL');
     const job = await terminal(e.sup, e.store, id);
     expect(job.state).toBe('lost');
     await sleep(1000);
@@ -218,7 +220,8 @@ describe('a job that starts jobs', () => {
   });
 });
 
-describe.skipIf(!existsSync(JOBHOST))('with the Job Object launcher', () => {
+// A descendant that leaves the job's process group is still ended by the Windows job host or a systemd scope. A bare process group cannot hold it.
+describe.runIf(process.platform === 'win32' ? existsSync(JOBHOST) : systemdScopes())('with the job host or a systemd scope', () => {
   it('ends a descendant that detached from the job', async () => {
     const e = setup();
     const marker = `escape-marker-${Date.now()}`;
@@ -260,6 +263,18 @@ describe('what a job may read and where it runs', () => {
   it.runIf(process.platform === 'win32')('does not start a job on Windows without the job host', () => {
     const e = setup({ jobhostPath: null });
     expect(e.sup.submit(request({ cwd: e.root }))).toMatchObject({ rejected: { code: 'adapter_unavailable' } });
+  });
+
+  it('names a systemd scope for each job where systemd can give one, and none where it cannot', async () => {
+    const jobFile = (e: Env, id: string) => JSON.parse(readFileSync(join(e.dir, 'jobs', id, 'job.json'), 'utf8')) as { scope: string | null };
+    const scoped = setup({}, undefined, { scopes: () => true }), plain = setup({}, undefined, { scopes: () => false });
+    const a = submitOk(scoped.sup, request({ cwd: scoped.root })), b = submitOk(plain.sup, request({ cwd: plain.root }));
+    expect(jobFile(scoped, a).scope).toBe(`augur-job-${a}`);
+    expect(jobFile(plain, b).scope).toBeNull();
+    // Windows contains jobs with the job host and ignores the scope.
+    const done = await terminal(scoped.sup, scoped.store, a);
+    if (process.platform === 'win32') expect(done.state).toBe('completed');
+    expect((await terminal(plain.sup, plain.store, b)).state).toBe('completed');
   });
 });
 

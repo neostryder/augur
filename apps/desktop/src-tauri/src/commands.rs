@@ -463,7 +463,6 @@ fn dispatch_args_allowed(args: &[String]) -> bool {
     }
 }
 
-#[cfg(windows)]
 #[tauri::command]
 pub async fn dispatch_cli(
     app: tauri::AppHandle,
@@ -477,13 +476,17 @@ pub async fn dispatch_cli(
         .or_else(|| app.path().resource_dir().ok().map(|d| d.join("service")))
         .filter(|d| d.join("augur.mjs").is_file())
         .ok_or_else(|| "The dispatch service is not installed with this build".to_owned())?;
-    let mut process = tokio::process::Command::new(dir.join("augur-node.exe"));
+    let node = if cfg!(windows) { "augur-node.exe" } else { "augur-node" };
+    let mut process = tokio::process::Command::new(dir.join(node));
     process
         .arg(dir.join("augur.mjs"))
         .args(args)
         .current_dir(&dir)
         .kill_on_drop(true);
-    process.creation_flags(0x0800_0000);
+    #[cfg(windows)]
+    {
+        process.creation_flags(0x0800_0000);
+    }
     let output = tokio::time::timeout(Duration::from_secs(20), process.output())
         .await
         .map_err(|_| "Command timed out".to_owned())?
@@ -493,15 +496,6 @@ pub async fn dispatch_cli(
         stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
     })
-}
-
-#[cfg(not(windows))]
-#[tauri::command]
-pub async fn dispatch_cli(
-    _app: tauri::AppHandle,
-    _args: Vec<String>,
-) -> Result<CommandOutput, String> {
-    Err("Dispatch runs on Windows only in this release".into())
 }
 
 fn keyring_entry(service: &str, account: &str) -> Result<keyring::Entry, String> {

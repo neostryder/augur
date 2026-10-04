@@ -22,7 +22,7 @@ describe('the routes page', () => {
     expect(saved).toMatch(/A key is saved in this computer(&#39;|')s key store\./);
     expect(saved).toContain('data-action="route-key-clear"');
     expect(/<input type="password"[^>]*>/.exec(saved)![0]).not.toContain('value=');
-    expect(renderRoutes(model({ sel: '+', draft: apiDraft({ keySource: 'store' }), canTest: false }))).toContain('Keys are saved from the desktop app on Windows.');
+    expect(renderRoutes(model({ sel: '+', draft: apiDraft({ keySource: 'store' }), canTest: false }))).toContain('Keys are saved from the desktop app.');
   });
 
   it('draws the budget and fallback fields with the values the route has', () => {
