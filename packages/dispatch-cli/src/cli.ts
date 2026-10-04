@@ -13,7 +13,8 @@ import { ServiceError, call, configLines, dataDir, disableLogin, enableLogin, lo
 
 export interface Io { out(text: string): void; err(text: string): void; stdin(): string; env: NodeJS.ProcessEnv; cwd: string; /** A person is at the terminal: input and output are both attached to it. */ interactive?: boolean }
 
-const HELP = `augur run <route> --prompt-file <file|-> | --prompt <text> [options]
+const HELP = `augur                   at a terminal, opens the full-screen app
+augur run <route> --prompt-file <file|-> | --prompt <text> [options]
   --activity <a>     required. One of: ${ACTIVITIES.join(', ')}
   --data <tier>      required. ${DATA_TIERS.join(' | ')}
   --tools <t>        ${TOOL_TIERS.join(' | ')} (default read)
@@ -70,6 +71,12 @@ export async function main(argv: string[], io: Io): Promise<number> {
   const opt = (n: string) => { const v = p.flags.get(n); return typeof v === 'string' ? v : undefined; };
   const say = (human: string, data: unknown) => io.out(json ? JSON.stringify(data) + '\n' : human + '\n');
   const opts = { dir: dataDir(io.env), ...(io.env.AUGURD_PIPE ? { pipe: io.env.AUGURD_PIPE } : {}) };
+  // With no command at a terminal, `augur` opens the full-screen app; piped or scripted, it prints the help.
+  if (!cmd && !p.flags.size && io.interactive) {
+    const { runTui } = await import('@augur/tui');
+    await runTui({ launch: () => launchService(io.env, opts), opts });
+    return EXIT_CODES.completed;
+  }
   if (!cmd || p.flags.has('help')) { io.out(HELP + '\n'); return cmd ? EXIT_CODES.completed : EXIT_CODES.usage; }
 
   try {

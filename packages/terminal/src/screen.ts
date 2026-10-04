@@ -22,6 +22,12 @@ export interface Glyphs {
   lowerHalf: string;
   fullBlock: string;
   separator: string;
+  /** Blocks from one eighth to a full cell high, for column charts and sparklines. */
+  levels: readonly string[];
+  dot: string;
+  /** A thin mark drawn over an empty bar, such as where an even pace would be. */
+  tick: string;
+  check: string;
 }
 
 export const UNICODE: Glyphs = {
@@ -45,6 +51,10 @@ export const UNICODE: Glyphs = {
   lowerHalf: '▄',
   fullBlock: '█',
   separator: '│',
+  levels: ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'],
+  dot: '●',
+  tick: '┊',
+  check: '✓',
 };
 
 export const ASCII: Glyphs = {
@@ -63,6 +73,10 @@ export const ASCII: Glyphs = {
   lowerHalf: ',',
   fullBlock: '#',
   separator: '|',
+  levels: ['_', '_', '.', '-', '-', '=', '#', '#'],
+  dot: '*',
+  tick: ':',
+  check: 'x',
 };
 
 /** UTF-8 glyphs unless the locale says the terminal is not UTF-8. Windows terminals take UTF-8 from Node either way. */

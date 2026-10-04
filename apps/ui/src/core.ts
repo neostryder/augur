@@ -1,8 +1,8 @@
 // The one place the UI touches the core package, so a renamed export is a one-line fix.
 import {
-  appendHistoryRows, calculatePace, collectFor, defaultConfig as coreDefault, dueFor, migrateConfig as coreMigrate, usageAlerts,
+  appendHistoryRows, collectFor, defaultConfig as coreDefault, dueFor, migrateConfig as coreMigrate, usageAlerts,
 } from '@augur/core';
-import type { AppConfig, HistoryRow as CoreRow, Host, Meter, PaceResult, Snapshot, UsageAlert } from '@augur/core';
+import type { AppConfig, HistoryRow as CoreRow, Host, PaceResult, Snapshot, UsageAlert } from '@augur/core';
 
 export type HistoryRow = CoreRow;
 export type Pace = PaceResult;
@@ -28,20 +28,7 @@ export function appendHistory(rows: HistoryRow[], snap: Snapshot): HistoryRow[] 
   return appendHistoryRows(rows, snap);
 }
 
-export function series(rows: HistoryRow[], providerId: string, meterId: string): Array<[number, number]> {
-  const out: Array<[number, number]> = [];
-  for (const r of rows) {
-    const p = r[providerId];
-    const v = typeof p === 'object' ? p[meterId] : undefined;
-    if (typeof v === 'number') out.push([new Date(r.t).getTime(), v]);
-  }
-  return out;
-}
-
-export function pace(meter: Meter, rows: HistoryRow[], providerId: string): Pace | null {
-  if (meter.usedPct == null || !meter.resetsAt || !meter.windowSeconds) return null;
-  try { return calculatePace(meter, rows, providerId, new Date()); } catch { return null; }
-}
+export { pace, series } from '@augur/view-model';
 
 export function evaluateAlerts(snap: Snapshot, rows: HistoryRow[], config: AppConfig, state: Record<string, unknown>): { alerts: Alert[]; firedState: Record<string, unknown> } {
   return usageAlerts(snap, rows, config, state);

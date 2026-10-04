@@ -1,6 +1,7 @@
 import type { AppConfig, Meter, ProviderPlugin, ProviderSnapshot, Snapshot } from '@augur/core';
 import type { UpdateState } from '../app';
-import { pace, series, type HistoryRow } from '../core';
+import { series, type HistoryRow } from '../core';
+import { USAGE_TEXT, errorText, notesParts, paceInfo, statusLabel, tightest as tightestMeter, windowed } from '@augur/view-model';
 import { ICON, ago, esc, money, sevOf, until, when } from '../util';
 import { chart } from './chart';
 import { pendingCount } from './rules';
@@ -23,7 +24,7 @@ export interface DashboardModel {
   canDispatch?: boolean;
 }
 
-const WINDOWED = (m: Meter) => m.windowKind !== 'credits' && m.usedPct != null;
+const WINDOWED = windowed;
 
 export function colorOf(model: DashboardModel, pid: string): string {
   const custom = (model.config.providers.find((p) => p.id === pid)?.settings?.color as string | undefined) || '';
@@ -33,17 +34,7 @@ export function colorOf(model: DashboardModel, pid: string): string {
 }
 
 export function tightest(model: DashboardModel): { p: ProviderSnapshot; m: Meter } | null {
-  let best: { p: ProviderSnapshot; m: Meter } | null = null;
-  for (const pc of model.config.providers) {
-    const p = model.snapshot?.providers[pc.id];
-    if (!pc.enabled || !p) continue;
-    const hidden = model.config.layout.hiddenMeters[pc.id] ?? [];
-    for (const m of p.meters) {
-      if (!WINDOWED(m) || hidden.includes(m.id)) continue;
-      if (!best || m.usedPct! > best.m.usedPct!) best = { p, m };
-    }
-  }
-  return best;
+  return tightestMeter(model.config, model.snapshot);
 }
 
 /** Shown while any model waits for its rules to be confirmed, since routers skip it until then. */
@@ -67,24 +58,10 @@ function spark(rows: HistoryRow[], pid: string, m: Meter): string {
     <circle cx="${X(lt).toFixed(1)}" cy="${Y(lv).toFixed(1)}" r="2.2" fill="var(--accent)"/></svg>`;
 }
 
-function paceText(model: DashboardModel, pid: string, m: Meter): { text: string; bad: boolean; elapsedPct: number | null } {
-  const p = pace(m, model.history, pid);
-  let elapsedPct: number | null = null;
-  if (m.resetsAt && m.windowSeconds) {
-    const left = (new Date(m.resetsAt).getTime() - Date.now()) / 1000;
-    elapsedPct = Math.min(100, Math.max(0, 100 * (1 - left / m.windowSeconds)));
-  }
-  if (!p || p.burnRatio == null) return { text: '', bad: false, elapsedPct };
-  if (p.willExhaustBeforeReset && p.projectedExhaustAt) {
-    return { text: `Runs out around ${when(p.projectedExhaustAt)}`, bad: true, elapsedPct };
-  }
-  return { text: p.burnRatio >= 1 ? 'On pace' : 'Ahead of pace', bad: p.burnRatio < 1 && (m.usedPct ?? 0) > 50, elapsedPct };
-}
-
 function meterHtml(model: DashboardModel, pid: string, m: Meter): string {
   const pct = m.usedPct;
   const sev = pct == null ? '' : sevOf(pct);
-  const pc = paceText(model, pid, m);
+  const pc = paceInfo(m, model.history, pid);
   const foot = [until(m.resetsAt), m.detail ?? ''].filter(Boolean).map(esc).join(' &middot; ');
   const key = `${pid}|${m.id}`;
   const open = model.expanded === key;
@@ -98,11 +75,9 @@ function meterHtml(model: DashboardModel, pid: string, m: Meter): string {
 }
 
 function statusBadge(p: ProviderSnapshot): string {
-  const s = p.status;
-  if (!s || s.indicator === 'none' || s.indicator === 'unknown') return '';
-  const icon = s.indicator === 'minor' || s.indicator === 'maintenance' ? ICON.warn : ICON.crit;
-  const label = s.indicator === 'maintenance' ? 'Maintenance' : s.indicator === 'minor' ? 'Degraded' : 'Outage';
-  return `<span class="status ${esc(s.indicator)}" title="${esc(s.description ?? label)}">${icon}${label}</span>`;
+  const s = statusLabel(p);
+  if (!s) return '';
+  return `<span class="status ${esc(p.status!.indicator)}" title="${esc(s.description)}">${s.severe ? ICON.crit : ICON.warn}${s.label}</span>`;
 }
 
 function cardHtml(model: DashboardModel, pid: string): string {
@@ -122,9 +97,9 @@ function cardHtml(model: DashboardModel, pid: string): string {
     }
     const notes = notesLine(p);
     if (notes) body += `<div class="notes">${notes}</div>`;
-    if (p.error) body += `<div class="err">${ICON.warn}<span>${p.stale && p.fetchedAt ? `Refresh failed: ${esc(p.error)} Showing the figures from ${esc(ago(p.fetchedAt))}.` : esc(p.error)}</span></div>`;
+    if (p.error) body += `<div class="err">${ICON.warn}<span>${esc(errorText(p, ago))}</span></div>`;
   } else {
-    body = `<div class="notes">Waiting for the first refresh.</div>`;
+    body = `<div class="notes">${USAGE_TEXT.waiting}</div>`;
   }
   return `<section class="card${collapsed ? ' collapsed' : ''}" data-pid="${esc(pid)}">
     <h2><span class="handle" id="handle-${esc(pid)}" role="button" tabindex="0" title="Drag to reorder, or press Alt with the Up or Down arrow" aria-label="Reorder ${esc(name)}. Press Alt with the Up or Down arrow to move it.">${ICON.grip}</span>
@@ -137,26 +112,7 @@ function cardHtml(model: DashboardModel, pid: string): string {
 }
 
 function notesLine(p: ProviderSnapshot): string {
-  const n = (p.notes ?? {}) as Record<string, any>;
-  const out: string[] = [];
-  if (typeof n.resets_available === 'number' || typeof n.resetsAvailable === 'number') {
-    const k = n.resetsAvailable ?? n.resets_available;
-    const ends = typeof n.resetsEndsAt === 'string' ? new Date(n.resetsEndsAt).toLocaleDateString([], { month: 'short', day: 'numeric' }) : '';
-    out.push(`${k} limit reset${k === 1 ? '' : 's'} available${ends ? `, the first ends ${ends}` : ''}`);
-  }
-  const ku = n.keyUsage ?? n.key_usage;
-  if (ku) out.push(`This key: ${money(ku.day)} today, ${money(ku.week)} this week, ${money(ku.month)} this month`);
-  const top = n.topEndpoints ?? n.top_endpoints;
-  if (Array.isArray(top) && top.length) out.push('Top: ' + top.slice(0, 3).map((e: any) => `${e.endpoint} ${money(Number(e.cost))}`).join(', '));
-  if (n.lastWeek) out.push(`${Number(n.lastWeek.requests).toLocaleString()} requests, ${(Number(n.lastWeek.tokens) / 1e6).toFixed(1)}M tokens in 7 days`);
-  if (typeof n.refill === 'string') out.push(n.refill);
-  if (n.signInNeeded) out.push('Sign in to the TypeSafe console in settings to see your balance');
-  if (n.resetsSignIn) out.push('Claude resets are not counted yet. Sign in to claude.ai in settings.');
-  if (n.resetsChallenge) out.push('claude.ai is showing a Cloudflare check. Open it from settings and pass it so your resets can be read.');
-  if (n.cloudflareCheck) out.push('Open the TypeSafe console in settings and pass the Cloudflare check to show your balance');
-  if (n.balanceMissing) out.push('The TypeSafe billing page opened but showed no credit balance');
-  if (typeof n.latencyMs === 'number') out.push(`Answered in ${Math.round(n.latencyMs)} ms${n.model ? `, ${n.model}` : ''}`);
-  return out.map(esc).join(' &middot; ');
+  return notesParts(p).map(esc).join(' &middot; ');
 }
 
 /** Only the desktop shell can check for updates, so the phone never shows this. Hovering lists the changes from updateTip, and a click installs with no confirmation step. */

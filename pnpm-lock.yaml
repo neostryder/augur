@@ -188,6 +188,34 @@ importers:
         specifier: ^4.141.0
         version: 4.141.0(@cloudflare/workers-types@5.20260927.1)(@types/node@26.6.3)
 
+  apps/tui:
+    dependencies:
+      '@augur/augurd':
+        specifier: workspace:*
+        version: link:../../packages/augurd
+      '@augur/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@augur/dispatch-protocol':
+        specifier: workspace:*
+        version: link:../../packages/dispatch-protocol
+      '@augur/terminal':
+        specifier: workspace:*
+        version: link:../../packages/terminal
+      '@augur/view-model':
+        specifier: workspace:*
+        version: link:../../packages/view-model
+    devDependencies:
+      '@types/node':
+        specifier: 26.6.3
+        version: 26.6.3
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 5.0.2
+        version: 5.0.2(@types/node@26.6.3)(vite@8.3.1(@types/node@26.6.3)(esbuild@0.28.2)(tsx@4.23.15))
+
   apps/ui:
     dependencies:
       '@augur/core':
@@ -199,6 +227,9 @@ importers:
       '@augur/host-tauri':
         specifier: workspace:*
         version: link:../../packages/host-tauri
+      '@augur/view-model':
+        specifier: workspace:*
+        version: link:../../packages/view-model
       jsqr:
         specifier: 1.4.0
         version: 1.4.0
@@ -289,6 +320,9 @@ importers:
       '@augur/dispatch-protocol':
         specifier: workspace:*
         version: link:../dispatch-protocol
+      '@augur/tui':
+        specifier: workspace:*
+        version: link:../../apps/tui
     devDependencies:
       '@types/node':
         specifier: 26.6.3
@@ -383,6 +417,22 @@ importers:
       '@types/node':
         specifier: 26.6.3
         version: 26.6.3
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 5.0.2
+        version: 5.0.2(@types/node@26.6.3)(vite@8.3.1(@types/node@26.6.3)(esbuild@0.28.2)(tsx@4.23.15))
+
+  packages/view-model:
+    dependencies:
+      '@augur/core':
+        specifier: workspace:*
+        version: link:../core
+      '@augur/dispatch-protocol':
+        specifier: workspace:*
+        version: link:../dispatch-protocol
+    devDependencies:
       typescript:
         specifier: 7.0.2
         version: 7.0.2

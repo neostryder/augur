@@ -1,4 +1,5 @@
 import type { FeedAlert } from '@augur/core';
+import { ALERTS_TEXT, shortAgo } from '@augur/view-model';
 import { esc, ICON } from '../util';
 
 export interface StripModel {
@@ -14,25 +15,13 @@ export const STRIP_TEXT = {
   hint: 'Pinned. Drag here to move.',
   pin: 'Pin Augur on top until you hide it',
   unpin: 'Unpin. Augur hides again when you click elsewhere.',
-  bell: 'Alerts',
-  heading: 'Alerts',
-  dismiss: 'Dismiss',
-  dismissAll: 'Dismiss all',
-  empty: 'No alerts. An alert stays here until you dismiss it or it stops applying.',
-  foot: 'Dismissing an alert here clears it everywhere Augur shows it.',
+  bell: ALERTS_TEXT.heading,
+  ...ALERTS_TEXT,
 };
-
-function ago(iso: string, now: Date): string {
-  const min = Math.max(0, Math.round((now.getTime() - Date.parse(iso)) / 60000));
-  if (min < 1) return 'now';
-  if (min < 60) return `${min}m`;
-  const h = Math.round(min / 60);
-  return h < 48 ? `${h}h` : `${Math.round(h / 24)}d`;
-}
 
 function alertRow(a: FeedAlert, now: Date): string {
   return `<li class="alert-row ${a.severity}"><span class="sev" aria-hidden="true"></span>
-    <div class="alert-text"><div class="alert-title">${esc(a.title)}<span class="alert-age">${ago(a.raisedAt, now)}</span></div><div class="alert-body">${esc(a.body)}</div></div>
+    <div class="alert-text"><div class="alert-title">${esc(a.title)}<span class="alert-age">${shortAgo(a.raisedAt, now)}</span></div><div class="alert-body">${esc(a.body)}</div></div>
     <button class="strip-btn small" data-action="dismiss-alert" data-value="${esc(a.id)}" title="${STRIP_TEXT.dismiss}" aria-label="${STRIP_TEXT.dismiss}: ${esc(a.title)}">${ICON.close}</button></li>`;
 }
 

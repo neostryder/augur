@@ -22,40 +22,7 @@ export const ICON = {
   columns: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2.5" width="12" height="11" rx="2"/><path d="M8 2.5v11"/></svg>',
 };
 
-export const sevOf = (p: number): '' | 'warn' | 'crit' => (p >= 90 ? 'crit' : p >= 75 ? 'warn' : '');
-
-export function until(iso: string | null | undefined, now = Date.now()): string {
-  if (!iso) return '';
-  const ms = new Date(iso).getTime() - now;
-  if (!Number.isFinite(ms)) return '';
-  if (ms <= 0) return 'Resetting now';
-  return `Resets in ${span(ms)}, ${when(iso, ms)}`;
-}
-
-export function span(ms: number): string {
-  const m = Math.max(0, Math.round(ms / 60000));
-  const d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), mm = m % 60;
-  return d ? `${d}d ${h}h` : h ? `${h}h ${mm}m` : `${mm}m`;
-}
-
-export function when(iso: string | number | Date, msAhead?: number): string {
-  const t = new Date(iso);
-  const ahead = msAhead ?? t.getTime() - Date.now();
-  const opts: Intl.DateTimeFormatOptions = ahead > 20 * 3600e3 ? { weekday: 'short', hour: 'numeric', minute: '2-digit' } : { hour: 'numeric', minute: '2-digit' };
-  return t.toLocaleString([], opts);
-}
-
-export function ago(iso: string | null | undefined): string {
-  if (!iso) return 'never';
-  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
-  return s < 60 ? 'just now' : s < 3600 ? `${Math.floor(s / 60)}m ago` : s < 86400 ? `${Math.floor(s / 3600)}h ago` : `${Math.floor(s / 86400)}d ago`;
-}
-
-export function money(v: number | null | undefined, cur = 'USD'): string {
-  if (v == null || !Number.isFinite(v)) return '-';
-  const n = v.toLocaleString([], { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  return cur === 'USD' ? `$${n}` : `${n} ${cur}`;
-}
+export { ago, money, sevOf, span, until, when } from '@augur/view-model';
 
 export function debounce<T extends (...a: never[]) => void>(fn: T, ms: number): T {
   let t: ReturnType<typeof setTimeout> | undefined;

@@ -14,6 +14,7 @@
     "@augur/core": "workspace:*",
     "@augur/dispatch-protocol": "workspace:*",
     "@augur/host-tauri": "workspace:*",
+    "@augur/view-model": "workspace:*",
     "jsqr": "1.4.0",
     "qrcode-generator": "^2.0.4",
     "sortablejs": "^1.15.7"
