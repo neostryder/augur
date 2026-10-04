@@ -1,0 +1,40 @@
+# Maintainer: neostryder <61663569+neostryder@users.noreply.github.com>
+
+pkgname=augur-terminal
+pkgver=1.3.0
+pkgrel=1
+pkgdesc="Terminal app and background service for Augur: AI plan usage, alerts, model rules and jobs"
+arch=('any')
+url='https://github.com/neostryder/augur'
+license=('MIT')
+depends=('nodejs>=24')
+optdepends=('libnotify: desktop notices for alerts through notify-send'
+            'systemd: containment of jobs in user scopes, and the service starting at login')
+conflicts=('augur-bin')
+source=("${pkgname}-${pkgver}.tar.gz::${url}/releases/download/v${pkgver}/augur-terminal-${pkgver}.tar.gz")
+sha256sums=('SKIP')
+
+package() {
+  cd "${srcdir}/augur-terminal-${pkgver}"
+  install -d "${pkgdir}/usr/lib/augur" "${pkgdir}/usr/bin"
+  install -m644 ./*.mjs VERSION "${pkgdir}/usr/lib/augur/"
+  install -m755 augur augur-mcp "${pkgdir}/usr/lib/augur/"
+  cp -r claude-mod "${pkgdir}/usr/lib/augur/"
+  find "${pkgdir}/usr/lib/augur/claude-mod" -type d -exec chmod 755 {} + -o -type f -exec chmod 644 {} +
+  ln -s /usr/lib/augur/augur "${pkgdir}/usr/bin/augur"
+  ln -s /usr/lib/augur/augur-mcp "${pkgdir}/usr/bin/augur-mcp"
+  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+  # `systemctl --user enable --now augurd` starts the service at login. `augur service enable` writes its own copy under ~/.config, which wins over this one.
+  install -Dm644 /dev/stdin "${pkgdir}/usr/lib/systemd/user/augurd.service" <<UNIT
+[Unit]
+Description=Augur background service: usage readings, alerts and jobs
+
+[Service]
+ExecStart=/usr/bin/node /usr/lib/augur/augurd.mjs
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+UNIT
+}

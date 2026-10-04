@@ -1,0 +1,27 @@
+# Maintainer: neostryder <61663569+neostryder@users.noreply.github.com>
+
+pkgname=augur-bin
+pkgver=1.3.0
+pkgrel=1
+pkgdesc="Tray app and background service for AI plan usage, alerts, model rules and jobs (the release's .deb, repackaged)"
+arch=('x86_64')
+url='https://github.com/neostryder/augur'
+license=('MIT')
+depends=('gtk3' 'webkit2gtk-4.1' 'libayatana-appindicator' 'openssl')
+optdepends=('libnotify: desktop notices for alerts through notify-send'
+            'systemd: containment of jobs in user scopes, and the service starting at login')
+conflicts=('augur-terminal')
+options=('!strip' '!debug')
+noextract=("Augur_${pkgver}_amd64.deb" "LICENSE-${pkgver}")
+source=("Augur_${pkgver}_amd64.deb::${url}/releases/download/v${pkgver}/Augur_${pkgver}_amd64.deb"
+        "LICENSE-${pkgver}::https://raw.githubusercontent.com/neostryder/augur/v${pkgver}/LICENSE")
+sha256sums=('SKIP' 'SKIP')
+
+package() {
+  bsdtar -xf "${srcdir}/Augur_${pkgver}_amd64.deb" -C "${srcdir}" data.tar.gz
+  bsdtar -xf "${srcdir}/data.tar.gz" -C "${pkgdir}"
+  # /usr/bin/augur is the tray app. The command that agents and terminals use sits in the service folder; these two names reach it from the PATH.
+  ln -s /usr/lib/Augur/service/augur "${pkgdir}/usr/bin/augur-cli"
+  ln -s /usr/lib/Augur/service/augur-mcp "${pkgdir}/usr/bin/augur-mcp"
+  install -Dm644 "${srcdir}/LICENSE-${pkgver}" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}

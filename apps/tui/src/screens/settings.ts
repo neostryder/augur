@@ -22,6 +22,8 @@ export interface SettingsDeps {
   platform: NodeJS.Platform;
   env: NodeJS.ProcessEnv;
   login?: LoginControl;
+  /** Added after "Version x is available." for this kind of install. */
+  updateAdvice?: string;
   spawn?: EditorDeps['spawn'];
 }
 
@@ -280,7 +282,7 @@ export class SettingsPage implements Page {
 
   private computer(ctx: Ctx): Row[] {
     const u = ctx.state.update, config = ctx.state.config;
-    const status = u.status === 'available' ? COMPUTER_TEXT.available(u.available?.version ?? '') : COMPUTER_TEXT.status[u.status];
+    const status = u.status === 'available' ? [COMPUTER_TEXT.available(u.available?.version ?? ''), this.deps.updateAdvice].filter(Boolean).join(' ') : COMPUTER_TEXT.status[u.status];
     const busy = u.status === 'checking' || u.status === 'installing';
     const out: Row[] = [{ kind: 'heading', text: COMPUTER_TEXT.heading }];
     out.push({ kind: 'action', id: 'update', label: u.version ? COMPUTER_TEXT.version(u.version) : COMPUTER_TEXT.updates, ...(status ? { desc: status } : {}),

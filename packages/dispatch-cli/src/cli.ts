@@ -10,7 +10,8 @@ import { EXIT_CODES, TOOL_TIERS, describeFigure, exitCodeForState, isTerminal } 
 import type { JobRecord, JobRequest, ToolTier } from '@augur/dispatch-protocol';
 import { STATUS_TEXT, statusLine } from '@augur/view-model';
 import { bridge, stdioBridge } from './bridge.js';
-import { ServiceError, call, configLines, dataDir, disableLogin, enableLogin, loginState, setConfigValue, startViaLogin } from '@augur/augurd';
+import { SERVICE_VERSION, ServiceError, call, configLines, dataDir, disableLogin, enableLogin, loginState, setConfigValue, startViaLogin } from '@augur/augurd';
+import { installOf, realFetch, updateAdvice, updateScriptInstall, versionOf } from './update.js';
 
 export interface Io { out(text: string): void; err(text: string): void; stdin(): string; env: NodeJS.ProcessEnv; cwd: string; /** A person is at the terminal: input and output are both attached to it. */ interactive?: boolean }
 
@@ -42,6 +43,7 @@ augur note-prompt --session <id>     tell the service a person sent the message 
 augur routes
 augur refresh                         read every provider's usage now
 augur alerts [dismiss <id>|--all]     list the alerts, or dismiss one or all of them
+augur update [--force]                install the newest version, for a copy the macOS install script put in place
 augur claude status | install | remove <code|desktop>     add or take out Augur's part of Claude Code or Claude Desktop
 augur test <route> [--wait]          send a fixed one-word prompt through a route to check it works
 augur config [--json]                 the service's settings and what each is now
@@ -52,7 +54,7 @@ Every command takes --json. Exit codes: 0 completed, 1 usage, 2 rejected, 3 need
 
 interface Parsed { cmd: string[]; flags: Map<string, string | true> }
 function parse(argv: string[]): Parsed {
-  const cmd: string[] = [], flags = new Map<string, string | true>(), boolean = new Set(['json', 'wait', 'named', 'follow', 'stderr', 'help', 'if-idle', 'no-failover', 'waybar', 'all']);
+  const cmd: string[] = [], flags = new Map<string, string | true>(), boolean = new Set(['json', 'wait', 'named', 'follow', 'stderr', 'help', 'if-idle', 'no-failover', 'waybar', 'all', 'force']);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] as string;
     if (a === '-') { cmd.push(a); continue; }
@@ -79,7 +81,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
   // With no command at a terminal, `augur` opens the full-screen app; piped or scripted, it prints the help.
   if (!cmd && !p.flags.size && io.interactive) {
     const { runTui } = await import('@augur/tui');
-    await runTui({ launch: () => launchService(io.env, opts), opts, env: io.env, login: { state: loginState, enable: () => enableAtLogin(io), disable: disableLogin }, dispatch: { restart: () => restartService(io, opts) } });
+    await runTui({ launch: () => launchService(io.env, opts), opts, env: io.env, login: { state: loginState, enable: () => enableAtLogin(io), disable: disableLogin }, updateAdvice: updateAdvice(installOf(here()).kind), dispatch: { restart: () => restartService(io, opts) } });
     return EXIT_CODES.completed;
   }
   if (!cmd || p.flags.has('help')) { io.out(HELP + '\n'); return cmd ? EXIT_CODES.completed : EXIT_CODES.usage; }
@@ -139,6 +141,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
         const recent = jobs.length ? ['', 'Recent jobs', ...jobs] : [];
         say((rows.length ? [...rows, ...recent] : ['No jobs yet.']).join('\n'), r); return 0;
       }
+      case 'update': return await updateCmd(p.flags.has('force'), io, opts, say);
       case 'refresh': { await engineCall('refresh', [true], io, opts); say(STATUS_TEXT.refreshed, { ok: true }); return 0; }
       case 'alerts': return await alertsCmd(rest, p.flags.has('all'), io, opts, say);
       case 'claude': return await claudeCmd(rest, io, opts, say);
@@ -165,6 +168,30 @@ export async function main(argv: string[], io: Io): Promise<number> {
 }
 
 type Say = (human: string, data: unknown) => void;
+
+/** The folder this command's own files sit in. */
+const here = (): string => dirname(fileURLToPath(import.meta.url));
+
+async function updateCmd(force: boolean, io: Io, opts: Opts, say: Say): Promise<number> {
+  const install = installOf(here());
+  const current = versionOf(install.dir) ?? SERVICE_VERSION;
+  const r = await updateScriptInstall(install, {
+    current, platform: process.platform, env: io.env, ...realFetch,
+    afterSwap: (dir) => afterUpdate(dir, io, opts),
+  }, force);
+  if (r.ok) say(r.message, r); else io.err(r.message + '\n');
+  return r.ok ? 0 : EXIT_CODES.failed;
+}
+
+/** Moves the login entry to the new version, or stops an idle service so the next start uses it. A busy service keeps running the old one. */
+async function afterUpdate(newDir: string, io: Io, opts: Opts): Promise<string> {
+  const run = (args: string[]) => spawnSync(join(newDir, 'augur'), args, { encoding: 'utf8', env: io.env });
+  const login = loginState();
+  if (login.supported && login.enabled) return run(['service', 'enable']).status === 0 ? 'The service runs the new version.' : 'Run augur service enable to move the start at login to the new version.';
+  const running = await call('ping', undefined, { ...opts, timeoutMs: 1000 }).then(() => true, () => false);
+  if (!running) return '';
+  return run(['service', 'stop', '--if-idle']).status === 0 ? 'The service starts the new version the next time it is needed.' : 'Jobs are still running, so the service keeps the old version until you run augur service stop and start it again.';
+}
 
 /** Returns null when no service is running. It does not start one, because a status bar polls this. */
 async function engineState(opts: Opts): Promise<EngineState | null> {

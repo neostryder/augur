@@ -26,12 +26,14 @@ export interface RunOptions {
   login?: LoginControl;
   /** What the dispatch page needs beyond the service's own calls. */
   dispatch?: DispatchDeps;
+  /** What to do about a newer version in this install, shown after the settings page says one is available. */
+  updateAdvice?: string;
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
 }
 
-export function pages(o: Pick<RunOptions, 'login' | 'env' | 'platform' | 'dispatch'> = {}): Page[] {
-  const settings = new SettingsPage({ platform: o.platform ?? process.platform, env: o.env ?? process.env, ...(o.login ? { login: o.login } : {}) });
+export function pages(o: Pick<RunOptions, 'login' | 'env' | 'platform' | 'dispatch' | 'updateAdvice'> = {}): Page[] {
+  const settings = new SettingsPage({ platform: o.platform ?? process.platform, env: o.env ?? process.env, ...(o.login ? { login: o.login } : {}), ...(o.updateAdvice ? { updateAdvice: o.updateAdvice } : {}) });
   return [new UsagePage(), new AlertsPage(), new RulesPage(), new DispatchPage({ env: o.env ?? process.env, ...o.dispatch }), settings];
 }
 

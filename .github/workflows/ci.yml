@@ -26,9 +26,14 @@ jobs:
       - run: pnpm --filter @augur/ui build
       - run: pnpm --filter @augur/relay typecheck
 
-  dispatch:
-    # The dispatch service is Windows-only at 1.0, so its tests run where it runs. The job host is built with Go first, because jobs do not start without it.
-    runs-on: windows-2025
+  # The engine, the dispatch service and the terminal app run on all three systems, so their tests do too. The job host is written in Go and
+  # only Windows uses it.
+  workspace:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025, ubuntu-24.04, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -36,14 +41,44 @@ jobs:
         with:
           node-version: 26
           cache: pnpm
-      - uses: actions/setup-go@v7
+      - if: startsWith(matrix.os, 'windows')
+        uses: actions/setup-go@v7
         with:
           go-version-file: packages/augurd/native/jobhost/go.mod
           cache-dependency-path: packages/augurd/native/jobhost/go.sum
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @augur/augurd build:jobhost
+      - if: startsWith(matrix.os, 'windows')
+        run: pnpm --filter @augur/augurd build:jobhost
       - run: pnpm -r typecheck
       - run: pnpm -r test
+
+  # The terminal package: built, packed, and put through the install script against a local copy of a release. The Linux run uses the generic
+  # tarball with the Arch package's layout; the macOS run uses the one that carries its own Node.
+  terminal:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          pnpm build:terminal
+          pnpm pack:terminal
+          dist/terminal/augur --help | head -n 1
+          AUGURD_DATA="$RUNNER_TEMP/augurd" dist/terminal/augur status --waybar
+      - if: startsWith(matrix.os, 'macos')
+        run: |
+          AUGUR_NODE="$(command -v node)" pnpm build:terminal
+          pnpm pack:terminal --macos
+          sh packaging/macos/test-install.sh dist/augur-terminal-*-macos.tar.gz
 
   laya:
     runs-on: ubuntu-24.04

@@ -79,10 +79,93 @@ jobs:
           uploadUpdaterJson: true
           args: ${{ matrix.args }}
 
+  # The terminal package: a tarball for Arch (it uses the system Node), a tarball for macOS (it carries its own), and the macOS install script.
+  # They go on the release the installers made, and the checksum file below covers them.
+  terminal:
+    if: github.ref_type == 'tag'
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build and pack
+        shell: bash
+        run: |
+          if [ "${{ matrix.os }}" = macos-latest ]; then
+            # A universal runtime: the arm64 and x64 builds of this Node version, checked against the release's checksums and joined with lipo.
+            v=$(node -v); cd "$RUNNER_TEMP"
+            curl -fsSLO "https://nodejs.org/dist/$v/SHASUMS256.txt"
+            for a in arm64 x64; do
+              curl -fsSLO "https://nodejs.org/dist/$v/node-$v-darwin-$a.tar.gz"
+              grep " node-$v-darwin-$a.tar.gz\$" SHASUMS256.txt | shasum -a 256 -c -
+              tar -xzf "node-$v-darwin-$a.tar.gz"
+            done
+            lipo -create "node-$v-darwin-arm64/bin/node" "node-$v-darwin-x64/bin/node" -output augur-node
+            codesign --force --sign - augur-node
+            cd "$GITHUB_WORKSPACE"
+            AUGUR_NODE="$RUNNER_TEMP/augur-node" pnpm build:terminal
+            pnpm pack:terminal --macos
+            sh packaging/macos/test-install.sh dist/augur-terminal-*-macos.tar.gz
+          else
+            pnpm build:terminal
+            pnpm pack:terminal
+          fi
+      - name: Check the version matches the tag
+        shell: bash
+        run: |
+          version=$(cat dist/terminal/VERSION)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then echo "Tag $GITHUB_REF_NAME does not match version $version"; exit 1; fi
+      - name: Upload
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "$GITHUB_REF_NAME" dist/augur-terminal-*.tar.gz --clobber
+          if [ "${{ matrix.os }}" = macos-latest ]; then gh release upload "$GITHUB_REF_NAME" packaging/macos/install.sh --clobber; fi
+
+  # Both PKGBUILDs are built in a clean Arch container from the files on the release (the checksums are recomputed here, since the recipe's own are
+  # written once the release exists), then namcap checks them and the installed command is run.
+  arch:
+    if: github.ref_type == 'tag'
+    needs: [build, terminal]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build the image
+        run: docker build -t augur-arch packaging/arch
+      - name: Validate the terminal package
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          mkdir -p src-terminal
+          gh release download "$GITHUB_REF_NAME" --pattern "augur-terminal-$v.tar.gz" --dir src-terminal
+          docker run --rm -v "$PWD:/r:ro" -v "$PWD/src-terminal:/src:ro" augur-arch bash /r/packaging/arch/validate.sh augur-terminal
+      - name: Validate the full app package
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          mkdir -p src-bin
+          gh release download "$GITHUB_REF_NAME" --pattern "Augur_${v}_amd64.deb" --dir src-bin
+          curl -fsSL -o "src-bin/LICENSE-$v" "https://raw.githubusercontent.com/neostryder/augur/$GITHUB_REF_NAME/LICENSE"
+          docker run --rm -v "$PWD:/r:ro" -v "$PWD/src-bin:/src:ro" augur-arch bash /r/packaging/arch/validate.sh augur-bin
+
   # Once every installer is on the release, attach a software bill of materials for the JavaScript and Rust dependencies and a checksum for each file.
   integrity:
     if: github.ref_type == 'tag'
-    needs: build
+    needs: [build, terminal]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

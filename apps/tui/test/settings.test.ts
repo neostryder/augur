@@ -27,6 +27,13 @@ describe('settings page', () => {
     expect(text).not.toMatch(/Keep in Augur +Claude Code +Phone/);
   });
 
+  it('says what to do about an available update for this kind of install', () => {
+    const s = state();
+    s.update = { version: '1.3.0', status: 'available', available: { version: '1.4.0' }, changes: null };
+    expect(settings({ updateAdvice: 'Run augur update to install it.' }, s).draw(120, 200)).toContain('Version 1.4.0 is available. Run augur update to install it.');
+    expect(settings({}, s).draw(120, 200)).toContain('Version 1.4.0 is available.');
+  });
+
   it('names the system column after the platform and adds Phone once paired', () => {
     const s = state();
     s.config.sync = { relay: 'https://r', channel: 'c1', pwaUrl: 'https://p' };
