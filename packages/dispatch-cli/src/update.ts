@@ -118,15 +118,24 @@ function prune(versions: string, keep: string): void {
   for (const v of all.slice(KEEP)) if (v !== keep) rmSync(join(versions, v), { recursive: true, force: true });
 }
 
+/** A request that says why it failed: Node's own message for a refused or timed-out connection is only "fetch failed". */
+async function get(url: string, signal?: AbortSignal): Promise<Response> {
+  try { return await fetch(url, { headers: { 'User-Agent': 'augur' }, redirect: 'follow', signal }); }
+  catch (e) {
+    const cause = (e as { cause?: { code?: string; message?: string } }).cause;
+    throw new Error(`${url} could not be reached (${cause?.code ?? cause?.message ?? (e as Error).message})`);
+  }
+}
+
 /** Real network and tar for `augur update`; tests give their own. */
 export const realFetch = {
   async fetchText(url: string): Promise<string> {
-    const r = await fetch(url, { headers: { 'User-Agent': 'augur' }, redirect: 'follow', signal: AbortSignal.timeout(30_000) });
+    const r = await get(url, AbortSignal.timeout(30_000));
     if (!r.ok) throw new Error(`${url} answered ${r.status}`);
     return r.text();
   },
   async fetchTo(url: string, file: string): Promise<void> {
-    const r = await fetch(url, { headers: { 'User-Agent': 'augur' }, redirect: 'follow' });
+    const r = await get(url);
     if (!r.ok || !r.body) throw new Error(`${url} answered ${r.status}`);
     await pipeline(Readable.fromWeb(r.body as never), createWriteStream(file));
   },

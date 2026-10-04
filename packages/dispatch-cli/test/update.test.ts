@@ -1,9 +1,12 @@
 import { createHash } from 'node:crypto';
+import { once } from 'node:events';
+import { createServer } from 'node:net';
+import type { AddressInfo } from 'node:net';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { checksumFor, installOf, updateAdvice, updateScriptInstall, type UpdateDeps } from '../src/update.js';
+import { checksumFor, installOf, realFetch, updateAdvice, updateScriptInstall, type UpdateDeps } from '../src/update.js';
 
 const cleanup: string[] = [];
 afterEach(() => { while (cleanup.length) rmSync(cleanup.pop()!, { recursive: true, force: true }); });
@@ -111,5 +114,18 @@ describe('updateScriptInstall', () => {
     const bad = deps({ fetchText: async () => { throw new Error('offline'); } });
     expect((await updateScriptInstall(install, bad.d)).message).toContain('offline');
     expect((await updateScriptInstall(install, { ...deps().d, platform: 'linux' })).message).toBe('The script install is for macOS.');
+  });
+});
+
+describe('realFetch', () => {
+  it('says why a request failed instead of only that it did', async () => {
+    // A port that was just free and is closed again refuses the connection.
+    const server = createServer().listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const { port } = server.address() as AddressInfo;
+    server.close();
+    await once(server, 'close');
+    const failure = await realFetch.fetchText(`http://127.0.0.1:${port}/latest.json`).catch((e: Error) => e);
+    expect((failure as Error).message).toMatch(/could not be reached \(ECONNREFUSED\)/);
   });
 });
