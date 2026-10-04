@@ -1,6 +1,6 @@
 # Augur
 
-Augur shows how much of your AI plans and credits you have used, in one place: a tray icon on Windows, a menu-bar icon on macOS, and a web app you can add to a phone's home screen. It reads the same numbers each provider's own usage page shows, refreshes each one on its own schedule, and warns you when a limit is running out faster than its window resets.
+Augur shows how much of your AI plans and credits you have used, in one place: a tray icon on Windows, a menu-bar icon on macOS, a full-screen app for the terminal, and a web app you can add to a phone's home screen. It reads the same numbers each provider's own usage page shows, refreshes each one on its own schedule, and warns you when a limit is running out faster than its window resets.
 
 <table align="center">
   <tr>
@@ -33,13 +33,21 @@ You can add any other provider whose usage endpoint returns JSON, without writin
 
 ## Install
 
-Every installer is on the [releases page](https://github.com/neostryder/augur/releases/latest). Augur is built and used mostly on Windows. The macOS and Linux apps come from the same code and the same release but get less testing, and running jobs for agents works only on Windows.
+Every installer is on the [releases page](https://github.com/neostryder/augur/releases/latest). Augur is built and used mostly on Windows. The macOS and Linux apps come from the same code and the same release but get less testing. Running jobs for agents works on all three.
 
 **Windows:** download the installer and run it. No administrator rights are needed. The installer is not code-signed yet, so Windows SmartScreen may warn the first time; choose More info, then Run anyway. The icon may land in the hidden-icons area at first. Drag it onto the taskbar to keep it in view.
 
 **macOS:** download the `.dmg` (one build runs on both Apple silicon and Intel) and drag Augur into Applications. The app is not signed with an Apple developer certificate yet, so macOS blocks it the first time you open it. Open System Settings, go to Privacy & Security, choose Open Anyway next to the message about Augur, and confirm. After that it opens normally.
 
 **Linux:** download the AppImage (runs on most distributions, including Arch, as long as WebKitGTK 4.1 is installed), or the `.deb` or `.rpm`. The tray icon needs an AppIndicator host: KDE Plasma has one built in, and GNOME needs the AppIndicator extension. On Linux the panel opens from the icon's menu rather than a click.
+
+**Terminal only:** a computer with no tray or taskbar can run the terminal app and the background service without the window app (see [In a terminal](#in-a-terminal)). On Arch Linux, build the `augur-terminal` package from a checkout of this repository with `makepkg -si` in `packaging/arch/augur-terminal`; it needs only Node.js 24 or newer. `packaging/arch/augur-bin` builds the window app from the release's `.deb` instead. The window app takes the `augur` name on Linux, so that package puts the command on your PATH as `augur-cli`. Install one of the two, not both. On macOS, run the install script. It downloads the newest terminal build, checks it against the release's `SHA256SUMS.txt`, and puts `augur` in `~/.local/bin`:
+
+```bash
+curl -fsSL https://github.com/neostryder/augur/releases/latest/download/install.sh | sh
+```
+
+The macOS build carries its own copy of Node, so nothing else has to be installed. Run `augur update` to move to a newer version; the previous one stays in place until the update after that.
 
 Every release also carries `SHA256SUMS.txt`, with a checksum for each installer, and a bill of materials for the JavaScript and Rust dependencies. Since the installers are not signed, compare a download against its line in that file before you run it: `Get-FileHash <file>` on Windows, `shasum -a 256 <file>` on macOS, `sha256sum <file>` on Linux.
 
@@ -83,7 +91,23 @@ Augur can show up inside Claude too. Settings has a Claude section with two swit
 
 Turn on Claude Code and your next Claude Code session shows Claude's 5-hour and weekly use in the status line, along with any other provider past 70%. A new alert pops up once, then sits in a row above the prompt until you press D to dismiss it, which clears it in Augur and on your phone as well. Press O there to bring up Augur. This switch needs the usage file, so it turns that on at `.augur/usage.json` if you had it off. Augur updates the mod when it updates itself, and turning the switch off takes the mod back out.
 
-On Windows, Claude Desktop chat lets your chats in Claude Desktop pick and run models through Augur. Restart Claude Desktop after you flip it. Turning it off removes only what Augur added to Claude Desktop's settings.
+Claude Desktop chat lets your chats in Claude Desktop pick and run models through Augur. It is available on Windows and macOS, and on Linux where Claude Desktop's settings folder exists. Restart Claude Desktop after you flip it. Turning it off removes only what Augur added to Claude Desktop's settings.
+
+## In a terminal
+
+Run `augur` in a terminal and it opens a full-screen version of the panel. Tabs across the top hold Usage, Alerts, Rules, Dispatch and Settings. Press 1 to 5 or Tab to move between them and ? for the keys on the page you are on. The terminal app starts the Augur service if it is not running, and the window app and the terminal app are two views of that one service, so a change in either shows in the other. Providers, alerts, rules, routes, jobs, phone pairing and the Claude Code and Claude Desktop switches are all there. The sign-ins that need a browser window, such as the Claude resets and the TypeSafe balance, still need the window app. Pairing draws its QR code in the terminal when the terminal is tall enough, and shows the link with a key to copy it when it is not.
+
+The same command answers short questions that suit a status bar or a script:
+
+```bash
+augur status               # Claude's session and week, anything running hot, and the alert count
+augur status --waybar      # the same as the JSON a Waybar custom module reads
+augur refresh              # read every provider now
+augur alerts               # list the alerts; add dismiss <id>, or --all, to clear them
+augur claude install code  # or desktop; status and remove work too
+```
+
+`augur status --waybar` prints `text`, `tooltip` and `class`. The class is `ok`, `warn` or `crit`, and `off` when the service is not running; the command never starts the service. `augur service enable` starts the service at each login, through a systemd user unit on Linux or a launch agent on macOS, and `augur service disable` turns that off. Alerts sent to your computer's notifications use `notify-send` on Linux, so install `libnotify` if the command is missing, and the system notification center on macOS.
 
 ## Model rules
 
@@ -91,9 +115,9 @@ The rules page (the icon at the top of the panel) lists every model Augur has se
 
 A model can also wait on others. Check models under Use only after and the model stays out of picks until every one of them is spent, paused, not allowed for the task, or down. The providers of the models it waits on are then used up in full instead of paced, so a Codex plan runs to its limit before Copilot's GPT-6 Sol is picked. A spent provider still counts while it has a limit reset in hand, so the models waiting on it stay held until the reset is used. A limit reset in hand, which Codex reports and Claude needs entered in its provider settings, counts as one more full weekly window of room for a provider that is paced, and a pick says when a spent provider still has a reset waiting.
 
-## Running jobs for agents (Windows)
+## Running jobs for agents
 
-Turn on Also run jobs in setup or on the Service page and Augur starts a service on your computer. An agent asks it which model to use with `augur pick`, then runs the task with `augur run`. The service checks your rules and how much of each plan is left before it starts anything, and a job that breaks a rule is refused with the reason. The `augur` command is `service\augur.cmd` inside the install folder (`%LOCALAPPDATA%\Augur`), which is not on your PATH.
+Turn on Also run jobs in setup or on the Service page and Augur starts a service on your computer. An agent asks it which model to use with `augur pick`, then runs the task with `augur run`. The service checks your rules and how much of each plan is left before it starts anything, and a job that breaks a rule is refused with the reason. On Windows the `augur` command is `service\augur.cmd` inside the install folder (`%LOCALAPPDATA%\Augur`), which is not on your PATH. In the macOS app it is `Contents/Resources/service/augur` inside Augur.app, and a terminal install already has it on your PATH. In the Linux `.deb` it is `/usr/lib/Augur/service/augur`, and the Arch packages put it on your PATH as `augur` (`augur-terminal`) or `augur-cli` (`augur-bin`).
 
 ```bash
 augur pick --activity write_code --data internal
@@ -105,13 +129,13 @@ Here `luna` is a route you added on the Routes page. To add one, choose Add rout
 
 A run has to state its activity and data tier, and it has to follow a pick made for the same caller in the last hour. `--activity` takes one of `write_code`, `review_code`, `research`, `reason_critique`, `draft_prose`, `summarize_extract`, `long_context`, `bulk_tagging`, `typed_decisions`, `read_images`, `generate_images`, `generate_video` or `speech`. `--data` takes `public`, `internal`, `sensitive` or `regulated`, and a model is only offered for data at or below the tier its rules allow. A caller is whatever asks: the `augur` command, an MCP client or a script. `augur --help` lists every command.
 
-- The Jobs page lists what agents started, with each job's result, output and errors, and lets you cancel one that is still going.
-- The Routes page joins a model to the program that runs it. A route is an entry in `dispatch/routes.json`, and Test route checks that it works. An API route can keep its key in the Windows credential store: choose store as the key source and save the key on the page, and it never appears in `routes.json` or a job record.
+- The Jobs page lists what agents started, with each job's result, output and errors, and lets you cancel one that is still going. Cancelling a job, or a job reaching its time limit, ends everything it started: through a job object on Windows, a systemd user scope on Linux where systemd runs, and the job's process group otherwise.
+- The Routes page joins a model to the program that runs it. A route is an entry in `dispatch/routes.json`, and Test route checks that it works. An API route can keep its key in the operating system's key store: choose store as the key source and save the key on the page, and it never appears in `routes.json` or a job record. The store is the Windows credential store, the macOS Keychain, or the Secret Service on Linux, with a file only you can read as the fallback where no Secret Service answers.
 - The Service page holds the service's settings, and `augur config` shows the same list.
 - Tokens and cost appear with each job, labelled reported, derived or imputed. [docs/accounting.md](docs/accounting.md) explains how they are worked out and how to set a rate.
-- `augur-mcp.cmd`, beside `augur.cmd`, lets Claude Code, Claude Desktop and other MCP clients pick and run models under the same rules. See [docs/mcp.md](docs/mcp.md).
+- `augur-mcp`, beside `augur` (`augur-mcp.cmd` on Windows), lets Claude Code, Claude Desktop and other MCP clients pick and run models under the same rules. See [docs/mcp.md](docs/mcp.md).
 
-Uninstalling Augur stops the service and removes the program, and leaves your job history in `%LOCALAPPDATA%\Augur\dispatch` and your rules in `~/.augur`. Delete those folders to remove everything.
+Uninstalling Augur stops the service and removes the program, and leaves your job history and your rules behind. The history is in `%LOCALAPPDATA%\Augur\dispatch` on Windows and `~/.local/share/augur/dispatch` on macOS and Linux, and the rules are in `~/.augur`. Delete those folders to remove everything.
 
 ### Who classifies tasks
 
@@ -199,7 +223,7 @@ A key saved in settings takes priority over the same key in the project.
 
 ## Privacy
 
-Augur has no accounts, and the only server it uses is the optional relay behind the phone app. The desktop app talks to each provider directly and keeps its settings and usage history on your computer. If you run the dispatch service (Windows only), it also keeps a job history in a SQLite file in your profile: each job's route, model, state, timing, usage, folder and the length of its prompt and answer, and the prompt itself only if you turn that on. Job folders are deleted after 30 days by default, and the records stay until you delete the service's data folder. The relay the phone app uses passes each request, including the API key in it, to a fixed list of usage and status endpoints. Its code stores and logs none of it, though Cloudflare, which runs it, keeps its own request logs. Sync data on the relay is encrypted on your computer with a key only your paired phone has, so the relay holds ciphertext it cannot read, and it expires after 14 days. See SECURITY.md for what is stored where and how to report a problem.
+Augur has no accounts, and the only server it uses is the optional relay behind the phone app. The desktop app talks to each provider directly and keeps its settings and usage history on your computer. If you run the dispatch service, it also keeps a job history in a SQLite file in your profile: each job's route, model, state, timing, usage, folder and the length of its prompt and answer, and the prompt itself only if you turn that on. Job folders are deleted after 30 days by default, and the records stay until you delete the service's data folder. The relay the phone app uses passes each request, including the API key in it, to a fixed list of usage and status endpoints. Its code stores and logs none of it, though Cloudflare, which runs it, keeps its own request logs. Sync data on the relay is encrypted on your computer with a key only your paired phone has, so the relay holds ciphertext it cannot read, and it expires after 14 days. See SECURITY.md for what is stored where and how to report a problem.
 
 ## License
 

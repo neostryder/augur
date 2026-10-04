@@ -4,6 +4,24 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+### Added
+
+- [Visible] [UI] [Platform] **A full-screen terminal app.** Run `augur` in a terminal to open it. It has Usage, Alerts, Rules, Dispatch and Settings pages that show the same things as the window app in the same words, and it needs no tray or taskbar. It runs on Linux, macOS and Windows, and it draws the phone pairing code in the terminal.
+- [Visible] [Platform] **Status, refresh and alerts from the command line.** `augur status` prints Claude's session and week, anything running hot and the alert count, and `augur status --waybar` prints the same as JSON for a status bar. `augur refresh` reads every provider now, `augur alerts` lists alerts and dismisses them, and `augur claude install|remove code|desktop` adds or removes Augur's part of Claude Code and Claude Desktop.
+- [Visible] [Platform] **Running jobs for agents on macOS and Linux.** Dispatch, routes and the MCP server work on all three systems. Cancelling a job or reaching its time limit ends everything it started, through a systemd user scope on Linux where systemd runs and the job's process group otherwise. A route's key is kept in the macOS Keychain or the Linux Secret Service, with a file only you can read as the fallback.
+- [Visible] [Platform] **Start the service at login.** `augur service enable` starts the service at each login through a systemd user unit on Linux or a launch agent on macOS, and `augur service disable` turns that off.
+- [Visible] [Platform] **Packages for Arch Linux.** `augur-terminal` installs the terminal app and the service on their own and needs only Node.js 24 or newer. `augur-bin` installs the window app from the release's `.deb` and puts the command on the PATH as `augur-cli`.
+- [Visible] [Platform] **A macOS install script and `augur update`.** The script installs the terminal build, which carries its own Node, after checking it against the release's checksums. `augur update` installs a newer version the same way and keeps the previous one.
+- [Visible] [Alerts] [Platform] **Notifications on Linux and macOS from the service.** Alerts sent to your computer's notifications use `notify-send` on Linux and the system notification center on macOS.
+- [Visible] [Platform] **Claude Desktop chat works on macOS.** The switch under Claude in Settings is available on macOS, and on Linux where Claude Desktop's settings folder exists.
+
+### Changed
+
+- [Visible] [Platform] [UI] **One service does the work for every view.** Refreshes, alerts, phone sync and rule edits run in the Augur service on every platform, and the window app and the terminal app both show what it reports. Either one starts the service when it opens, and an idle service from 1.3 is replaced on upgrade. Usage only is enforced by the service, which refuses jobs until Also run jobs is on.
+- [Internal] [Security] **The window app no longer reaches the network, the keychain or login files itself.** Its commands for HTTP requests, the keychain, secrets and history files are gone, and the file commands allow only the routes file.
+- [Internal] [Platform] **CI runs the tests on Windows, Linux and macOS** and builds the terminal package on Linux and macOS. A release builds both Arch packages and checks them against the release's files.
+- [Visible] [Docs] **The README and the MCP page cover the terminal app and the macOS and Linux installs.**
+
 ### Fixed
 
 - [Visible] [Platform] **Updating on Windows no longer stops on augur-node.exe.** An open Claude session restarts Augur's MCP server right after the installer stops it, which locked the file and made the update ask to retry. The installer now moves the old file aside instead of overwriting it.

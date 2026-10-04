@@ -2,17 +2,20 @@
 
 `augur-mcp` lets an MCP client, such as Claude Code or Claude Desktop, ask Augur which model should take a piece of work and then run it there. It is a thin layer over the dispatch service. Every tool goes through the same service and the same rules as the `augur` command, so the server cannot run a model the rules do not allow. It can ask for changes to the rules, but it cannot make one that widens what data a model may see or lets a model run; the owner accepts those in Augur.
 
-It needs the dispatch service, which runs whenever the Augur app is open; without the app, `augur service start` starts it. Tools that run a job also need "Also run jobs" turned on in Augur's settings, and the service refuses jobs with `jobs_off` until it is. Windows only, like the service.
+It needs the dispatch service, which runs whenever the Augur app is open; without the app, `augur service start` starts it, and `augur service enable` starts it at each login. Tools that run a job also need "Also run jobs" turned on in Augur's settings, and the service refuses jobs with `jobs_off` until it is. The server and the service run on Windows, macOS and Linux.
 
 ## Registering it
 
-The installer puts `augur-mcp.cmd` in the `service` folder beside the app. Point the client at that file.
+The installer puts the server in the `service` folder beside the app: `augur-mcp.cmd` on Windows, `augur-mcp` on macOS and Linux. A terminal install and the Arch packages also put `augur-mcp` on your PATH. Point the client at that file.
 
 Claude Code:
 
 ```bash
 claude mcp add augur -- "<install folder>\service\augur-mcp.cmd"
+claude mcp add augur -- augur-mcp
 ```
+
+The first line is for Windows and the second for a macOS or Linux install that has `augur-mcp` on its PATH. For the macOS app without a terminal install, give the full path, `/Applications/Augur.app/Contents/Resources/service/augur-mcp`.
 
 Claude Desktop: turn on Claude Desktop chat under Claude in Augur's settings, which adds this entry to `claude_desktop_config.json` and removes it again when turned off. To add it by hand:
 
@@ -52,7 +55,7 @@ A run that takes longer than `wait_s` returns its job id and leaves the job runn
 
 ## Changing the rules
 
-The server never writes the rules. `augur_policy_edit` checks each edit against `policy.json`, then appends the valid ones to `policy-edits.jsonl` beside it. The running app reads that file within a minute, or as soon as its panel opens, and applies each edit with the same code the rules page uses, so every change is stamped, recorded under History and merged to the phone like one made by hand. The app records what it did with each edit in `policy-edit-results.json`, which `augur_policy` reads back. Augur has to be running for an edit to land.
+The server never writes the rules. `augur_policy_edit` checks each edit against `policy.json`, then appends the valid ones to `policy-edits.jsonl` beside it. The running Augur service reads that file within a minute, or as soon as the panel or the terminal app comes to the front, and applies each edit with the same code the rules page uses, so every change is stamped, recorded under History and merged to the phone like one made by hand. The service records what it did with each edit in `policy-edit-results.json`, which `augur_policy` reads back. The service has to be running for an edit to land.
 
 These edits apply at once: an activity weight (`activities.<activity>`, one of `last_resort`, `occasional`, `normal`, `often` or `preferred`, `null` to block the activity, or `"inherit"` to return to the provider's default), `pause`, `notes` and `useAfter`. These wait in Model rules for the owner to choose Accept or Dismiss: `dataTier`, `askFirst`, `output`, `sandbox`, `effort`, `cost`, `status`, `dataHandling.<part>` and `thresholds.<warnPct|denyPct|minBalance>`. Accepting runs the checks again against the rules as they are then. An edit that fails its checks, or names a model that is not in the rules, is rejected with the reason and never reaches the app.
 
