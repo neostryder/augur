@@ -1,5 +1,5 @@
 import { ALERT_KINDS } from '@augur/core';
-import type { AlertKind, AppConfig, Outlet, Platform, ProviderPlugin, PushStatus, Snapshot } from '@augur/core';
+import type { AlertKind, AppConfig, ClaudeStatus, Outlet, Platform, ProviderPlugin, PushStatus, Snapshot } from '@augur/core';
 import type { UpdateState } from '../app';
 import { ICON, esc } from '../util';
 import { DEFAULT_REFRESH_SECONDS } from '../core';
@@ -36,6 +36,8 @@ export interface SettingsModel {
   platform: Platform;
   /** Phone only: where push stands in this browser, the last error, and whether the desktop has sent its push key. */
   push: { status: PushStatus | null; error: string; hasKey: boolean } | null;
+  /** Desktop only: where the two Claude installs stand, and the last error from turning one on or off. */
+  claude: { status: ClaudeStatus | null; error: string } | null;
 }
 
 export const KIND_LABELS: Record<AlertKind, string> = {
@@ -69,6 +71,30 @@ export const PUSH_TEXT = {
   refused: 'The browser did not allow notifications, so push is still off.',
   where: 'Your computer picks which alerts reach this phone, in its own Alerts settings.',
 };
+
+export const CLAUDE_TEXT = {
+  code: 'Claude Code',
+  codeDesc: 'Shows your usage in the status line and Augur alerts above the prompt, in the terminal and the Code tab. New sessions pick it up.',
+  codeExport: 'Turning this on also saves your usage to .augur/usage.json, which the mod reads.',
+  desktop: 'Claude Desktop chat',
+  desktopDesc: 'Lets chats in Claude Desktop pick and run models through Augur. Restart Claude Desktop after turning this on or off.',
+  desktopMissing: 'Needs the dispatch service, which comes with the Windows app.',
+};
+
+/** Desktop: turns the Claude Code mod and the Claude Desktop MCP entry on and off. */
+function claudeSection(m: SettingsModel): string {
+  const st = m.claude?.status;
+  if (!st) return '';
+  const codeDesc = CLAUDE_TEXT.codeDesc + (m.config.exportPath ? '' : ` ${CLAUDE_TEXT.codeExport}`);
+  const desktop = st.desktopPossible
+    ? toggle('claude-desktop', st.desktop, CLAUDE_TEXT.desktop)
+    : '';
+  return `<h2 class="sec">Claude</h2><div class="card">
+    <div class="row"><label class="name">${CLAUDE_TEXT.code}<span class="desc">${codeDesc}</span></label>${toggle('claude-code', !!st.code, CLAUDE_TEXT.code)}</div>
+    <div class="row"><label class="name">${CLAUDE_TEXT.desktop}<span class="desc">${st.desktopPossible ? CLAUDE_TEXT.desktopDesc : CLAUDE_TEXT.desktopMissing}</span></label>${desktop}</div>
+    ${m.claude?.error ? `<div class="field"><span class="bad-json">${esc(m.claude.error)}</span></div>` : ''}
+  </div>`;
+}
 
 const SYSTEM_NAMES: Record<Platform, string> = { windows: 'Windows', macos: 'macOS', linux: 'Linux', browser: 'Browser' };
 
@@ -208,6 +234,8 @@ export function renderSettings(m: SettingsModel): string {
     ${balances.length ? `<div class="field"><label>Notify when a balance drops below</label>${balances.map((b) =>
       `<div class="row" style="border:0;padding:2px 0"><label class="name">${esc(b.label)}</label>$ <input type="number" step="1" min="0" data-alert="bal:${esc(b.key)}" value="${a.balanceBelow[b.key] ?? ''}"></div>`).join('')}</div>` : ''}
   </div>`;
+
+  if (m.shellKind === 'desktop') html += claudeSection(m);
 
   html += `<h2 class="sec">Custom providers</h2><div class="card">
     <div class="field"><span class="help">Track a provider that is not built in by pasting its definition as JSON: the address to call, how to send its key, and where each number sits in the answer. Once saved, it appears in the provider list above, where you add its key.</span>

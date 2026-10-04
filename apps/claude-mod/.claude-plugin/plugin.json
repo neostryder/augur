@@ -1,0 +1,9 @@
+{
+  "name": "augur",
+  "version": "1.3.0",
+  "description": "Augur's usage in the status line, its alerts as toasts, and a band above the prompt to dismiss them.",
+  "author": {
+    "name": "neostryder"
+  },
+  "types": "./types/index.d.ts"
+}

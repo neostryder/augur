@@ -14,3 +14,4 @@ apps/relay/wrangler.toml
 packages/augurd/native/bin/
 __pycache__/
 *.pyc
+apps/claude-mod/.claude-plugin/types/

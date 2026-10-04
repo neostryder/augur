@@ -1,5 +1,5 @@
 import Sortable from 'sortablejs';
-import { ACTIVITY_LABELS, DATA_TIER_LABELS, WEIGHT_LABELS, addModels, buildPolicyFile, emptyEditState, parseEditState, parseInbox, processInbox, resolveHeld, INBOX_FILE, RESULTS_FILE, emptyPolicy, importPolicy, listDue, mergePolicy, policyDigest, policyFromFile, policyPathFor, releaseChanges, setField, setFieldMany, setModelStatus, syncModelList, undoChange, type AppConfig, type DataTier, type EditState, type ModelCatalog, type ModelEntry, type ProviderPlugin, type ReleaseChanges, type Shell, type Snapshot, type UpdateInfo, feedFor, feedFromUsage, type AlertKind, type Outlet, type PushStatus } from '@augur/core';
+import { ACTIVITY_LABELS, DATA_TIER_LABELS, WEIGHT_LABELS, addModels, buildPolicyFile, emptyEditState, parseEditState, parseInbox, processInbox, resolveHeld, INBOX_FILE, RESULTS_FILE, emptyPolicy, importPolicy, listDue, mergePolicy, policyDigest, policyFromFile, policyPathFor, releaseChanges, setField, setFieldMany, setModelStatus, syncModelList, undoChange, type AppConfig, type DataTier, type EditState, type ModelCatalog, type ModelEntry, type ProviderPlugin, type ReleaseChanges, type Shell, type Snapshot, type UpdateInfo, feedFor, feedFromUsage, type AlertKind, type Outlet, type PushStatus, type ClaudeStatus, type ClaudeTarget } from '@augur/core';
 import * as core from './core';
 import type { HistoryRow } from './core';
 import { renderDashboard, tightest, updateTip, type DashboardModel } from './views/dashboard';
@@ -41,6 +41,8 @@ const TICK_MS = 15_000;
 /** Dismissals on the phone wait this long before they upload, so several in a row go up together. After the relay refuses an upload, the phone tries again a minute later. */
 const PHONE_WRITE_DELAY_MS = 3000;
 const PHONE_RETRY_MS = 61_000;
+/** The usage file turned on for the Claude Code mod when no export path is set, under the home folder. */
+const DEFAULT_EXPORT = '.augur/usage.json';
 const ASK_CHECK_MS = 60_000;
 const PULL_MS = 5 * 60_000;
 // Rules are compared with the paired device's at most once a minute, and a local edit starts a comparison a few seconds after it.
@@ -138,6 +140,9 @@ export class App {
   private pushKey: string | null = null;
   private pushStatus: PushStatus | null = null;
   private pushError = '';
+  /** Desktop: where the Claude Code mod and the Claude Desktop MCP entry stand, and the last install error. */
+  private claude: ClaudeStatus | null = null;
+  private claudeError = '';
 
   private pluginMap(): Map<string, ProviderPlugin> {
     return new Map(core.plugins(this.config).map((p) => [p.id, p]));
@@ -166,6 +171,7 @@ export class App {
     }
     this.customDraft = JSON.stringify(this.config.custom ?? [], null, 2);
     this.autostart = this.shell.getAutostart ? await this.shell.getAutostart().catch(() => null) : null;
+    await this.loadClaude(true);
     await this.applyHotkey();
     if (this.shell.kind === 'desktop' && this.shell.setPopupPinned) this.pinned = (await this.shell.popupPinned?.().catch(() => false)) ?? false;
     this.ensureStrip();
@@ -361,10 +367,7 @@ export class App {
         else if (force) { clearTimeout(this.pushRetry); this.pushRetry = setTimeout(() => void this.push(), FORCED_PUSH_MS - since); }
       }
       void this.refreshModelLists();
-      if (this.shell.exportSnapshot && this.config.exportPath) {
-        const out = { ...this.snapshot, summary: summaryLine(this.snapshot, this.config) };
-        await this.shell.exportSnapshot(this.config.exportPath, JSON.stringify(out, null, 2)).catch(() => undefined);
-      }
+      await this.exportUsage();
     } finally {
       this.busy = false;
       document.body.classList.remove('busy');
@@ -487,6 +490,7 @@ export class App {
       classifier: this.servicePage.lines?.find((l) => l.key === 'decision.backend')?.value ?? null,
       sync: this.sync, relay: this.relay(), pwaUrl: this.pwaUrl(), pairQr: this.pairQr, pairUrl: this.pairUrl,
       scanError: this.scanError, iosInstallHint: iosInstallHint(), hotkeyError: this.hotkeyError, canHotkey: !!this.shell.setHotkey,
+      claude: this.shell.claudeStatus ? { status: this.claude, error: this.claudeError } : null,
       platform: this.shell.host.platform, push: this.shell.kind === 'pwa' ? { status: this.pushStatus, error: this.pushError, hasKey: !!this.pushKey } : null,
     };
   }
@@ -823,6 +827,43 @@ export class App {
   }
 
   /** Turns push on or off for this browser on the phone. */
+  private async exportUsage() {
+    if (!this.shell.exportSnapshot || !this.config.exportPath || !this.snapshot) return;
+    const out = { ...this.snapshot, summary: summaryLine(this.snapshot, this.config) };
+    await this.shell.exportSnapshot(this.config.exportPath, JSON.stringify(out, null, 2)).catch(() => undefined);
+  }
+
+  /** Reads where the Claude installs stand. After an update, an installed mod older than the one this build carries is replaced. */
+  private async loadClaude(refresh: boolean) {
+    if (!this.shell.claudeStatus) return;
+    this.claude = await this.shell.claudeStatus().catch(() => null);
+    const c = this.claude;
+    if (refresh && c?.code && c.bundled && c.code !== c.bundled && this.config.exportPath) {
+      await this.shell.claudeInstall?.('code', this.config.exportPath).catch(() => undefined);
+      this.claude = await this.shell.claudeStatus().catch(() => null);
+    }
+  }
+
+  private async setClaude(target: ClaudeTarget, on: boolean) {
+    this.claudeError = '';
+    try {
+      if (!on) await this.shell.claudeRemove?.(target);
+      else {
+        // The mod reads the usage file, so turning it on also turns on the export when it is off.
+        if (target === 'code' && !this.config.exportPath) {
+          this.config.exportPath = DEFAULT_EXPORT;
+          await this.saveConfig();
+          await this.exportUsage();
+        }
+        await this.shell.claudeInstall?.(target, this.config.exportPath ?? DEFAULT_EXPORT);
+      }
+    } catch (e) {
+      this.claudeError = e instanceof Error ? e.message : String(e);
+    }
+    await this.loadClaude(false);
+    await this.render();
+  }
+
   private async togglePush(on: boolean): Promise<void> {
     this.pushError = '';
     if (on && !this.pushKey) this.pushError = PUSH_TEXT.noKey;
@@ -1563,6 +1604,7 @@ export class App {
       else if (kind === 'alerts') this.config.alerts.enabled = t.checked;
       else if (kind === 'push') { await this.togglePush(t.checked); return; }
       else if (kind === 'autostart') { await this.shell.setAutostart?.(t.checked); this.autostart = t.checked; return; }
+      else if (kind === 'claude-code' || kind === 'claude-desktop') { await this.setClaude(kind === 'claude-code' ? 'code' : 'desktop', t.checked); return; }
       else if (kind === 'sharekeys') { if (this.sync) this.sync = { ...this.sync, shareKeys: t.checked }; this.lastPush = 0; await this.saveConfig(); void this.refresh(); return; }
       else if (kind === 'openonlaunch') { this.config.openOnLaunch = t.checked; await this.saveConfig(); return; }
       else if (kind === 'autoupdate') { this.config.autoUpdate = t.checked; await this.saveConfig(); if (t.checked) void this.autoInstall(); return; }
@@ -1593,7 +1635,13 @@ export class App {
       await this.saveConfig(); await this.render(); return;
     }
     if (t.matches('[data-hotkey]')) { this.config.hotkey = t.value.trim() || null; await this.applyHotkey(); await this.saveConfig(); await this.render(); return; }
-    if (t.matches('[data-export]')) { this.config.exportPath = t.value.trim() || null; await this.saveConfig(); return; }
+    if (t.matches('[data-export]')) {
+      this.config.exportPath = t.value.trim() || null;
+      await this.saveConfig();
+      // The installed mod reads the usage file from the path it was given, so it follows the change.
+      if (this.claude?.code && this.config.exportPath) await this.shell.claudeInstall?.('code', this.config.exportPath).catch(() => undefined);
+      return;
+    }
     if (d.alert) {
       const a = this.config.alerts;
       if (d.alert === 'pct') a.pctThresholds = t.value.split(/[,\s]+/).map(Number).filter((n) => n > 0 && n <= 100).sort((x, y) => x - y);

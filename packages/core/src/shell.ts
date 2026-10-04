@@ -9,6 +9,10 @@ import type { PushSubscriptionInfo } from './webpush.js';
 /** Where push stands on this phone. needs-install means an iPhone browser tab, which can only get push after it is added to the Home Screen. */
 export type PushStatus = 'unsupported' | 'needs-install' | 'denied' | 'off' | 'on';
 
+/** Where Augur's two Claude installs stand. code is the version of the mod Claude Code loads, null when it is not installed. */
+export interface ClaudeStatus { code: string | null; bundled: string | null; desktop: boolean; desktopPossible: boolean }
+export type ClaudeTarget = 'code' | 'desktop';
+
 export interface TrayUpdate {
   /** PNG of the tray icon at the requested size, base64 without a data: prefix. */
   pngBase64?: string;
@@ -80,6 +84,12 @@ export interface Shell {
   startPopupDrag?(): Promise<void>;
   getAutostart?(): Promise<boolean>;
   setAutostart?(on: boolean): Promise<void>;
+  /** Desktop only: whether the Claude Code mod and the Claude Desktop MCP entry are installed. */
+  claudeStatus?(): Promise<ClaudeStatus>;
+  /** Desktop only: installs the Claude Code mod (pointed at the usage file at exportPath) or the Claude Desktop MCP entry, or refreshes it. */
+  claudeInstall?(target: ClaudeTarget, exportPath: string): Promise<void>;
+  /** Desktop only: removes exactly what claudeInstall added. */
+  claudeRemove?(target: ClaudeTarget): Promise<void>;
   /** Desktop only: the global shortcut that opens and closes the panel. Null turns it off; rejects if it cannot be registered. */
   setHotkey?(accelerator: string | null): Promise<void>;
   /** Opens a window to sign in to a site that webSession reads. */

@@ -25,14 +25,14 @@ pub struct CommandOutput {
     stderr: String,
 }
 
-fn home_dir() -> Result<PathBuf, String> {
+pub(crate) fn home_dir() -> Result<PathBuf, String> {
     let key = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
     std::env::var_os(key)
         .map(PathBuf::from)
         .ok_or_else(|| "Home directory unavailable".into())
 }
 
-fn relative_path(path: &str) -> Result<PathBuf, String> {
+pub(crate) fn relative_path(path: &str) -> Result<PathBuf, String> {
     if path.is_empty() || path.contains('\\') || path.contains(':') || path.starts_with('/') {
         return Err("Invalid home-relative path".into());
     }

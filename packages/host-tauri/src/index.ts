@@ -7,7 +7,7 @@ import { check, type Update } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { getVersion } from '@tauri-apps/api/app';
 import type { AlertFeed, AppConfig, Host, HttpRequest, HttpResponse, ModelCatalog, Platform, Snapshot } from '@augur/core';
-import type { Shell, TrayUpdate, UpdateInfo } from '@augur/core';
+import type { ClaudeStatus, ClaudeTarget, Shell, TrayUpdate, UpdateInfo } from '@augur/core';
 
 let pendingUpdate: Update | null = null;
 
@@ -121,6 +121,10 @@ export function createTauriShell(): Shell {
     ...(platform() === 'windows' ? { dispatch: (args: string[]) => invoke<{ code: number; stdout: string; stderr: string }>('dispatch_cli', { args }) } : {}),
     getAutostart: () => isEnabled(),
     setAutostart: (on: boolean) => on ? enable() : disable(),
+    claudeStatus: () => invoke<ClaudeStatus>('claude_status'),
+    claudeInstall: (target: ClaudeTarget, exportPath: string) =>
+      target === 'code' ? invoke<void>('claude_code_install', { exportPath }) : invoke<void>('claude_desktop_install'),
+    claudeRemove: (target: ClaudeTarget) => invoke<void>(target === 'code' ? 'claude_code_remove' : 'claude_desktop_remove'),
     setHotkey: (accelerator: string | null) => invoke<void>('set_hotkey', { accelerator }),
     appVersion: () => getVersion(),
     openSignIn: (site: string) => invoke<void>('web_session_sign_in', { site }),

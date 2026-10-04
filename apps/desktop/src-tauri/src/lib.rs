@@ -1,3 +1,4 @@
+mod claude;
 mod commands;
 mod websession;
 
@@ -406,6 +407,11 @@ pub fn run() {
             set_hotkey,
             commands::http_request,
             commands::web_push,
+            claude::claude_status,
+            claude::claude_code_install,
+            claude::claude_code_remove,
+            claude::claude_desktop_install,
+            claude::claude_desktop_remove,
             commands::read_home_file,
             commands::write_home_file_atomic,
             commands::run_command,
