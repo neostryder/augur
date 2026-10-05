@@ -45,7 +45,7 @@ export function rank(policy: PolicyFile, usage: UsageSnapshot | null, req: PickR
     }
   }
   holdBack(policy, press, rows, blocked, notes);
-  const governed = govern(policy, req.activity, req.depth, rows.map(r => r.model), req.named);
+  const governed = govern(policy, req.activity, req.depth, rows.map(r => r.model), req.named, usage, now);
   for (const b of governed.blocks) { const at = rows.findIndex(r => r.model === b.model); if (at >= 0) { rows.splice(at, 1); blocked.push(b); } }
   notes.push(...governed.notes);
   const { factors, scarcity } = usageFactors(policy, press, rows.map(r => r.model));

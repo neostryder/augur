@@ -95,3 +95,72 @@ describe('the governor in a pick', () => {
     expect(govern(p, 'review_code').tilts['codex/luna']).toBe(0.85);
   });
 });
+
+const HOUR = 3600e3, WEEK = 7 * 24 * HOUR;
+/** A Claude meter that is `elapsed` of the way through its window and `used` percent spent. */
+const track = (kind: 'session' | 'weekly', used: number, elapsed: number) => {
+  const seconds = kind === 'weekly' ? WEEK / 1000 : 5 * HOUR / 1000;
+  return { id: kind, label: kind, usedPct: used, windowKind: kind, windowSeconds: seconds, resetsAt: new Date(now.getTime() + (1 - elapsed) * seconds * 1000).toISOString() };
+};
+const claudeUsage = (meters: ReturnType<typeof track>[], fetchedAt = now.toISOString()) => ({ providers: { claude: { fetchedAt, meters } } });
+const tiltOf = (r: ReturnType<typeof rank>, m: string) => r.ranking.find(x => x.model === m)?.tilt;
+
+describe('the Claude controller', () => {
+  const review = { activity: 'review_code' as const, dataTier: 'internal' as const };
+
+  it('leans to Sonnet when the week runs ahead of pace, and says so', () => {
+    const r = rank(policy(), claudeUsage([track('weekly', 60, 0.5)]), review, now);
+    expect(tiltOf(r, 'claude/claude-sonnet-5-5')).toBeCloseTo(1.15 * 1.25, 3);
+    expect(tiltOf(r, 'claude/live')).toBeCloseTo(0.85 * 0.8, 3);
+    expect(r.pick).toBe('claude/claude-sonnet-5-5');
+    expect(r.reason).toContain('week is 10 points ahead of pace, so Claude leans to Sonnet');
+  });
+
+  it('leans to Opus when both windows fall behind pace', () => {
+    const r = rank(policy(), claudeUsage([track('weekly', 30, 0.5), track('session', 10, 0.5)]), review, now);
+    expect(tiltOf(r, 'claude/live')).toBeCloseTo(0.85 * 1.25, 3);
+    expect(tiltOf(r, 'claude/claude-sonnet-5-5')).toBeCloseTo(1.15 * 0.85, 3);
+  });
+
+  it('adds nothing inside the band', () => {
+    const r = rank(policy(), claudeUsage([track('weekly', 53, 0.5)]), review, now);
+    expect(tiltOf(r, 'claude/live')).toBe(0.85);
+    expect(tiltOf(r, 'claude/claude-sonnet-5-5')).toBe(1.15);
+  });
+
+  it('lets the stricter track win', () => {
+    const r = rank(policy(), claudeUsage([track('weekly', 20, 0.5), track('session', 60, 0.3)]), review, now);
+    expect(govern(policy(), 'review_code', undefined, undefined, undefined, claudeUsage([track('weekly', 20, 0.5), track('session', 60, 0.3)]), now).reasons['claude/claude-sonnet-5-5']?.join(' ')).toContain('5-hour window is 30 points ahead of pace');
+    expect(tiltOf(r, 'claude/claude-sonnet-5-5')).toBeCloseTo(1.15 * 1.25, 3);
+    const one = rank(policy(), claudeUsage([track('weekly', 20, 0.5), track('session', 52, 0.5)]), review, now);
+    expect(tiltOf(one, 'claude/live')).toBe(0.85);
+  });
+
+  it('leaves Opus for prose alone when Claude runs hot', () => {
+    const r = rank(policy(), claudeUsage([track('weekly', 60, 0.5)]), { activity: 'draft_prose', dataTier: 'internal' }, now);
+    expect(tiltOf(r, 'claude/live')).toBe(1.3);
+  });
+
+  it('moves optional work off Claude at the reserve while another route can take it', () => {
+    const r = rank(policy(), claudeUsage([track('session', 91, 0.5)]), review, now);
+    expect(r.ranking.map(x => x.model)).not.toContain('claude/live');
+    expect(r.blocked.find(b => b.model === 'claude/live')?.why).toMatch(/past the 90% reserve/);
+    const alone = govern(policy(), 'review_code', undefined, ['claude/live'], undefined, claudeUsage([track('session', 91, 0.5)]), now);
+    expect(alone.blocks).toEqual([]);
+    const named = rank(policy(), claudeUsage([track('session', 91, 0.5)]), { ...review, named: 'claude/live' }, now);
+    expect(named.ranking.map(x => x.model)).toContain('claude/live');
+  });
+
+  it('treats unusable Claude figures as hot and says it could not check the reserve', () => {
+    const r = rank(policy(), claudeUsage([track('weekly', 50, 0.5)], new Date(now.getTime() - 3 * HOUR).toISOString()), review, now);
+    expect(r.notes.join(' ')).toContain('reserve could not be checked');
+    expect(tiltOf(r, 'claude/claude-sonnet-5-5')).toBeCloseTo(1.15 * 1.25, 3);
+  });
+
+  it('is off when no Claude figures are present, and takes its numbers from the rules', () => {
+    expect(rank(policy(), { providers: {} }, review, now).notes).toEqual([]);
+    const tight = policy({ claude: { band: 1, hot: { light: 2 } } });
+    const r = rank(tight, claudeUsage([track('weekly', 53, 0.5)]), review, now);
+    expect(tiltOf(r, 'claude/claude-sonnet-5-5')).toBeCloseTo(1.15 * 2, 3);
+  });
+});

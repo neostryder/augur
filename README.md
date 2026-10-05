@@ -145,6 +145,8 @@ Uninstalling Augur stops the service and removes the program, and leaves your jo
 
 A pick also leans toward a model that fits the task. Coding and hard reasoning are deep work and go to the strong models (Opus, Sol, Grok) first. Reviews, research, summaries and bulk work are everyday work and go to the lighter ones (Sonnet, Luna, DeepSeek, MiniMax), which keeps the strong models' usage for the tasks that need them. Prose goes to Opus at any depth. Fable and Astra are never picked unless a caller names one. `--depth deep` or `--depth everyday` overrides the default for one task, and the pick prints a line saying why the top model won and which came next.
 
+Claude's usage has its own pace check. The week and the 5-hour window are each compared with how much of them has passed, and the stricter one wins: more than 5 points ahead leans toward Sonnet, more than 5 behind leans toward Opus, and a window at 90% sends optional work to other routes while any can take it. A caller that names a model still gets it.
+
 Pauses, ask-first, data tiers and your weights apply first. The `balance` section of `policy.json` sets each activity's depth, each model's tier, the excluded names, how strong each lean is and which models write prose, and `"enabled": false` there switches it off.
 
 - **None** is the default. The agent gives the activity and data tier itself.

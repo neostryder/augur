@@ -7,6 +7,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 ### Added
 
 - [Visible] [Providers] **A pick weighs how hard the task is.** Coding and hard reasoning lean toward Opus, Sol and Grok, and the rest lean toward Sonnet, Luna, DeepSeek and MiniMax, with Opus kept ahead for prose. Fable and Astra are skipped unless named. `--depth deep|everyday` overrides the default, each pick ends with a line giving the reason, and a `balance` section in `policy.json` changes or switches off the rules.
+- [Visible] [Providers] **Picks keep Claude on pace.** If the week or the 5-hour window is running more than 5 points ahead of the time that has passed, Sonnet is favored over Opus, and if both are running more than 5 points behind, Opus is favored. Once a window hits 90%, optional work goes to other routes when any can take it. If Claude's figures are missing or old, the pick says it could not check.
 
 ### Fixed
 

@@ -2,6 +2,8 @@
 // `rank()` multiplies the tilt into the score it already computes, so the weights, pauses, ask-first, data tiers and the usage factor all still apply.
 import { ACTIVITIES } from '@augur/core';
 import type { ActivityId, PolicyFile } from '@augur/core';
+import { PACE, ageMinutes, isWindowMeter } from './pace.js';
+import type { UsageSnapshot } from './pace.js';
 
 /** Deep work is hard reasoning, serious coding and long chains. Everyday work is review, research, summaries and bulk work. */
 export type Depth = 'deep' | 'everyday';
@@ -21,6 +23,18 @@ export interface BalanceRules {
   tilt: Record<Depth, Record<ModelTier, number>>;
   /** Route labels that write the best prose, and the multiplier they get on draft_prose in place of the depth tilt. */
   prose: { models: string[]; tilt: number };
+  /** The Claude controller: holds Claude's usage near the pace marker and keeps a reserve so it never runs out. */
+  claude: {
+    /** The provider id the controller steers. */
+    provider: string;
+    /** Points of usage ahead of or behind the share of the window elapsed that still count as on pace. */
+    band: number;
+    /** A window at or above this percent moves optional work off Claude. */
+    reserve: number;
+    /** The score multiplier for each tier when Claude runs hot (ahead of pace) and when it runs behind. */
+    hot: Record<ModelTier, number>;
+    behind: Record<ModelTier, number>;
+  };
 }
 
 const DEEP: ActivityId[] = ['write_code', 'reason_critique'];
@@ -37,6 +51,7 @@ export const DEFAULT_BALANCE: BalanceRules = {
   exclude: ['fable', 'astra'],
   tilt: { deep: { strong: 1.4, light: 0.8 }, everyday: { strong: 0.85, light: 1.15 } },
   prose: { models: ['claude/live', 'claude/opus', 'copilot/claude-opus-5.5'], tilt: 1.3 },
+  claude: { provider: 'claude', band: 5, reserve: 90, hot: { strong: 0.8, light: 1.25 }, behind: { strong: 1.25, light: 0.85 } },
 };
 
 const num = (v: unknown, fallback: number): number => typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : fallback;
@@ -51,14 +66,47 @@ export function resolveBalance(raw: unknown): BalanceRules {
   for (const [m, v] of Object.entries(rec(s.tiers))) { if (v === 'strong' || v === 'light') tiers[m] = v; else if (v === null) delete tiers[m]; }
   const tilt = { deep: { ...d.tilt.deep }, everyday: { ...d.tilt.everyday } };
   for (const depthKey of ['deep', 'everyday'] as const) for (const tier of ['strong', 'light'] as const) tilt[depthKey][tier] = num(rec(rec(s.tilt)[depthKey])[tier], tilt[depthKey][tier]);
-  const prose = rec(s.prose);
+  const prose = rec(s.prose), cl = rec(s.claude);
+  const pair = (v: unknown, dflt: Record<ModelTier, number>): Record<ModelTier, number> => ({ strong: num(rec(v).strong, dflt.strong), light: num(rec(v).light, dflt.light) });
   return {
     enabled: typeof s.enabled === 'boolean' ? s.enabled : d.enabled,
     depth, tiers, tilt,
     exclude: strings(s.exclude) ?? [...d.exclude],
     prose: { models: strings(prose.models) ?? [...d.prose.models], tilt: num(prose.tilt, d.prose.tilt) },
+    claude: {
+      provider: typeof cl.provider === 'string' && cl.provider ? cl.provider : d.claude.provider,
+      band: num(cl.band, d.claude.band), reserve: num(cl.reserve, d.claude.reserve),
+      hot: pair(cl.hot, d.claude.hot), behind: pair(cl.behind, d.claude.behind),
+    },
   };
 }
+
+/** One of Claude's two windows set against the share of it that has passed. `ahead` is in points of usage and is negative when behind. */
+export interface PaceTrack { window: 'week' | '5-hour window'; used: number; elapsed: number; ahead: number }
+export type ClaudeStance = 'hot' | 'on pace' | 'behind' | 'unknown';
+export interface ClaudeState { stance: ClaudeStance; tracks: PaceTrack[]; /** The highest used percent of the two windows, or null with no figures. */ peak: number | null; atReserve: boolean }
+
+/** Reads Claude's session (5-hour) and weekly windows. The stricter track wins: hot if either is hot, behind only when every known track is behind. With Claude's figures present but unusable the stance is unknown, and it is treated as hot because the reserve cannot be checked. With no Claude figures at all, the controller is off. */
+export function claudeState(usage: UsageSnapshot | null, rules: BalanceRules, now: Date): ClaudeState {
+  const p = usage?.providers[rules.claude.provider];
+  const tracks: PaceTrack[] = [];
+  let peak: number | null = null;
+  if (p && ageMinutes(p, now) <= PACE.ignoreMin) {
+    for (const m of p.meters ?? []) {
+      if (!isWindowMeter(m) || (m.windowKind !== 'session' && m.windowKind !== 'weekly')) continue;
+      const used = m.usedPct as number, reset = m.resetsAt ? Date.parse(m.resetsAt) : NaN;
+      peak = Math.max(peak ?? 0, used);
+      if (!Number.isFinite(reset) || !m.windowSeconds) continue;
+      const elapsed = Math.min(1, Math.max(0, 1 - (reset - now.getTime()) / 1000 / m.windowSeconds)) * 100;
+      tracks.push({ window: m.windowKind === 'weekly' ? 'week' : '5-hour window', used, elapsed, ahead: Math.round((used - elapsed) * 10) / 10 });
+    }
+  }
+  const band = rules.claude.band;
+  const stance: ClaudeStance = !p ? 'on pace' : !tracks.length ? 'unknown' : tracks.some(t => t.ahead > band) ? 'hot' : tracks.every(t => t.ahead < -band) ? 'behind' : 'on pace';
+  return { stance, tracks, peak, atReserve: peak !== null && peak >= rules.claude.reserve };
+}
+
+const points = (t: PaceTrack): string => `${t.window} is ${Math.abs(Math.round(t.ahead))} points ${t.ahead >= 0 ? 'ahead of' : 'behind'} pace`;
 
 export interface Governed {
   depth: Depth;
@@ -78,12 +126,15 @@ const excluded = (rules: BalanceRules, label: string, id: string): string | null
 };
 
 /** The tilt each model gets for this activity and depth. `depth` is the caller's choice, or the activity's default. An excluded model the person named is not excluded. */
-export function govern(policy: PolicyFile, activity: ActivityId, depth?: Depth, models?: readonly string[], named?: string): Governed {
+export function govern(policy: PolicyFile, activity: ActivityId, depth?: Depth, models?: readonly string[], named?: string, usage: UsageSnapshot | null = null, now = new Date()): Governed {
   const rules = resolveBalance((policy as { balance?: unknown }).balance);
   const used: Depth = depth ?? rules.depth[activity] ?? 'everyday';
   const out: Governed = { depth: used, tilts: {}, blocks: [], reasons: {}, notes: [] };
   if (!rules.enabled) return out;
-  for (const p of Object.values(policy.providers)) {
+  const claude = claudeState(usage, rules, now);
+  const lean = claude.stance === 'unknown' ? 'hot' : claude.stance === 'on pace' ? null : claude.stance;
+  const candidates: Array<{ label: string; claude: boolean }> = [];
+  for (const [providerId, p] of Object.entries(policy.providers)) {
     for (const [label, m] of Object.entries(p.models)) {
       if (models && !models.includes(label)) continue;
       const why = label === named ? null : excluded(rules, label, m.id);
@@ -91,17 +142,38 @@ export function govern(policy: PolicyFile, activity: ActivityId, depth?: Depth, 
       let tilt = 1;
       const reasons: string[] = [];
       const tier = rules.tiers[label];
+      const isClaude = providerId === rules.claude.provider;
+      candidates.push({ label, claude: isClaude });
       // The best prose writers are tilted for prose alone, so being a strong model on everyday work does not count against them.
-      if (activity === 'draft_prose' && rules.prose.models.includes(label)) { tilt = rules.prose.tilt; reasons.push('writes the best prose'); }
+      const prose = activity === 'draft_prose' && rules.prose.models.includes(label);
+      if (prose) { tilt = rules.prose.tilt; reasons.push('writes the best prose'); }
       else if (tier) {
         const t = rules.tilt[used][tier];
         if (t !== 1) { tilt *= t; reasons.push(`${tier} model for ${used} work`); }
+      }
+      // Claude's own pace picks between Opus and Sonnet. Opus for prose is not held back by it.
+      if (isClaude && tier && lean && !prose) {
+        const t = rules.claude[lean][tier];
+        if (t !== 1) { tilt *= t; reasons.push(claudeWhy(claude, lean)); }
       }
       if (tilt !== 1) out.tilts[label] = Math.round(tilt * 1000) / 1000;
       if (reasons.length) out.reasons[label] = reasons;
     }
   }
+  // At the reserve, optional work leaves Claude while another route can take it, so Claude never runs out.
+  if (claude.atReserve && candidates.some(c => !c.claude)) {
+    for (const c of candidates.filter(c => c.claude && c.label !== named)) {
+      out.blocks.push({ model: c.label, why: `Claude is at ${Math.round(claude.peak as number)}% of a window, past the ${rules.claude.reserve}% reserve, so other routes take optional work` });
+      delete out.tilts[c.label]; delete out.reasons[c.label];
+    }
+  }
+  if (claude.stance === 'unknown') out.notes.push('Claude usage figures are missing or old, so the reserve could not be checked and Claude leans light.');
   return out;
+}
+
+function claudeWhy(c: ClaudeState, lean: 'hot' | 'behind'): string {
+  if (c.stance === 'unknown') return 'Claude figures are missing, so it leans to Sonnet';
+  return `the ${c.tracks.map(points).join(' and the ')}, so Claude leans to ${lean === 'hot' ? 'Sonnet' : 'Opus'}`;
 }
 
 /** One sentence on why the top model won, and what comes next. */
