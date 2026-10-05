@@ -3,6 +3,8 @@ import { DATA_TIERS, pauseActive } from '@augur/core';
 import type { ActivityId, DataTier, PolicyFile, WeightLevel } from '@augur/core';
 import { govern, reasonLine } from './balance.js';
 import type { Depth } from './balance.js';
+import { seatsFor } from './seats.js';
+import type { Seats } from './seats.js';
 import { modelOwners, pressure, usageFactors } from './pace.js';
 import type { UsageSnapshot } from './pace.js';
 
@@ -19,7 +21,7 @@ export interface PickRequest {
 
 export interface Ranked { model: string; score: number; fit: number; level: WeightLevel; weight: number; usage: number; /** The balance's multiplier for this model, 1 when it did not tilt it. */ tilt: number; why: string }
 export interface Blocked { model: string; why: string }
-export interface PickResult { pick: string | null; ranking: Ranked[]; blocked: Blocked[]; scarcity: number; unreviewed: string[]; notes: string[]; depth: Depth; /** One sentence on why the top model won and what comes next. */ reason: string }
+export interface PickResult { pick: string | null; ranking: Ranked[]; blocked: Blocked[]; scarcity: number; unreviewed: string[]; notes: string[]; depth: Depth; /** One sentence on why the top model won and what comes next. */ reason: string; /** The second opinion, web route and shadow that go with the pick. */ seats: Seats }
 
 /** Score is fit, times the weight of the activity's level, times the usage factor. A model that fails a rule is listed as blocked with the reason. */
 export function rank(policy: PolicyFile, usage: UsageSnapshot | null, req: PickRequest, now = new Date()): PickResult {
@@ -53,7 +55,8 @@ export function rank(policy: PolicyFile, usage: UsageSnapshot | null, req: PickR
     const fit = req.fits?.[r.model] ?? 0.5, weight = policy.weights[r.level] ?? 1, factor = factors[r.model] ?? 1, tilt = governed.tilts[r.model] ?? 1;
     return { model: r.model, score: Math.round(fit * weight * factor * tilt * 1000) / 1000, fit, level: r.level, weight, usage: factor, tilt, why: press[r.provider]?.why ?? '' };
   }).sort((a, b) => b.score - a.score);
-  return { pick: ranking[0]?.model ?? null, ranking, blocked, scarcity, unreviewed: policy.unreviewed, notes, depth: governed.depth, reason: reasonLine(ranking[0], ranking[1], governed, req.activity) };
+  const pick = ranking[0]?.model ?? null;
+  return { pick, ranking, blocked, scarcity, unreviewed: policy.unreviewed, notes, depth: governed.depth, reason: reasonLine(ranking[0], ranking[1], governed, req.activity), seats: seatsFor(policy, ranking, pick, req.activity) };
 }
 
 /**

@@ -5,7 +5,7 @@ import { call as serviceCall } from '@augur/augurd/client';
 import type { ClientOptions } from '@augur/augurd/client';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES, checkEdit, editKind, parseEditState, parseInbox, previewEdits } from '@augur/core';
 import type { ActivityId, DataTier, OutputMode, PolicyEdit, PolicyFile } from '@augur/core';
-import { TOOL_TIERS, isTerminal, rank } from '@augur/dispatch-protocol';
+import { TOOL_TIERS, isTerminal, rank, seatLines } from '@augur/dispatch-protocol';
 import type { JobRecord, JobRequest, ToolTier, UsageSnapshot } from '@augur/dispatch-protocol';
 
 export interface ToolResult { text: string; isError?: boolean; data?: Record<string, unknown> }
@@ -80,7 +80,7 @@ export function createTools(d: McpDeps) {
     return guarded(() => d.call('pick', { ...(activity ? { activity: activity as ActivityId } : {}), ...(dataTier ? { dataTier: dataTier as DataTier } : {}), ...(a.depth === 'deep' || a.depth === 'everyday' ? { depth: a.depth } : {}), ...(a.task ? { task: a.task } : {}), session: d.session }, d.opts), r => {
       if ('error' in r) return fail(r.error);
       const lines = r.ranking.map(x => `${x.model.padEnd(24)} score ${x.score.toFixed(2)}  routes ${(r.routes[x.model] ?? []).join(', ') || 'none'}`);
-      return { text: r.pick ? `Pick: ${r.pick} (${r.activity}, ${r.dataTier} data). ${r.reason}\n${lines.join('\n')}` : `No model is permitted ${r.activity} on ${r.dataTier} data.\n${lines.join('\n')}`, data: r as unknown as Record<string, unknown> };
+      return { text: r.pick ? `Pick: ${r.pick} (${r.activity}, ${r.dataTier} data). ${[r.reason, ...seatLines(r.seats ?? {})].filter(Boolean).join('\n')}\n${lines.join('\n')}` : `No model is permitted ${r.activity} on ${r.dataTier} data.\n${lines.join('\n')}`, data: r as unknown as Record<string, unknown> };
     });
   }
 

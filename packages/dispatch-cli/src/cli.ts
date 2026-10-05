@@ -6,7 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES, feedFor } from '@augur/core';
 import type { ActivityId, DataTier, EngineState, OutputMode } from '@augur/core';
-import { EXIT_CODES, TOOL_TIERS, describeFigure, exitCodeForState, isTerminal } from '@augur/dispatch-protocol';
+import { EXIT_CODES, TOOL_TIERS, describeFigure, exitCodeForState, isTerminal, seatLines } from '@augur/dispatch-protocol';
 import type { JobRecord, JobRequest, ToolTier } from '@augur/dispatch-protocol';
 import { STATUS_TEXT, statusLine } from '@augur/view-model';
 import { bridge, stdioBridge } from './bridge.js';
@@ -325,7 +325,7 @@ async function pickCmd(io: Io, opts: Opts, say: (h: string, d: unknown) => void,
   const lines = r.ranking.map(x => `  ${x.model.padEnd(22)} ${x.score.toFixed(2)}   fit ${x.fit.toFixed(2)} x ${x.level} ${x.weight.toFixed(2)} x usage ${x.usage.toFixed(2)}   routes ${(r.routes[x.model] ?? []).join(', ') || 'none'}`);
   for (const b of r.blocked) lines.push(`  ${b.model.padEnd(22)} --     ${b.why}`);
   const nl = String.fromCharCode(10);
-  say(r.pick ? `Pick: ${r.pick}   (${r.activity}, ${r.dataTier} data; scarcity ${r.scarcity}${r.decision ? `; ${r.decision.backend}` : ''})${nl}${r.reason}${nl}${lines.join(nl)}` : `No model is permitted ${r.activity} on ${r.dataTier} data.${nl}${lines.join(nl)}`, r);
+  say(r.pick ? `Pick: ${r.pick}   (${r.activity}, ${r.dataTier} data; scarcity ${r.scarcity}${r.decision ? `; ${r.decision.backend}` : ''})${nl}${[r.reason, ...seatLines(r.seats)].join(nl)}${nl}${lines.join(nl)}` : `No model is permitted ${r.activity} on ${r.dataTier} data.${nl}${lines.join(nl)}`, r);
   return r.pick ? 0 : EXIT_CODES.rejected;
 }
 

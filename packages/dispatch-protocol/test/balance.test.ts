@@ -244,3 +244,61 @@ describe('the backup routes', () => {
     expect(b.fallback).toMatchObject({ aim: 100, cap: 120, margin: 0, routes: {}, anthropic: [] });
   });
 });
+
+const all = { write_code: 'normal', review_code: 'normal', research: 'normal', typed_decisions: 'normal', bulk_tagging: 'normal', generate_images: 'normal' };
+const SEATS = { providers: {
+  codex: { defaults: { dataTier: 'sensitive', output: 'write_files', cost: 'moderate' }, models: { 'codex/sol': { id: 'gpt-6.1-sol', rule: { activities: all } } } },
+  minimax: { defaults: { dataTier: 'internal', output: 'write_files', cost: 'free' }, models: { 'minimax/m3': { id: 'minimax-m3', rule: { activities: all } } } },
+  chatgpt: { defaults: { dataTier: 'public', output: 'text', cost: 'free' }, models: { 'chatgpt/web': { id: 'chatgpt-web', rule: { activities: all } } } },
+  jev: { defaults: { dataTier: 'internal', output: 'text', cost: 'very_cheap' }, models: { 'jev/jev-latest': { id: 'jev-latest', rule: { activities: all } } } },
+  laya: { defaults: { dataTier: 'regulated', output: 'text', cost: 'free' }, models: { 'laya/laya': { id: 'laya', rule: { activities: { typed_decisions: 'normal' } } } } },
+} };
+function seatPolicy(balance?: Record<string, unknown>): PolicyFile {
+  const p = emptyPolicy(); importPolicy(p, SEATS, now);
+  for (const [id, provider] of Object.entries(p.providers)) for (const label of Object.keys(provider.models)) setField(p, fieldPath(id, label, 'status'), 'confirmed', 'test', now);
+  if (balance) p.balance = balance;
+  return buildPolicyFile(p, Object.keys(p.providers).map(id => ({ id, name: id, metered: true })), now);
+}
+const seat = (activity: 'write_code' | 'research' | 'typed_decisions' | 'generate_images', tier: 'public' | 'internal' = 'internal', balance?: Record<string, unknown>) =>
+  rank(seatPolicy(balance), null, { activity, dataTier: tier }, now);
+
+describe('the seats beside a pick', () => {
+  it('add a second opinion from MiniMax on a task that is not small', () => {
+    const r = seat('write_code');
+    expect(r.pick).not.toBe('minimax/m3');
+    expect(r.seats.second).toMatchObject({ model: 'minimax/m3' });
+    expect(seat('generate_images').seats.second).toBeUndefined();
+  });
+
+  it('skip the second opinion when its data tier does not allow it, or the pick is that model', () => {
+    expect(seat('write_code', 'internal').seats.second?.model).toBe('minimax/m3');
+    const sensitive = rank(seatPolicy(), null, { activity: 'write_code', dataTier: 'sensitive' }, now);
+    expect(sensitive.seats.second).toBeUndefined();
+    const only = rank(seatPolicy({ seats: { second: { models: ['codex/sol'] } } }), null, { activity: 'write_code', dataTier: 'internal' }, now);
+    expect(only.seats.second?.model === only.pick).toBe(false);
+  });
+
+  it('recommend a free web route for research, with the steps for the caller', () => {
+    const r = seat('research', 'public');
+    expect(r.seats.web).toMatchObject({ model: 'chatgpt/web' });
+    expect(r.seats.web?.how).toContain('brief file');
+    expect(seat('research', 'internal').seats.web).toBeUndefined();
+    expect(seat('write_code', 'public').seats.web).toBeUndefined();
+  });
+
+  it('put Jev first for classification and scoring, and leave the shadow off its own decisions', () => {
+    const r = seat('typed_decisions');
+    expect(r.pick).toBe('jev/jev-latest');
+    expect(r.reason).toContain('Jev is first for classification and scoring');
+    expect(r.seats.shadow).toBeUndefined();
+    expect(tiltOfJev(seat('write_code'))).toBe(1);
+  });
+
+  it('name the local model as a shadow beside a reasoning model\'s pick', () => {
+    const r = seat('write_code');
+    expect(r.seats.shadow?.model).toBe('laya/laya');
+    expect(seat('write_code', 'internal', { enabled: false }).seats).toEqual({});
+    expect(seat('write_code', 'internal', { seats: { shadow: '' } }).seats.shadow).toBeUndefined();
+  });
+});
+const tiltOfJev = (r: ReturnType<typeof rank>) => r.ranking.find(x => x.model === 'jev/jev-latest')?.tilt;

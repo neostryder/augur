@@ -5,6 +5,7 @@ export * from './pace.js';
 export * from './rules.js';
 export * from './pick.js';
 export * from './balance.js';
+export * from './seats.js';
 export * from './ipc.js';
 export * from './adapter-info.js';
 export * from './accounting.js';

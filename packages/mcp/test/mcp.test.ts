@@ -55,6 +55,14 @@ describe('pick', () => {
     expect(r.text).toContain('Pick: codex/luna');
     expect(calls[0]).toEqual({ method: 'pick', params: { activity: 'write_code', dataTier: 'internal', session: 'mcp-test' } });
   });
+  it('prints the reason and the seats under the pick', async () => {
+    const seats = { second: { model: 'minimax/m3', why: 'a second opinion from a route with plenty of room' }, shadow: { model: 'laya/laya', why: 'the local model answers the same decision' } };
+    const r = await createTools(deps({ pick: { pick: 'codex/luna', activity: 'review_code', dataTier: 'internal', ranking: [{ model: 'codex/luna', score: 0.8 }], routes: {}, reason: 'codex/luna for everyday review code: light model for everyday work.', seats } }))
+      .pick({ activity: 'review_code', data_tier: 'internal', depth: 'everyday' });
+    expect(r.text).toContain('codex/luna for everyday review code');
+    expect(r.text).toContain('Second opinion: minimax/m3');
+    expect(r.text).toContain('Shadow: laya/laya');
+  });
   it('reports an error result from the service as an error', async () => {
     const r = await createTools(deps({ pick: { error: 'could not classify' } })).pick({ task: 'do a thing' });
     expect(r).toMatchObject({ isError: true, text: 'could not classify' });

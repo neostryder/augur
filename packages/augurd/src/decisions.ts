@@ -17,6 +17,8 @@ export interface PickEntry {
   classified?: { activity: boolean; dataTier: boolean };
   /** What the fit questions said about each ranked model, needed to rebuild those questions for training. */
   descriptions?: Record<string, string>;
+  /** The balance's reading of the task and why the top model won, and the models named beside it. A job that used another model than the pick is the override label. */
+  depth?: string; reason?: string; seats?: { second?: string; web?: string; shadow?: string };
 }
 
 /** Tiers whose task text may be written to disk for training. */

@@ -48,6 +48,17 @@ export interface BalanceRules {
     cap: number;
     margin: number;
   };
+  /** The extra seats a pick names beside its model. */
+  seats: {
+    /** Models that give a second opinion, in order, and the activities too small to need one. */
+    second: { models: string[]; skip: ActivityId[] };
+    /** The free web routes to recommend for an activity, in order. The calling session drives the browser. */
+    web: Partial<Record<ActivityId, string[]>>;
+    /** The local model that shadows decisions a reasoning model makes, so its answers can be compared and learned from. */
+    shadow: string;
+    /** Jev is first for classification, noul and scoring: its route gets this multiplier on those activities. */
+    jev: { route: string; activities: ActivityId[]; tilt: number };
+  };
 }
 
 const DEEP: ActivityId[] = ['write_code', 'reason_critique'];
@@ -66,6 +77,12 @@ export const DEFAULT_BALANCE: BalanceRules = {
   prose: { models: ['claude/live', 'claude/opus', 'copilot/claude-opus-5.5'], tilt: 1.3 },
   claude: { provider: 'claude', band: 5, reserve: 90, hot: { strong: 0.8, light: 1.25 }, behind: { strong: 1.25, light: 0.85 } },
   fallback: { providers: ['copilot'], routes: { 'deepseek/v4.1-flash': ['write_code'] }, anthropic: ['copilot/claude-opus-5.5', 'copilot/claude-sonnet-5.5'], aim: 150, cap: 250, margin: 5 },
+  seats: {
+    second: { models: ['minimax/m3'], skip: ['bulk_tagging', 'typed_decisions', 'speech', 'generate_images', 'generate_video', 'read_images'] },
+    web: { research: ['chatgpt/web', 'gemini/web'], generate_images: ['chatgpt/web', 'gemini/web'], read_images: ['gemini/web', 'chatgpt/web'], long_context: ['gemini/web'] },
+    shadow: 'laya/laya',
+    jev: { route: 'jev/jev-latest', activities: ['typed_decisions', 'bulk_tagging'], tilt: 3 },
+  },
 };
 
 const num = (v: unknown, fallback: number): number => typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : fallback;
@@ -80,7 +97,11 @@ export function resolveBalance(raw: unknown): BalanceRules {
   for (const [m, v] of Object.entries(rec(s.tiers))) { if (v === 'strong' || v === 'light') tiers[m] = v; else if (v === null) delete tiers[m]; }
   const tilt = { deep: { ...d.tilt.deep }, everyday: { ...d.tilt.everyday } };
   for (const depthKey of ['deep', 'everyday'] as const) for (const tier of ['strong', 'light'] as const) tilt[depthKey][tier] = num(rec(rec(s.tilt)[depthKey])[tier], tilt[depthKey][tier]);
-  const prose = rec(s.prose), cl = rec(s.claude), fb = rec(s.fallback);
+  const prose = rec(s.prose), cl = rec(s.claude), fb = rec(s.fallback), st = rec(s.seats);
+  const acts = (v: unknown): ActivityId[] | null => { const a = strings(v); return a ? a.filter((x): x is ActivityId => (ACTIVITIES as readonly string[]).includes(x)) : null; };
+  const web: Partial<Record<ActivityId, string[]>> = { ...d.seats.web };
+  for (const [a, v] of Object.entries(rec(st.web))) if ((ACTIVITIES as readonly string[]).includes(a)) { const l = strings(v); if (l) web[a as ActivityId] = l; else if (v === null) delete web[a as ActivityId]; }
+  const jev = rec(st.jev), second = rec(st.second);
   const routes: Record<string, string[]> = { ...d.fallback.routes };
   for (const [label, v] of Object.entries(rec(fb.routes))) { const a = strings(v); if (a) routes[label] = a; else if (v === null) delete routes[label]; }
   const money = (v: unknown, fallback: number): number => typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : fallback;
@@ -98,6 +119,12 @@ export function resolveBalance(raw: unknown): BalanceRules {
     fallback: {
       providers: strings(fb.providers) ?? [...d.fallback.providers], routes, anthropic: strings(fb.anthropic) ?? [...d.fallback.anthropic],
       aim: money(fb.aim, d.fallback.aim), cap: money(fb.cap, d.fallback.cap), margin: money(fb.margin, d.fallback.margin),
+    },
+    seats: {
+      second: { models: strings(second.models) ?? [...d.seats.second.models], skip: acts(second.skip) ?? [...d.seats.second.skip] },
+      web,
+      shadow: typeof st.shadow === 'string' ? st.shadow : d.seats.shadow,
+      jev: { route: typeof jev.route === 'string' && jev.route ? jev.route : d.seats.jev.route, activities: acts(jev.activities) ?? [...d.seats.jev.activities], tilt: num(jev.tilt, d.seats.jev.tilt) },
     },
   };
 }
@@ -172,6 +199,7 @@ export function govern(policy: PolicyFile, activity: ActivityId, depth?: Depth, 
         const t = rules.tilt[used][tier];
         if (t !== 1) { tilt *= t; reasons.push(`${tier} model for ${used} work`); }
       }
+      if (label === rules.seats.jev.route && rules.seats.jev.activities.includes(activity)) { tilt *= rules.seats.jev.tilt; reasons.push('Jev is first for classification and scoring'); }
       // Claude's own pace picks between Opus and Sonnet. Opus for prose is not held back by it.
       if (isClaude && tier && lean && !prose) {
         const t = rules.claude[lean][tier];
