@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { emptyPolicy } from '@augur/core';
+import { emptyPolicy, migrateConfig } from '@augur/core';
 import { balanceReport } from '@augur/dispatch-protocol';
 import { renderBalance } from '../src/views/balance';
+import { renderRules, type RulesModel } from '../src/views/rules';
 
 describe('the balance page', () => {
   it('waits for the service before showing anything', () => {
@@ -23,5 +24,17 @@ describe('the balance page', () => {
     const html = renderBalance({ report: null, error: '<b>no policy</b>' });
     expect(html).toContain('&lt;b&gt;no policy&lt;/b&gt;');
     expect(html).toContain('role="alert"');
+  });
+});
+
+describe('stance chips on the rules page', () => {
+  const base = (stances?: Record<string, string>): RulesModel => ({
+    config: migrateConfig({}), held: [], providers: [{ id: 'codex', name: 'Codex', metered: true }], plugins: new Map(), snapshot: null, dark: false, policyError: null, sel: null, query: '', filter: 'all', open: new Set(),
+    picked: new Set(), showHistory: false, addError: '', note: '', bulkTier: '', bulkField: 'cost', bulkValue: '', preview: null, dialOpen: false, dialEnd: '', dialCustom: '', dialPlan: null, dialError: '', pauseMode: 'off', pauseWeights: {},
+    catalog: {}, listing: new Set(), canList: false, ...(stances ? { stances } : {}) });
+
+  it('names the balance stance of a provider once it is known', () => {
+    expect(renderRules(base({ codex: 'backup' }))).toContain('Backup, used last');
+    expect(renderRules(base())).not.toContain('Backup, used last');
   });
 });

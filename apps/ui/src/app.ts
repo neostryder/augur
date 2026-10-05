@@ -72,6 +72,7 @@ export class App {
   private policyError: string | null = null;
   private jobs: JobsModel = { service: null, serviceNote: '', unavailable: '', jobs: null, accounted: {}, sel: null, detail: null, busy: false };
   private jobsTimer: ReturnType<typeof setInterval> | undefined;
+  private stances: Record<string, string> = {};
   private balancePage: BalanceModel = { report: null, error: '' };
   private servicePage: ServiceModel = { lines: null, service: null, runJobs: false, note: '', error: '', busy: false, unavailable: '' };
   private routesPage: RoutesModel = { file: null, error: '', health: null, sel: null, draft: null, formError: '', note: '', models: [], confirmDelete: false, busy: false, canTest: false, testing: false, testNote: '', keyStored: null, keyNote: '' };
@@ -454,7 +455,7 @@ export class App {
   }
 
   private rulesModel(): RulesModel {
-    return { config: this.config, held: heldRows(this.editState), providers: core.policyProviders(this.config), plugins: this.pluginMap(), snapshot: this.snapshot,
+    return { config: this.config, held: heldRows(this.editState), providers: core.policyProviders(this.config), stances: this.stances, plugins: this.pluginMap(), snapshot: this.snapshot,
       dark: document.documentElement.dataset.theme === 'dark', policyError: this.policyError, catalog: this.catalog, listing: this.listing, canList: this.shell.kind === 'desktop', ...this.rules };
   }
 
@@ -905,6 +906,17 @@ export class App {
     return Object.entries(this.config.policy?.providers ?? {}).flatMap(([pid, p]) => Object.keys(p.models).map((label) => `${pid}/${label}`)).sort();
   }
 
+  /** Reads how the balance treats each provider, for the chips on the Rules page. The page works without it. */
+  private async loadStances(): Promise<void> {
+    if (!this.shell.dispatch) return;
+    try {
+      const r = await this.augur<BalanceModel['report'] | { error: string }>(['balance', '--json']);
+      const got = r.data;
+      if (got && !('error' in got)) this.stances = Object.fromEntries(got.providers.map((p) => [p.id, p.stance]));
+    } catch { /* the service is not running */ }
+    if (this.view === 'rules') await this.render();
+  }
+
   private async loadBalance(): Promise<void> {
     const page = this.balancePage;
     try {
@@ -1063,7 +1075,7 @@ export class App {
       case 'settings': this.view = 'settings'; await this.render(); break;
       case 'retry-policy': await this.engine?.retryPolicy(); break;
       case 'edit-accept': case 'edit-dismiss': await this.engine?.answerEdit(t.dataset.edit ?? '', t.dataset.action === 'edit-accept'); break;
-      case 'rules': this.view = 'rules'; this.rules.showHistory = false; if (t.dataset.value) this.rules.filter = t.dataset.value as RulesFilter; await this.render(); break;
+      case 'rules': this.view = 'rules'; this.rules.showHistory = false; if (t.dataset.value) this.rules.filter = t.dataset.value as RulesFilter; await this.render(); void this.loadStances(); break;
       case 'rules-dial': this.rules.dialOpen = !this.rules.dialOpen; this.rules.dialPlan = null; this.rules.dialError = ''; await this.render(); break;
       case 'rules-history': this.rules.showHistory = !this.rules.showHistory; await this.render(); break;
       case 'back': this.leaveJobs(); this.view = 'dashboard'; await this.render(); break;

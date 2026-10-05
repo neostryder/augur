@@ -91,6 +91,18 @@ export class RulesPage implements Page {
   picked = new Set<string>();
   /** What the last change to the picked models did. */
   note = '';
+  /** How the balance treats each provider, by provider id, read from the service. */
+  stances: Record<string, string> = {};
+  private reading = false;
+
+  async refresh(ctx: Ctx): Promise<void> {
+    if (this.reading) return;
+    this.reading = true;
+    try {
+      const got = await ctx.link.call('balance', { days: 1 });
+      if (!('error' in got)) this.stances = Object.fromEntries(got.providers.map((p) => [p.id, p.stance]));
+    } catch { /* the service does not answer, and the page works without the chips */ } finally { this.reading = false; ctx.redraw(); }
+  }
   readonly forms: Record<View, Form> = { list: new Form(), detail: new Form(), wait: new Form(), history: new Form(), dial: new Form() };
   private bulk: { act: ActivityId; level: string; field: BulkPreview['field']; value: string; preview: BulkPreview | null } = { act: ACTIVITIES[0], level: '', field: BULK_FIELDS[0]!.field, value: '', preview: null };
   private dial: { end: string; custom: string; plan: DialBackPlan | null; error: string } = { end: '', custom: '', plan: null, error: '' };
@@ -211,7 +223,7 @@ export class RulesPage implements Page {
       const keys = list.map(([label]) => `${meta.id}|${label}`), all = keys.length > 0 && keys.every((k) => this.picked.has(k));
       rows.push({
         kind: 'item', id: `prov:${meta.id}`, label: meta.name, dot: theme.provider(meta.id), open, right: models(total),
-        chips: [...(meta.metered ? [] : [[RULES_TEXT.noUsage, theme.muted] as const]), ...(drained ? [[RULES_TEXT.usedUpFirst, theme.muted] as const] : []), ...(waiting ? [[RULES_TEXT.review(waiting), theme.warn] as const] : [])],
+        chips: [...(meta.metered ? [] : [[RULES_TEXT.noUsage, theme.muted] as const]), ...(drained ? [[RULES_TEXT.usedUpFirst, theme.muted] as const] : []), ...(this.stances[meta.id] && RULES_TEXT.stance[this.stances[meta.id]!] ? [[RULES_TEXT.stance[this.stances[meta.id]!]!, theme.muted] as const] : []), ...(waiting ? [[RULES_TEXT.review(waiting), theme.warn] as const] : [])],
         enter: () => { if (this.open.has(meta.id)) this.open.delete(meta.id); else this.open.add(meta.id); },
         enterLabel: open ? RULES_TUI_TEXT.hideModels : RULES_TUI_TEXT.showModels,
         ...(open && keys.length ? { pick: all, setPick: (on: boolean) => this.pickMany(keys, on) } : {}),

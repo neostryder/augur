@@ -11,7 +11,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 - [Visible] [Providers] **Backup routes wait their turn.** A Copilot model, or DeepSeek on a coding task, is skipped while another route can take the work. Copilot's Anthropic models step in once Claude reaches 90%. The pick mentions Copilot's monthly spend once it passes $150 and drops Copilot at $250.
 - [Visible] [Providers] **Picks can suggest more than one model.** Most picks also suggest MiniMax for a second look. Research and image tasks suggest a free ChatGPT or Gemini route with the steps to follow, and tagging and typed decisions go to Jev first. Each pick also names the local Laya model as a shadow, so its answer can be compared with the pick's.
 - [Visible] [Providers] **`augur balance` shows what the router is doing.** It prints where each kind of work goes now, Claude's pace, Copilot's spend and the last few days of picks, and the `augur_balance` tool returns the same. The service also saves a copy each day in `~/.augur/balance`.
-- [Visible] [UI] **A Balance page in the window app and the terminal app.** It shows the same report as `augur balance`, and nothing on it can be changed. The terminal app's Settings page moves from key 5 to key 6.
+- [Visible] [UI] **A Balance page in the window app and the terminal app.** It shows the same report as `augur balance`, and nothing on it can be changed. Each provider on the Rules page also carries a chip with its stance: kept on pace, used up first, backup or free. The terminal app's Settings page moves from key 5 to key 6.
 
 ### Fixed
 

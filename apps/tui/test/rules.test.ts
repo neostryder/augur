@@ -110,3 +110,18 @@ describe('parseWhen', () => {
     expect(parseWhen('2026-02-31', NOW)).toBeNull();
   });
 });
+
+describe('rules page stances', () => {
+  it('shows how the balance treats each provider once the service has answered', async () => {
+    const page = new RulesPage();
+    const list = pages();
+    list[2] = page;
+    const t = setup(withModels(), { pages: list, answers: { balance: { providers: [{ id: 'claude', stance: 'paced' }, { id: 'codex', stance: 'backup' }] } } });
+    t.app.active = 2;
+    expect(t.draw(110, 30)).not.toContain('Kept on pace');
+    await t.app.poll();
+    const text = t.draw(110, 30);
+    expect(text).toContain('Kept on pace');
+    expect(text).toContain('Backup, used last');
+  });
+});

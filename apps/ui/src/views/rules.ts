@@ -22,6 +22,8 @@ export interface RulesModel {
   /** Changes agents asked for that wait for the owner's yes. */
   held: HeldRow[];
   providers: Array<{ id: string; name: string; metered: boolean }>;
+  /** How the balance treats each provider, by provider id, from the balance report. Empty until the service answers. */
+  stances?: Record<string, string>;
   plugins: Map<string, ProviderPlugin>;
   snapshot: Snapshot | null;
   dark: boolean;
@@ -97,7 +99,7 @@ function providerBlock(m: RulesModel, meta: RulesModel['providers'][number]): st
   return `<section class="card rprov">
     <div class="phead">
       <span class="dot" style="background:${esc(colorOf(m, meta.id))}"></span>
-      <span class="pname">${esc(meta.name)}${meta.metered ? '' : `<span class="chip">${RULES_TEXT.noUsage}</span>`}${drained ? `<span class="chip">${RULES_TEXT.usedUpFirst}</span>` : ''}${pending ? `<span class="chip stale">${RULES_TEXT.review(pending)}</span>` : ''}</span>
+      <span class="pname">${esc(meta.name)}${meta.metered ? '' : `<span class="chip">${RULES_TEXT.noUsage}</span>`}${drained ? `<span class="chip">${RULES_TEXT.usedUpFirst}</span>` : ''}${m.stances?.[meta.id] && RULES_TEXT.stance[m.stances[meta.id]!] ? `<span class="chip">${esc(RULES_TEXT.stance[m.stances[meta.id]!]!)}</span>` : ''}${pending ? `<span class="chip stale">${RULES_TEXT.review(pending)}</span>` : ''}</span>
       <span class="age">${models(total)}</span>
       <button class="link" data-rprov="${esc(meta.id)}" aria-expanded="${open}" aria-label="${open ? 'Hide' : 'Show'} ${esc(meta.name)} models" style="transform:rotate(${open ? 0 : -90}deg)">${ICON.chevron}</button></div>
     ${open ? `<div class="rlist-body">

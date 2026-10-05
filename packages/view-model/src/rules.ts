@@ -42,6 +42,8 @@ export const RULES_TEXT = {
   defaultsSub: (name: string) => `Used by every ${name} model that leaves a field unset`,
   noUsage: 'No usage data',
   usedUpFirst: 'Used up first',
+  /** How the balance treats a provider, read-only here. A drained provider already shows Used up first. */
+  stance: { paced: 'Kept on pace', drain: '', backup: 'Backup, used last', free: 'Free' } as Record<string, string>,
   review: (n: number) => `${n} ${n === 1 ? 'needs' : 'need'} review`,
   status: {
     unreviewed: 'New model. Routers skip it until its rules are confirmed.',
