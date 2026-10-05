@@ -143,7 +143,7 @@ Uninstalling Augur stops the service and removes the program, and leaves your jo
 
 ### How a pick balances models
 
-A pick also leans toward a model that fits the task. Coding and hard reasoning are deep work and go to the strong models (Opus, Sol, Grok) first. Reviews, research, summaries and bulk work are everyday work and go to the lighter ones (Sonnet, Luna, DeepSeek, MiniMax), which keeps the strong models' usage for the tasks that need them. Prose goes to Opus at any depth. Fable and Astra are never picked unless a caller names one. `--depth deep` or `--depth everyday` overrides the default for one task, and the pick prints a line saying why the top model won and which came next.
+A pick also leans toward a model that fits the task. Coding and hard reasoning are deep work and go to the strong models (Opus, Sol, Grok) first. Reviews, research, summaries and bulk work are everyday work and go to the lighter ones (Sonnet, Luna, DeepSeek, MiniMax), which keeps the strong models' usage for the tasks that need them. Prose goes to Opus at any depth. Each route also gets a lift on the activities it is known for, such as MiniMax on long context and ChatGPT on research. Fable and Astra are never picked unless a caller names one. `--depth deep` or `--depth everyday` overrides the default for one task, and the pick prints a line saying why the top model won and which came next.
 
 Claude's usage has its own pace check. The week and the 5-hour window are each compared with how much of them has passed, and the stricter one wins: more than 5 points ahead leans toward Sonnet, more than 5 behind leans toward Opus, and a window at 90% sends optional work to other routes while any can take it. A caller that names a model still gets it.
 
@@ -151,7 +151,7 @@ Copilot models, and DeepSeek when coding, are backups. They get a task only when
 
 A pick can name more than the top model. Most tasks get a second opinion from MiniMax when its data tier allows it, and small tasks such as tagging, typed decisions and speech do not. Research and image tasks name a free web route, ChatGPT or Gemini, together with the steps: write a brief file, give it to the route in the browser, and save the file it returns. The caller does that, because Augur does not drive a browser. Jev is first for typed decisions and tagging. The local model is named as a shadow beside a pick made by a reasoning model, so the two answers can be compared. The `seats` section of the `balance` rules changes any of these.
 
-Pauses, ask-first, data tiers and your weights apply first. The `balance` section of `policy.json` sets each activity's depth, each model's tier, the excluded names, how strong each lean is and which models write prose, and `"enabled": false` there switches it off.
+Pauses, ask-first, data tiers and your weights apply first. The `balance` section of `policy.json` sets each activity's depth, each model's tier, what each route suits, the excluded names, how strong each lean is and which models write prose, and `"enabled": false` there switches it off.
 
 - **None** is the default. The agent gives the activity and data tier itself.
 - **Jev** is a hosted model from TypeSafe. The text of each task goes there with your API key, except text about students, which is checked on your computer first and never sent. Put the key in the `TYPESAFE_API_KEY` environment variable.

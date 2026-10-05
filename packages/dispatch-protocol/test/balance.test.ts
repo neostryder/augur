@@ -16,10 +16,12 @@ const RULES = { providers: {
     'claude/fable': { id: 'claude-fable-5-1', rule: { activities: level } } } },
 } };
 
+// The shipped route preferences are tested on their own; the rest of these tests read the depth, pace and backup rules without them.
+const NO_PREFER = Object.fromEntries(Object.keys(DEFAULT_BALANCE.prefer).map(m => [m, null]));
 function policy(balance?: Record<string, unknown>): PolicyFile {
   const p = emptyPolicy(); importPolicy(p, RULES, now);
   for (const [id, provider] of Object.entries(p.providers)) for (const label of Object.keys(provider.models)) setField(p, fieldPath(id, label, 'status'), 'confirmed', 'test', now);
-  if (balance) p.balance = balance;
+  p.balance = { prefer: NO_PREFER, ...balance };
   return buildPolicyFile(p, Object.keys(p.providers).map(id => ({ id, name: id, metered: true })), now);
 }
 const order = (r: ReturnType<typeof rank>) => r.ranking.map(x => x.model);
@@ -91,7 +93,7 @@ describe('the governor in a pick', () => {
 
   it('carries the overrides in policy.json and reads them back', () => {
     const p = policy({ tiers: { 'codex/luna': 'strong' } });
-    expect(p.balance).toEqual({ tiers: { 'codex/luna': 'strong' } });
+    expect(p.balance).toMatchObject({ tiers: { 'codex/luna': 'strong' } });
     expect(govern(p, 'review_code').tilts['codex/luna']).toBe(0.85);
   });
 });
@@ -256,7 +258,7 @@ const SEATS = { providers: {
 function seatPolicy(balance?: Record<string, unknown>): PolicyFile {
   const p = emptyPolicy(); importPolicy(p, SEATS, now);
   for (const [id, provider] of Object.entries(p.providers)) for (const label of Object.keys(provider.models)) setField(p, fieldPath(id, label, 'status'), 'confirmed', 'test', now);
-  if (balance) p.balance = balance;
+  p.balance = { prefer: NO_PREFER, ...balance };
   return buildPolicyFile(p, Object.keys(p.providers).map(id => ({ id, name: id, metered: true })), now);
 }
 const seat = (activity: 'write_code' | 'research' | 'typed_decisions' | 'generate_images', tier: 'public' | 'internal' = 'internal', balance?: Record<string, unknown>) =>
@@ -302,3 +304,20 @@ describe('the seats beside a pick', () => {
   });
 });
 const tiltOfJev = (r: ReturnType<typeof rank>) => r.ranking.find(x => x.model === 'jev/jev-latest')?.tilt;
+
+describe('the route preferences', () => {
+  it('lift a route on the activity it is known for', () => {
+    const p = seatPolicy(); p.balance = {};
+    const r = rank(p, null, { activity: 'research', dataTier: 'public' }, now);
+    expect(r.ranking.find(x => x.model === 'chatgpt/web')?.tilt).toBe(1.3);
+    expect(r.reason).toContain('suits research');
+    expect(r.ranking.find(x => x.model === 'minimax/m3')?.tilt).toBe(1.15);
+  });
+
+  it('take overrides and removals from the rules', () => {
+    const b = resolveBalance({ prefer: { 'minimax/m3': { long_context: 2, summarize_extract: null }, 'codex/luna': null, 'x/y': { research: 1.5, nonsense: 3 } } });
+    expect(b.prefer['minimax/m3']).toEqual({ long_context: 2 });
+    expect(b.prefer['codex/luna']).toBeUndefined();
+    expect(b.prefer['x/y']).toEqual({ research: 1.5 });
+  });
+});

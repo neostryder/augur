@@ -48,6 +48,8 @@ export interface BalanceRules {
     cap: number;
     margin: number;
   };
+  /** What each route is known to be good at: a multiplier per activity, by route label. */
+  prefer: Record<string, Partial<Record<ActivityId, number>>>;
   /** The extra seats a pick names beside its model. */
   seats: {
     /** Models that give a second opinion, in order, and the activities too small to need one. */
@@ -77,6 +79,15 @@ export const DEFAULT_BALANCE: BalanceRules = {
   prose: { models: ['claude/live', 'claude/opus', 'copilot/claude-opus-5.5'], tilt: 1.3 },
   claude: { provider: 'claude', band: 5, reserve: 90, hot: { strong: 0.8, light: 1.25 }, behind: { strong: 1.25, light: 0.85 } },
   fallback: { providers: ['copilot'], routes: { 'deepseek/v4.1-flash': ['write_code'] }, anthropic: ['copilot/claude-opus-5.5', 'copilot/claude-sonnet-5.5'], aim: 150, cap: 250, margin: 5 },
+  prefer: {
+    'minimax/m3': { long_context: 1.6, summarize_extract: 1.4 },
+    'codex/luna': { review_code: 1.2, research: 1.2 },
+    'claude/claude-sonnet-5-5': { review_code: 1.2, research: 1.2 },
+    'claude/sonnet': { review_code: 1.2, research: 1.2 },
+    'deepseek/v4.1-flash': { review_code: 1.2 },
+    'chatgpt/web': { research: 1.3 },
+    'xai/grok': { write_code: 1.1, review_code: 1.1, research: 1.1 },
+  },
   seats: {
     second: { models: ['minimax/m3'], skip: ['bulk_tagging', 'typed_decisions', 'speech', 'generate_images', 'generate_video', 'read_images'] },
     web: { research: ['chatgpt/web', 'gemini/web'], generate_images: ['chatgpt/web', 'gemini/web'], read_images: ['gemini/web', 'chatgpt/web'], long_context: ['gemini/web'] },
@@ -102,6 +113,11 @@ export function resolveBalance(raw: unknown): BalanceRules {
   const web: Partial<Record<ActivityId, string[]>> = { ...d.seats.web };
   for (const [a, v] of Object.entries(rec(st.web))) if ((ACTIVITIES as readonly string[]).includes(a)) { const l = strings(v); if (l) web[a as ActivityId] = l; else if (v === null) delete web[a as ActivityId]; }
   const jev = rec(st.jev), second = rec(st.second);
+  const prefer: BalanceRules['prefer'] = Object.fromEntries(Object.entries(d.prefer).map(([m, v]) => [m, { ...v }]));
+  for (const [m, v] of Object.entries(rec(s.prefer))) {
+    if (v === null) { delete prefer[m]; continue; }
+    for (const [a, n] of Object.entries(rec(v))) if ((ACTIVITIES as readonly string[]).includes(a)) { const mine = (prefer[m] ??= {}); if (n === null) delete mine[a as ActivityId]; else if (typeof n === 'number' && Number.isFinite(n) && n > 0) mine[a as ActivityId] = n; }
+  }
   const routes: Record<string, string[]> = { ...d.fallback.routes };
   for (const [label, v] of Object.entries(rec(fb.routes))) { const a = strings(v); if (a) routes[label] = a; else if (v === null) delete routes[label]; }
   const money = (v: unknown, fallback: number): number => typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : fallback;
@@ -120,6 +136,7 @@ export function resolveBalance(raw: unknown): BalanceRules {
       providers: strings(fb.providers) ?? [...d.fallback.providers], routes, anthropic: strings(fb.anthropic) ?? [...d.fallback.anthropic],
       aim: money(fb.aim, d.fallback.aim), cap: money(fb.cap, d.fallback.cap), margin: money(fb.margin, d.fallback.margin),
     },
+    prefer,
     seats: {
       second: { models: strings(second.models) ?? [...d.seats.second.models], skip: acts(second.skip) ?? [...d.seats.second.skip] },
       web,
@@ -199,6 +216,8 @@ export function govern(policy: PolicyFile, activity: ActivityId, depth?: Depth, 
         const t = rules.tilt[used][tier];
         if (t !== 1) { tilt *= t; reasons.push(`${tier} model for ${used} work`); }
       }
+      const likes = rules.prefer[label]?.[activity];
+      if (likes && likes !== 1) { tilt *= likes; reasons.push(`suits ${activity.replace(/_/g, ' ')}`); }
       if (label === rules.seats.jev.route && rules.seats.jev.activities.includes(activity)) { tilt *= rules.seats.jev.tilt; reasons.push('Jev is first for classification and scoring'); }
       // Claude's own pace picks between Opus and Sonnet. Opus for prose is not held back by it.
       if (isClaude && tier && lean && !prose) {
@@ -269,7 +288,8 @@ export function reasonLine(top: { model: string; why: string } | undefined, next
   const parts = [`${top.model} for ${governed.depth} ${activity.replace(/_/g, ' ')}`];
   const g = governed.reasons[top.model];
   if (g?.length) parts.push(g.join(', '));
-  if (top.why) parts.push(top.why);
+  // The provider's own note matters when it says something (a spent window, an old figure) and is noise when it says there is plenty.
+  if (top.why && !/^(plenty left|no Augur data)$/.test(top.why)) parts.push(top.why);
   const line = `${parts[0]}: ${parts.slice(1).join('; ') || 'best score'}.`;
   return next ? `${line} Next: ${next.model}.` : line;
 }
