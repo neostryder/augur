@@ -34,6 +34,12 @@ describe('the balance report', () => {
     expect(r.excluded).toEqual(['fable', 'astra']);
   });
 
+  it('counts the picks that went to Copilot beside its spend', () => {
+    const withCopilot = balanceReport(policy(), usage, now, { days: 7, picks: 4, jobs: 0, overrides: 0, byActivity: { write_code: { 'claude/live': 2, 'copilot/gpt-5': 2 } } });
+    expect(renderReport(withCopilot).join(' ')).toContain('2 of those went to Copilot, which stands at $160.00 for the month.');
+    expect(renderReport(r).join(' ')).not.toContain('went to Copilot');
+  });
+
   it('renders plain lines with no non-ASCII punctuation', () => {
     const text = renderReport(r).join('\n');
     expect(text).toContain('spend this month: $160.00, past the aim ($150 aim, $250 cap)');

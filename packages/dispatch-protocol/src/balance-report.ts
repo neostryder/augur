@@ -81,6 +81,8 @@ export function reportSections(r: BalanceReport): ReportSection[] {
   out.push({ title: 'Never picked', lines: [`${r.excluded.join(', ') || 'nothing'}.`] });
   if (r.picks) {
     const k = r.picks, lines = [`Last ${k.days} ${k.days === 1 ? 'day' : 'days'}: ${k.picks} picks, ${k.jobs} jobs, ${k.overrides} ran on a model other than the pick.`];
+    const onCopilot = Object.values(k.byActivity).reduce((n, models) => n + Object.entries(models).filter(([m]) => m.startsWith('copilot/')).reduce((x, [, c]) => x + c, 0), 0);
+    if (onCopilot) lines.push(`${onCopilot} of those went to Copilot${r.copilot.spend === null ? '' : `, which stands at $${r.copilot.spend.toFixed(2)} for the month`}.`);
     for (const [activity, models] of Object.entries(k.byActivity)) lines.push(`${activity.padEnd(18)} ${Object.entries(models).sort((a, b) => b[1] - a[1]).map(([m, n]) => `${m} ${n}`).join(', ')}`);
     out.push({ title: 'The pick log', lines });
   }
