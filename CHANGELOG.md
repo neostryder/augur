@@ -4,6 +4,8 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-10-04
+
 ### Added
 
 - [Visible] [Providers] **A pick weighs how hard the task is.** Coding and hard reasoning lean toward Opus, Sol and Grok, and the rest lean toward Sonnet, Luna, DeepSeek and MiniMax, with Opus kept ahead for prose. Fable and Astra are skipped unless named, and a route gets a small lift on what it is known for: MiniMax on long context, Luna on review, ChatGPT on research. `--depth deep|everyday` overrides the default, each pick ends with a line giving the reason, and a `balance` section in `policy.json` changes or switches off the rules.
