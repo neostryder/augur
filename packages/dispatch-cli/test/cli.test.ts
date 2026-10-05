@@ -182,6 +182,16 @@ describe('augur pick and augur pressure', () => {
     expect(json.mix.length).toBeGreaterThan(0);
   });
 
+  it('asks for a brief result and says when the id is not in the decision log', async () => {
+    const { run } = await boot();
+    const none = await run(['label', 'abc']);
+    expect(none.code).toBe(1);
+    expect(none.err).toContain('--brief met, partly or missed');
+    const unknown = await run(['label', 'abc', '--brief', 'met']);
+    expect(unknown.code).toBe(4);
+    expect(unknown.err).toContain('No pick or job with that id');
+  });
+
   it('shows tokens and cost per route with each figure labelled', async () => {
     const { run } = await boot();
     expect((await run(['usage'])).out.trim()).toBe('No jobs yet.');

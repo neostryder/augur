@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { BalanceReport } from '@augur/dispatch-protocol';
-import { writeDailyReport } from '../src/balance-files.js';
+import { writeDailyReport, writeLabels } from '../src/balance-files.js';
 import { DecisionLog } from '../src/decisions.js';
 
 const dirs: string[] = [];
@@ -53,5 +53,28 @@ describe('the pick log summary', () => {
     log.pick({ ...base, pick: 'copilot/gpt-5' });
     expect(log.summary(7).copilot).toEqual([{ at: '2026-10-04T12:00:00.000Z', activity: 'write_code', model: 'copilot/gpt-5', spend: 61.5 }, { at: '2026-10-04T12:00:00.000Z', activity: 'write_code', model: 'copilot/gpt-5', spend: null }]);
     expect(log.summary(7)).toMatchObject({ picks: 3 });
+  });
+});
+
+describe('the labels file', () => {
+  it('records a brief check against a pick or a job and folds it into one row per pick', () => {
+    const t = Date.parse('2026-10-05T01:00:00Z');
+    const log = new DecisionLog(tmp(), { recordTasks: false }, () => t);
+    const base = { session: 's', dataTier: 'internal', ranking: [], named: null, activity: 'research' };
+    const id = log.pick({ ...base, pick: 'a/b' });
+    log.linkJob('s', 'c/d', 'j1');
+    expect(log.label('nope', 'met')).toEqual({ error: 'No pick or job with that id is in the decision log.' });
+    expect(log.label('j1', 'missed', 'no sources')).toEqual({ ok: true, pick: id, job: 'j1' });
+    expect(log.label(id, 'partly')).toEqual({ ok: true, pick: id, job: null });
+    expect(log.labels()).toMatchObject([{ pick: id, model: 'a/b', used: ['c/d'], overridden: true, brief: 'partly', briefNote: null }]);
+  });
+
+  it('is written once and rewritten only when a row changed', () => {
+    const home = tmp(), rows = [{ pick: 'p1', brief: null }];
+    expect(writeLabels(home, [])).toBe(false);
+    expect(writeLabels(home, rows)).toBe(true);
+    expect(writeLabels(home, rows)).toBe(false);
+    expect(readFileSync(join(home, 'balance', 'labels.jsonl'), 'utf8')).toBe('{"pick":"p1","brief":null}\n');
+    expect(writeLabels(home, [{ pick: 'p1', brief: 'met' }])).toBe(true);
   });
 });

@@ -4,12 +4,16 @@ import { FIT_LEVELS, activityQuestion, dataQuestion, fitQuestions } from './ques
 import type { Question } from './questions.js';
 
 export interface PickRow {
-  kind: 'pick'; id: string; task?: string; activity: string; dataTier: string; pick: string | null;
+  kind: 'pick'; id: string; at?: number; task?: string; named?: string | null; depth?: string; seats?: { second?: string; web?: string; shadow?: string }; activity: string; dataTier: string; pick: string | null;
   classified?: { activity: boolean; dataTier: boolean }; descriptions?: Record<string, string>;
 }
 export interface JobRow { kind: 'job'; job: string; pick: string; model: string; overridden: boolean }
 export interface OutcomeRow { kind: 'outcome'; job: string; pick: string | null; model: string; state: string }
-export type DecisionRow = PickRow | JobRow | OutcomeRow | { kind: string };
+/** How a job's report met the brief it was given: the check itself runs in the caller's own tooling and is reported back with `augur label`. */
+export type BriefResult = 'met' | 'partly' | 'missed';
+export const BRIEF_RESULTS: readonly BriefResult[] = ['met', 'partly', 'missed'];
+export interface BriefRow { kind: 'brief'; at?: number; pick: string; job: string | null; result: BriefResult; note?: string }
+export type DecisionRow = PickRow | JobRow | OutcomeRow | BriefRow | { kind: string };
 
 export interface TrainingRow {
   id: string; pilot: string; split: 'train' | 'test'; source: 'human'; provenance: 'rule' | 'outcome';
@@ -49,6 +53,47 @@ export function trainingRows(records: DecisionRow[]): TrainingRow[] {
     const q = fitQuestions([{ model: o.model, description: desc }]);
     out.push({ id: `${pick.id}:${o.job}`, pilot: 'augur_fit', split: splitOf(pick.id), source: 'human', provenance: 'outcome', state: { task: pick.task }, questions: q,
       labels: { [`f_${key(o.model)}`]: level, [`r_${key(o.model)}`]: FIT_LEVELS.length - 1 - level } });
+  }
+  return out;
+}
+
+/** One pick with everything that later said how it went, and no task text: the single file the local shadow model learns its labels from. */
+export interface LabelRow {
+  pick: string; at: string | null; activity: string; dataTier: string; model: string | null; named: string | null; depth: string | null;
+  seats: { second?: string; web?: string; shadow?: string };
+  /** Models the pick's jobs ran on, and whether any of them was not the model picked. */
+  used: string[]; overridden: boolean;
+  /** The end state of each job that finished, in the order they were recorded. */
+  outcomes: string[];
+  /** The latest brief check reported for the pick or any of its jobs, or null when none was. */
+  brief: BriefResult | null; briefNote: string | null;
+}
+
+export function labelRows(records: DecisionRow[]): LabelRow[] {
+  const picks = new Map<string, PickRow>(), used = new Map<string, Set<string>>(), over = new Set<string>(), outcomes = new Map<string, string[]>(), briefs = new Map<string, BriefRow>();
+  const jobPick = new Map<string, string>();
+  for (const r of records) {
+    if (r.kind === 'pick') picks.set((r as PickRow).id, r as PickRow);
+    else if (r.kind === 'job') {
+      const j = r as JobRow;
+      jobPick.set(j.job, j.pick);
+      (used.get(j.pick) ?? used.set(j.pick, new Set()).get(j.pick)!).add(j.model);
+      if (j.overridden) over.add(j.pick);
+    }
+  }
+  for (const r of records) {
+    if (r.kind === 'outcome') {
+      const o = r as OutcomeRow, pick = o.pick ?? jobPick.get(o.job);
+      if (pick) (outcomes.get(pick) ?? outcomes.set(pick, []).get(pick)!).push(o.state);
+    } else if (r.kind === 'brief') briefs.set((r as BriefRow).pick, r as BriefRow);
+  }
+  const out: LabelRow[] = [];
+  for (const p of picks.values()) {
+    const b = briefs.get(p.id);
+    out.push({
+      pick: p.id, at: typeof p.at === 'number' ? new Date(p.at).toISOString() : null, activity: p.activity, dataTier: p.dataTier, model: p.pick, named: p.named ?? null, depth: p.depth ?? null,
+      seats: p.seats ?? {}, used: [...(used.get(p.id) ?? [])], overridden: over.has(p.id), outcomes: outcomes.get(p.id) ?? [], brief: b?.result ?? null, briefNote: b?.note ?? null,
+    });
   }
   return out;
 }

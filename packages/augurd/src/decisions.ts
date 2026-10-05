@@ -3,7 +3,8 @@
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
-import { STUDENT_RE } from '@augur/decision';
+import { STUDENT_RE, labelRows } from '@augur/decision';
+import type { BriefResult, DecisionRow, LabelRow } from '@augur/decision';
 import type { PickSummary } from '@augur/dispatch-protocol';
 
 export interface LearnSettings {
@@ -77,6 +78,27 @@ export class DecisionLog {
     }
     if (copilot.length) out.copilot = copilot.slice(-20);
     return out;
+  }
+
+  private rows(): DecisionRow[] {
+    const path = join(this.dir, 'decisions.jsonl');
+    if (!existsSync(path)) return [];
+    let text = '';
+    try { text = readFileSync(path, 'utf8'); } catch { return []; }
+    return text.split('\n').flatMap(l => { if (!l) return []; try { return [JSON.parse(l) as DecisionRow]; } catch { return []; } });
+  }
+
+  /** Every pick with its override, job outcomes and brief check, one row each and no task text. */
+  labels(): LabelRow[] { return labelRows(this.rows()); }
+
+  /** Records how a job's report met its brief, beside the pick it belongs to. `id` is a pick id or a job id. */
+  label(id: string, result: BriefResult, note?: string): { ok: true; pick: string; job: string | null } | { error: string } {
+    const rows = this.rows();
+    const job = rows.find(r => r.kind === 'job' && (r as { job?: string }).job === id) as { pick: string } | undefined;
+    const pick = job ? job.pick : (rows.find(r => r.kind === 'pick' && (r as { id?: string }).id === id) ? id : null);
+    if (!pick) return { error: 'No pick or job with that id is in the decision log.' };
+    this.write({ kind: 'brief', at: this.now(), pick, job: job ? id : null, result, ...(note ? { note: note.slice(0, 200) } : {}) });
+    return { ok: true, pick, job: job ? id : null };
   }
 
   outcome(jobId: string, model: string, state: string, reason: string | null, ms: number | null): void {

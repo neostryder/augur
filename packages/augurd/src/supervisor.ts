@@ -5,8 +5,8 @@ import { closeSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, readS
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES } from '@augur/core';
 import type { PolicyFile } from '@augur/core';
-import { classifyTask, fitScores } from '@augur/decision';
-import type { DecisionBackend } from '@augur/decision';
+import { BRIEF_RESULTS, classifyTask, fitScores } from '@augur/decision';
+import type { BriefResult, DecisionBackend } from '@augur/decision';
 import { BUDGET_WINDOW_MS, NAMED_PROMPT_WINDOW, PICK_WINDOW_MIN, TOOL_TIERS, account, balanceReport, budgetStatus, calibrateRoutes, copilotSpend, checkLineage, routeSecretName, checkNamed, checkPick, evaluate, isTerminal, matchNamedModels, pressure, rank, usageFactors } from '@augur/dispatch-protocol';
 import type { Adapter, BalanceReport, BudgetStatus, JobRecord, JobRequest, LaunchPlan, PickAnswer, PickParams, RateCard, Rejection, RouteConfig, UsageSnapshot } from '@augur/dispatch-protocol';
 import { MAX_COMMAND_LINE } from './adapters/util.js';
@@ -264,6 +264,13 @@ export class Supervisor {
     const models = matchNamedModels(policy, text);
     this.d.store.addPrompt({ at: this.now(), session, models });
     return { models };
+  }
+
+  /** Records a brief check against the pick it belongs to. */
+  label(id: string, result: string, note?: string): { ok: true; pick: string; job: string | null } | { error: string } {
+    if (!this.d.decisions) return { error: 'The service keeps no decision log.' };
+    if (!BRIEF_RESULTS.includes(result as BriefResult)) return { error: `The brief result is one of ${BRIEF_RESULTS.join(', ')}.` };
+    return this.d.decisions.label(id, result as BriefResult, note);
   }
 
   private validate(req: JobRequest): string | null {

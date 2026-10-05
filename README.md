@@ -153,6 +153,8 @@ A pick can name more than the top model. Most tasks get a second opinion from Mi
 
 `augur balance` prints what the router is doing: where each kind of work goes now, how Claude is pacing against its week and 5-hour window, Copilot's spend for the month, how each provider is treated, and what the last days of picks were, including each pick that went to Copilot with the month's spend at that moment. `--days` sets how many days of picks it covers. The service writes the same report to `~/.augur/balance` once a day, as a JSON file and a text file. The window app shows it on a Balance tab beside Jobs, Routes and Service, and the terminal app on a Balance page. The report only reads; nothing in it changes a rule.
 
+The service keeps a decision log of picks and jobs. `augur label <pick or job id> --brief met|partly|missed [--note <text>]` adds how a job's report met its brief, which the caller's own tooling checks, and the service rewrites `~/.augur/balance/labels.jsonl` each hour with one line per pick: the model picked, the models its jobs ran on, whether any of them was not the pick, how each job ended and the brief result. The file holds no task text, so the local Laya model can learn from it without the tasks leaving the machine.
+
 Pauses, ask-first, data tiers and your weights apply first. The `balance` section of `policy.json` sets each activity's depth, each model's tier, what each route suits, the excluded names, how strong each lean is and which models write prose, and `"enabled": false` there switches it off.
 
 - **None** is the default. The agent gives the activity and data tier itself.

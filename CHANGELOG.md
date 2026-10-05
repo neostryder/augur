@@ -9,6 +9,8 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 - [Visible] [Providers] **Each pick that lands on Copilot is listed with the month's spend.** The pick log in the balance report names the time, the kind of work, the model and what Copilot's month stood at when the pick was made, and marks the ones past the $150 aim.
 - [Visible] [Providers] **A web route comes with a fixed folder.** The steps for a ChatGPT or Gemini route name `~/.augur/web/<kind of work>-<date and time>/`, with `brief.md` for the task and `result.md` for what the route returns, so the session that asks and the one that reads the answer look in the same place.
 
+- [Visible] [Providers] **Every pick has one row of labels for the local model.** `augur label <pick or job id> --brief met|partly|missed` records how a job's report met its brief, beside the pick in the decision log. The service writes `~/.augur/balance/labels.jsonl` hourly, one line per pick with the model picked, the models its jobs used, whether any differed, how each job ended and the brief result, and no task text.
+
 ### Fixed
 
 - [Visible] [Providers] **The balance report counts Claude's week once.** Fable's own weekly window was listed as a second week and always read as far behind pace. The report and the pick now use only the windows that cover the whole subscription, and "1 points" reads "1 point".

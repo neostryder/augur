@@ -52,6 +52,8 @@ export interface Methods {
   pressure: { params: undefined; result: { pressure: Record<string, Headroom>; factors: Record<string, number>; scarcity: number } | null };
   /** The read-only balance report: Claude's pace, Copilot's spend, each provider's stance, where each kind of work goes now, and what the pick log shows for the last few days. */
   balance: { params: { days?: number } | undefined; result: BalanceReport | { error: string } };
+  /** Records how a job's report met its brief, beside the pick in the decision log. `id` is a pick id or a job id; the check itself runs in the caller's tooling. */
+  label: { params: { id: string; result: 'met' | 'partly' | 'missed'; note?: string }; result: { ok: true; pick: string; job: string | null } | { error: string } };
   routes: { params: undefined; result: Array<{ name: string; model: string; adapter: string; problem: string | null }> };
   /** Tokens and cost of recent jobs and totals per route, each figure labelled reported, derived or imputed. */
   accounting: { params: { limit?: number }; result: AccountingAnswer };

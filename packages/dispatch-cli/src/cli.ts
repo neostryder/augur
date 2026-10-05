@@ -39,6 +39,7 @@ augur apply <job> [--check]
 augur pick (--task <description> | --activity <a> --data <tier>) [--depth deep|everyday] [--named <model>] [--fit <model>=<0-1>,...]
 augur pressure
 augur balance [--days <n>]            where each kind of work goes now, Claude's pace, Copilot's spend and the last days' picks
+augur label <pick or job id> --brief met|partly|missed [--note <text>]     record how a job's report met its brief, beside the pick in the decision log
 augur usage                             tokens and cost per route, each labelled reported, derived or imputed
 augur note-prompt --session <id>     tell the service a person sent the message on standard input; it keeps only the models named
 augur routes
@@ -129,6 +130,13 @@ export async function main(argv: string[], io: Io): Promise<number> {
         const r = await call('balance', opt('days') ? { days: Number(opt('days')) } : undefined, opts);
         if ('error' in r) { io.err(r.error + String.fromCharCode(10)); return EXIT_CODES.failed; }
         say(renderReport(r).join(String.fromCharCode(10)), r); return 0;
+      }
+      case 'label': {
+        const result = opt('brief');
+        if (result !== 'met' && result !== 'partly' && result !== 'missed') { io.err('Give --brief met, partly or missed.' + String.fromCharCode(10)); return EXIT_CODES.usage; }
+        const r = await call('label', { id: need(rest[0], 'pick or job id'), result, ...(opt('note') ? { note: opt('note') as string } : {}) }, opts);
+        if ('error' in r) { io.err(r.error + String.fromCharCode(10)); return EXIT_CODES.failed; }
+        say(`Recorded: the brief was ${result} for pick ${r.pick}${r.job ? `, job ${r.job}` : ''}.`, r); return 0;
       }
       case 'pressure': {
         const r = await call('pressure', undefined, opts);
