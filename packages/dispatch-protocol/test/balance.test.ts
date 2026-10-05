@@ -164,3 +164,83 @@ describe('the Claude controller', () => {
     expect(tiltOf(r, 'claude/claude-sonnet-5-5')).toBeCloseTo(1.15 * 2, 3);
   });
 });
+
+const BACKUPS = { providers: {
+  codex: { defaults: { dataTier: 'sensitive', output: 'write_files', cost: 'moderate' }, models: { 'codex/sol': { id: 'gpt-6.1-sol', rule: { activities: level } } } },
+  claude: { defaults: { dataTier: 'regulated', output: 'write_files', cost: 'moderate' }, models: { 'claude/live': { id: 'claude-opus-5-5', rule: { activities: level } } } },
+  copilot: { defaults: { dataTier: 'sensitive', output: 'write_files', cost: 'moderate' }, models: {
+    'copilot/kimi-k3': { id: 'kimi-k3', rule: { activities: level } },
+    'copilot/claude-opus-5.5': { id: 'claude-opus-5.5', rule: { activities: level } } } },
+  openrouter: { defaults: { dataTier: 'internal', output: 'write_files', cost: 'very_cheap' }, models: { 'deepseek/v4.1-flash': { id: 'deepseek-v4.1-flash', rule: { activities: level } } } },
+} };
+function backupPolicy(): PolicyFile {
+  const p = emptyPolicy(); importPolicy(p, BACKUPS, now);
+  for (const [id, provider] of Object.entries(p.providers)) for (const label of Object.keys(provider.models)) setField(p, fieldPath(id, label, 'status'), 'confirmed', 'test', now);
+  return buildPolicyFile(p, Object.keys(p.providers).map(id => ({ id, name: id, metered: true })), now);
+}
+const full = (o: { claude?: number; codex?: number; spend?: number } = {}) => ({ providers: {
+  claude: { fetchedAt: now.toISOString(), meters: [track('weekly', o.claude ?? 40, 0.4)] },
+  codex: { fetchedAt: now.toISOString(), meters: [track('weekly', o.codex ?? 40, 0.4)] },
+  copilot: { fetchedAt: now.toISOString(), meters: [], money: [{ id: 'spent', amount: o.spend ?? 40, currency: 'USD' }] },
+} });
+const run = (u: ReturnType<typeof full>, activity: 'write_code' | 'review_code' = 'review_code') => rank(backupPolicy(), u, { activity, dataTier: 'internal' }, now);
+const names = (r: ReturnType<typeof rank>) => r.ranking.map(x => x.model);
+const whyBlocked = (r: ReturnType<typeof rank>, m: string) => r.blocked.find(b => b.model === m)?.why;
+
+describe('the backup routes', () => {
+  it('stay in reserve while a subscription route can take the work', () => {
+    const r = run(full());
+    expect(names(r)).toEqual(expect.arrayContaining(['codex/sol', 'claude/live']));
+    expect(whyBlocked(r, 'copilot/kimi-k3')).toBe('a subscription route can take this, so copilot/kimi-k3 stays in reserve');
+    expect(whyBlocked(r, 'copilot/claude-opus-5.5')).toBe('Anthropic through a backup waits until Claude reaches its reserve');
+  });
+
+  it('let Anthropic through Copilot take over when Claude reaches its reserve', () => {
+    const r = run(full({ claude: 92 }));
+    expect(names(r)).toContain('copilot/claude-opus-5.5');
+    expect(names(r)).not.toContain('claude/live');
+    expect(whyBlocked(r, 'copilot/kimi-k3')).toMatch(/stays in reserve/);
+    expect(r.ranking.find(x => x.model === 'copilot/claude-opus-5.5')).toBeDefined();
+  });
+
+  it('open up other Copilot models only when no subscription route is left', () => {
+    const r = run(full({ claude: 92, codex: 99 }), 'write_code');
+    expect(names(r)).toContain('copilot/kimi-k3');
+    expect(names(run(full({ claude: 92, codex: 99 })))).not.toContain('copilot/kimi-k3');
+    expect(whyBlocked(r, 'codex/sol')).toBeUndefined();
+    const g = govern(backupPolicy(), 'write_code', undefined, undefined, undefined, full({ claude: 92, codex: 99 }), now);
+    expect(g.reasons['copilot/kimi-k3']).toContain('no subscription route can take this');
+  });
+
+  it('report a Copilot spend past the aim, and stop at the cap', () => {
+    const past = run(full({ claude: 92, codex: 99, spend: 160 }), 'write_code');
+    expect(names(past)).toContain('copilot/kimi-k3');
+    expect(past.notes.join(' ')).toContain('Copilot spend is $160.00, past the $150 aim');
+    const capped = run(full({ claude: 92, codex: 99, spend: 246 }), 'write_code');
+    expect(names(capped)).not.toContain('copilot/kimi-k3');
+    expect(whyBlocked(capped, 'copilot/kimi-k3')).toBe('Copilot spend is $246.00, at the $250 cap');
+  });
+
+  it('never let a Claude stop come from the Copilot cap', () => {
+    const r = run(full({ claude: 92, spend: 300 }));
+    expect(names(r)).toContain('copilot/claude-opus-5.5');
+    const notYet = run(full({ claude: 40, spend: 300 }));
+    expect(names(notYet)).not.toContain('copilot/claude-opus-5.5');
+  });
+
+  it('hold DeepSeek back for coding but let it review', () => {
+    expect(names(run(full(), 'write_code'))).not.toContain('deepseek/v4.1-flash');
+    expect(whyBlocked(run(full(), 'write_code'), 'deepseek/v4.1-flash')).toMatch(/stays in reserve/);
+    expect(names(run(full(), 'review_code'))).toContain('deepseek/v4.1-flash');
+  });
+
+  it('are not held for a model the person names', () => {
+    const r = rank(backupPolicy(), full(), { activity: 'review_code', dataTier: 'internal', named: 'copilot/kimi-k3' }, now);
+    expect(names(r)).toContain('copilot/kimi-k3');
+  });
+
+  it('take their budget and routes from the rules', () => {
+    const b = resolveBalance({ fallback: { aim: 100, cap: 120, margin: 0, routes: { 'deepseek/v4.1-flash': null }, anthropic: [] } });
+    expect(b.fallback).toMatchObject({ aim: 100, cap: 120, margin: 0, routes: {}, anthropic: [] });
+  });
+});

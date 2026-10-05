@@ -120,8 +120,9 @@ describe('ranking', () => {
     expect(why['codex/sol']).toMatch(/cleared for sensitive data, task is regulated/);
     expect(why['codex/astra']).toMatch(/ask first/);
     expect(why['minimax/m3']).toMatch(/cleared for internal data/);
-    expect(r.ranking.map(x => x.model)).toEqual(expect.arrayContaining(['xai/grok', 'deepseek/v4.1-flash', 'claude/sonnet']));
+    expect(r.ranking.map(x => x.model)).toEqual(expect.arrayContaining(['xai/grok', 'claude/sonnet']));
     expect(r.ranking.map(x => x.model)).not.toContain('codex/sol');
+    expect(why['deepseek/v4.1-flash']).toMatch(/stays in reserve/);
   });
   it('lets a named ask-first model through and says which activity a model is not permitted', () => {
     const r = rank(policy(), usage, { activity: 'write_code', dataTier: 'internal', named: 'codex/astra' }, now);
@@ -276,7 +277,8 @@ describe('spending a provider in full before the models that wait on it', () => 
 
   it('holds a model back while the model it waits on has usage, and ranks it once that one is spent', () => {
     const open = rank(policy2(), usage({ meters: [weekly(60, 0.4)] }), write, now);
-    expect(order(open)).toEqual(['codex/sol', 'codex/luna', 'copilot/kimi-k3']);
+    expect(order(open)).toEqual(['codex/sol', 'codex/luna']);
+    expect(open.blocked).toContainEqual({ model: 'copilot/kimi-k3', why: 'a subscription route can take this, so copilot/kimi-k3 stays in reserve' });
     expect(open.blocked).toContainEqual({ model: 'copilot/gpt-6-sol', why: expect.stringMatching(/^use codex\/sol first/) });
     expect(open.blocked.map(b => b.model)).toContain('copilot/gpt-6-luna');
 

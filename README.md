@@ -147,6 +147,8 @@ A pick also leans toward a model that fits the task. Coding and hard reasoning a
 
 Claude's usage has its own pace check. The week and the 5-hour window are each compared with how much of them has passed, and the stricter one wins: more than 5 points ahead leans toward Sonnet, more than 5 behind leans toward Opus, and a window at 90% sends optional work to other routes while any can take it. A caller that names a model still gets it.
 
+Copilot models, and DeepSeek when coding, are backups. They get a task only when no other route can take it, unless the model has its own wait rule. Copilot's Anthropic models are the exception once Claude reaches its reserve. Copilot's usage figures give its spend for the month. A pick mentions the spend once it passes $150 and drops Copilot at $250, except its Anthropic models while Claude is at its reserve. The `fallback` section of the `balance` rules changes these amounts.
+
 Pauses, ask-first, data tiers and your weights apply first. The `balance` section of `policy.json` sets each activity's depth, each model's tier, the excluded names, how strong each lean is and which models write prose, and `"enabled": false` there switches it off.
 
 - **None** is the default. The agent gives the activity and data tier itself.

@@ -2,7 +2,7 @@
 // `rank()` multiplies the tilt into the score it already computes, so the weights, pauses, ask-first, data tiers and the usage factor all still apply.
 import { ACTIVITIES } from '@augur/core';
 import type { ActivityId, PolicyFile } from '@augur/core';
-import { PACE, ageMinutes, isWindowMeter } from './pace.js';
+import { PACE, ageMinutes, isWindowMeter, pressure } from './pace.js';
 import type { UsageSnapshot } from './pace.js';
 
 /** Deep work is hard reasoning, serious coding and long chains. Everyday work is review, research, summaries and bulk work. */
@@ -35,6 +35,19 @@ export interface BalanceRules {
     hot: Record<ModelTier, number>;
     behind: Record<ModelTier, number>;
   };
+  /** Backup routes. They compete only when no subscription route can take the work, and Copilot spend is held to a budget. */
+  fallback: {
+    /** Providers whose routes are backups. */
+    providers: string[];
+    /** Single routes that are backups for some activities only, by route label. */
+    routes: Record<string, string[]>;
+    /** Anthropic routes through a backup provider. They are allowed when Claude is at its reserve, since a Claude stop halts everything. */
+    anthropic: string[];
+    /** Dollars of Copilot spend the router aims to stay under, the hard stop, and the margin added to the last known spend for figures that lag. */
+    aim: number;
+    cap: number;
+    margin: number;
+  };
 }
 
 const DEEP: ActivityId[] = ['write_code', 'reason_critique'];
@@ -52,6 +65,7 @@ export const DEFAULT_BALANCE: BalanceRules = {
   tilt: { deep: { strong: 1.4, light: 0.8 }, everyday: { strong: 0.85, light: 1.15 } },
   prose: { models: ['claude/live', 'claude/opus', 'copilot/claude-opus-5.5'], tilt: 1.3 },
   claude: { provider: 'claude', band: 5, reserve: 90, hot: { strong: 0.8, light: 1.25 }, behind: { strong: 1.25, light: 0.85 } },
+  fallback: { providers: ['copilot'], routes: { 'deepseek/v4.1-flash': ['write_code'] }, anthropic: ['copilot/claude-opus-5.5', 'copilot/claude-sonnet-5.5'], aim: 150, cap: 250, margin: 5 },
 };
 
 const num = (v: unknown, fallback: number): number => typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : fallback;
@@ -66,7 +80,10 @@ export function resolveBalance(raw: unknown): BalanceRules {
   for (const [m, v] of Object.entries(rec(s.tiers))) { if (v === 'strong' || v === 'light') tiers[m] = v; else if (v === null) delete tiers[m]; }
   const tilt = { deep: { ...d.tilt.deep }, everyday: { ...d.tilt.everyday } };
   for (const depthKey of ['deep', 'everyday'] as const) for (const tier of ['strong', 'light'] as const) tilt[depthKey][tier] = num(rec(rec(s.tilt)[depthKey])[tier], tilt[depthKey][tier]);
-  const prose = rec(s.prose), cl = rec(s.claude);
+  const prose = rec(s.prose), cl = rec(s.claude), fb = rec(s.fallback);
+  const routes: Record<string, string[]> = { ...d.fallback.routes };
+  for (const [label, v] of Object.entries(rec(fb.routes))) { const a = strings(v); if (a) routes[label] = a; else if (v === null) delete routes[label]; }
+  const money = (v: unknown, fallback: number): number => typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : fallback;
   const pair = (v: unknown, dflt: Record<ModelTier, number>): Record<ModelTier, number> => ({ strong: num(rec(v).strong, dflt.strong), light: num(rec(v).light, dflt.light) });
   return {
     enabled: typeof s.enabled === 'boolean' ? s.enabled : d.enabled,
@@ -77,6 +94,10 @@ export function resolveBalance(raw: unknown): BalanceRules {
       provider: typeof cl.provider === 'string' && cl.provider ? cl.provider : d.claude.provider,
       band: num(cl.band, d.claude.band), reserve: num(cl.reserve, d.claude.reserve),
       hot: pair(cl.hot, d.claude.hot), behind: pair(cl.behind, d.claude.behind),
+    },
+    fallback: {
+      providers: strings(fb.providers) ?? [...d.fallback.providers], routes, anthropic: strings(fb.anthropic) ?? [...d.fallback.anthropic],
+      aim: money(fb.aim, d.fallback.aim), cap: money(fb.cap, d.fallback.cap), margin: money(fb.margin, d.fallback.margin),
     },
   };
 }
@@ -133,7 +154,7 @@ export function govern(policy: PolicyFile, activity: ActivityId, depth?: Depth, 
   if (!rules.enabled) return out;
   const claude = claudeState(usage, rules, now);
   const lean = claude.stance === 'unknown' ? 'hot' : claude.stance === 'on pace' ? null : claude.stance;
-  const candidates: Array<{ label: string; claude: boolean }> = [];
+  const candidates: Array<{ label: string; provider: string; claude: boolean }> = [];
   for (const [providerId, p] of Object.entries(policy.providers)) {
     for (const [label, m] of Object.entries(p.models)) {
       if (models && !models.includes(label)) continue;
@@ -143,7 +164,7 @@ export function govern(policy: PolicyFile, activity: ActivityId, depth?: Depth, 
       const reasons: string[] = [];
       const tier = rules.tiers[label];
       const isClaude = providerId === rules.claude.provider;
-      candidates.push({ label, claude: isClaude });
+      candidates.push({ label, provider: providerId, claude: isClaude });
       // The best prose writers are tilted for prose alone, so being a strong model on everyday work does not count against them.
       const prose = activity === 'draft_prose' && rules.prose.models.includes(label);
       if (prose) { tilt = rules.prose.tilt; reasons.push('writes the best prose'); }
@@ -167,8 +188,46 @@ export function govern(policy: PolicyFile, activity: ActivityId, depth?: Depth, 
       delete out.tilts[c.label]; delete out.reasons[c.label];
     }
   }
+  backups(out, policy, rules, activity, usage, now, candidates, claude, named);
   if (claude.stance === 'unknown') out.notes.push('Claude usage figures are missing or old, so the reserve could not be checked and Claude leans light.');
   return out;
+}
+
+/** Copilot's spend this month, in dollars, from the usage figures. Null when they carry none. */
+export function copilotSpend(usage: UsageSnapshot | null, provider = 'copilot'): number | null {
+  const m = usage?.providers[provider]?.money?.find(x => x.id === 'spent');
+  return m && typeof m.amount === 'number' ? m.amount : null;
+}
+
+/** Holds backup routes out of the running while a subscription route can take the work, and holds Copilot to its budget. Mutates `out`. */
+function backups(out: Governed, policy: PolicyFile, rules: BalanceRules, activity: ActivityId, usage: UsageSnapshot | null, now: Date, candidates: Array<{ label: string; provider: string; claude: boolean }>, claude: ClaudeState, named?: string): void {
+  const f = rules.fallback, blocked = new Set(out.blocks.map(b => b.model));
+  const live = candidates.filter(c => !blocked.has(c.label));
+  const isBackup = (c: { label: string; provider: string }): boolean => f.providers.includes(c.provider) || (f.routes[c.label]?.includes(activity) ?? false);
+  const press = pressure(policy, usage, now);
+  // A subscription route can take the work when it is not spent or down. A spent provider with a limit reset in hand still counts.
+  const available = (c: { provider: string }): boolean => { const h = press[c.provider]; return !h?.down && (!h?.spent || (h.resets ?? 0) > 0); };
+  const subscription = live.filter(c => !isBackup(c) && available(c));
+  const claudeOpen = live.some(c => c.claude);
+  const spend = copilotSpend(usage), counted = spend === null ? null : spend + f.margin;
+  for (const c of live.filter(isBackup)) {
+    if (c.label === named) continue;
+    const anthropic = f.anthropic.includes(c.label);
+    // A model with its own `useAfter` rule is held back by that rule, so the fallback hold leaves it alone.
+    const waits = (policy.providers[c.provider]?.models[c.label]?.useAfter?.length ?? 0) > 0;
+    const open = anthropic ? claude.atReserve || !claudeOpen : waits || subscription.length === 0;
+    const copilot = f.providers.includes(c.provider);
+    let why: string | null = null;
+    if (!open) why = anthropic ? 'Anthropic through a backup waits until Claude reaches its reserve' : `a subscription route can take this, so ${c.label} stays in reserve`;
+    else if (copilot && counted !== null && counted >= f.cap && !anthropic) why = `Copilot spend is $${spend?.toFixed(2)}, at the $${f.cap} cap`;
+    else if (copilot && counted !== null && counted >= f.cap && anthropic && !claude.atReserve) why = `Copilot spend is $${spend?.toFixed(2)}, at the $${f.cap} cap`;
+    if (why) { out.blocks.push({ model: c.label, why }); delete out.tilts[c.label]; delete out.reasons[c.label]; continue; }
+    const r = out.reasons[c.label] ?? [];
+    if (anthropic) r.push('Claude is at its reserve, so Anthropic through Copilot takes the work');
+    else r.push('no subscription route can take this');
+    if (copilot && counted !== null && counted >= f.aim) { const line = `Copilot spend is $${spend?.toFixed(2)}, past the $${f.aim} aim`; r.push(line); out.notes.push(`${line}; ${c.label} is a spend to report.`); }
+    out.reasons[c.label] = r;
+  }
 }
 
 function claudeWhy(c: ClaudeState, lean: 'hot' | 'behind'): string {
