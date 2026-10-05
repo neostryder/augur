@@ -38,7 +38,7 @@ The data tier is required on every run and is never assumed. An agent has to say
 | Tool | Arguments | What it returns |
 | --- | --- | --- |
 | `augur_models` | none | Every model in the rules: status, cost, the most sensitive data it may see, ask-first, pause, and the routes that reach it. |
-| `augur_pick` | `activity` and `data_tier`, or `task` | The permitted models ranked by score, with the routes for each and the pick. With `task`, the classifier the owner chose sets the activity and data tier. |
+| `augur_pick` | `activity` and `data_tier`, or `task`; optional `depth` (`deep` or `everyday`) | The permitted models ranked by score, with the routes for each, the pick, and one line saying why it won. `depth` overrides the activity's default, so a hard review can ask for a strong model. With `task`, the classifier the owner chose sets the activity and data tier. |
 | `augur_run` | `route`, `prompt`, `activity`, `data_tier`; optional `tools`, `output`, `cwd`, `timeout_s`, `wait_s` | The model's answer. `tools` is `read`, `write` or `full` and defaults to `read`. `output` is `text_only`, `patch_only` or `write_files` and defaults to `text_only`. `wait_s` is how long to wait, 300 by default and 900 at most. |
 | `augur_job` | `id` | A job's state and, once it has finished, its answer. |
 | `augur_jobs` | optional `limit` | Recent jobs, newest first. |

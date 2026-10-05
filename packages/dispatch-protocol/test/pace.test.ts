@@ -134,7 +134,7 @@ describe('ranking', () => {
     const r = rank(policy(), usage, { activity: 'write_code', dataTier: 'internal', fits: { 'codex/sol': 0.5, 'codex/luna': 1, 'xai/grok': 0.2 } }, now);
     const sol = r.ranking.find(x => x.model === 'codex/sol') as (typeof r.ranking)[number];
     expect(sol.weight).toBe(2.5);
-    expect(sol.score).toBeCloseTo(0.5 * 2.5 * sol.usage, 2);
+    expect(sol.score).toBeCloseTo(0.5 * 2.5 * sol.usage * sol.tilt, 2);
     expect(r.ranking.map(x => x.score)).toEqual([...r.ranking.map(x => x.score)].sort((a, b) => b - a));
     expect(r.pick).toBe(r.ranking[0]?.model);
   });

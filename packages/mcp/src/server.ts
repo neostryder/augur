@@ -31,6 +31,7 @@ export function buildServer(tools: Tools, version: string): McpServer {
       activity: z.enum(ACTIVITIES).optional().describe('What the work is.'),
       data_tier: z.enum(DATA_TIERS).optional().describe('The most sensitive data the task touches.'),
       task: z.string().optional().describe('A description of the task, when no activity and data tier are given. Its text goes to the classifier the owner chose.'),
+      depth: z.enum(['deep', 'everyday']).optional().describe('Deep for hard reasoning and serious coding, everyday for routine review, research and summaries. Left out, the activity decides.'),
     },
   }, async (a) => out(await tools.pick(a)));
 

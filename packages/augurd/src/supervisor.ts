@@ -210,7 +210,7 @@ export class Supervisor {
     dataTier ??= 'sensitive';
     if (!ACTIVITIES.includes(activity) || !DATA_TIERS.includes(dataTier)) return { error: 'Unknown activity or data tier.' };
     if (req.task && backend) {
-      const asked = rank(policy, this.d.usage(), { activity, dataTier }, new Date(this.now())).ranking.map(r => r.model).filter(m => fits[m] === undefined);
+      const asked = rank(policy, this.d.usage(), { activity, dataTier, ...(req.depth ? { depth: req.depth } : {}) }, new Date(this.now())).ranking.map(r => r.model).filter(m => fits[m] === undefined);
       if (asked.length) {
         const describe = (m: string) => { const e = Object.values(policy.providers).map(p => p.models[m]).find(Boolean); return `${e?.name ?? e?.id ?? m}. Permitted: ${Object.keys(e?.activities ?? {}).join(', ')}. ${e?.notes ?? ''}`.trim(); };
         for (const m of asked) descriptions[m] = describe(m);
@@ -218,7 +218,7 @@ export class Supervisor {
         Object.assign(fits, got.fits); fitError = got.error;
       }
     }
-    const result = rank(policy, this.d.usage(), { activity, dataTier, ...(req.named ? { named: req.named } : {}), fits }, new Date(this.now()));
+    const result = rank(policy, this.d.usage(), { activity, dataTier, ...(req.named ? { named: req.named } : {}), ...(req.depth ? { depth: req.depth } : {}), fits }, new Date(this.now()));
     const routes: Record<string, string[]> = {};
     for (const [name, r] of Object.entries(this.d.routes() ?? {})) if (this.d.adapters.has(r.adapter)) (routes[r.model] ??= []).push(name);
     const pickId = this.d.decisions?.pick({ session: req.session ?? null, ...(req.task ? { task: req.task } : {}), activity, dataTier, pick: result.pick ?? null,

@@ -72,15 +72,15 @@ export function createTools(d: McpDeps) {
     return { text: `${usable.length} of ${rows.length} models can take jobs now.\n${lines.join('\n')}`, data: { models: rows } };
   }
 
-  async function pick(a: { activity?: string; data_tier?: string; task?: string }): Promise<ToolResult> {
+  async function pick(a: { activity?: string; data_tier?: string; task?: string; depth?: string }): Promise<ToolResult> {
     const activity = oneOf(ACTIVITIES, a.activity), dataTier = oneOf(DATA_TIERS, a.data_tier);
     if (a.activity && !activity) return fail(`${a.activity} is not an activity. Use one of: ${ACTIVITIES.join(', ')}.`);
     if (a.data_tier && !dataTier) return fail(`${a.data_tier} is not a data tier. Use one of: ${DATA_TIERS.join(', ')}.`);
     if (!a.task && (!activity || !dataTier)) return fail('Give a task, or both an activity and a data tier, each one of the known values.');
-    return guarded(() => d.call('pick', { ...(activity ? { activity: activity as ActivityId } : {}), ...(dataTier ? { dataTier: dataTier as DataTier } : {}), ...(a.task ? { task: a.task } : {}), session: d.session }, d.opts), r => {
+    return guarded(() => d.call('pick', { ...(activity ? { activity: activity as ActivityId } : {}), ...(dataTier ? { dataTier: dataTier as DataTier } : {}), ...(a.depth === 'deep' || a.depth === 'everyday' ? { depth: a.depth } : {}), ...(a.task ? { task: a.task } : {}), session: d.session }, d.opts), r => {
       if ('error' in r) return fail(r.error);
       const lines = r.ranking.map(x => `${x.model.padEnd(24)} score ${x.score.toFixed(2)}  routes ${(r.routes[x.model] ?? []).join(', ') || 'none'}`);
-      return { text: r.pick ? `Pick: ${r.pick} (${r.activity}, ${r.dataTier} data).\n${lines.join('\n')}` : `No model is permitted ${r.activity} on ${r.dataTier} data.\n${lines.join('\n')}`, data: r as unknown as Record<string, unknown> };
+      return { text: r.pick ? `Pick: ${r.pick} (${r.activity}, ${r.dataTier} data). ${r.reason}\n${lines.join('\n')}` : `No model is permitted ${r.activity} on ${r.dataTier} data.\n${lines.join('\n')}`, data: r as unknown as Record<string, unknown> };
     });
   }
 

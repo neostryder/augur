@@ -95,6 +95,8 @@ export interface PolicyConfig {
   clock?: string;
   /** Newest last. */
   history: PolicyChange[];
+  /** Overrides for the automatic balance's standing rules. Kept as written; the balance reads what it recognizes. */
+  balance?: Record<string, unknown>;
 }
 
 export const HISTORY_LIMIT = 1000;
@@ -332,6 +334,8 @@ export interface PolicyFile {
   /** Models never given rules. Routers treat them as blocked. */
   unreviewed: string[];
   providers: Record<string, { name: string; metered: boolean; thresholds: Thresholds; models: Record<string, ResolvedModel> }>;
+  /** Overrides for the automatic balance's standing rules, when the owner has set any. */
+  balance?: Record<string, unknown>;
 }
 
 export function buildPolicyFile(policy: PolicyConfig, providers: Array<{ id: string; name: string; metered: boolean }>, now = new Date()): PolicyFile {
@@ -346,7 +350,7 @@ export function buildPolicyFile(policy: PolicyConfig, providers: Array<{ id: str
     out[meta.id] = { name: meta.name, metered: meta.metered, thresholds: resolveThresholds(p), models };
   }
   const stamps = Object.values(policy.stamps).sort();
-  return { schema: 1, updatedAt: stamps.length ? stampTime(stamps.at(-1) as string) : now.toISOString(), weights: WEIGHTS, dataTiers: DATA_TIERS, activities: ACTIVITIES, unreviewed: unreviewed.sort(), providers: out };
+  return { schema: 1, updatedAt: stamps.length ? stampTime(stamps.at(-1) as string) : now.toISOString(), weights: WEIGHTS, dataTiers: DATA_TIERS, activities: ACTIVITIES, unreviewed: unreviewed.sort(), providers: out, ...(policy.balance && Object.keys(policy.balance).length ? { balance: policy.balance } : {}) };
 }
 
 /**
@@ -454,5 +458,6 @@ export function migratePolicy(value: unknown): PolicyConfig {
     if (typeof e.at === 'string' && typeof e.path === 'string' && typeof e.device === 'string') policy.history.push({ at: e.at, device: e.device, path: e.path, from: e.from ?? null, to: e.to ?? null, ...(typeof e.stamp === 'string' ? { stamp: e.stamp } : {}) });
   }
   policy.history.splice(0, Math.max(0, policy.history.length - HISTORY_LIMIT));
+  if (s.balance && typeof s.balance === 'object' && !Array.isArray(s.balance)) policy.balance = s.balance as Record<string, unknown>;
   return policy;
 }

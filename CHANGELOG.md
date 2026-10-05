@@ -4,6 +4,10 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+### Added
+
+- [Visible] [Providers] **A pick weighs how hard the task is.** Coding and hard reasoning lean toward Opus, Sol and Grok, and the rest lean toward Sonnet, Luna, DeepSeek and MiniMax, with Opus kept ahead for prose. Fable and Astra are skipped unless named. `--depth deep|everyday` overrides the default, each pick ends with a line giving the reason, and a `balance` section in `policy.json` changes or switches off the rules.
+
 ### Fixed
 
 - [Visible] [Platform] **The service log records how the service stopped.** It used to log every start and no exit, so a service that had died looked the same as one that never ran. Each exit now writes a line with its exit code, and an uncaught error or a stop signal writes its reason first. A kill the service cannot catch, such as an end-task from outside, still leaves no line. The terminal app also starts the service again when it is lost while the app is open.

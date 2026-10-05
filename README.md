@@ -141,6 +141,12 @@ Uninstalling Augur stops the service and removes the program, and leaves your jo
 
 `augur pick --task "..."` can work out the activity and data tier from a description. The setup screen and the Service page ask who does that.
 
+### How a pick balances models
+
+A pick also leans toward a model that fits the task. Coding and hard reasoning are deep work and go to the strong models (Opus, Sol, Grok) first. Reviews, research, summaries and bulk work are everyday work and go to the lighter ones (Sonnet, Luna, DeepSeek, MiniMax), which keeps the strong models' usage for the tasks that need them. Prose goes to Opus at any depth. Fable and Astra are never picked unless a caller names one. `--depth deep` or `--depth everyday` overrides the default for one task, and the pick prints a line saying why the top model won and which came next.
+
+Pauses, ask-first, data tiers and your weights apply first. The `balance` section of `policy.json` sets each activity's depth, each model's tier, the excluded names, how strong each lean is and which models write prose, and `"enabled": false` there switches it off.
+
 - **None** is the default. The agent gives the activity and data tier itself.
 - **Jev** is a hosted model from TypeSafe. The text of each task goes there with your API key, except text about students, which is checked on your computer first and never sent. Put the key in the `TYPESAFE_API_KEY` environment variable.
 - **Laya** is an open-weight model of the same kind that runs on your own computer, so task text never leaves your network. It needs Python 3.10 or newer, PowerShell 7 from the Microsoft Store, and about 6 GB of disk: 2.3 GB for the model and around 3 GB for PyTorch with GPU support. An NVIDIA GPU makes it faster and is not required. From a checkout of this repository, in PowerShell:
