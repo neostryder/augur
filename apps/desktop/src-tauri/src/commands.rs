@@ -181,7 +181,7 @@ fn dispatch_setting_allowed(key: &str, value: &str) -> bool {
     }
 }
 
-/// What the page may ask the packaged `augur` command to do: read the service's state and start or stop it, cancel a job, never submit or apply one.
+/// What the page may ask the packaged `augur` command to do: read the service's state (including the balance report) and start or stop it, cancel a job, never submit or apply one.
 fn dispatch_args_allowed(args: &[String]) -> bool {
     let is_id = |s: &str| s.len() == 12 && s.bytes().all(|b| b.is_ascii_hexdigit());
     let is_number =
@@ -198,7 +198,7 @@ fn dispatch_args_allowed(args: &[String]) -> bool {
                 ["status" | "start" | "stop"] | ["stop", "--if-idle"]
             )
         }
-        Some("routes" | "pressure") => rest.all(|a| a == "--json"),
+        Some("routes" | "pressure" | "balance") => rest.all(|a| a == "--json"),
         Some("usage") => {
             let rest: Vec<&str> = rest.collect();
             match rest.as_slice() {
@@ -444,6 +444,7 @@ mod tests {
         assert!(allowed(&["cancel", "0d26110efa99"]));
         assert!(allowed(&["logs", "0d26110efa99", "--stderr"]));
         assert!(allowed(&["routes", "--json"]));
+        assert!(allowed(&["balance", "--json"]));
         assert!(allowed(&["usage", "--json"]));
         assert!(allowed(&["usage", "--json", "--limit", "50"]));
         assert!(allowed(&["config", "--json"]));

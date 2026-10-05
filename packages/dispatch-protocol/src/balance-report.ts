@@ -62,31 +62,34 @@ export function balanceReport(policy: PolicyFile, usage: UsageSnapshot | null, n
 
 const pct = (n: number) => `${Math.round(n)}%`;
 
+export interface ReportSection { title: string; lines: string[] }
+
+/** The headline of the report, one line, for a page title or the top of a file. */
+export const reportHeading = (r: BalanceReport): string => `Balance report, ${r.at.slice(0, 16).replace('T', ' ')} UTC${r.enabled ? '' : ' (the balance is switched off)'}`;
+
+/** The report as titled groups of plain lines. The window app, the terminal app, the command and the daily file all show these same words. */
+export function reportSections(r: BalanceReport): ReportSection[] {
+  const out: ReportSection[] = [];
+  const c = r.claude, claude: string[] = [];
+  if (c.tracks.length) for (const t of c.tracks) claude.push(`${t.window}: ${pct(t.used)} used, ${pct(t.elapsed)} of the time gone, ${Math.abs(Math.round(t.ahead))} points ${t.ahead >= 0 ? 'ahead of' : 'behind'} pace`);
+  else claude.push('no usable figures');
+  claude.push(`stance: ${c.stance}, leaning to ${c.lean}. The band is ${c.band} points and the reserve is ${c.reserve}%${c.atReserve ? ', and a window is at it' : ''}.`);
+  out.push({ title: 'Claude', lines: claude });
+  out.push({ title: 'Copilot', lines: [`spend this month: ${r.copilot.spend === null ? 'unknown' : `$${r.copilot.spend.toFixed(2)}`}, ${r.copilot.zone} ($${r.copilot.aim} aim, $${r.copilot.cap} cap)`] });
+  out.push({ title: 'Providers', lines: r.providers.map(p => `${p.name.padEnd(22)} ${p.stance.padEnd(7)} ${p.headroom === null ? 'no figures' : `${pct(p.headroom * 100)} room`}${p.spent ? ', spent' : ''}, ${p.why}`) });
+  out.push({ title: 'What each kind of work goes to now', lines: r.mix.map(m => `${m.activity.padEnd(18)} ${m.depth.padEnd(9)} ${(m.pick ?? 'nothing allowed').padEnd(26)} next ${m.next ?? '-'}${m.second ? `, second opinion ${m.second}` : ''}${m.web ? `, web ${m.web}` : ''}`) });
+  out.push({ title: 'Never picked', lines: [`${r.excluded.join(', ') || 'nothing'}.`] });
+  if (r.picks) {
+    const k = r.picks, lines = [`Last ${k.days} ${k.days === 1 ? 'day' : 'days'}: ${k.picks} picks, ${k.jobs} jobs, ${k.overrides} ran on a model other than the pick.`];
+    for (const [activity, models] of Object.entries(k.byActivity)) lines.push(`${activity.padEnd(18)} ${Object.entries(models).sort((a, b) => b[1] - a[1]).map(([m, n]) => `${m} ${n}`).join(', ')}`);
+    out.push({ title: 'The pick log', lines });
+  }
+  return out;
+}
+
 /** The report as plain lines for a terminal, a file or a tool result. */
 export function renderReport(r: BalanceReport): string[] {
-  const out: string[] = [];
-  out.push(`Balance report, ${r.at.slice(0, 16).replace('T', ' ')} UTC${r.enabled ? '' : ' (the balance is switched off)'}`);
-  out.push('');
-  const c = r.claude;
-  out.push('Claude');
-  if (c.tracks.length) for (const t of c.tracks) out.push(`  ${t.window}: ${pct(t.used)} used, ${pct(t.elapsed)} of the time gone, ${Math.abs(Math.round(t.ahead))} points ${t.ahead >= 0 ? 'ahead of' : 'behind'} pace`);
-  else out.push('  no usable figures');
-  out.push(`  stance: ${c.stance}, leaning to ${c.lean}. The band is ${c.band} points and the reserve is ${c.reserve}%${c.atReserve ? ', and a window is at it' : ''}.`);
-  out.push('');
-  out.push('Copilot');
-  out.push(`  spend this month: ${r.copilot.spend === null ? 'unknown' : `$${r.copilot.spend.toFixed(2)}`}, ${r.copilot.zone} ($${r.copilot.aim} aim, $${r.copilot.cap} cap)`);
-  out.push('');
-  out.push('Providers');
-  for (const p of r.providers) out.push(`  ${p.name.padEnd(22)} ${p.stance.padEnd(7)} ${p.headroom === null ? 'no figures' : `${pct(p.headroom * 100)} room`}${p.spent ? ', spent' : ''}, ${p.why}`);
-  out.push('');
-  out.push('What each kind of work goes to now');
-  for (const m of r.mix) out.push(`  ${m.activity.padEnd(18)} ${m.depth.padEnd(9)} ${(m.pick ?? 'nothing allowed').padEnd(26)} next ${m.next ?? '-'}${m.second ? `, second opinion ${m.second}` : ''}${m.web ? `, web ${m.web}` : ''}`);
-  out.push('');
-  out.push(`Never picked: ${r.excluded.join(', ') || 'nothing'}.`);
-  if (r.picks) {
-    out.push('');
-    out.push(`Last ${r.picks.days} ${r.picks.days === 1 ? 'day' : 'days'}: ${r.picks.picks} picks, ${r.picks.jobs} jobs, ${r.picks.overrides} ran on a model other than the pick.`);
-    for (const [activity, models] of Object.entries(r.picks.byActivity)) out.push(`  ${activity.padEnd(18)} ${Object.entries(models).sort((a, b) => b[1] - a[1]).map(([m, n]) => `${m} ${n}`).join(', ')}`);
-  }
+  const out = [reportHeading(r)];
+  for (const sec of reportSections(r)) { out.push('', sec.title, ...sec.lines.map(l => `  ${l}`)); }
   return out;
 }

@@ -22,7 +22,7 @@ export interface JobsModel {
 export { STATE_LABELS, duration, isLive };
 
 /** Jobs and Routes are two pages of the same area, so both carry this switch. */
-const TAB_LABELS = { jobs: 'Jobs', routes: 'Routes', service: 'Service' } as const;
+const TAB_LABELS = { jobs: 'Jobs', routes: 'Routes', balance: 'Balance', service: 'Service' } as const;
 export function dispatchTabs(active: keyof typeof TAB_LABELS): string {
   return `<div class="seg dtabs" role="tablist" aria-label="Dispatch">${(Object.keys(TAB_LABELS) as Array<keyof typeof TAB_LABELS>).map((v) =>
     `<button role="tab" aria-selected="${v === active}" class="${v === active ? 'on' : ''}" data-action="dispatch-tab" data-value="${v}">${TAB_LABELS[v]}</button>`).join('')}</div>`;

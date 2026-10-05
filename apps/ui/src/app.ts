@@ -8,6 +8,7 @@ import { CUSTOM_EXAMPLE, PUSH_TEXT, renderSettings, type SettingsModel } from '.
 import { renderRules, type RulesFilter, type RulesModel } from './views/rules';
 import { renderJobs, type JobsModel } from './views/jobs';
 import { renderRoutes, type RoutesModel } from './views/routes';
+import { renderBalance, type BalanceModel } from './views/balance';
 import { renderService, type ConfigLine, type ServiceModel } from './views/service';
 import { renderStrip } from './views/strip';
 import { ROUTES_PATH, checkDraft, draftOf, emptyDraft, parseRoutesText, writeRoute } from '@augur/view-model';
@@ -51,7 +52,7 @@ export class App {
   private snapshot: Snapshot | null = null;
   private history: HistoryRow[] = [];
   private alertState: Record<string, unknown> = {};
-  private view: 'dashboard' | 'settings' | 'rules' | 'jobs' | 'routes' | 'service' = 'dashboard';
+  private view: 'dashboard' | 'settings' | 'rules' | 'jobs' | 'routes' | 'balance' | 'service' = 'dashboard';
   private firstRun = false;
   private busy = false;
   private expanded: string | null = null;
@@ -71,6 +72,7 @@ export class App {
   private policyError: string | null = null;
   private jobs: JobsModel = { service: null, serviceNote: '', unavailable: '', jobs: null, accounted: {}, sel: null, detail: null, busy: false };
   private jobsTimer: ReturnType<typeof setInterval> | undefined;
+  private balancePage: BalanceModel = { report: null, error: '' };
   private servicePage: ServiceModel = { lines: null, service: null, runJobs: false, note: '', error: '', busy: false, unavailable: '' };
   private routesPage: RoutesModel = { file: null, error: '', health: null, sel: null, draft: null, formError: '', note: '', models: [], confirmDelete: false, busy: false, canTest: false, testing: false, testNote: '', keyStored: null, keyNote: '' };
   private timer: ReturnType<typeof setInterval> | undefined;
@@ -467,6 +469,9 @@ export class App {
     } else if (this.view === 'routes') {
       this.twoColumns = this.shell.kind === 'desktop';
       this.root.innerHTML = renderRoutes(this.routesPage);
+    } else if (this.view === 'balance') {
+      this.twoColumns = false;
+      this.root.innerHTML = renderBalance(this.balancePage);
     } else if (this.view === 'service') {
       this.twoColumns = false;
       this.servicePage.runJobs = this.config.dispatch?.runJobs === true;
@@ -682,7 +687,7 @@ export class App {
     });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
-        if (this.view === 'service') { this.view = 'dashboard'; void this.render(); }
+        if (this.view === 'service' || this.view === 'balance') { this.view = 'dashboard'; void this.render(); }
         else if (this.view === 'routes') { if (this.routesPage.sel) this.closeRoute(); else this.view = 'dashboard'; void this.render(); }
         else if (this.view === 'jobs') { if (this.jobs.sel) this.closeJob(); else { this.leaveJobs(); this.view = 'dashboard'; } void this.render(); }
         else if (this.view === 'rules') { if (this.rules.showHistory) this.rules.showHistory = false; else if (this.rules.sel) this.rules.sel = null; else this.view = 'dashboard'; void this.render(); }
@@ -900,6 +905,18 @@ export class App {
     return Object.entries(this.config.policy?.providers ?? {}).flatMap(([pid, p]) => Object.keys(p.models).map((label) => `${pid}/${label}`)).sort();
   }
 
+  private async loadBalance(): Promise<void> {
+    const page = this.balancePage;
+    try {
+      const r = await this.augur<BalanceModel['report'] | { error: string }>(['balance', '--json']);
+      const got = r.data;
+      if (got && 'error' in got) { page.error = got.error; page.report = null; }
+      else if (got) { page.error = ''; page.report = got; }
+      else { page.error = r.err || r.text || 'The dispatch service did not answer.'; page.report = null; }
+    } catch (e) { page.error = e instanceof Error ? e.message : String(e); page.report = null; }
+    if (this.view === 'balance') await this.render();
+  }
+
   private async loadRoutes(): Promise<void> {
     const read = this.shell.host.readHomeFile;
     const page = this.routesPage;
@@ -1052,7 +1069,8 @@ export class App {
       case 'back': this.leaveJobs(); this.view = 'dashboard'; await this.render(); break;
       case 'jobs': this.view = 'jobs'; this.jobs.sel = null; this.jobs.detail = null; this.jobsTimer ??= setInterval(() => { void this.loadJobs(); }, 3000); await this.render(); void this.loadJobs(); break;
       case 'dispatch-tab':
-        if (t.dataset.value === 'service') { this.leaveJobs(); this.view = 'service'; await this.render(); await this.loadService(); }
+        if (t.dataset.value === 'balance') { this.leaveJobs(); this.view = 'balance'; await this.render(); await this.loadBalance(); }
+        else if (t.dataset.value === 'service') { this.leaveJobs(); this.view = 'service'; await this.render(); await this.loadService(); }
         else if (t.dataset.value === 'routes') { this.leaveJobs(); this.view = 'routes'; this.closeRoute(); await this.render(); await this.loadRoutes(); }
         else { this.view = 'jobs'; this.jobs.sel = null; this.jobs.detail = null; this.jobsTimer ??= setInterval(() => { void this.loadJobs(); }, 3000); await this.render(); void this.loadJobs(); }
         break;

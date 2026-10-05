@@ -6,6 +6,7 @@ import { Link } from './link.js';
 import { openUrl } from './open.js';
 import type { Page } from './page.js';
 import { AlertsPage } from './screens/alerts.js';
+import { BalancePage } from './screens/balance.js';
 import { DispatchPage, type DispatchDeps } from './screens/dispatch.js';
 import { RulesPage } from './screens/rules.js';
 import { SettingsPage, type LoginControl } from './screens/settings.js';
@@ -34,7 +35,7 @@ export interface RunOptions {
 
 export function pages(o: Pick<RunOptions, 'login' | 'env' | 'platform' | 'dispatch' | 'updateAdvice'> = {}): Page[] {
   const settings = new SettingsPage({ platform: o.platform ?? process.platform, env: o.env ?? process.env, ...(o.login ? { login: o.login } : {}), ...(o.updateAdvice ? { updateAdvice: o.updateAdvice } : {}) });
-  return [new UsagePage(), new AlertsPage(), new RulesPage(), new DispatchPage({ env: o.env ?? process.env, ...o.dispatch }), settings];
+  return [new UsagePage(), new AlertsPage(), new RulesPage(), new DispatchPage({ env: o.env ?? process.env, ...o.dispatch }), new BalancePage(), settings];
 }
 
 /** Runs the app until the person quits. Resolves once the terminal is back as it was. */
