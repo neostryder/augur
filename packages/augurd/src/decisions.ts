@@ -20,6 +20,8 @@ export interface PickEntry {
   descriptions?: Record<string, string>;
   /** The balance's reading of the task and why the top model won, and the models named beside it. A job that used another model than the pick is the override label. */
   depth?: string; reason?: string; seats?: { second?: string; web?: string; shadow?: string };
+  /** Copilot's spend for the month when a pick landed on a Copilot model, so each such spend can be reported. */
+  spend?: number | null;
 }
 
 /** Tiers whose task text may be written to disk for training. */
@@ -56,6 +58,7 @@ export class DecisionLog {
   /** What the log says about the last `days` days: picks per activity and model, and the jobs that ran on another model than the pick. */
   summary(days: number): PickSummary {
     const out: PickSummary = { days, picks: 0, byActivity: {}, overrides: 0, jobs: 0 };
+    const copilot: NonNullable<PickSummary['copilot']> = [];
     const path = join(this.dir, 'decisions.jsonl');
     if (!existsSync(path)) return out;
     const since = this.now() - days * 86400_000;
@@ -63,12 +66,16 @@ export class DecisionLog {
     try { text = readFileSync(path, 'utf8'); } catch { return out; }
     for (const line of text.split('\n')) {
       if (!line) continue;
-      let row: { kind?: string; at?: number; activity?: string; pick?: string | null; overridden?: boolean };
+      let row: { kind?: string; at?: number; activity?: string; pick?: string | null; overridden?: boolean; spend?: number | null };
       try { row = JSON.parse(line); } catch { continue; }
       if (typeof row.at !== 'number' || row.at < since) continue;
-      if (row.kind === 'pick' && row.activity && row.pick) { out.picks++; const m = (out.byActivity[row.activity] ??= {}); m[row.pick] = (m[row.pick] ?? 0) + 1; }
+      if (row.kind === 'pick' && row.activity && row.pick) {
+        out.picks++; const m = (out.byActivity[row.activity] ??= {}); m[row.pick] = (m[row.pick] ?? 0) + 1;
+        if (row.pick.startsWith('copilot/')) copilot.push({ at: new Date(row.at).toISOString(), activity: row.activity, model: row.pick, spend: typeof row.spend === 'number' ? row.spend : null });
+      }
       else if (row.kind === 'job') { out.jobs++; if (row.overridden) out.overrides++; }
     }
+    if (copilot.length) out.copilot = copilot.slice(-20);
     return out;
   }
 

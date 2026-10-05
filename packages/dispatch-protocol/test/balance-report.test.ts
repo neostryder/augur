@@ -40,6 +40,13 @@ describe('the balance report', () => {
     expect(renderReport(r).join(' ')).not.toContain('went to Copilot');
   });
 
+  it('lists each Copilot pick with the month at the time and says when it was past the aim', () => {
+    const list = [{ at: '2026-10-04T12:30:00.000Z', activity: 'write_code', model: 'copilot/gpt-5', spend: 120 }, { at: '2026-10-05T01:05:00.000Z', activity: 'research', model: 'copilot/gpt-5', spend: 160 }];
+    const text = renderReport(balanceReport(policy(), usage, now, { days: 7, picks: 2, jobs: 0, overrides: 0, byActivity: { write_code: { 'copilot/gpt-5': 2 } }, copilot: list })).join(' ');
+    expect(text).toContain('2026-10-04 12:30 UTC write_code on copilot/gpt-5, month at $120.00 ');
+    expect(text).toContain('2026-10-05 01:05 UTC research on copilot/gpt-5, month at $160.00, past the aim');
+  });
+
   it('renders plain lines with no non-ASCII punctuation', () => {
     const text = renderReport(r).join('\n');
     expect(text).toContain('spend this month: $160.00, past the aim ($150 aim, $250 cap)');

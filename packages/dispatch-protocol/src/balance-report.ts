@@ -22,6 +22,8 @@ export interface PickSummary {
   /** Jobs that ran on another model than the one picked. */
   overrides: number;
   jobs: number;
+  /** Each pick that landed on a Copilot model, oldest first, with the month's spend when it was made. */
+  copilot?: Array<{ at: string; activity: string; model: string; spend: number | null }>;
 }
 
 export interface BalanceReport {
@@ -83,6 +85,10 @@ export function reportSections(r: BalanceReport): ReportSection[] {
     const k = r.picks, lines = [`Last ${k.days} ${k.days === 1 ? 'day' : 'days'}: ${k.picks} picks, ${k.jobs} jobs, ${k.overrides} ran on a model other than the pick.`];
     const onCopilot = Object.values(k.byActivity).reduce((n, models) => n + Object.entries(models).filter(([m]) => m.startsWith('copilot/')).reduce((x, [, c]) => x + c, 0), 0);
     if (onCopilot) lines.push(`${onCopilot} of those went to Copilot${r.copilot.spend === null ? '' : `, which stands at $${r.copilot.spend.toFixed(2)} for the month`}.`);
+    if (k.copilot?.length) {
+      lines.push('Copilot picks, each billed at API price:');
+      for (const c of k.copilot) lines.push(`  ${c.at.slice(0, 16).replace('T', ' ')} UTC ${c.activity} on ${c.model}${c.spend === null ? '' : `, month at $${c.spend.toFixed(2)}${c.spend >= r.copilot.aim ? ', past the aim' : ''}`}`);
+    }
     for (const [activity, models] of Object.entries(k.byActivity)) lines.push(`${activity.padEnd(18)} ${Object.entries(models).sort((a, b) => b[1] - a[1]).map(([m, n]) => `${m} ${n}`).join(', ')}`);
     out.push({ title: 'The pick log', lines });
   }

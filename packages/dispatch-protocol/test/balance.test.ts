@@ -296,7 +296,8 @@ describe('the seats beside a pick', () => {
   it('recommend a free web route for research, with the steps for the caller', () => {
     const r = seat('research', 'public');
     expect(r.seats.web).toMatchObject({ model: 'chatgpt/web' });
-    expect(r.seats.web?.how).toContain('brief file');
+    expect(r.seats.web?.how).toMatch(/~\/\.augur\/web\/research-\d{8}-\d{4}\/brief\.md/);
+    expect(r.seats.web?.how).toContain('/result.md');
     expect(seat('research', 'internal').seats.web).toBeUndefined();
     expect(seat('write_code', 'public').seats.web).toBeUndefined();
   });

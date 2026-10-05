@@ -43,4 +43,15 @@ describe('the pick log summary', () => {
     expect(log.summary(30)).toMatchObject({ picks: 3, jobs: 2, overrides: 1 });
     expect(new DecisionLog(tmp(), { recordTasks: false }).summary(7)).toMatchObject({ picks: 0, jobs: 0 });
   });
+
+  it('keeps each Copilot pick with the month spend when it was made', () => {
+    const t = Date.parse('2026-10-04T12:00:00Z');
+    const log = new DecisionLog(tmp(), { recordTasks: false }, () => t);
+    const base = { session: 's', dataTier: 'internal', ranking: [], named: null, activity: 'write_code' };
+    log.pick({ ...base, pick: 'a/b' });
+    log.pick({ ...base, pick: 'copilot/gpt-5', spend: 61.5 });
+    log.pick({ ...base, pick: 'copilot/gpt-5' });
+    expect(log.summary(7).copilot).toEqual([{ at: '2026-10-04T12:00:00.000Z', activity: 'write_code', model: 'copilot/gpt-5', spend: 61.5 }, { at: '2026-10-04T12:00:00.000Z', activity: 'write_code', model: 'copilot/gpt-5', spend: null }]);
+    expect(log.summary(7)).toMatchObject({ picks: 3 });
+  });
 });

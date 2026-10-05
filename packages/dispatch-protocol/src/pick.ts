@@ -56,7 +56,7 @@ export function rank(policy: PolicyFile, usage: UsageSnapshot | null, req: PickR
     return { model: r.model, score: Math.round(fit * weight * factor * tilt * 1000) / 1000, fit, level: r.level, weight, usage: factor, tilt, why: press[r.provider]?.why ?? '' };
   }).sort((a, b) => b.score - a.score);
   const pick = ranking[0]?.model ?? null;
-  return { pick, ranking, blocked, scarcity, unreviewed: policy.unreviewed, notes, depth: governed.depth, reason: reasonLine(ranking[0], ranking[1], governed, req.activity), seats: seatsFor(policy, ranking, pick, req.activity) };
+  return { pick, ranking, blocked, scarcity, unreviewed: policy.unreviewed, notes, depth: governed.depth, reason: reasonLine(ranking[0], ranking[1], governed, req.activity), seats: seatsFor(policy, ranking, pick, req.activity, now) };
 }
 
 /**
