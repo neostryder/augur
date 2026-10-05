@@ -69,6 +69,12 @@ export function buildServer(tools: Tools, version: string): McpServer {
     inputSchema: { id: z.string().describe('The job id.') },
   }, async (a) => out(await tools.cancel(a)));
 
+  server.registerTool('augur_balance', {
+    title: 'Model balance report', annotations: readOnly,
+    description: 'Shows what the automatic balance is doing: where each kind of work goes now, how Claude is pacing against its week and 5-hour window, how much Copilot has cost this month, each provider stance, and what recent picks were. Read only.',
+    inputSchema: { days: z.number().int().min(1).max(90).optional().describe('How many days of picks to summarize. Defaults to 7.') },
+  }, async (a) => out(await tools.balance(a)));
+
   server.registerTool('augur_pressure', {
     title: 'Plan usage pressure', annotations: readOnly,
     description: 'Shows how much room each model has under its provider\'s plan right now. A low factor means its provider is close to a limit.',

@@ -1,6 +1,7 @@
 // Wire contract between the service and its callers. One JSON object per line over a named pipe, each request carrying the auth token.
 import type { Accounted, BudgetStatus, RouteCalibration, Totals } from './accounting.js';
 import type { Headroom } from './pace.js';
+import type { BalanceReport } from './balance-report.js';
 import type { ActivityId, DataTier, EngineKey, EngineState } from '@augur/core';
 import type { PickRequest, PickResult } from './pick.js';
 import type { JobEvent, JobRecord, JobRequest, Rejection } from './spec.js';
@@ -49,6 +50,8 @@ export interface Methods {
   human_prompt: { params: { session: string; text: string }; result: { models: string[] } | { error: string } };
   /** Headroom per provider and the usage factor of every model. */
   pressure: { params: undefined; result: { pressure: Record<string, Headroom>; factors: Record<string, number>; scarcity: number } | null };
+  /** The read-only balance report: Claude's pace, Copilot's spend, each provider's stance, where each kind of work goes now, and what the pick log shows for the last few days. */
+  balance: { params: { days?: number } | undefined; result: BalanceReport | { error: string } };
   routes: { params: undefined; result: Array<{ name: string; model: string; adapter: string; problem: string | null }> };
   /** Tokens and cost of recent jobs and totals per route, each figure labelled reported, derived or imputed. */
   accounting: { params: { limit?: number }; result: AccountingAnswer };

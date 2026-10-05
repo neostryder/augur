@@ -6,7 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES, feedFor } from '@augur/core';
 import type { ActivityId, DataTier, EngineState, OutputMode } from '@augur/core';
-import { EXIT_CODES, TOOL_TIERS, describeFigure, exitCodeForState, isTerminal, seatLines } from '@augur/dispatch-protocol';
+import { EXIT_CODES, TOOL_TIERS, describeFigure, exitCodeForState, isTerminal, renderReport, seatLines } from '@augur/dispatch-protocol';
 import type { JobRecord, JobRequest, ToolTier } from '@augur/dispatch-protocol';
 import { STATUS_TEXT, statusLine } from '@augur/view-model';
 import { bridge, stdioBridge } from './bridge.js';
@@ -38,6 +38,7 @@ augur cancel <job>
 augur apply <job> [--check]
 augur pick (--task <description> | --activity <a> --data <tier>) [--depth deep|everyday] [--named <model>] [--fit <model>=<0-1>,...]
 augur pressure
+augur balance [--days <n>]            where each kind of work goes now, Claude's pace, Copilot's spend and the last days' picks
 augur usage                             tokens and cost per route, each labelled reported, derived or imputed
 augur note-prompt --session <id>     tell the service a person sent the message on standard input; it keeps only the models named
 augur routes
@@ -124,6 +125,11 @@ export async function main(argv: string[], io: Io): Promise<number> {
         say(r.models.join(', ') || 'No models named.', r); return 0;
       }
       case 'pick': return await pickCmd(io, opts, say, opt);
+      case 'balance': {
+        const r = await call('balance', opt('days') ? { days: Number(opt('days')) } : undefined, opts);
+        if ('error' in r) { io.err(r.error + String.fromCharCode(10)); return EXIT_CODES.failed; }
+        say(renderReport(r).join(String.fromCharCode(10)), r); return 0;
+      }
       case 'pressure': {
         const r = await call('pressure', undefined, opts);
         if (!r) { io.err('Pressure needs policy.json and usage.json.\n'); return EXIT_CODES.failed; }

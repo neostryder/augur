@@ -10,6 +10,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 - [Visible] [Providers] **Picks keep Claude on pace.** If the week or the 5-hour window is running more than 5 points ahead of the time that has passed, Sonnet is favored over Opus, and if both are running more than 5 points behind, Opus is favored. Once a window hits 90%, optional work goes to other routes when any can take it. If Claude's figures are missing or old, the pick says it could not check.
 - [Visible] [Providers] **Backup routes wait their turn.** A Copilot model, or DeepSeek on a coding task, is skipped while another route can take the work. Copilot's Anthropic models step in once Claude reaches 90%. The pick mentions Copilot's monthly spend once it passes $150 and drops Copilot at $250.
 - [Visible] [Providers] **Picks can suggest more than one model.** Most picks also suggest MiniMax for a second look. Research and image tasks suggest a free ChatGPT or Gemini route with the steps to follow, and tagging and typed decisions go to Jev first. Each pick also names the local Laya model as a shadow, so its answer can be compared with the pick's.
+- [Visible] [Providers] **`augur balance` shows what the router is doing.** It prints where each kind of work goes now, Claude's pace, Copilot's spend and the last few days of picks, and the `augur_balance` tool returns the same. The service also saves a copy each day in `~/.augur/balance`.
 
 ### Fixed
 

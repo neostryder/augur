@@ -63,6 +63,15 @@ describe('pick', () => {
     expect(r.text).toContain('Second opinion: minimax/m3');
     expect(r.text).toContain('Shadow: laya/laya');
   });
+  it('prints the balance report and passes the days', async () => {
+    const calls: Calls[] = [];
+    const report = { at: '2026-09-28T12:00:00.000Z', enabled: true, claude: { stance: 'on pace', lean: 'neither', peak: 40, reserve: 90, band: 5, atReserve: false, tracks: [] },
+      copilot: { spend: 10, aim: 150, cap: 250, zone: 'under the aim' }, providers: [], mix: [], excluded: ['fable'], picks: null };
+    const r = await createTools(deps({ balance: report }, calls)).balance({ days: 3 });
+    expect(r.text).toContain('Balance report');
+    expect(r.text).toContain('spend this month: $10.00');
+    expect(calls[0]).toEqual({ method: 'balance', params: { days: 3 } });
+  });
   it('reports an error result from the service as an error', async () => {
     const r = await createTools(deps({ pick: { error: 'could not classify' } })).pick({ task: 'do a thing' });
     expect(r).toMatchObject({ isError: true, text: 'could not classify' });
@@ -128,7 +137,7 @@ describe('the server', () => {
     const client = new Client({ name: 'test', version: '1' });
     await Promise.all([server.connect(a), client.connect(b)]);
     const { tools } = await client.listTools();
-    expect(tools.map(t => t.name).sort()).toEqual(['augur_cancel', 'augur_job', 'augur_jobs', 'augur_models', 'augur_pick', 'augur_pick_preview', 'augur_policy', 'augur_policy_edit', 'augur_pressure', 'augur_routes', 'augur_run']);
+    expect(tools.map(t => t.name).sort()).toEqual(['augur_balance', 'augur_cancel', 'augur_job', 'augur_jobs', 'augur_models', 'augur_pick', 'augur_pick_preview', 'augur_policy', 'augur_policy_edit', 'augur_pressure', 'augur_routes', 'augur_run']);
     expect(client.getInstructions()).toContain('data tier is never assumed');
     const run = tools.find(t => t.name === 'augur_run')!;
     expect(run.inputSchema.required).toEqual(expect.arrayContaining(['route', 'prompt', 'activity', 'data_tier']));

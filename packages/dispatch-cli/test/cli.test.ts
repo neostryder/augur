@@ -171,6 +171,17 @@ describe('augur pick and augur pressure', () => {
     expect(JSON.parse(r.out).factors['test/fake']).toBeGreaterThan(0);
   });
 
+  it('prints the balance report, and the same report as JSON', async () => {
+    const { run } = await boot();
+    const text = await run(['balance']);
+    expect(text.code).toBe(0);
+    expect(text.out).toContain('Balance report');
+    expect(text.out).toContain('What each kind of work goes to now');
+    const json = JSON.parse((await run(['balance', '--days', '3', '--json'])).out);
+    expect(json.picks.days).toBe(3);
+    expect(json.mix.length).toBeGreaterThan(0);
+  });
+
   it('shows tokens and cost per route with each figure labelled', async () => {
     const { run } = await boot();
     expect((await run(['usage'])).out.trim()).toBe('No jobs yet.');

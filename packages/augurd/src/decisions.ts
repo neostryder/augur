@@ -1,9 +1,10 @@
 // A local record of what was picked and how it turned out, kept so the decision model can learn from everyday use.
 // Task text is written only when learning is on and the task's data tier is public or internal; otherwise a pick keeps its structure and no words.
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { STUDENT_RE } from '@augur/decision';
+import type { PickSummary } from '@augur/dispatch-protocol';
 
 export interface LearnSettings {
   /** Keep the task text of a pick, when the data tier allows it. Off by default. */
@@ -50,6 +51,25 @@ export class DecisionLog {
     this.links.set(jobId, last.id);
     this.write({ kind: 'job', job: jobId, pick: last.id, model, at: this.now(), overridden: last.model !== null && last.model !== model });
     return last.id;
+  }
+
+  /** What the log says about the last `days` days: picks per activity and model, and the jobs that ran on another model than the pick. */
+  summary(days: number): PickSummary {
+    const out: PickSummary = { days, picks: 0, byActivity: {}, overrides: 0, jobs: 0 };
+    const path = join(this.dir, 'decisions.jsonl');
+    if (!existsSync(path)) return out;
+    const since = this.now() - days * 86400_000;
+    let text = '';
+    try { text = readFileSync(path, 'utf8'); } catch { return out; }
+    for (const line of text.split('\n')) {
+      if (!line) continue;
+      let row: { kind?: string; at?: number; activity?: string; pick?: string | null; overridden?: boolean };
+      try { row = JSON.parse(line); } catch { continue; }
+      if (typeof row.at !== 'number' || row.at < since) continue;
+      if (row.kind === 'pick' && row.activity && row.pick) { out.picks++; const m = (out.byActivity[row.activity] ??= {}); m[row.pick] = (m[row.pick] ?? 0) + 1; }
+      else if (row.kind === 'job') { out.jobs++; if (row.overridden) out.overrides++; }
+    }
+    return out;
   }
 
   outcome(jobId: string, model: string, state: string, reason: string | null, ms: number | null): void {

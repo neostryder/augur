@@ -75,6 +75,7 @@ export class IpcServer {
       case 'pick': return this.sup.pick(params as never);
       case 'human_prompt': return this.sup.humanPrompt(String(p.session ?? ''), String(p.text ?? ''));
       case 'pressure': return this.sup.pressure();
+      case 'balance': return this.sup.balance(typeof p.days === 'number' ? p.days : 7);
       case 'routes': return Object.entries(this.routes() ?? {}).map(([name, r]) => ({ name, model: r.model, adapter: r.adapter, problem: this.sup.routeProblem(r as RouteConfig, name) }));
       case 'engine_state': { const e = this.needEngine(); return { state: this.stateOf(p.keys as EngineKey[] | undefined), views: e.views.info() }; }
       case 'engine_call': return callEngine(this.needEngine().api, String(p.method ?? ''), Array.isArray(p.args) ? p.args : []);

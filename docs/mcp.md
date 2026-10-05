@@ -47,6 +47,7 @@ The data tier is required on every run and is never assumed. An agent has to say
 | `augur_routes` | none | Each route, its model and adapter, and any reason it cannot run. |
 | `augur_policy` | none | The full rules from `policy.json`: every model with its status, data tier, weights, pause, data handling, hold rules and notes, each provider's limits, the edits still queued, the ones waiting for the owner, and what became of recent ones. |
 | `augur_policy_edit` | `edits`: a list of `model`, `field`, `value` and an optional `reason` (a limit edit names its `provider` instead of a model) | Each edit with its value before the request, and whether it was queued, is waiting for the owner, or was rejected and why. |
+| `augur_balance` | optional `days` | What the automatic balance is doing: where each kind of work goes now, Claude's pace against its week and 5-hour window, Copilot's spend, each provider's stance and a summary of recent picks. Read only. |
 | `augur_pick_preview` | `activity`, `data_tier`; optional `edits`, `include_pending` | The ranking now and again with the given edits applied, so a change can be tried first. It records nothing and does not count as a pick for a run. |
 
 Each result has a text form for the model and, where there is structure, a `structuredContent` object with the same facts. A refusal, a failed job and a service that is not running all come back as an error result with the reason in the text. A refusal carries the service's code, such as `not_picked`, in `structuredContent.rejected`.

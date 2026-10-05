@@ -10,6 +10,7 @@ import { loadConfig } from './config.js';
 import { DecisionLog } from './decisions.js';
 import { createEngineShell } from './engine-shell.js';
 import { IpcServer, ensureToken } from './ipc.js';
+import { writeDailyReport } from './balance-files.js';
 import { augurHome, dataDir, pipeName } from './paths.js';
 import { policySource, routeSource, usageSource } from './sources.js';
 import { Store } from './store.js';
@@ -67,11 +68,15 @@ export async function startService(opts: ServiceOptions = {}) {
   supervisor.reconcile();
   const timer = setInterval(() => { try { supervisor.tick(); } catch (e) { log(`tick failed: ${(e as Error).message}`); } }, 500);
   const daily = setInterval(() => { try { supervisor.purge(); } catch (e) { log(`purge failed: ${(e as Error).message}`); } }, 86400000);
+  // The balance report is written once a day, and the check runs hourly so a service left on across midnight still writes it.
+  const balanceFile = () => { try { const r = supervisor.balance(7); if (!('error' in r)) { const file = writeDailyReport(home, r, new Date()); if (file) log(`balance report written to ${file}`); } } catch (e) { log(`balance report failed: ${(e as Error).message}`); } };
+  balanceFile();
+  const hourly = setInterval(balanceFile, 3600000);
   log('started');
   return {
     supervisor, store, config,
     engine,
-    async stop() { engine?.stop(); clearInterval(timer); clearInterval(daily); await server.close(); store.close(); log('stopped'); },
+    async stop() { engine?.stop(); clearInterval(timer); clearInterval(daily); clearInterval(hourly); await server.close(); store.close(); log('stopped'); },
   };
 }
 

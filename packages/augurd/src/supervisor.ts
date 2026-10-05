@@ -7,8 +7,8 @@ import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES } from '@augur/core';
 import type { PolicyFile } from '@augur/core';
 import { classifyTask, fitScores } from '@augur/decision';
 import type { DecisionBackend } from '@augur/decision';
-import { BUDGET_WINDOW_MS, NAMED_PROMPT_WINDOW, PICK_WINDOW_MIN, TOOL_TIERS, account, budgetStatus, calibrateRoutes, checkLineage, routeSecretName, checkNamed, checkPick, evaluate, isTerminal, matchNamedModels, pressure, rank, usageFactors } from '@augur/dispatch-protocol';
-import type { Adapter, BudgetStatus, JobRecord, JobRequest, LaunchPlan, PickAnswer, PickParams, RateCard, Rejection, RouteConfig, UsageSnapshot } from '@augur/dispatch-protocol';
+import { BUDGET_WINDOW_MS, NAMED_PROMPT_WINDOW, PICK_WINDOW_MIN, TOOL_TIERS, account, balanceReport, budgetStatus, calibrateRoutes, checkLineage, routeSecretName, checkNamed, checkPick, evaluate, isTerminal, matchNamedModels, pressure, rank, usageFactors } from '@augur/dispatch-protocol';
+import type { Adapter, BalanceReport, BudgetStatus, JobRecord, JobRequest, LaunchPlan, PickAnswer, PickParams, RateCard, Rejection, RouteConfig, UsageSnapshot } from '@augur/dispatch-protocol';
 import { MAX_COMMAND_LINE } from './adapters/util.js';
 import type { ServiceConfig } from './config.js';
 import { buildEnv } from './env.js';
@@ -227,6 +227,13 @@ export class Supervisor {
       depth: result.depth, reason: result.reason, seats: { ...(result.seats.second ? { second: result.seats.second.model } : {}), ...(result.seats.web ? { web: result.seats.web.model } : {}), ...(result.seats.shadow ? { shadow: result.seats.shadow.model } : {}) } });
     if (result.pick) this.d.store.addPick({ at: this.now(), session: req.session ?? null, model: result.pick, activity, dataTier, named: req.named ?? null, cleared: result.ranking.map(r => r.model) });
     return { ...result, routes, activity, dataTier, ...(pickId ? { pickId } : {}), ...(backend ? { decision: { backend: backend.primary.id, ...(classified ? { classified } : {}), ...(fitError ? { fitError } : {}) } } : {}) };
+  }
+
+  /** The balance report for the policy and usage as they stand, with what the pick log shows for the last `days` days. */
+  balance(days = 7): BalanceReport | { error: string } {
+    const policy = this.d.policy();
+    if (!policy) return { error: 'policy.json was not found. Augur writes it when a rule is saved.' };
+    return balanceReport(policy, this.d.usage(), new Date(this.now()), this.d.decisions ? this.d.decisions.summary(Math.min(Math.max(Math.round(days), 1), 90)) : null);
   }
 
   pressure(): { pressure: ReturnType<typeof pressure>; factors: Record<string, number>; scarcity: number } | null {
