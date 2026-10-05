@@ -1,7 +1,7 @@
 // The read-only balance report: what the router is doing now and what it has been doing, in one structure that the command, the tool, the apps and the daily file all share. Pure.
 import { ACTIVITIES } from '@augur/core';
 import type { ActivityId, PolicyFile } from '@augur/core';
-import { claudeState, copilotSpend, resolveBalance } from './balance.js';
+import { claudeState, copilotSpend, plural, resolveBalance } from './balance.js';
 import type { ClaudeStance, Depth, PaceTrack } from './balance.js';
 import { drainProviders, pressure } from './pace.js';
 import type { UsageSnapshot } from './pace.js';
@@ -71,9 +71,9 @@ export const reportHeading = (r: BalanceReport): string => `Balance report, ${r.
 export function reportSections(r: BalanceReport): ReportSection[] {
   const out: ReportSection[] = [];
   const c = r.claude, claude: string[] = [];
-  if (c.tracks.length) for (const t of c.tracks) claude.push(`${t.window}: ${pct(t.used)} used, ${pct(t.elapsed)} of the time gone, ${Math.abs(Math.round(t.ahead))} points ${t.ahead >= 0 ? 'ahead of' : 'behind'} pace`);
+  if (c.tracks.length) for (const t of c.tracks) claude.push(`${t.window}: ${pct(t.used)} used, ${pct(t.elapsed)} of the time gone, ${plural(Math.abs(Math.round(t.ahead)), 'point')} ${t.ahead >= 0 ? 'ahead of' : 'behind'} pace`);
   else claude.push('no usable figures');
-  claude.push(`stance: ${c.stance}, leaning to ${c.lean}. The band is ${c.band} points and the reserve is ${c.reserve}%${c.atReserve ? ', and a window is at it' : ''}.`);
+  claude.push(`stance: ${c.stance}, leaning to ${c.lean}. The band is ${plural(c.band, 'point')} and the reserve is ${c.reserve}%${c.atReserve ? ', and a window is at it' : ''}.`);
   out.push({ title: 'Claude', lines: claude });
   out.push({ title: 'Copilot', lines: [`spend this month: ${r.copilot.spend === null ? 'unknown' : `$${r.copilot.spend.toFixed(2)}`}, ${r.copilot.zone} ($${r.copilot.aim} aim, $${r.copilot.cap} cap)`] });
   out.push({ title: 'Providers', lines: r.providers.map(p => `${p.name.padEnd(22)} ${p.stance.padEnd(7)} ${p.headroom === null ? 'no figures' : `${pct(p.headroom * 100)} room`}${p.spent ? ', spent' : ''}, ${p.why}`) });

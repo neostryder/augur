@@ -160,6 +160,8 @@ export function claudeState(usage: UsageSnapshot | null, rules: BalanceRules, no
     for (const m of p.meters ?? []) {
       // Claude marks only the window that is limiting right now as active, but the week is the pace marker even while the 5-hour window is the active one, so inactive windows count here.
       if (typeof m.usedPct !== 'number' || (m.windowKind !== 'session' && m.windowKind !== 'weekly')) continue;
+      // A window scoped to one model (Fable's own week) is not the pace of the subscription, and the models it covers are never picked anyway.
+      if (/scoped/.test(m.id ?? '')) continue;
       const used = m.usedPct as number, reset = m.resetsAt ? Date.parse(m.resetsAt) : NaN;
       peak = Math.max(peak ?? 0, used);
       if (!Number.isFinite(reset) || !m.windowSeconds) continue;
@@ -172,7 +174,8 @@ export function claudeState(usage: UsageSnapshot | null, rules: BalanceRules, no
   return { stance, tracks, peak, atReserve: peak !== null && peak >= rules.claude.reserve };
 }
 
-const points = (t: PaceTrack): string => `${t.window} is ${Math.abs(Math.round(t.ahead))} points ${t.ahead >= 0 ? 'ahead of' : 'behind'} pace`;
+export const plural = (n: number, one: string, many = one + 's'): string => `${n} ${n === 1 ? one : many}`;
+const points = (t: PaceTrack): string => `${t.window} is ${plural(Math.abs(Math.round(t.ahead)), 'point')} ${t.ahead >= 0 ? 'ahead of' : 'behind'} pace`;
 
 export interface Governed {
   depth: Depth;

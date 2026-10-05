@@ -4,6 +4,10 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+### Fixed
+
+- [Visible] [Providers] **The balance report counts Claude's week once.** Fable's own weekly window was listed as a second week and always read as far behind pace. The report and the pick now use only the windows that cover the whole subscription, and "1 points" reads "1 point".
+
 ## [1.5.0] - 2026-10-04
 
 ### Added

@@ -110,6 +110,13 @@ const tiltOf = (r: ReturnType<typeof rank>, m: string) => r.ranking.find(x => x.
 describe('the Claude controller', () => {
   const review = { activity: 'review_code' as const, dataTier: 'internal' as const };
 
+  it('leaves out a window scoped to one model, such as the Fable week', () => {
+    const scoped = { ...track('weekly', 0, 0.07), id: 'weekly_scoped_fable' as never };
+    const r = rank(policy(), claudeUsage([track('weekly', 8, 0.07), scoped]), review, now);
+    expect(r.notes.join(' ')).not.toMatch(/behind pace/);
+    expect(tiltOf(r, 'claude/claude-sonnet-5-5')).toBeCloseTo(1.15, 3);
+  });
+
   it('counts the week even while Claude marks only the 5-hour window as the active one', () => {
     const inactive = { ...track('weekly', 60, 0.5), active: false };
     const r = rank(policy(), claudeUsage([track('session', 10, 0.5), inactive]), review, now);
