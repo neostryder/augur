@@ -148,6 +148,26 @@ describe('link', () => {
     link.close();
   });
 
+  it('starts the service again when it is lost after being up', async () => {
+    const st = state();
+    let handlers: Parameters<typeof import('@augur/augurd').watchEngine>[1] = {};
+    let tries = 0;
+    const watch = vi.fn(async (_h: unknown, hs: typeof handlers) => {
+      tries++;
+      if (tries === 2) throw Object.assign(new Error('not running'), { code: 'unreachable' });
+      handlers = hs;
+      return { state: st, views: [], close() {} };
+    });
+    const launch = vi.fn(async () => ({ pid: 1 }));
+    const link = new Link({ watch: watch as never, launch, retryMs: 1 });
+    await link.connect();
+    expect(launch).not.toHaveBeenCalled();
+    handlers!.closed!(new Error('gone'));
+    await vi.waitFor(() => expect(link.status).toBe('up'));
+    expect(launch).toHaveBeenCalledTimes(1);
+    link.close();
+  });
+
   it('applies changes and reports a dropped connection', async () => {
     const st = state();
     let handlers: Parameters<typeof import('@augur/augurd').watchEngine>[1] = {};

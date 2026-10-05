@@ -76,9 +76,14 @@ export async function startService(opts: ServiceOptions = {}) {
 }
 
 if (process.argv[1] && /(main|augurd)\.(ts|js|mjs)$/.test(process.argv[1].replace(/\\/g, '/'))) {
+  // Every way out of the process leaves a line in service.log, so an exit is never silent. A kill the process cannot catch (SIGKILL, taskkill /F) is the one exception.
+  const exitLog = (msg: string) => { try { appendFileSync(join(dataDir(), 'service.log'), `${new Date().toISOString()} ${msg}\n`); } catch { /* logging is best effort */ } };
+  process.on('exit', code => exitLog(`exited with code ${code}`));
+  process.on('uncaughtException', e => { exitLog(`stopped by an uncaught error: ${e.stack ?? e.message}`); process.exit(1); });
+  process.on('unhandledRejection', e => { exitLog(`stopped by an unhandled rejection: ${(e as Error)?.stack ?? String(e)}`); process.exit(1); });
   startService().then(svc => {
-    const quit = () => { void svc.stop().then(() => process.exit(0)); };
-    process.on('SIGINT', quit); process.on('SIGTERM', quit);
+    const quit = (signal: string) => { exitLog(`received ${signal}`); void svc.stop().then(() => process.exit(0)); };
+    process.on('SIGINT', () => quit('SIGINT')); process.on('SIGTERM', () => quit('SIGTERM'));
   }).catch(e => {
     if ((e as NodeJS.ErrnoException).code === 'EADDRINUSE') { console.error('augurd is already running.'); process.exit(0); }
     console.error(e); process.exit(1);

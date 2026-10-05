@@ -4,6 +4,10 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+### Fixed
+
+- [Visible] [Platform] **The service log records how the service stopped.** It used to log every start and no exit, so a service that had died looked the same as one that never ran. Each exit now writes a line with its exit code, and an uncaught error or a stop signal writes its reason first. A kill the service cannot catch, such as an end-task from outside, still leaves no line. The terminal app also starts the service again when it is lost while the app is open.
+
 ## [1.4.0] - 2026-10-04
 
 ### Added

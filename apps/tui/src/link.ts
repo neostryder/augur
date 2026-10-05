@@ -62,10 +62,12 @@ export class Link {
       }, this.deps.opts);
       this.state = this.watcher.state;
       this.views = this.watcher.views;
+      // A later loss of the service is a new reason to start it.
+      this.launched = false;
       this.set('up');
     } catch (e) {
       const err = e as ServiceError;
-      // A service that was never started, or has stopped, is started once; after that the app keeps trying to reach it.
+      // A service that was never started, or has stopped, is started once per loss; after that the app keeps trying to reach it.
       if ((err.code === 'unreachable' || err.code === 'no_token') && this.deps.launch && !this.launched) {
         this.launched = true;
         this.set('starting');
