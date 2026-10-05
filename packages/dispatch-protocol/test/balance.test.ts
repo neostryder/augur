@@ -110,6 +110,12 @@ const tiltOf = (r: ReturnType<typeof rank>, m: string) => r.ranking.find(x => x.
 describe('the Claude controller', () => {
   const review = { activity: 'review_code' as const, dataTier: 'internal' as const };
 
+  it('counts the week even while Claude marks only the 5-hour window as the active one', () => {
+    const inactive = { ...track('weekly', 60, 0.5), active: false };
+    const r = rank(policy(), claudeUsage([track('session', 10, 0.5), inactive]), review, now);
+    expect(tiltOf(r, 'claude/claude-sonnet-5-5')).toBeCloseTo(1.15 * 1.25, 3);
+  });
+
   it('leans to Sonnet when the week runs ahead of pace, and says so', () => {
     const r = rank(policy(), claudeUsage([track('weekly', 60, 0.5)]), review, now);
     expect(tiltOf(r, 'claude/claude-sonnet-5-5')).toBeCloseTo(1.15 * 1.25, 3);

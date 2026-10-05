@@ -2,7 +2,7 @@
 // `rank()` multiplies the tilt into the score it already computes, so the weights, pauses, ask-first, data tiers and the usage factor all still apply.
 import { ACTIVITIES } from '@augur/core';
 import type { ActivityId, PolicyFile } from '@augur/core';
-import { PACE, ageMinutes, isWindowMeter, pressure } from './pace.js';
+import { PACE, ageMinutes, pressure } from './pace.js';
 import type { UsageSnapshot } from './pace.js';
 
 /** Deep work is hard reasoning, serious coding and long chains. Everyday work is review, research, summaries and bulk work. */
@@ -158,7 +158,8 @@ export function claudeState(usage: UsageSnapshot | null, rules: BalanceRules, no
   let peak: number | null = null;
   if (p && ageMinutes(p, now) <= PACE.ignoreMin) {
     for (const m of p.meters ?? []) {
-      if (!isWindowMeter(m) || (m.windowKind !== 'session' && m.windowKind !== 'weekly')) continue;
+      // Claude marks only the window that is limiting right now as active, but the week is the pace marker even while the 5-hour window is the active one, so inactive windows count here.
+      if (typeof m.usedPct !== 'number' || (m.windowKind !== 'session' && m.windowKind !== 'weekly')) continue;
       const used = m.usedPct as number, reset = m.resetsAt ? Date.parse(m.resetsAt) : NaN;
       peak = Math.max(peak ?? 0, used);
       if (!Number.isFinite(reset) || !m.windowSeconds) continue;
