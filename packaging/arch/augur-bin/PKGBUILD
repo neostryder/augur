@@ -15,7 +15,7 @@ options=('!strip' '!debug')
 noextract=("Augur_${pkgver}_amd64.deb" "LICENSE-${pkgver}")
 source=("Augur_${pkgver}_amd64.deb::${url}/releases/download/v${pkgver}/Augur_${pkgver}_amd64.deb"
         "LICENSE-${pkgver}::https://raw.githubusercontent.com/neostryder/augur/v${pkgver}/LICENSE")
-sha256sums=('0f6c756db434746cf618863df2ff660efc75139dced5a258124232af8680a40a'
+sha256sums=('f80362e0d745e0f2adf188174a4b8e54be39e7550c49182999bbe0c685897813'
             'ce1dd14135d1822bf50c38f91709f5ca866dc6ce5510eaa954b617a29de8718c')
 
 package() {

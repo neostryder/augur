@@ -17,7 +17,7 @@ ls "$work"
 # Checksums for the copied sources, written into the copy of the recipe in the order the sources are listed.
 if [ -d /src ]; then
   su builder -c "cd $work && makepkg -g > sums.txt 2> /dev/null"
-  su builder -c "cd $work && sed -i '/^sha256sums=/d' PKGBUILD && cat sums.txt >> PKGBUILD && rm sums.txt"
+  su builder -c "cd $work && sed -i '/^sha256sums=(/{:a;/)[[:space:]]*$/!{N;ba};d}' PKGBUILD && cat sums.txt >> PKGBUILD && rm sums.txt"
 fi
 echo "=== namcap on the recipe"
 su builder -c "cd $work && namcap PKGBUILD"
