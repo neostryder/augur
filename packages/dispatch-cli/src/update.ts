@@ -22,7 +22,8 @@ export function installOf(scriptDir: string): Install {
   const parent = dirname(dir), root = dirname(parent);
   if (basename(parent) === 'versions' && existsSync(join(root, 'install.json'))) return { kind: 'script', root, dir };
   if (dir === '/usr/lib/augur') return { kind: 'pacman', root: null, dir };
-  if (basename(dir) === 'service') return { kind: 'app', root: null, dir };
+  // The window app's package for Arch drops a marker beside its service folder, so the app is not asked to update what pacman owns.
+  if (basename(dir) === 'service') return { kind: existsSync(join(parent, 'package-manager')) ? 'pacman' : 'app', root: null, dir };
   return { kind: 'source', root: null, dir };
 }
 
@@ -30,7 +31,7 @@ export function installOf(scriptDir: string): Install {
 export function updateAdvice(kind: InstallKind): string {
   switch (kind) {
     case 'script': return 'Run augur update to install it.';
-    case 'pacman': return 'Build the new augur-terminal package to install it, with makepkg -si from the updated PKGBUILD.';
+    case 'pacman': return 'Build the new package to install it: download the PKGBUILD attached to the new release and run makepkg -si beside it.';
     case 'app': return 'The Augur app installs updates from its settings.';
     default: return 'Pull the new source and build it again.';
   }

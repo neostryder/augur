@@ -140,6 +140,8 @@ jobs:
     if: github.ref_type == 'tag'
     needs: [build, terminal]
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v7
       - name: Build the image
@@ -151,7 +153,8 @@ jobs:
           v="${GITHUB_REF_NAME#v}"
           mkdir -p src-terminal
           gh release download "$GITHUB_REF_NAME" --pattern "augur-terminal-$v.tar.gz" --dir src-terminal
-          docker run --rm -v "$PWD:/r:ro" -v "$PWD/src-terminal:/src:ro" augur-arch bash /r/packaging/arch/validate.sh augur-terminal
+          mkdir -p pkgbuilds
+          docker run --rm -v "$PWD:/r:ro" -v "$PWD/src-terminal:/src:ro" -v "$PWD/pkgbuilds:/out" augur-arch bash /r/packaging/arch/validate.sh augur-terminal
       - name: Validate the full app package
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -160,7 +163,12 @@ jobs:
           mkdir -p src-bin
           gh release download "$GITHUB_REF_NAME" --pattern "Augur_${v}_amd64.deb" --dir src-bin
           curl -fsSL -o "src-bin/LICENSE-$v" "https://raw.githubusercontent.com/neostryder/augur/$GITHUB_REF_NAME/LICENSE"
-          docker run --rm -v "$PWD:/r:ro" -v "$PWD/src-bin:/src:ro" augur-arch bash /r/packaging/arch/validate.sh augur-bin
+          mkdir -p pkgbuilds
+          docker run --rm -v "$PWD:/r:ro" -v "$PWD/src-bin:/src:ro" -v "$PWD/pkgbuilds:/out" augur-arch bash /r/packaging/arch/validate.sh augur-bin
+      - name: Attach the recipes with their checksums to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$GITHUB_REF_NAME" pkgbuilds/PKGBUILD-augur-terminal pkgbuilds/PKGBUILD-augur-bin --clobber
 
   # Once every installer is on the release, attach a software bill of materials for the JavaScript and Rust dependencies and a checksum for each file.
   integrity:

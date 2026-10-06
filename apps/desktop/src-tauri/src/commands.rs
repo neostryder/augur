@@ -414,10 +414,41 @@ pub fn start_popup_drag(
         .map_err(|e| e.to_string())
 }
 
+/// Names the package manager that owns this install, from a marker file its package puts beside the app. Only the Arch package writes one.
+pub(crate) fn package_manager_marker(path: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let name = text.trim();
+    (!name.is_empty() && name.len() <= 32 && name.chars().all(|c| c.is_ascii_alphanumeric())).then(|| name.to_string())
+}
+
+#[tauri::command]
+pub fn package_manager() -> Option<String> {
+    if cfg!(target_os = "linux") {
+        package_manager_marker(Path::new("/usr/lib/Augur/package-manager"))
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{dispatch_args_allowed, dispatch_routes_path};
+    use super::{dispatch_args_allowed, dispatch_routes_path, package_manager_marker};
     use std::path::Path;
+
+    #[test]
+    fn a_package_marker_names_its_manager_and_nothing_else_counts() {
+        let dir = std::env::temp_dir().join(format!("augur-marker-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("package-manager");
+        std::fs::write(&file, "pacman\n").unwrap();
+        assert_eq!(package_manager_marker(&file).as_deref(), Some("pacman"));
+        std::fs::write(&file, "  \n").unwrap();
+        assert_eq!(package_manager_marker(&file), None);
+        std::fs::write(&file, "not a name; rm -rf").unwrap();
+        assert_eq!(package_manager_marker(&file), None);
+        assert_eq!(package_manager_marker(&dir.join("missing")), None);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn dispatch_routes_file_sits_in_the_export_folder() {

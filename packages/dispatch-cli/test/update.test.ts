@@ -51,6 +51,11 @@ describe('installOf', () => {
     expect(installOf(temp()).kind).toBe('source');
     const app = join(temp(), 'service'); mkdirSync(app);
     expect(installOf(app).kind).toBe('app');
+    // The window app's Arch package leaves a marker beside the service folder, and then pacman owns the install.
+    const owned = temp(); mkdirSync(join(owned, 'service'));
+    expect(installOf(join(owned, 'service')).kind).toBe('app');
+    writeFileSync(join(owned, 'package-manager'), 'pacman');
+    expect(installOf(join(owned, 'service')).kind).toBe('pacman');
     // A versions folder without install.json is not a script install.
     const loose = join(temp(), 'versions', '1.0.0'); mkdirSync(loose, { recursive: true });
     expect(installOf(loose).kind).toBe('source');

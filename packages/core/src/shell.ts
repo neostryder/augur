@@ -23,6 +23,8 @@ export interface TrayUpdate {
 
 export interface UpdateInfo {
   version: string;
+  /** Set when a package manager owns this install, so the app says how to update it and never installs the update itself. */
+  managedBy?: string;
   notes?: string;
   date?: string;
 }

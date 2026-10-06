@@ -22,6 +22,7 @@ const ACKS_PRUNE_LINES = 200;
 export const UPDATE_ALERT_TEXT = {
   auto: 'Augur installs it the next time the panel closes.',
   manual: 'Open Settings to install it.',
+  managed: 'Update it with your package manager.',
 };
 
 export function severityFor(kind: AlertKind): FeedAlert['severity'] {

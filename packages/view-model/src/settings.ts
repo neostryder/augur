@@ -89,6 +89,7 @@ export const COMPUTER_TEXT = {
   check: 'Check for updates',
   status: { idle: '', checking: 'Checking for updates.', current: 'This is the latest version.', installing: 'Installing the update.', error: 'Could not check for updates. Try again later.' },
   available: (v: string) => `Version ${v} is available.`,
+  managed: (by: string) => `${by} installed Augur, so it installs updates too: build the new package from the PKGBUILD attached to the new release and run makepkg -si.`,
   exportFile: 'Usage data file',
   exportFileDesc: 'The file other tools read for your usage and limits.',
   export: 'Also save the latest numbers to this file',

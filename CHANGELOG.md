@@ -8,8 +8,9 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 - [Visible] [Providers] **Each pick that lands on Copilot is listed with the month's spend.** The pick log in the balance report names the time, the kind of work, the model and what Copilot's month stood at when the pick was made, and marks the ones past the $150 aim.
 - [Visible] [Providers] **A web route comes with a fixed folder.** The steps for a ChatGPT or Gemini route name `~/.augur/web/<kind of work>-<date and time>/`, with `brief.md` for the task and `result.md` for what the route returns, so the session that asks and the one that reads the answer look in the same place.
-
 - [Visible] [Providers] **Every pick has one row of labels for the local model.** `augur label <pick or job id> --brief met|partly|missed` records how a job's report met its brief, beside the pick in the decision log. The service writes `~/.augur/balance/labels.jsonl` hourly, one line per pick with the model picked, the models its jobs used, whether any differed, how each job ended and the brief result, and no task text.
+- [Visible] [Platform] **Each release carries ready Arch recipes.** `PKGBUILD-augur-bin` and `PKGBUILD-augur-terminal` are attached to the release with their checksums filled in after both were built and installed in a clean Arch container, so `makepkg -si -p PKGBUILD-augur-terminal` is the whole install and no checkout is needed.
+- [Visible] [Platform] **On Arch, the window app leaves updates to pacman.** The app and `augur update` now say that pacman installed Augur and how to update it, where the app offered an install button that would have tried to install a `.deb`. The package marks itself with a file the app checks for.
 
 ### Fixed
 

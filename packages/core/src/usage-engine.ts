@@ -681,7 +681,7 @@ export class UsageEngine implements EngineApi {
     if (found && found !== before) {
       u.changes = await this.loadChanges(found);
       await this.raise([{ id: `update.${found}`, kind: 'update', severity: 'info', group: 'update', clears: { when: 'flag', flag: 'update' },
-        title: `Augur ${found} is ready`, body: this.config.autoUpdate !== false ? UPDATE_ALERT_TEXT.auto : UPDATE_ALERT_TEXT.manual }]);
+        title: `Augur ${found} is ready`, body: u.available?.managedBy ? UPDATE_ALERT_TEXT.managed : this.config.autoUpdate !== false ? UPDATE_ALERT_TEXT.auto : UPDATE_ALERT_TEXT.manual }]);
     }
     if (!found) u.changes = null;
     this.emit('update');

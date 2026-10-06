@@ -240,11 +240,12 @@ function refreshRow(m: SettingsModel, pid: string, plugin: ProviderPlugin): stri
       <span class="help">${PROVIDER_TEXT.refreshHelp}</span></div>`;
 }
 
-function updateRows(m: SettingsModel): string {
+export function updateRows(m: Pick<SettingsModel, 'update' | 'config'>): string {
   const u = m.update;
-  const status = u.status === 'available' ? COMPUTER_TEXT.available(u.available?.version ?? '') : COMPUTER_TEXT.status[u.status];
+  const by = u.available?.managedBy;
+  const status = u.status === 'available' ? [COMPUTER_TEXT.available(u.available?.version ?? ''), by ? COMPUTER_TEXT.managed(by) : ''].filter(Boolean).join(' ') : COMPUTER_TEXT.status[u.status];
   const busy = u.status === 'checking' || u.status === 'installing';
-  const button = u.status === 'available'
+  const button = u.status === 'available' && !by
     ? '<button class="btn small primary" data-action="update-install">Install and restart</button>'
     : `<button class="btn small" data-action="update-check" ${busy ? 'disabled' : ''}>${COMPUTER_TEXT.check}</button>`;
   return `<div class="row"><label class="name">${u.version ? esc(COMPUTER_TEXT.version(u.version)) : COMPUTER_TEXT.updates}${status ? `<span class="desc">${esc(status)}</span>` : ''}</label>${button}</div>

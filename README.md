@@ -41,7 +41,17 @@ Every installer is on the [releases page](https://github.com/neostryder/augur/re
 
 **Linux:** download the AppImage (runs on most distributions, including Arch, as long as WebKitGTK 4.1 is installed), or the `.deb` or `.rpm`. The tray icon needs an AppIndicator host: KDE Plasma has one built in, and GNOME needs the AppIndicator extension. On Linux the panel opens from the icon's menu rather than a click.
 
-**Terminal only:** a computer with no tray or taskbar can run the terminal app and the background service without the window app (see [In a terminal](#in-a-terminal)). On Arch Linux, build the `augur-terminal` package from a checkout of this repository with `makepkg -si` in `packaging/arch/augur-terminal`; it needs only Node.js 24 or newer. `packaging/arch/augur-bin` builds the window app from the release's `.deb` instead. The window app takes the `augur` name on Linux, so that package puts the command on your PATH as `augur-cli`. Install one of the two, not both. On macOS, run the install script. It downloads the newest terminal build, checks it against the release's `SHA256SUMS.txt`, and puts `augur` in `~/.local/bin`:
+**Arch Linux:** each release carries two ready recipes with their checksums filled in: `PKGBUILD-augur-bin`, the window app built from the release's `.deb`, and `PKGBUILD-augur-terminal`, the terminal app and background service, which needs only Node.js 24 or newer. Download one into an empty folder and build it with makepkg, which also installs what it depends on:
+
+```bash
+curl -fLO https://github.com/neostryder/augur/releases/latest/download/PKGBUILD-augur-terminal
+makepkg -si -p PKGBUILD-augur-terminal
+systemctl --user enable --now augurd
+```
+
+The last line starts the service at each login; leave it out to start the service yourself with `augur service start`. The window app takes the `augur` name, so `augur-bin` puts the terminal command on your PATH as `augur-cli`, and it starts at login from its own settings. Install one of the two, not both. Either one tells you when a new version is out and leaves the update to pacman: download the new release's recipe and run the same makepkg line. The recipes are also in `packaging/arch` for building from a checkout.
+
+**Terminal only:** a computer with no tray or taskbar can run the terminal app and the background service without the window app (see [In a terminal](#in-a-terminal)). On macOS, run the install script. It downloads the newest terminal build, checks it against the release's `SHA256SUMS.txt`, and puts `augur` in `~/.local/bin`:
 
 ```bash
 curl -fsSL https://github.com/neostryder/augur/releases/latest/download/install.sh | sh

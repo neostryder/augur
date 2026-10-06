@@ -83,9 +83,12 @@ export function createTauriShell(): Shell {
     openSignIn: (site: string) => invoke<void>('web_session_sign_in', { site }),
     checkUpdate: async (): Promise<UpdateInfo | null> => {
       pendingUpdate = await check();
-      return pendingUpdate ? { version: pendingUpdate.version, notes: pendingUpdate.body, date: pendingUpdate.date } : null;
+      if (!pendingUpdate) return null;
+      const managedBy = await invoke<string | null>('package_manager').catch(() => null);
+      return { version: pendingUpdate.version, notes: pendingUpdate.body, date: pendingUpdate.date, ...(managedBy ? { managedBy } : {}) };
     },
     installUpdate: async () => {
+      if (await invoke<string | null>('package_manager').catch(() => null)) return;
       const update = pendingUpdate ?? await check();
       if (!update) return;
       await update.downloadAndInstall();

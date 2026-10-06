@@ -3,7 +3,8 @@
 # run of the installed command. It expects the repository at /r and a non-root user named builder (the rpgm-validate/arch image has both).
 #   docker run --rm -v <repo>:/r:ro -v <folder of release files>:/src:ro rpgm-validate/arch:latest bash /r/packaging/arch/validate.sh <augur-terminal|augur-bin>
 # Anything in /src is copied next to the PKGBUILD as a source, and its checksum is written into the copy, so a build can run before the release
-# exists. With no /src, makepkg downloads the sources from the release.
+# exists. With no /src, makepkg downloads the sources from the release. A folder mounted at /out gets the finished recipe, checksums included, as
+# PKGBUILD-<name>, which is what the release carries so an Arch user needs no checkout.
 set -eu
 name=${1:?package folder name}
 work=/home/builder/$name
@@ -43,4 +44,5 @@ case $name in
     test -x /usr/bin/augur-cli && /usr/bin/augur-cli --help | head -3
     ;;
 esac
+[ -d /out ] && cp "$work/PKGBUILD" "/out/PKGBUILD-$name"
 echo "=== ok"

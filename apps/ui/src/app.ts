@@ -1184,11 +1184,11 @@ export class App {
   }
 
   private async autoInstall(): Promise<void> {
-    if (this.update.status === 'available' && this.config.autoUpdate !== false && document.visibilityState === 'hidden') await this.installUpdate();
+    if (this.update.status === 'available' && !this.update.available?.managedBy && this.config.autoUpdate !== false && document.visibilityState === 'hidden') await this.installUpdate();
   }
 
   private async installUpdate(): Promise<void> {
-    if (!this.shell.installUpdate || this.update.status === 'installing') return;
+    if (!this.shell.installUpdate || this.update.status === 'installing' || this.update.available?.managedBy) return;
     this.update.status = 'installing';
     this.tip.style.opacity = '0';
     await this.engine?.setInstalling(true);

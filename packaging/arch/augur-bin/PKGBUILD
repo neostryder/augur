@@ -24,5 +24,7 @@ package() {
   # /usr/bin/augur is the tray app. The command that agents and terminals use sits in the service folder; these two names reach it from the PATH.
   ln -s /usr/lib/Augur/service/augur "${pkgdir}/usr/bin/augur-cli"
   ln -s /usr/lib/Augur/service/augur-mcp "${pkgdir}/usr/bin/augur-mcp"
+  # The app checks for this file and leaves updates to pacman, since its own updater would try to install a .deb.
+  echo pacman > "${pkgdir}/usr/lib/Augur/package-manager"
   install -Dm644 "${srcdir}/LICENSE-${pkgver}" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
 }

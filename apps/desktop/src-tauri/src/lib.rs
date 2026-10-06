@@ -421,6 +421,7 @@ pub fn run() {
             commands::popup_pinned,
             commands::set_popup_pinned,
             commands::start_popup_drag,
+            commands::package_manager,
             websession::web_session_sign_in,
             websession::web_session_read
         ])
