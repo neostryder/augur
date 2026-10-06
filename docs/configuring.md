@@ -173,6 +173,8 @@ The `profile` setting picks the rules the other settings sit on. `classic` is th
 
 An agent can change a balance setting through `augur_policy_edit` with `field` set to `balance` and a `path`, as [mcp.md](mcp.md) describes. The setting `agentApproval` in `config.json` decides how many of an agent's edits wait for the owner: `all` holds every edit, `risky` (the default) holds the ones that change what data a model may see or whether it runs, and `none` applies everything. It is set from the Service page or the terminal app, and no tool an agent can call reads or changes it.
 
+To move a setup to another computer, run `augur profile export profile.json` on the first one. The file holds the balance settings and the routes and never a key. On the second, `augur profile import profile.json` reads the whole file before it changes anything, and if an entry is wrong it stops and says which. Otherwise the balance settings go through the edit inbox, so the approval setting treats them like an agent's edits, and routes with new names are added. A route that already exists stays as it is, and `--dry-run` shows the plan without writing it. Each new route then needs its key from `augur key set <route>`.
+
 Put the object in `config.json` under `policy`, with the app closed and the service stopped. Augur copies it into `policy.json` the next time it saves a rule or a setting, and the service reads that file for every pick. This example holds Copilot spend to $90 with a $150 stop, never picks anything with `astra` in its name, and adds a preference:
 
 ```json

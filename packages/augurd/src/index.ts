@@ -15,6 +15,7 @@ export type { ServiceOptions } from './main.js';
 export * from './decisions.js';
 export * from './keystore.js';
 export * from './home-files.js';
+export * from './policy-inbox.js';
 export * from './claude-install.js';
 export * from './views.js';
 export * from './engine-shell.js';

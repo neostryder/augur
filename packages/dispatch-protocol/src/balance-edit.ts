@@ -42,3 +42,9 @@ export function checkBalanceSetting(path: readonly string[], value: unknown): st
   if (value === null) return mapEntry ? null : `${path.join('.')} cannot be removed; give it a value or "inherit".`;
   return valueProblem(row.type, value);
 }
+
+/** Every setting a balance object sets, as a path and a value. A list is one value, and a null stays a value, since it removes a map entry. */
+export function balanceLeaves(balance: unknown, trail: readonly string[] = []): Array<{ path: string[]; value: unknown }> {
+  if (typeof balance !== 'object' || balance === null || Array.isArray(balance)) return trail.length ? [{ path: [...trail], value: balance }] : [];
+  return Object.entries(balance).flatMap(([k, v]) => balanceLeaves(v, [...trail, k]));
+}

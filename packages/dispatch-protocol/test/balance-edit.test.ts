@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BALANCE_FIELDS, checkBalanceSetting } from '../src/index.js';
+import { BALANCE_FIELDS, balanceLeaves, checkBalanceSetting } from '../src/index.js';
 
 describe('checking a balance setting edit', () => {
   it('accepts a documented setting with a value of its kind', () => {
@@ -26,5 +26,14 @@ describe('checking a balance setting edit', () => {
   it('knows every documented setting', () => {
     const sample = (p: string) => p.split('.').map(s => s === '<route>' ? 'a/b' : s === '<activity>' ? 'review_code' : s);
     for (const f of BALANCE_FIELDS) expect(checkBalanceSetting(sample(f.path), 'inherit'), f.path).toBeNull();
+  });
+});
+
+describe('listing the settings in a balance object', () => {
+  it('gives each setting as a path and a value, keeping lists whole', () => {
+    expect(balanceLeaves({ profile: 'neutral', tilt: { deep: { strong: 1.2 } }, exclude: ['a', 'b'], tiers: { 'codex/gpt-6.1-sol': null } })).toEqual([
+      { path: ['profile'], value: 'neutral' }, { path: ['tilt', 'deep', 'strong'], value: 1.2 }, { path: ['exclude'], value: ['a', 'b'] }, { path: ['tiers', 'codex/gpt-6.1-sol'], value: null }]);
+    expect(balanceLeaves({})).toEqual([]);
+    expect(balanceLeaves(undefined)).toEqual([]);
   });
 });
