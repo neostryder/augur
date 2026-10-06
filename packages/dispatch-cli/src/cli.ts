@@ -229,7 +229,12 @@ async function engineState(opts: Opts): Promise<EngineState | null> {
 async function engineCall(method: string, args: unknown[], io: Io, opts: Opts): Promise<unknown> {
   const up = await call('ping', undefined, { ...opts, timeoutMs: 1000 }).then(() => true, () => false);
   if (!up && !await launchService(io.env, opts)) throw new Error('The service did not start. See service.log in its data folder.');
-  return call('engine_call', { method, args }, opts);
+  try { return await call('engine_call', { method, args }, opts); }
+  catch (e) {
+    // A service started before an update does not know the newer commands.
+    if (/^Unknown engine command/.test((e as Error).message)) throw new Error(`The running service is older than this command and does not know ${method}. Run augur service stop, then try again; the service starts its new version on the next call.`);
+    throw e;
+  }
 }
 
 async function statusCmd(waybar: boolean, io: Io, opts: Opts, say: Say): Promise<number> {

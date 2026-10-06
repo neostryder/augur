@@ -40,6 +40,15 @@ describe('augur profile export', () => {
     expect(JSON.stringify(file)).not.toContain('sk-should-not-leave');
     expect(file.routes.deepseek.options.keySource).toBe('store');
   });
+  it('writes to and reads from an absolute path as given, not under the current folder', async () => {
+    const t = setup();
+    const abs = join(t.home, 'elsewhere.json');
+    const r = await t.run(['profile', 'export', abs]);
+    expect(r.code).toBe(0);
+    expect(JSON.parse(readFileSync(abs, 'utf8'))).toMatchObject({ kind: 'augur-profile' });
+    expect((await t.run(['profile', 'import', abs, '--dry-run'])).code).toBe(0);
+  });
+
   it('exports an empty profile from a computer with nothing set', async () => {
     const t = setup();
     const r = await t.run(['profile', 'export', 'out.json']);

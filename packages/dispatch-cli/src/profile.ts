@@ -1,7 +1,7 @@
 // `augur profile`: moves a setup between computers as one file. The file holds the balance settings and the routes, and never a key. An import goes through the same
 // edit inbox an agent's request does, so the owner's approval setting decides whether it lands at once or waits in the app.
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { appendPolicyEdits, augurHome } from '@augur/augurd';
 import { balanceField } from '@augur/core';
 import { EXIT_CODES, adapterInfo, balanceLeaves, checkBalanceSetting } from '@augur/dispatch-protocol';
@@ -75,14 +75,14 @@ export async function profileCmd(rest: string[], flags: { dryRun: boolean }, io:
     if ('error' in built) { io.err(`${built.error}\n`); return EXIT_CODES.failed; }
     const text = `${JSON.stringify(built.profile, null, 2)}\n`;
     if (!file) { say(text.trimEnd(), built.profile); return EXIT_CODES.completed; }
-    writeAtomic(join(io.cwd, file), text);
+    writeAtomic(resolve(io.cwd, file), text);
     const routes = Object.keys(built.profile.routes as Raw).length, settings = balanceLeaves(built.profile.balance).length;
     say(`Wrote ${file}: ${plural(settings, 'balance setting')} and ${plural(routes, 'route')}. It holds no keys.${built.dropped.length ? ` Left out: ${built.dropped.join(', ')}.` : ''}`, { file, settings, routes, dropped: built.dropped });
     return EXIT_CODES.completed;
   }
   if (action === 'import') {
     if (!file) { io.err('augur profile import needs the profile file.\n'); return EXIT_CODES.usage; }
-    const path = join(io.cwd, file);
+    const path = resolve(io.cwd, file);
     if (!existsSync(path)) { io.err(`${file} was not found.\n`); return EXIT_CODES.usage; }
     const current = parseRoutesText(readText(routesPath(io.env)));
     if (!current.ok) { io.err(`${current.error}\n`); return EXIT_CODES.failed; }
