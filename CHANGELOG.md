@@ -11,6 +11,9 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 - [Visible] [Providers] **Every pick has one row of labels for the local model.** `augur label <pick or job id> --brief met|partly|missed` records how a job's report met its brief, beside the pick in the decision log. The service writes `~/.augur/balance/labels.jsonl` hourly, one line per pick with the model picked, the models its jobs used, whether any differed, how each job ended and the brief result, and no task text.
 - [Visible] [Platform] **Each release carries ready Arch recipes.** `PKGBUILD-augur-bin` and `PKGBUILD-augur-terminal` are attached to the release with their checksums filled in after both were built and installed in a clean Arch container, so `makepkg -si -p PKGBUILD-augur-terminal` is the whole install and no checkout is needed.
 - [Visible] [Platform] **On Arch, the window app leaves updates to pacman.** The app and `augur update` now say that pacman installed Augur and how to update it, where the app offered an install button that would have tried to install a `.deb`. The package marks itself with a file the app checks for.
+- [Visible] [Docs] **A guide to the settings and files.** `docs/configuring.md` says where the rules, routes and balance settings live, how to add a provider and a route, and lists every balance setting and adapter option in tables drawn from the code. A test fails when a table drifts from the code.
+- [Visible] [Docs] **A guide to adapting Augur.** `docs/adapting.md` and `AGENTS.md` give the steps for a provider plugin, an adapter and a local adapter, the lines a change must not move, and the checks to run. `pnpm docs:update` rewrites the generated tables.
+- [Internal] [Docs] **Docs move with the code.** The pull request template asks which docs changed, and a test pins the shipped balance defaults to a fixture so an install with no profile keeps resolving to the same rules.
 
 ### Fixed
 

@@ -9,5 +9,6 @@ export * from './seats.js';
 export * from './balance-report.js';
 export * from './ipc.js';
 export * from './adapter-info.js';
+export * from './config-reference.js';
 export * from './accounting.js';
 export * from './secrets.js';

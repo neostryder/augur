@@ -23,7 +23,7 @@ pnpm --filter @augur/desktop tauri dev
 | `apps/desktop` | The Tauri shell: tray, popup window, keychain, updater |
 | `apps/relay` | The Cloudflare Worker that serves the web app and relays its requests |
 
-The code that runs jobs for agents is in five packages. `packages/augurd` is the service, `packages/dispatch-protocol` holds what the service and its callers share, `packages/dispatch-cli` is the `augur` command, `packages/mcp` is the MCP server, and `packages/decision` classifies tasks. The local classifier model, Laya, and its trainer are in `packages/laya`. The service only runs on Windows, so CI tests it there after building the job host with Go (`pnpm --filter @augur/augurd build:jobhost`).
+The code that runs jobs for agents is in five packages. `packages/augurd` is the service, `packages/dispatch-protocol` holds what the service and its callers share, `packages/dispatch-cli` is the `augur` command, `packages/mcp` is the MCP server, and `packages/decision` classifies tasks. The local classifier model, Laya, and its trainer are in `packages/laya`. CI runs the workspace tests on Windows, Ubuntu and macOS, building the job host with Go first (`pnpm --filter @augur/augurd build:jobhost`). [AGENTS.md](AGENTS.md) and [docs/adapting.md](docs/adapting.md) describe how the packages fit together and what a change to each has to keep.
 
 A provider with a JSON usage endpoint usually needs no code. Add it as a custom provider, as the README describes. A provider that has to refresh a sign-in or read a command-line login goes in `packages/core/src/providers`, with a fixture and a test in `packages/core/test`. Fixtures use made-up numbers.
 

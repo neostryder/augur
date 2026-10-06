@@ -11,6 +11,7 @@
     "build:service": "node scripts/build-service.mjs",
     "build:terminal": "node scripts/build-service.mjs --terminal",
     "pack:terminal": "node scripts/pack-terminal.mjs",
+    "docs:update": "node scripts/docs-update.mjs",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck"
   },

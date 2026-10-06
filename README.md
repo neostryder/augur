@@ -165,7 +165,7 @@ A pick can name more than the top model. Most tasks get a second opinion from Mi
 
 The service keeps a decision log of picks and jobs. `augur label <pick or job id> --brief met|partly|missed [--note <text>]` adds how a job's report met its brief, which the caller's own tooling checks, and the service rewrites `~/.augur/balance/labels.jsonl` each hour with one line per pick: the model picked, the models its jobs ran on, whether any of them was not the pick, how each job ended and the brief result. The file holds no task text, so the local Laya model can learn from it without the tasks leaving the machine.
 
-Pauses, ask-first, data tiers and your weights apply first. The `balance` section of `policy.json` sets each activity's depth, each model's tier, what each route suits, the excluded names, how strong each lean is and which models write prose, and `"enabled": false` there switches it off.
+Pauses, ask-first, data tiers and your weights apply first. The `balance` section of the app's `config.json` (exported to `policy.json`, which a hand edit does not survive) sets each activity's depth, each model's tier, what each route suits, the excluded names, how strong each lean is and which models write prose, and `"enabled": false` there switches it off. [docs/configuring.md](docs/configuring.md) lists every setting, and [docs/adapting.md](docs/adapting.md) covers adding a provider or a way to run a model.
 
 - **None** is the default. The agent gives the activity and data tier itself.
 - **Jev** is a hosted model from TypeSafe. The text of each task goes there with your API key, except text about students, which is checked on your computer first and never sent. Put the key in the `TYPESAFE_API_KEY` environment variable.
