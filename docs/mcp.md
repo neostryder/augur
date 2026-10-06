@@ -1,6 +1,6 @@
 # The Augur MCP server
 
-`augur-mcp` lets an MCP client, such as Claude Code or Claude Desktop, ask Augur which model should take a piece of work and then run it there. It is a thin layer over the dispatch service. Every tool goes through the same service and the same rules as the `augur` command, so the server cannot run a model the rules do not allow. It can ask for changes to the rules, and the owner's approval setting decides which of them wait for an accept in Augur. At the default level, a change that widens what data a model may see or lets a model run always waits.
+`augur-mcp` lets an MCP client, such as Claude Code or Claude Desktop, ask Augur which model should take a piece of work and then run it there. It is a thin layer over the dispatch service. Every tool goes through the same service and the same rules as the `augur` command, so the server cannot run a model the rules do not allow. It can ask for changes to the rules, and the owner's approval setting decides which of those changes wait for the owner to accept them in Augur. At the default level, a change that widens what data a model may see, or that lets a model run, always waits.
 
 It needs the dispatch service, which runs whenever the Augur app is open; without the app, `augur service start` starts it, and `augur service enable` starts it at each login. Tools that run a job also need "Also run jobs" turned on in Augur's settings, and the service refuses jobs with `jobs_off` until it is. The server and the service run on Windows, macOS and Linux.
 
@@ -8,7 +8,7 @@ It needs the dispatch service, which runs whenever the Augur app is open; withou
 
 The installer puts the server in the `service` folder beside the app: `augur-mcp.cmd` on Windows, `augur-mcp` on macOS and Linux. A terminal install and the Arch packages also put `augur-mcp` on your PATH. Point the client at that file.
 
-Claude Code: the [Augur plugin](claude-code.md) starts this server itself, so skip this step if you install it. To register the server by hand:
+Claude Code: the [Augur plugin](claude-code.md) starts this server itself, so skip this step if you use the plugin. To register the server by hand:
 
 ```bash
 claude mcp add augur -- "<install folder>\service\augur-mcp.cmd"
@@ -60,9 +60,9 @@ The server never writes the rules. `augur_policy_edit` checks each edit against 
 
 These edits apply at once: an activity weight (`activities.<activity>`, one of `last_resort`, `occasional`, `normal`, `often` or `preferred`, `null` to block the activity, or `"inherit"` to return to the provider's default), `pause`, `notes` and `useAfter`. These wait in Model rules for the owner to choose Accept or Dismiss: `dataTier`, `askFirst`, `output`, `sandbox`, `effort`, `cost`, `status`, `dataHandling.<part>` and `thresholds.<warnPct|denyPct|minBalance>`. Accepting runs the checks again against the rules as they are then. An edit that fails its checks, or names a model that is not in the rules, is rejected with the reason and never reaches the app.
 
-A balance setting is edited with `field` set to `balance` and a `path` that gives one name per level, such as `["tilt", "deep", "strong"]` or `["tiers", "codex/gpt-6.1-sol"]`; a route label stays whole, dots and slashes included. The settings are the ones in the table on [configuring.md](configuring.md). The value must be the kind the setting takes, `"inherit"` puts a setting back to the profile's own value, and `null` removes one entry of a map such as a tier. A balance edit names no model, applies at once at the default level, and is recorded in the history with a path that starts `balance:`.
+To edit a balance setting, set `field` to `balance` and give a `path` with one name per level, such as `["tilt", "deep", "strong"]` or `["tiers", "codex/gpt-6.1-sol"]`. A route label counts as one name, dots and slashes included. The settings are the ones in the table in [configuring.md](configuring.md), and the value must be of the type the setting takes. `"inherit"` puts a setting back to the profile's own value, and `null` removes one entry of a map, such as a tier. A balance edit names no model and applies at once at the default level. The history records it under a path that starts with `balance:`.
 
-The owner's approval setting, in the app's Service page and the terminal app's Service screen, decides what waits. `Ask me for risky edits` is the default and holds the edits listed above as waiting for the owner. `Ask me for everything` holds every edit. `Apply everything` holds none, so an agent can then change what data a model may see; each change is still checked, stamped and recorded in the history. No tool here reads or changes the setting, and an edit that names it is rejected.
+The owner's approval setting, on the app's Service page and the terminal app's Service screen, decides what waits. `Ask me for risky edits` is the default and holds the edits listed above as waiting for the owner. `Ask me for everything` holds every edit. `Apply everything` holds none, which lets an agent change what data a model may see, though each change is still checked, stamped and recorded in the history. No tool here reads or changes the setting, and an edit that names it is rejected.
 
 `augur_pick_preview` ranks with the edits applied to a copy of `policy.json`, using the current usage, so an agent can see what a change would do before it asks for it. With `include_pending` it also applies the edits that are queued or waiting for the owner. It cannot preview `"inherit"`, since `policy.json` no longer carries the provider's defaults.
 

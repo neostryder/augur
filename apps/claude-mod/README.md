@@ -1,6 +1,6 @@
 # Augur's Claude Code plugin
 
-This folder is the plugin Augur installs into Claude Code when you turn on Claude Code under Claude in Augur's settings, and the plugin that `claude plugin install augur@augur` installs from the repository's marketplace file. It is a mod, which draws in Claude Code's interface, and it also carries skills, an MCP server entry and a hook, described in [docs/claude-code.md](../../docs/claude-code.md). The status line shows your usage and Claude's pace, for example `Claude 5h 27% | wk 48% | hot +8 | Grok wk 81% | 1 Augur alert`. Other providers join the line once one of their limits reaches 70% or their last read failed, and the line says how old the numbers are once Augur has not written them for 15 minutes.
+This folder is the plugin Augur installs into Claude Code when you turn on Claude Code under Claude in Augur's settings. It is also what `claude plugin install augur@augur` installs from the repository's marketplace file. The plugin is a mod, so it can draw in Claude Code's interface, and it carries skills, an MCP server entry and a hook as well. [docs/claude-code.md](../../docs/claude-code.md) describes them all. The status line shows your usage and Claude's pace, for example `Claude 5h 27% | wk 48% | hot +8 | Grok wk 81% | 1 Augur alert`. Other providers join the line once one of their limits reaches 70% or their last read failed, and the line says how old the numbers are once Augur has not written them for 15 minutes.
 
 When Augur raises an alert meant for Claude Code, the mod shows it once as a toast and then keeps the newest one in a row above the prompt. Press D to dismiss it or O to open Augur. Alerts that were already waiting when the mod first loaded do not get a toast, so installing it does not set off a burst of them.
 
@@ -9,12 +9,12 @@ When Augur raises an alert meant for Claude Code, the mod shows it once as a toa
 | Path | What it is |
 | --- | --- |
 | `.claude-plugin/plugin.json` | The manifest, with the `pick_before_subagent` option. |
-| `hooks/hooks.json` | The mod's entry point under `modules`, and the PreToolUse hook for the Task tool under `hooks`. The hook runs `augur claude hook subagent`, which does nothing until the option is on. |
+| `hooks/hooks.json` | The mod's entry point under `modules`, and under `hooks` the PreToolUse hook that runs before the Task and Agent tools (the matcher is `Task|Agent`). The hook runs `augur claude hook subagent`, which does nothing until the option is on. |
 | `hooks/register.tsx`, `hooks/view.ts` | The status line, toasts and the band above the prompt. |
 | `skills/setup`, `skills/pick`, `skills/balance` | The three skills. |
 | `.mcp.json` | Starts `augur-mcp` for the Augur tools. |
 
-The marketplace file is `.claude-plugin/marketplace.json` at the root of the repository and points here.
+The marketplace file that points to this folder is `.claude-plugin/marketplace.json` at the root of the repository.
 
 ## How it talks to Augur
 
