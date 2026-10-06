@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { applyEdit, checkEdit, editKind, emptyEditState, parseEditState, parseInbox, previewEdits, processInbox, resolveHeld, resolvedValue } from '../src/policy-edits.js';
+import { applyEdit, balanceField, checkEdit, editKind, emptyEditState, parseEditState, parseInbox, previewEdits, processInbox, resolveHeld, resolvedValue } from '../src/policy-edits.js';
 import type { PolicyEdit } from '../src/policy-edits.js';
 import { buildPolicyFile, emptyPolicy, migratePolicy } from '../src/policy.js';
 import type { PolicyConfig } from '../src/policy.js';
@@ -126,5 +126,49 @@ describe('previewing edits on policy.json', () => {
 describe('applyEdit', () => {
   it('works on an empty policy without throwing', () => {
     expect(() => applyEdit(emptyPolicy(), edit({}), 'desktop', now)).not.toThrow();
+  });
+});
+
+describe('the approval level', () => {
+  const risky = () => edit({ id: 'r1', field: 'dataTier', value: 'internal' }), light = () => edit({ id: 'l1' });
+  it('holds only the risky edits by default', () => {
+    const r = processInbox(policy(), [risky(), light()], emptyEditState(), 'desktop', now);
+    expect(r.state.results.map(x => [x.id, x.status])).toEqual([['r1', 'held'], ['l1', 'applied']]);
+  });
+  it('holds every edit at the strictest level and none at the loosest', () => {
+    const strict = processInbox(policy(), [risky(), light()], emptyEditState(), 'desktop', now, 'all');
+    expect(strict.changed).toBe(false);
+    expect(strict.state.held.map(h => h.id)).toEqual(['r1', 'l1']);
+    const p = policy();
+    const loose = processInbox(p, [risky(), light()], emptyEditState(), 'desktop', now, 'none');
+    expect(loose.state.results.map(x => x.status)).toEqual(['applied', 'applied']);
+    expect(resolvedValue(p, risky())).toBe('internal');
+  });
+});
+
+describe('balance edits', () => {
+  const bal = (path: string[], value: unknown, id = 'b1'): PolicyEdit => edit({ id, provider: '', model: '', field: balanceField(path), value });
+  it('write the stored balance and the history, and prune what they empty', () => {
+    const p = policy();
+    const r = processInbox(p, [bal(['tilt', 'codex/gpt-6.1-sol'], 1.2), bal(['profile'], 'neutral', 'b2')], emptyEditState(), 'desktop', now);
+    expect(r.state.results.map(x => x.status)).toEqual(['applied', 'applied']);
+    expect(p.balance).toEqual({ tilt: { 'codex/gpt-6.1-sol': 1.2 }, profile: 'neutral' });
+    expect(p.history.map(h => h.path)).toContain('balance:tilt|codex/gpt-6.1-sol');
+    processInbox(p, [bal(['tilt', 'codex/gpt-6.1-sol'], 'inherit', 'b3')], r.state, 'desktop', now);
+    expect(p.balance).toEqual({ profile: 'neutral' });
+  });
+  it('are held at the strictest level and apply at the default', () => {
+    expect(processInbox(policy(), [bal(['prose', 'mode'], 'none')], emptyEditState(), 'desktop', now, 'all').state.held).toHaveLength(1);
+  });
+  it('reject an unknown setting, a big value and a named model', () => {
+    const r = processInbox(policy(), [bal(['nope'], 1, 'x1'), bal(['tilt', 'a'], { deep: 1 }, 'x2'), { ...bal(['profile'], 'neutral', 'x3'), model: 'minimax/m3' }], emptyEditState(), 'desktop', now);
+    expect(r.state.results.map(x => x.status)).toEqual(['rejected', 'rejected', 'rejected']);
+  });
+  it('preview on the file without touching it', () => {
+    const file = buildPolicyFile(policy(), [{ id: 'minimax', name: 'MiniMax', metered: false }], now);
+    const r = previewEdits(file, [bal(['tilt', 'minimax/m3'], 0.5)]);
+    expect(r.applied).toBe(1);
+    expect((r.file.balance as Record<string, any>).tilt['minimax/m3']).toBe(0.5);
+    expect(file.balance).toBeUndefined();
   });
 });

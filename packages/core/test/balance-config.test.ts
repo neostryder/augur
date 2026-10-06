@@ -29,3 +29,14 @@ describe('the balance profile', () => {
     expect(migrateConfig({ schema: 1, policy: { schema: 1, providers: {} } }).policy?.balance).toBeUndefined();
   });
 });
+
+describe('the agent approval setting', () => {
+  it('is risky on a new install and on a saved config that has none', () => {
+    expect(defaultConfig().agentApproval).toBe('risky');
+    expect(migrateConfig({ schema: 1 }).agentApproval).toBe('risky');
+  });
+  it('keeps a saved level and falls back on a value it does not know', () => {
+    for (const level of ['all', 'risky', 'none'] as const) expect(migrateConfig({ schema: 1, agentApproval: level }).agentApproval).toBe(level);
+    expect(migrateConfig({ schema: 1, agentApproval: 'whatever' }).agentApproval).toBe('risky');
+  });
+});

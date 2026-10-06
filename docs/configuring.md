@@ -6,8 +6,8 @@ The app covers most of this: Rules says what each model may do, Routes connects 
 
 | What | File | Edited with |
 | --- | --- | --- |
-| Rules for every model, and the balance overrides | `policy` inside `config.json` in the app's settings folder. Augur writes it out to `policy.json` in `~/.augur` each time a rule changes. | The Rules page, the `augur_policy_edit` tool for models, and by hand for the balance |
-| Providers, where their keys come from, custom providers, alerts | `config.json` in the app's settings folder | Settings, or by hand |
+| Rules for every model, and the balance overrides | `policy` inside `config.json` in the app's settings folder. Augur writes it out to `policy.json` in `~/.augur` each time a rule changes. | The Rules page, the `augur_policy_edit` tool for models and balance settings, and by hand |
+| Providers, where their keys come from, custom providers, alerts, and `agentApproval` | `config.json` in the app's settings folder | Settings, or by hand. `agentApproval` is set on the Service page or the terminal app's Service screen |
 | Routes | `dispatch/routes.json` in `~/.augur` | The Routes page, or by hand |
 | Service settings | Listed by `augur config` | The Service page |
 
@@ -170,6 +170,8 @@ Runs any command the route names, with no checks on what it does. It is off unle
 The balance leans each pick toward the models that suit the work, holds Claude near its pace and keeps backup routes in reserve. The README's [section on it](../README.md#how-a-pick-balances-models) says what it does. Its settings are the `balance` object of the rules. Each has a shipped default, a value of the wrong type is ignored, and `null` removes a shipped entry from a map.
 
 The `profile` setting picks the rules the other settings sit on. `classic` is the original rule set, with tiers, preferences and seats for a particular stack, and it is what an install that names no profile uses, so an update never changes what such an install picks. `neutral` is what a new install starts on: weights, pauses and data tiers apply as always, and the only tilt is Claude's pace (Sonnet when Claude runs ahead, Opus when it runs behind). It holds no preferences, no excluded names and no seats, so each is yours to add.
+
+An agent can change a balance setting through `augur_policy_edit` with `field` set to `balance` and a `path`, as [mcp.md](mcp.md) describes. The setting `agentApproval` in `config.json` decides how many of an agent's edits wait for the owner: `all` holds every edit, `risky` (the default) holds the ones that change what data a model may see or whether it runs, and `none` applies everything. It is set from the Service page or the terminal app, and no tool an agent can call reads or changes it.
 
 Put the object in `config.json` under `policy`, with the app closed and the service stopped. Augur copies it into `policy.json` the next time it saves a rule or a setting, and the service reads that file for every pick. This example holds Copilot spend to $90 with a $150 stop, never picks anything with `astra` in its name, and adds a preference:
 

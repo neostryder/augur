@@ -1,6 +1,6 @@
 import { dispatchTabs } from './jobs';
 import { ICON, esc } from '../util';
-import { CLASSIFIER_TEXT, MODE_TEXT } from '@augur/view-model';
+import { APPROVAL_LEVELS, APPROVAL_TEXT, CLASSIFIER_TEXT, MODE_TEXT } from '@augur/view-model';
 
 export { CLASSIFIER_TEXT, MODE_TEXT };
 
@@ -15,6 +15,7 @@ export interface ServiceModel {
   lines: ConfigLine[] | null;
   service: { running: boolean; pid: number | null } | null;
   runJobs: boolean;
+  agentApproval: 'all' | 'risky' | 'none';
   note: string;
   error: string;
   busy: boolean;
@@ -28,6 +29,14 @@ export function modeChooser(runJobs: boolean): string {
     const on = (v === 'jobs') === runJobs;
     return `<button role="radio" aria-checked="${on}" class="${on ? 'on' : ''}" data-action="dispatch-mode" data-value="${v}">${label}</button>`;
   }).join('')}</div><p class="help">${esc(runJobs ? MODE_TEXT.jobs : MODE_TEXT.usage)}</p>`;
+}
+
+/** The agent approval level: how much of what an agent asks to change in the rules waits for the owner. */
+export function approvalChooser(level: 'all' | 'risky' | 'none'): string {
+  return `<div class="seg" role="radiogroup" aria-label="${esc(APPROVAL_TEXT.heading)}">${APPROVAL_LEVELS.map(([v, label]) => {
+    const on = v === level;
+    return `<button role="radio" aria-checked="${on}" class="${on ? 'on' : ''}" data-action="agent-approval" data-value="${v}">${esc(label)}</button>`;
+  }).join('')}</div><p class="help">${esc(APPROVAL_TEXT[level])} ${esc(APPROVAL_TEXT.where)}</p>`;
 }
 
 /** Who answers the questions behind augur pick --task, with what each choice does with task text. Used in first-run setup. */
@@ -67,6 +76,7 @@ export function renderService(m: ServiceModel): string {
     <div><h1>Service</h1><div class="sub">The dispatch service on this computer</div></div><span class="grow"></span></header>
     ${dispatchTabs('service')}
     <div class="card"><div class="rsec" style="margin-top:0">What Augur does for agents</div>${modeChooser(m.runJobs)}</div>
+    <div class="card"><div class="rsec" style="margin-top:0">${esc(APPROVAL_TEXT.heading)}</div>${approvalChooser(m.agentApproval)}</div>
     ${m.runJobs ? `${status}${m.error ? `<div class="rnote bad" role="alert">${esc(m.error)}</div>` : ''}
     <div class="card"><div class="rsec" style="margin-top:0">Settings</div><p class="help">A running service reads these when it next starts.</p>${rows}
       <div class="rnote">${esc(CLASSIFIER_TEXT[decision] ?? '')}</div></div>` : ''}</div>`;

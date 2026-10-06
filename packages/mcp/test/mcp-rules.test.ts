@@ -103,3 +103,25 @@ describe('augur_pick_preview', () => {
     expect((r.data as { now: { ranking: unknown[] }; withEdits: { ranking: unknown[] } }).withEdits.ranking.length).toBeGreaterThan((r.data as { now: { ranking: unknown[] } }).now.ranking.length);
   });
 });
+
+describe('augur_policy_edit on the balance', () => {
+  it('queues a balance setting from a path and keeps a route label whole', async () => {
+    const { tools, inbox } = rig();
+    const r = await tools.editPolicy({ edits: [{ field: 'balance', path: ['tiers', 'codex/gpt-6.1-sol'], value: 'strong' }, { field: 'balance', path: ['tilt', 'deep', 'strong'], value: 1.4, reason: 'lean on strong models' }] });
+    expect(r.text).toContain('2 queued');
+    expect(sent(inbox).map(e => [e.field, e.provider, e.model])).toEqual([['balance:tiers|codex/gpt-6.1-sol', '', ''], ['balance:tilt|deep|strong', '', '']]);
+  });
+  it('refuses a missing path, an unknown setting, a wrong value and the raw field form', async () => {
+    const { tools, inbox } = rig();
+    const r = await tools.editPolicy({ edits: [{ field: 'balance', value: 1 }, { field: 'balance', path: ['nope'], value: 1 }, { field: 'balance', path: ['tilt', 'deep', 'strong'], value: -1 }, { field: 'balance:profile', value: 'neutral' }] });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain('4 rejected');
+    expect(inbox).toEqual([]);
+  });
+  it('cannot reach the approval level', async () => {
+    const { tools, inbox } = rig();
+    const r = await tools.editPolicy({ edits: [{ field: 'agentApproval', value: 'none' }, { field: 'balance', path: ['agentApproval'], value: 'none' }] });
+    expect(r.isError).toBe(true);
+    expect(inbox).toEqual([]);
+  });
+});

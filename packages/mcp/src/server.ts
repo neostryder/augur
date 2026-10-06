@@ -88,7 +88,8 @@ export function buildServer(tools: Tools, version: string): McpServer {
   const editShape = z.object({
     model: z.string().optional().describe('The route label as augur_policy lists it, such as codex/sol. Leave out for a provider thresholds edit.'),
     provider: z.string().optional().describe('Only needed for a thresholds edit, or when two providers carry the same label.'),
-    field: z.string().describe('activities.<activity> (a weight, null to block it, or "inherit"), pause, notes, useAfter apply at once. dataTier, askFirst, output, sandbox, effort, cost, status, dataHandling.<part> and thresholds.<warnPct|denyPct|minBalance> wait for the owner to accept them in Augur.'),
+    path: z.array(z.string()).optional().describe('Only with field "balance": the balance setting, one name per level, such as ["tilt", "deep", "strong"] or ["tiers", "codex/gpt-6.1-sol"]. docs/configuring.md lists them. "inherit" puts one back to the starting value.'),
+    field: z.string().describe('balance (with a path) sets a balance rule and applies at the default approval level. activities.<activity> (a weight, null to block it, or "inherit"), pause, notes, useAfter apply at once. dataTier, askFirst, output, sandbox, effort, cost, status, dataHandling.<part> and thresholds.<warnPct|denyPct|minBalance> wait for the owner to accept them in Augur.'),
     value: z.any().describe('The new value. Weights are last_resort, occasional, normal, often or preferred. Use "inherit" to go back to the provider default.'),
     reason: z.string().optional().describe('Why, shown to the owner next to a held edit.'),
   });

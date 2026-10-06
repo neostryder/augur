@@ -153,6 +153,16 @@ describe('dispatch page: service', () => {
     expect(text).not.toContain('Jobs at once');
   });
 
+  it('shows the agent approval level whether or not jobs run', async () => {
+    const t = dispatch({}, false);
+    t.page.sub = 'service';
+    await t.load();
+    const text = t.draw(130, 40);
+    expect(text).toContain('When an agent asks to change your rules');
+    expect(text).toContain('Ask me for risky edits');
+    expect(text).toContain('Agents cannot change this setting');
+  });
+
   it('saves a setting to config.json and says to restart', async () => {
     const t = dispatch({ ping: { pid: 4242, version: 1, startedAt: 0 } });
     t.page.sub = 'service';

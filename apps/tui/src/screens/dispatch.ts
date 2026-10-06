@@ -10,7 +10,7 @@ import { ADAPTER_INFO, adapterInfo, describeFigure, routeSecretName } from '@aug
 import type { Accounted, JobRecord } from '@augur/dispatch-protocol';
 import { inset, tabs, type Key, type Rect, type Screen } from '@augur/terminal';
 import {
-  CLASSIFIER_TEXT, DISPATCH_TEXT, JOB_OUTPUT_LABELS, MODE_TEXT, STATE_LABELS, TOOL_LABELS, ago, checkDraft, draftOf, duration, emptyDraft, isBad, isLive,
+  APPROVAL_LEVELS, APPROVAL_TEXT, CLASSIFIER_TEXT, DISPATCH_TEXT, JOB_OUTPUT_LABELS, MODE_TEXT, STATE_LABELS, TOOL_LABELS, ago, checkDraft, draftOf, duration, emptyDraft, isBad, isLive,
   parseRoutesText, writeRoute, type RouteDraft, type RoutesFile,
 } from '@augur/view-model';
 import { Form, type Row } from '../form.js';
@@ -55,6 +55,7 @@ export const DISPATCH_TUI_TEXT = {
   delegationHelp: 'Lets a job on this route run augur itself, within the depth and count limits.',
   keyHelp: 'The key goes to this computer\'s key store when saved and is never shown again.',
   mode: 'What Augur does',
+  approval: 'Agent edits',
   modeUsage: 'Usage only',
   modeJobs: 'Also run jobs',
   jobsOff: 'The service is set to usage only, so it does not run jobs. Choose Also run jobs on the Service screen to turn them on.',
@@ -446,6 +447,15 @@ export class DispatchPage implements Page {
         await this.loadService(ctx);
       } });
     rows.push({ kind: 'note', text: runJobs ? MODE_TEXT.jobs : MODE_TEXT.usage });
+    const level = ctx.state.config.agentApproval ?? 'risky';
+    rows.push({ kind: 'heading', text: APPROVAL_TEXT.heading });
+    rows.push({ kind: 'choice', id: 'approval', label: DISPATCH_TUI_TEXT.approval, value: level, options: APPROVAL_LEVELS.map(([v, label]) => [v, label] as [string, string]),
+      set: async (v) => {
+        const c = structuredClone(ctx.state.config);
+        c.agentApproval = v === 'all' || v === 'none' ? v : 'risky';
+        await ctx.run('saveConfig', c);
+      } });
+    rows.push({ kind: 'note', text: `${APPROVAL_TEXT[level]} ${APPROVAL_TEXT.where}` });
     if (!runJobs) return rows;
     rows.push({ kind: 'heading', text: 'Service' });
     rows.push({ kind: 'note', text: s.pid === null && s.lines === null ? DISPATCH_TUI_TEXT.checking : s.pid !== null ? DISPATCH_TEXT.serviceRunning(s.pid) : DISPATCH_TEXT.serviceStopped, style: s.pid !== null ? 'good' : 'warn' });

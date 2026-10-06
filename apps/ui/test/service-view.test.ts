@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { CLASSIFIER_TEXT, MODE_TEXT, classifierChooser, modeChooser, renderService, type ConfigLine, type ServiceModel } from '../src/views/service';
+import { CLASSIFIER_TEXT, MODE_TEXT, approvalChooser, classifierChooser, modeChooser, renderService, type ConfigLine, type ServiceModel } from '../src/views/service';
 
 const line = (over: Partial<ConfigLine>): ConfigLine => ({ key: 'maxConcurrent', label: 'Jobs at once', help: 'How many jobs run together.', kind: 'number', min: 1, max: 64, weakens: false, value: '8', default: '8', ...over });
-const model = (over: Partial<ServiceModel> = {}): ServiceModel => ({ lines: [], service: { running: true, pid: 99 }, runJobs: true, note: '', error: '', busy: false, unavailable: '', ...over });
+const model = (over: Partial<ServiceModel> = {}): ServiceModel => ({ lines: [], service: { running: true, pid: 99 }, runJobs: true, agentApproval: 'risky', note: '', error: '', busy: false, unavailable: '', ...over });
 
 describe('the service page', () => {
   it('shows only the mode choice while Augur is set to usage only', () => {
@@ -42,6 +42,19 @@ describe('the service page', () => {
   it('marks the current mode as checked', () => {
     expect(modeChooser(true)).toMatch(/aria-checked="true" class="on" data-action="dispatch-mode" data-value="jobs"/);
     expect(modeChooser(false)).toMatch(/aria-checked="true" class="on" data-action="dispatch-mode" data-value="usage"/);
+  });
+});
+
+describe('the agent approval choice', () => {
+  it('shows the three levels with the current one checked and says agents cannot change it', () => {
+    const html = approvalChooser('risky');
+    expect(html).toMatch(/aria-checked="true" class="on" data-action="agent-approval" data-value="risky"/);
+    expect(html).toMatch(/data-value="all"/);
+    expect(html).toMatch(/data-value="none"/);
+    expect(html).toContain('Agents cannot change this setting');
+  });
+  it('is on the Service page whether or not jobs run', () => {
+    for (const runJobs of [true, false]) expect(renderService(model({ runJobs, agentApproval: 'all' }))).toContain('data-action="agent-approval" data-value="all"');
   });
 });
 

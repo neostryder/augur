@@ -3,6 +3,7 @@ import { builtinProviders } from './providers/index.js';
 import { obj } from './util.js';
 import { MIN_REFRESH_SECONDS } from './engine.js';
 import { emptyPolicy, migratePolicy } from './policy.js';
+import { DEFAULT_APPROVAL, isApprovalLevel } from './policy-edits.js';
 import { defaultOutlets, migrateOutlets } from './feed.js';
 
 /** Super is the Windows key on Windows and Command on macOS. */
@@ -13,7 +14,7 @@ export function defaultConfig(): AppConfig {
     layout: { theme: 'system', columns: 'auto', hiddenMeters: {}, collapsed: [] },
     alerts: { enabled: false, pctThresholds: [50, 75, 90], paceRatio: { session: 0.8, weekly: 0.8, other: null }, balanceBelow: {}, outlets: defaultOutlets() }, exportPath: null,
     // A new install starts on the neutral balance. An install that already has a config never passes through here, so it keeps whatever it names, or the classic rules when it names none.
-    policy: { ...emptyPolicy(), balance: { profile: 'neutral' } } };
+    policy: { ...emptyPolicy(), balance: { profile: 'neutral' } }, agentApproval: DEFAULT_APPROVAL };
 }
 
 export function migrateConfig(value: unknown): AppConfig {
@@ -47,7 +48,8 @@ export function migrateConfig(value: unknown): AppConfig {
     autoUpdate: source.autoUpdate !== false,
     openOnLaunch: source.openOnLaunch !== false,
     sync: syncConfig(source.sync), secretSources: secretSources(source.secretSources),
-    policy: migratePolicy(source.policy), dispatch: { runJobs: obj(source.dispatch).runJobs === true } };
+    policy: migratePolicy(source.policy), dispatch: { runJobs: obj(source.dispatch).runJobs === true },
+    agentApproval: isApprovalLevel(source.agentApproval) ? source.agentApproval : DEFAULT_APPROVAL };
 }
 
 function syncConfig(value: unknown): AppConfig['sync'] {

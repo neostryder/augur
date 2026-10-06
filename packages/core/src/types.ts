@@ -227,6 +227,8 @@ export interface AppConfig {
   policy?: PolicyConfig;
   /** Windows desktop: whether the app also runs the dispatch service for agents. Off means usage tracking and rules only. */
   dispatch?: { runJobs: boolean };
+  /** How much of what an agent asks to change in the rules waits for the owner: `all`, `risky` (the default) or `none`. Only the app and the terminal change it. */
+  agentApproval?: 'all' | 'risky' | 'none';
 }
 
 // ------------------------------------------------------------------ declarative providers

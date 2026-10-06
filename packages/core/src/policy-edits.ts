@@ -2,7 +2,7 @@
 // an edit to an inbox file and the app applies it through the same functions the rules page uses. Weights, pauses, notes and hold rules apply
 // at once. Anything that changes what data a model may see or whether it runs waits in the app for its owner to accept it.
 
-import { ACTIVITIES, COST_TIERS, DATA_TIERS, MODEL_STATUSES, OUTPUT_MODES, WEIGHT_LEVELS, fieldPath, resolveModel, resolveThresholds, setField } from './policy.js';
+import { ACTIVITIES, COST_TIERS, DATA_TIERS, HISTORY_LIMIT, MODEL_STATUSES, OUTPUT_MODES, WEIGHT_LEVELS, fieldPath, resolveModel, resolveThresholds, setField } from './policy.js';
 import type { ActivityId, PolicyConfig, PolicyFile, ResolvedModel } from './policy.js';
 import { setModelStatus } from './models.js';
 
@@ -18,6 +18,25 @@ export const INBOX_FILE = 'policy-edits.jsonl';
 export const RESULTS_FILE = 'policy-edit-results.json';
 const KEEP_SEEN = 500, KEEP_RESULTS = 200, KEEP_HELD = 50;
 
+/**
+ * How much of what an agent asks for waits for the owner. `all` holds every edit, `risky` holds the ones that change what data a model may see or whether it runs
+ * (the default), and `none` applies everything. It is a setting of the app, changed only in the app or the terminal, and no tool an agent can call reaches it.
+ */
+export const APPROVAL_LEVELS = ['all', 'risky', 'none'] as const;
+export type ApprovalLevel = typeof APPROVAL_LEVELS[number];
+export const DEFAULT_APPROVAL: ApprovalLevel = 'risky';
+export const isApprovalLevel = (v: unknown): v is ApprovalLevel => APPROVAL_LEVELS.includes(v as never);
+
+/**
+ * A balance setting is an edit whose field is `balance:` and the setting's path, one segment after another joined by `|`, because a route label such as codex/gpt-6.1-sol holds
+ * the dots and slashes a dotted path could not. The edit names no provider and no model.
+ */
+export const BALANCE_PREFIX = 'balance:';
+export const balanceField = (segments: readonly string[]): string => BALANCE_PREFIX + segments.join('|');
+export const isBalanceField = (field: string): boolean => field.startsWith(BALANCE_PREFIX);
+export const balanceSegments = (field: string): string[] => field.slice(BALANCE_PREFIX.length).split('|');
+const BALANCE_ROOTS = ['profile', 'enabled', 'depth', 'tiers', 'exclude', 'tilt', 'prose', 'claude', 'fallback', 'prefer', 'seats'];
+
 /** The value that puts a field back to the provider's default, since JSON has no undefined. */
 export const INHERIT = 'inherit';
 
@@ -28,6 +47,7 @@ const level = (v: unknown) => WEIGHT_LEVELS.includes(v as never);
 
 /** Whether an edit takes effect at once or needs the owner's confirmation. Null for a field that cannot be edited this way. */
 export function editKind(field: string): EditKind | null {
+  if (isBalanceField(field)) return 'direct';
   if (field.startsWith('activities.')) return ACTIVITIES.includes(field.slice(11) as ActivityId) ? 'direct' : null;
   if (DIRECT_FIELDS.has(field)) return 'direct';
   if (['dataTier', 'askFirst', 'output', 'sandbox', 'effort', 'cost', 'status'].includes(field)) return 'confirm';
@@ -38,6 +58,7 @@ export function editKind(field: string): EditKind | null {
 
 /** A problem with the value for a field, or null when it is acceptable. */
 export function checkValue(field: string, value: unknown): string | null {
+  if (isBalanceField(field)) return checkBalanceEdit(balanceSegments(field), value);
   if (value === INHERIT) return field.startsWith('thresholds.') || field === 'status' ? `${field} has no default to go back to.` : null;
   if (field.startsWith('activities.')) return value === null || level(value) ? null : `An activity takes ${WEIGHT_LEVELS.join(', ')}, null to block it, or "${INHERIT}".`;
   switch (field) {
@@ -65,10 +86,51 @@ export function checkValue(field: string, value: unknown): string | null {
   }
 }
 
+/** Whether a balance setting's path and value are the shape the balance can hold. The balance itself ignores a value of the wrong type, so this only keeps junk out of the stored rules. */
+export function checkBalanceEdit(segments: readonly string[], value: unknown): string | null {
+  if (segments.length < 1 || segments.length > 4 || segments.some(x => !x || x.length > 120)) return 'A balance setting is a short path of names.';
+  if (!BALANCE_ROOTS.includes(segments[0] as string)) return `${segments[0]} is not a balance setting.`;
+  if (value === INHERIT || value === null) return null;
+  const small = (v: unknown): boolean => v === null || typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v)) || (typeof v === 'string' && v.length <= 200);
+  if (small(value)) return null;
+  if (Array.isArray(value) && value.length <= 50 && value.every(x => typeof x === 'string' && x.length <= 120)) return null;
+  return 'A balance setting takes a number, a text, true or false, or a list of texts.';
+}
+
+/** The override a balance path holds in the stored rules, undefined when the path is not overridden. */
+function balanceAt(policy: PolicyConfig, segments: readonly string[]): unknown {
+  let at: unknown = policy.balance;
+  for (const k of segments) { if (!isObj(at) || !Object.hasOwn(at, k)) return undefined; at = at[k]; }
+  return at;
+}
+
+/** Writes one balance override, or with undefined removes it and any parent map it leaves empty, and records the change in the history. */
+function setBalance(policy: PolicyConfig, segments: readonly string[], value: unknown, device: string, now: Date): void {
+  const from = balanceAt(policy, segments);
+  if (JSON.stringify(from) === JSON.stringify(value)) return;
+  policy.balance ??= {};
+  const trail: Array<Record<string, unknown>> = [policy.balance];
+  for (const k of segments.slice(0, -1)) {
+    const here = trail.at(-1) as Record<string, unknown>;
+    if (value === undefined && !isObj(here[k])) { trail.length = 0; break; }
+    if (!isObj(here[k])) here[k] = {};
+    trail.push(here[k] as Record<string, unknown>);
+  }
+  const last = segments.at(-1) as string;
+  if (trail.length) {
+    const leaf = trail.at(-1) as Record<string, unknown>;
+    if (value === undefined) delete leaf[last]; else leaf[last] = value;
+    for (let i = trail.length - 1; i > 0; i--) if (Object.keys(trail[i] as object).length === 0) delete (trail[i - 1] as Record<string, unknown>)[segments[i - 1] as string];
+  }
+  policy.history.push({ at: now.toISOString(), device, path: balanceField(segments), from: from ?? null, to: value ?? null });
+  if (policy.history.length > HISTORY_LIMIT) policy.history.splice(0, policy.history.length - HISTORY_LIMIT);
+}
+
 /** Checks an edit's shape and value, and that its model exists in `has`. Returns the problem, or null. */
 export function checkEdit(edit: PolicyEdit, has: (provider: string, model: string) => boolean): string | null {
   const kind = editKind(edit.field);
   if (!kind) return `${edit.field} cannot be edited here.`;
+  if (isBalanceField(edit.field)) return edit.provider || edit.model ? 'A balance setting names no provider and no model.' : checkValue(edit.field, edit.value);
   if (!edit.provider) return 'An edit names a provider.';
   if (edit.field.startsWith('thresholds.')) { if (edit.model) return 'Thresholds belong to a provider, so no model is named.'; }
   else if (!edit.model) return 'An edit names a model.';
@@ -81,6 +143,7 @@ export function checkEdit(edit: PolicyEdit, has: (provider: string, model: strin
 
 /** The value a field resolves to right now, for the before and after in a result. */
 export function resolvedValue(policy: PolicyConfig, edit: Pick<PolicyEdit, 'provider' | 'model' | 'field'>): unknown {
+  if (isBalanceField(edit.field)) return balanceAt(policy, balanceSegments(edit.field)) ?? null;
   const p = policy.providers[edit.provider];
   if (!p) return undefined;
   if (edit.field.startsWith('thresholds.')) return (resolveThresholds(p) as unknown as Record<string, unknown>)[edit.field.slice(11)];
@@ -96,7 +159,8 @@ export function resolvedValue(policy: PolicyConfig, edit: Pick<PolicyEdit, 'prov
 export function applyEdit(policy: PolicyConfig, edit: PolicyEdit, device: string, now = new Date()): { before: unknown; after: unknown } {
   const before = resolvedValue(policy, edit);
   const value = edit.value === INHERIT ? undefined : edit.value;
-  if (edit.field === 'status') setModelStatus(policy, edit.provider, edit.model, value as never, device, now);
+  if (isBalanceField(edit.field)) setBalance(policy, balanceSegments(edit.field), value, device, now);
+  else if (edit.field === 'status') setModelStatus(policy, edit.provider, edit.model, value as never, device, now);
   else setField(policy, fieldPath(edit.provider, edit.model || null, edit.field), value, device, now);
   return { before, after: resolvedValue(policy, edit) };
 }
@@ -135,7 +199,7 @@ const result = (e: PolicyEdit, status: EditStatus, now: Date, before: unknown, a
  * Looks at the inbox edits not seen before. A direct edit is applied, a confirm edit is held for the owner, and an edit that fails its checks is rejected with the reason.
  * Returns the new state, whether the rules changed, and the edits newly held.
  */
-export function processInbox(policy: PolicyConfig, inbox: PolicyEdit[], state: EditState, device: string, now = new Date()): { state: EditState; changed: boolean; newlyHeld: PolicyEdit[] } {
+export function processInbox(policy: PolicyConfig, inbox: PolicyEdit[], state: EditState, device: string, now = new Date(), approval: ApprovalLevel = DEFAULT_APPROVAL): { state: EditState; changed: boolean; newlyHeld: PolicyEdit[] } {
   const next: EditState = { seen: [...state.seen], results: [...state.results], held: [...state.held] };
   const seen = new Set(next.seen), newlyHeld: PolicyEdit[] = [];
   let changed = false;
@@ -144,7 +208,8 @@ export function processInbox(policy: PolicyConfig, inbox: PolicyEdit[], state: E
     seen.add(e.id); next.seen.push(e.id);
     const bad = checkEdit(e, has(policy));
     if (bad) { next.results.push(result(e, 'rejected', now, null, null, bad)); continue; }
-    if (editKind(e.field) === 'confirm') {
+    // `all` holds every edit and `none` holds none, so the owner's setting decides; `risky` holds what changes data access or whether a model runs.
+    if (approval === 'all' || (approval === 'risky' && editKind(e.field) === 'confirm')) {
       const before = resolvedValue(policy, e);
       next.held.push(e); newlyHeld.push(e); next.results.push(result(e, 'held', now, before, e.value, 'Waiting for the owner to accept it in Augur.'));
       continue;
@@ -178,7 +243,14 @@ export function previewEdits(file: PolicyFile, edits: Array<Pick<PolicyEdit, 'pr
   for (const e of edits) {
     const bad = checkEdit({ id: '', at: '', by: '', ...e }, (p, m) => !!copy.providers[p]?.models[m]);
     if (bad) { problems.push(`${e.model || e.provider} ${e.field}: ${bad}`); continue; }
-    if (e.value === INHERIT) { problems.push(`${e.model} ${e.field}: a preview cannot go back to a default; give a value.`); continue; }
+    if (e.value === INHERIT && !isBalanceField(e.field)) { problems.push(`${e.model} ${e.field}: a preview cannot go back to a default; give a value.`); continue; }
+    if (isBalanceField(e.field)) {
+      const segs = balanceSegments(e.field);
+      let at = (copy.balance ??= {}) as Record<string, unknown>;
+      for (const k of segs.slice(0, -1)) at = (isObj(at[k]) ? at[k] : (at[k] = {})) as Record<string, unknown>;
+      if (e.value === INHERIT) delete at[segs.at(-1) as string]; else at[segs.at(-1) as string] = e.value;
+      applied++; continue;
+    }
     const p = copy.providers[e.provider]!;
     if (e.field.startsWith('thresholds.')) { (p.thresholds as unknown as Record<string, unknown>)[e.field.slice(11)] = e.value; applied++; continue; }
     const m = p.models[e.model]! as unknown as Record<string, unknown>;

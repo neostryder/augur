@@ -6,7 +6,7 @@ import { createPairing, pairingUrl, pullPhoneState, pullRules, pushRules, pushSn
 import { feedFor, feedFromUsage, type AlertFeed } from './feed.js';
 import { emptyPolicy, mergePolicy, policyDigest, policyFromFile, policyPathFor, buildPolicyFile } from './policy.js';
 import { importPolicy } from './policy-import.js';
-import { emptyEditState, parseEditState, parseInbox, processInbox, resolveHeld, INBOX_FILE, RESULTS_FILE, type EditState } from './policy-edits.js';
+import { DEFAULT_APPROVAL, emptyEditState, parseEditState, parseInbox, processInbox, resolveHeld, INBOX_FILE, RESULTS_FILE, type EditState } from './policy-edits.js';
 import { listDue, syncModelList, type ModelCatalog } from './models.js';
 import { releaseChanges, type ReleaseChanges } from './changelog.js';
 import { defaultConfig, migrateConfig } from './config.js';
@@ -580,7 +580,7 @@ export class UsageEngine implements EngineApi {
       if (!this.state.editLoaded) { this.state.editState = parseEditState(await read(results).catch(() => null)); this.state.editLoaded = true; this.emit('editState', 'editLoaded'); }
       const edits = parseInbox(text);
       if (!edits.some((e) => !this.state.editState.seen.includes(e.id))) return;
-      const r = processInbox(this.config.policy, edits, this.state.editState, this.device);
+      const r = processInbox(this.config.policy, edits, this.state.editState, this.device, new Date(), this.config.agentApproval ?? DEFAULT_APPROVAL);
       this.state.editState = r.state;
       if (r.changed) { await this.persist(); this.emit('config'); }
       await this.saveEditState();
@@ -588,7 +588,7 @@ export class UsageEngine implements EngineApi {
       const held = this.state.editState.held.length;
       if (r.newlyHeld.length) await this.raise([{ id: `rules.${Date.now()}`, kind: 'rules', severity: 'warn', group: 'rules', clears: { when: 'flag', flag: 'rules' },
         title: `${held} rule ${held === 1 ? 'change' : 'changes'} to accept`,
-        body: 'An agent asked for a change to what a model may see or whether it runs. Open Model rules to accept or dismiss it.' }]);
+        body: 'An agent asked for a change to the rules. Open Model rules to accept or dismiss it.' }]);
     } finally { this.checkingEdits = false; }
   }
 

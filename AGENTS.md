@@ -29,7 +29,7 @@ pnpm docs:update   # rewrites the generated tables in docs/configuring.md
 - A key goes only to its own provider. It is never written to `routes.json`, a job record, a log or the phone sync outside the encrypted update.
 - Task text stays out of the decision log and out of `labels.jsonl` unless the owner has turned on recording for training. Text about students never leaves the computer for a hosted classifier.
 - The balance only tilts scores. Pauses, ask-first, data tiers and weights apply first, and a model is never offered for data above the tier its rules allow.
-- An edit that widens what data a model may see waits for the owner to accept it in the app. No tool an agent can call changes that.
+- An edit that widens what data a model may see waits for the owner to accept it in the app, unless the owner has set the approval level to apply everything. The level is `agentApproval` in `config.json`, and no tool an agent can call reads or changes it.
 - A run needs a pick for the same caller in the last hour, or a model named by its label.
 - A shipped balance default changes only with a matching change to `packages/dispatch-protocol/test/fixtures/classic-balance.json` and a note in the changelog, since installs that name no profile resolve to it.
 

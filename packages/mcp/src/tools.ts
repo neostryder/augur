@@ -3,9 +3,9 @@
 // check, claim that a person named a model, or turn a rule off.
 import { call as serviceCall } from '@augur/augurd/client';
 import type { ClientOptions } from '@augur/augurd/client';
-import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES, checkEdit, editKind, parseEditState, parseInbox, previewEdits } from '@augur/core';
+import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES, balanceField, balanceSegments, checkEdit, editKind, isBalanceField, parseEditState, parseInbox, previewEdits } from '@augur/core';
 import type { ActivityId, DataTier, OutputMode, PolicyEdit, PolicyFile } from '@augur/core';
-import { TOOL_TIERS, isTerminal, rank, renderReport, seatLines } from '@augur/dispatch-protocol';
+import { TOOL_TIERS, checkBalanceSetting, isTerminal, rank, renderReport, seatLines } from '@augur/dispatch-protocol';
 import type { JobRecord, JobRequest, ToolTier, UsageSnapshot } from '@augur/dispatch-protocol';
 
 export interface ToolResult { text: string; isError?: boolean; data?: Record<string, unknown> }
@@ -27,7 +27,8 @@ export interface McpDeps {
   sleep?: (ms: number) => Promise<void>;
 }
 
-export interface EditArg { model?: string; provider?: string; field: string; value: unknown; reason?: string }
+/** `field: 'balance'` with a `path` edits a balance setting, one name per level; the route labels in it stay whole. */
+export interface EditArg { model?: string; provider?: string; field: string; path?: string[]; value: unknown; reason?: string }
 export interface PolicyEditArgs { edits: EditArg[]; by?: string }
 export interface PreviewArgs { activity: string; data_tier: string; edits?: EditArg[]; include_pending?: boolean }
 
@@ -145,6 +146,7 @@ export function createTools(d: McpDeps) {
   };
   /** The value a field has in policy.json now. */
   const current = (file: PolicyFile, e: PolicyEdit): unknown => {
+    if (isBalanceField(e.field)) { let at: unknown = file.balance; for (const k of balanceSegments(e.field)) { if (!isObj(at)) return null; at = at[k]; } return at ?? null; }
     const p = file.providers[e.provider];
     if (e.field.startsWith('thresholds.')) return (p?.thresholds as unknown as Record<string, unknown> | undefined)?.[e.field.slice(11)] ?? null;
     const m = p?.models[e.model] as unknown as Record<string, unknown> | undefined;
@@ -155,6 +157,12 @@ export function createTools(d: McpDeps) {
   };
   const toEdit = (file: PolicyFile, a: EditArg, by: string, id: string, at: string): PolicyEdit | { problem: string } => {
     if (!a.field) return { problem: 'An edit names a field.' };
+    if (a.field === 'balance') {
+      if (!Array.isArray(a.path) || !a.path.every(x => typeof x === 'string')) return { problem: 'A balance edit gives a path: one name per level, such as ["tilt", "deep", "strong"].' };
+      const bad = checkBalanceSetting(a.path, a.value);
+      return bad ? { problem: bad } : { id, at, by, provider: '', model: '', field: balanceField(a.path), value: a.value, ...(a.reason ? { reason: a.reason } : {}) };
+    }
+    if (isBalanceField(a.field)) return { problem: 'Name a balance setting with field "balance" and a path.' };
     const thresholds = a.field.startsWith('thresholds.');
     const provider = thresholds ? a.provider ?? (a.model ? labelProvider(file, a.model) : null) ?? '' : labelProvider(file, a.model ?? '', a.provider);
     if (!provider) return { problem: thresholds ? 'A thresholds edit names its provider.' : a.model ? `${a.model} is not in the rules, or more than one provider has it.` : 'An edit names a model.' };
@@ -190,11 +198,12 @@ export function createTools(d: McpDeps) {
     const rows: Array<Record<string, unknown>> = [], lines: string[] = [];
     for (const [i, arg] of a.edits.slice(0, 20).entries()) {
       const e = toEdit(file, arg, by, `${at}-${d.session}-${i}`, at);
-      if ('problem' in e) { rows.push({ model: arg.model, field: arg.field, status: 'rejected', reason: e.problem }); continue; }
+      if ('problem' in e) { rows.push({ model: arg.model, field: arg.field === 'balance' ? `balance.${(arg.path ?? []).join('.')}` : arg.field, status: 'rejected', reason: e.problem }); continue; }
       const bad = checkEdit(e, (p, m) => !!file.providers[p]?.models[m]);
-      if (bad) { rows.push({ model: e.model || e.provider, field: e.field, status: 'rejected', reason: bad }); continue; }
+      const shown = isBalanceField(e.field) ? `balance.${balanceSegments(e.field).join('.')}` : e.field;
+      if (bad) { rows.push({ model: e.model || e.provider, field: shown, status: 'rejected', reason: bad }); continue; }
       lines.push(JSON.stringify(e));
-      rows.push({ model: e.model || e.provider, field: e.field, before: current(file, e), value: e.value, status: editKind(e.field) === 'direct' ? 'queued' : 'needs-owner' });
+      rows.push({ model: e.model || e.provider, field: shown, before: current(file, e), value: e.value, status: editKind(e.field) === 'direct' ? 'queued' : 'needs-owner' });
     }
     if (lines.length) d.appendInbox(`${lines.join('\n')}\n`);
     const queued = rows.filter(r => r.status === 'queued').length, held = rows.filter(r => r.status === 'needs-owner').length, rejected = rows.filter(r => r.status === 'rejected').length;

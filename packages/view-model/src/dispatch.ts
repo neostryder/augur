@@ -27,6 +27,16 @@ export const MODE_TEXT = {
   jobs: 'Augur also runs a service on this computer. Agents start jobs with the augur command, and Augur picks the model from your rules and current usage.',
 };
 
+/** The three levels of agent approval, and what each does with the rule changes an agent asks for. Only the app and the terminal change the level. */
+export const APPROVAL_LEVELS: ReadonlyArray<readonly [value: 'all' | 'risky' | 'none', label: string]> = [['all', 'Ask me for everything'], ['risky', 'Ask me for risky edits'], ['none', 'Apply everything']];
+export const APPROVAL_TEXT = {
+  heading: 'When an agent asks to change your rules',
+  all: 'Every change an agent asks for waits for you to accept it in Model rules.',
+  risky: 'Changes to what data a model may see, whether it runs, or what it costs wait for you. Weights, pauses, notes and balance settings apply within a minute.',
+  none: 'Every change an agent asks for applies within a minute, including changes to what data a model may see. Each one is recorded in the rules history.',
+  where: 'Agents cannot change this setting. Only this app and the terminal can.',
+};
+
 /** What each choice for the task classifier means for where task text goes. */
 export const CLASSIFIER_TEXT: Record<string, string> = {
   none: 'Nothing classifies tasks. Agents give augur pick the activity and data tier themselves.',

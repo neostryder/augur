@@ -18,7 +18,7 @@ import { renderTrayIcon } from './trayicon';
 import qrcode from 'qrcode-generator';
 import { HOSTED } from './hosted';
 import { attachPullToRefresh } from './pull-refresh';
-import { acceptPairing, applySharedConfig, askDesktop, mergeSynced, parsePairing, pullPhoneState, pullRules, pullSnapshot, pushPhoneState, pushRules, type PhoneState, FeedKeeper, type Raise, tooltip } from '@augur/core';
+import { isApprovalLevel, acceptPairing, applySharedConfig, askDesktop, mergeSynced, parsePairing, pullPhoneState, pullRules, pullSnapshot, pushPhoneState, pushRules, type PhoneState, FeedKeeper, type Raise, tooltip } from '@augur/core';
 import { acceptPairingFromUrl } from './pairing';
 import { connectEngine } from './engine-link';
 import type { EngineApi, EngineKey, EngineState, UpdateState, AlertFeed } from '@augur/core';
@@ -74,7 +74,7 @@ export class App {
   private jobsTimer: ReturnType<typeof setInterval> | undefined;
   private stances: Record<string, string> = {};
   private balancePage: BalanceModel = { report: null, error: '' };
-  private servicePage: ServiceModel = { lines: null, service: null, runJobs: false, note: '', error: '', busy: false, unavailable: '' };
+  private servicePage: ServiceModel = { lines: null, service: null, runJobs: false, agentApproval: 'risky', note: '', error: '', busy: false, unavailable: '' };
   private routesPage: RoutesModel = { file: null, error: '', health: null, sel: null, draft: null, formError: '', note: '', models: [], confirmDelete: false, busy: false, canTest: false, testing: false, testNote: '', keyStored: null, keyNote: '' };
   private timer: ReturnType<typeof setInterval> | undefined;
   private lastRun = 0;
@@ -785,6 +785,7 @@ export class App {
   private async loadService(): Promise<void> {
     const page = this.servicePage;
     page.runJobs = this.config.dispatch?.runJobs === true;
+    page.agentApproval = this.config.agentApproval ?? 'risky';
     if (!this.shell.dispatch) return;
     try {
       const cfg = await this.augur<ConfigLine[]>(['config', '--json']);
@@ -803,6 +804,14 @@ export class App {
     await this.saveConfig(false);
     await this.render();
     await this.loadService();
+  }
+
+  /** How much of what an agent asks to change in the rules waits for the owner. A tool an agent can call never reaches this. */
+  private async setAgentApproval(level: 'all' | 'risky' | 'none'): Promise<void> {
+    this.config.agentApproval = level;
+    this.servicePage.agentApproval = level;
+    await this.saveConfig(false);
+    await this.render();
   }
 
   /** Shows why the service cannot be reached, or clears it. Before the first connection the message is the whole page. */
@@ -1086,6 +1095,7 @@ export class App {
         else if (t.dataset.value === 'routes') { this.leaveJobs(); this.view = 'routes'; this.closeRoute(); await this.render(); await this.loadRoutes(); }
         else { this.view = 'jobs'; this.jobs.sel = null; this.jobs.detail = null; this.jobsTimer ??= setInterval(() => { void this.loadJobs(); }, 3000); await this.render(); void this.loadJobs(); }
         break;
+      case 'agent-approval': if (isApprovalLevel(t.dataset.value)) await this.setAgentApproval(t.dataset.value); break;
       case 'dispatch-mode': await this.setDispatchMode(t.dataset.value === 'jobs'); break;
       case 'dispatch-classifier': {
         const r = await this.augur(['config', 'set', 'decision.backend', t.dataset.value ?? 'none']);
