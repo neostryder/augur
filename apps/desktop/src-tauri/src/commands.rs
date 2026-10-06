@@ -418,7 +418,8 @@ pub fn start_popup_drag(
 pub(crate) fn package_manager_marker(path: &Path) -> Option<String> {
     let text = std::fs::read_to_string(path).ok()?;
     let name = text.trim();
-    (!name.is_empty() && name.len() <= 32 && name.chars().all(|c| c.is_ascii_alphanumeric())).then(|| name.to_string())
+    (!name.is_empty() && name.len() <= 32 && name.chars().all(|c| c.is_ascii_alphanumeric()))
+        .then(|| name.to_string())
 }
 
 #[tauri::command]
