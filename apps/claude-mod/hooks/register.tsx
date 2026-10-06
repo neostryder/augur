@@ -1,7 +1,7 @@
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { ModAlert } from '../types'
-import { alertText, claudeAlerts, folderOf, statusLine, withAck, type Usage } from './view'
+import { PACE_BAND, alertText, claudeAlerts, folderOf, statusLine, withAck, type Usage } from './view'
 
 const ALERTS = { plugin: 'augur', key: 'alerts' } as const
 const CAN_OPEN = { plugin: 'augur', key: 'canOpen' } as const
@@ -18,6 +18,7 @@ let usageFile = ''
 let exe = ''
 let lastAlerts: string | null = null
 let usage: Usage | null = null
+let band = PACE_BAND
 
 async function readText($: EngineInterface, path: string): Promise<string | null> {
   return $.fs.read(path).then((t) => t as string, () => null)
@@ -29,12 +30,18 @@ async function currentAlerts($: EngineInterface): Promise<ModAlert[]> {
 }
 
 async function showStatus($: EngineInterface) {
-  $.ui.status(statusLine(usage, (await currentAlerts($)).length, await $.clock.now()))
+  $.ui.status(statusLine(usage, (await currentAlerts($)).length, await $.clock.now(), band))
 }
 
 async function poll($: EngineInterface) {
   const usageText = await readText($, usageFile)
   try { usage = usageText ? (JSON.parse(usageText) as Usage) : null } catch { usage = null }
+  // The owner may have moved the pace band, so the line reads it from the rules Augur writes beside the usage file.
+  try {
+    const rules = JSON.parse((await readText($, `${folderOf(usageFile)}/policy.json`)) ?? '{}') as { balance?: { claude?: { band?: unknown } } }
+    const set = rules.balance?.claude?.band
+    band = typeof set === 'number' && Number.isFinite(set) && set >= 0 ? set : PACE_BAND
+  } catch { band = PACE_BAND }
   const text = await readText($, `${folderOf(usageFile)}/alerts.json`)
   if (text !== lastAlerts) {
     lastAlerts = text

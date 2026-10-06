@@ -11,6 +11,7 @@ import type { JobRecord, JobRequest, ToolTier } from '@augur/dispatch-protocol';
 import { STATUS_TEXT, statusLine } from '@augur/view-model';
 import { bridge, stdioBridge } from './bridge.js';
 import { SERVICE_VERSION, ServiceError, call, configLines, dataDir, disableLogin, enableLogin, loginState, setConfigValue, startViaLogin } from '@augur/augurd';
+import { subagentHook } from './claude-hook.js';
 import { KEY_HELP, keyCmd } from './key.js';
 import { PROFILE_HELP, profileCmd } from './profile.js';
 import { installOf, realFetch, updateAdvice, updateScriptInstall, versionOf } from './update.js';
@@ -51,6 +52,7 @@ augur update [--force]                install the newest version, for a copy the
 ${KEY_HELP}
 ${PROFILE_HELP}
 augur claude status | install | remove <code|desktop>     add or take out Augur's part of Claude Code or Claude Desktop
+augur claude hook subagent           the plugin's pick-before-subagent hook: reads Claude Code's hook JSON on standard input, adds a note, never blocks
 augur test <route> [--wait]          send a fixed one-word prompt through a route to check it works
 augur config [--json]                 the service's settings and what each is now
 augur config set <setting> <value>    change one; a running service needs augur service stop then start to read it
@@ -254,6 +256,14 @@ async function alertsCmd(rest: string[], all: boolean, io: Io, opts: Opts, say: 
 
 async function claudeCmd(rest: string[], io: Io, opts: Opts, say: Say): Promise<number> {
   const [action, target] = rest;
+  if (action === 'hook' && target === 'subagent') {
+    // Claude Code reads this command's output as JSON, so nothing else is ever printed and the exit code is always 0.
+    io.out(await subagentHook(io.stdin(), io.env, {
+      balance: async () => { const r = await call('balance', undefined, opts); return 'error' in r ? null : { stance: r.claude.stance, lean: r.claude.lean }; },
+      pick: async (task, session) => { const r = await call('pick', { task, fits: {}, ...(session ? { session } : {}) }, opts); return 'error' in r ? null : { pick: r.pick, reason: r.reason, routes: r.pick ? r.routes[r.pick] ?? [] : [] }; },
+    }));
+    return EXIT_CODES.completed;
+  }
   if (action === 'status') {
     const c = (await engineState(opts))?.claude ?? null;
     if (!c) { io.err(STATUS_TEXT.noService + '\n'); return EXIT_CODES.failed; }

@@ -99,7 +99,7 @@ An alert stays under the bell at the top of the panel until you dismiss it or it
 
 Augur can show up inside Claude too. Settings has a Claude section with two switches.
 
-Turn on Claude Code and your next Claude Code session shows Claude's 5-hour and weekly use in the status line, along with any other provider past 70%. A new alert pops up once, then sits in a row above the prompt until you press D to dismiss it, which clears it in Augur and on your phone as well. Press O there to bring up Augur. This switch needs the usage file, so it turns that on at `.augur/usage.json` if you had it off. Augur updates the mod when it updates itself, and turning the switch off takes the mod back out.
+Turn on Claude Code and your next Claude Code session shows Claude's 5-hour and weekly use in the status line, along with any other provider past 70%. A new alert pops up once, then sits in a row above the prompt until you press D to dismiss it, which clears it in Augur and on your phone as well. Press O there to bring up Augur. This switch needs the usage file, so it turns that on at `.augur/usage.json` if you had it off. Augur updates the mod when it updates itself, and turning the switch off takes the mod back out. The same plugin adds `/augur:setup`, `/augur:pick` and `/augur:balance` and the Augur tools, and can also be installed from Claude Code's own plugin manager; [docs/claude-code.md](docs/claude-code.md) has the details.
 
 Claude Desktop chat lets your chats in Claude Desktop pick and run models through Augur. It is available on Windows and macOS, and on Linux where Claude Desktop's settings folder exists. Restart Claude Desktop after you flip it. Turning it off removes only what Augur added to Claude Desktop's settings.
 

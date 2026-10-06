@@ -1,1 +1,13 @@
-{ "modules": ["./register.tsx"] }
+{
+  "modules": ["./register.tsx"],
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Task|Agent",
+        "hooks": [
+          { "type": "command", "command": "augur claude hook subagent", "timeout": 10 }
+        ]
+      }
+    ]
+  }
+}

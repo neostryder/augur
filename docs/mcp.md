@@ -8,7 +8,7 @@ It needs the dispatch service, which runs whenever the Augur app is open; withou
 
 The installer puts the server in the `service` folder beside the app: `augur-mcp.cmd` on Windows, `augur-mcp` on macOS and Linux. A terminal install and the Arch packages also put `augur-mcp` on your PATH. Point the client at that file.
 
-Claude Code:
+Claude Code: the [Augur plugin](claude-code.md) starts this server itself, so skip this step if you install it. To register the server by hand:
 
 ```bash
 claude mcp add augur -- "<install folder>\service\augur-mcp.cmd"

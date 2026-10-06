@@ -1,0 +1,16 @@
+{
+  "name": "augur",
+  "owner": {
+    "name": "neostryder"
+  },
+  "metadata": {
+    "description": "Augur's Claude Code plugin."
+  },
+  "plugins": [
+    {
+      "name": "augur",
+      "source": "./apps/claude-mod",
+      "description": "Augur for Claude Code: usage and pace in the status line, alerts as toasts, a setup skill, /augur:pick and /augur:balance, and an optional note before each subagent."
+    }
+  ]
+}

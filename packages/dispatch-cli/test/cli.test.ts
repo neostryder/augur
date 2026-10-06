@@ -222,6 +222,17 @@ describe('augur note-prompt', () => {
   });
 });
 
+describe('augur claude hook subagent', () => {
+  it('prints nothing while the option is off and exits 0 whatever the service says', async () => {
+    const { run } = await boot();
+    const off = await run(['claude', 'hook', 'subagent'], JSON.stringify({ session_id: 's1', tool_input: { description: 'Survey the tests' } }));
+    expect(off).toMatchObject({ code: 0, out: '' });
+    const on = await run(['claude', 'hook', 'subagent'], JSON.stringify({ session_id: 's1', tool_input: { description: 'Survey the tests' } }), { CLAUDE_PLUGIN_OPTION_PICK_BEFORE_SUBAGENT: 'true' });
+    expect(on.code).toBe(0);
+    if (on.out) expect(JSON.parse(on.out).hookSpecificOutput.hookEventName).toBe('PreToolUse');
+  });
+});
+
 describe('augur run defaults', () => {
   it('needs an activity and a data tier, and defaults to read tools and text output', async () => {
     const { run } = await boot();

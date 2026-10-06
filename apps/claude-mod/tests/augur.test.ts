@@ -54,6 +54,20 @@ describe('the Augur mod', () => {
     expect(w.status.at(-1)).toBe('Claude 5h 27% | wk 48% | Grok wk 81% | 1 Augur alert')
   })
 
+  test('adds the pace of Claude to the status line, read against the band in the rules', async ($, on) => {
+    // The session window is 3 hours from its reset, so 40 percent of it has passed and 60 percent is used, 20 points ahead. The week is on pace.
+    const meters = [
+      { id: 'session', usedPct: 60, windowKind: 'session', windowSeconds: 18000, resetsAt: new Date(NOW + 3 * 3600_000).toISOString() },
+      { id: 'weekly_all', usedPct: 48, windowKind: 'weekly', windowSeconds: 604800, resetsAt: new Date(NOW + 3.6 * 86400_000).toISOString() }]
+    const files = new Map([[USAGE, JSON.stringify({ schema: 1, generatedAt: '2026-10-03T19:59:00Z', providers: { claude: { id: 'claude', name: 'Claude', meters } } })]])
+    const w = world(on, files, [])
+    await $.session.start({ cwd: HOME, surface: 'terminal', isInteractive: true })
+    expect(w.status.at(-1)).toBe('Claude 5h 60% | wk 48% | hot +20')
+    files.set(`${HOME}/.augur/policy.json`, JSON.stringify({ balance: { claude: { band: 25 } } }))
+    await w.clock.advance(30_000)
+    expect(w.status.at(-1)).toBe('Claude 5h 60% | wk 48% | on pace')
+  })
+
   test('toasts an alert once when it first appears, and not the ones already there on the first run', async ($, on) => {
     const files = new Map([[USAGE, usage()], [FEED, feed(alert('old', ['claude'], '2026-10-03T19:00:00Z'))]])
     const w = world(on, files)

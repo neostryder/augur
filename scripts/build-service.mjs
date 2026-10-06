@@ -66,7 +66,8 @@ if (terminal) {
   const mod = join(root, 'apps/claude-mod'), dest = join(out, 'claude-mod');
   mkdirSync(join(dest, '.claude-plugin'), { recursive: true });
   copyFileSync(join(mod, '.claude-plugin', 'plugin.json'), join(dest, '.claude-plugin', 'plugin.json'));
-  for (const dir of ['hooks', 'types']) cpSync(join(mod, dir), join(dest, dir), { recursive: true });
+  for (const dir of ['hooks', 'types', 'skills']) cpSync(join(mod, dir), join(dest, dir), { recursive: true });
+  copyFileSync(join(mod, '.mcp.json'), join(dest, '.mcp.json'));
   copyFileSync(join(root, 'LICENSE'), join(out, 'LICENSE'));
   // Stamped so `augur update` and a bug report can name the build.
   writeFileSync(join(out, 'VERSION'), JSON.parse(readFileSync(join(root, 'apps/desktop/src-tauri/tauri.conf.json'), 'utf8')).version + '\n');

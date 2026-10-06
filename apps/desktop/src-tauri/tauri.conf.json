@@ -34,6 +34,8 @@
       "../../claude-mod/.claude-plugin/plugin.json": "claude-mod/.claude-plugin/plugin.json",
       "../../claude-mod/hooks/": "claude-mod/hooks/",
       "../../claude-mod/types/": "claude-mod/types/",
+      "../../claude-mod/skills/": "claude-mod/skills/",
+      "../../claude-mod/.mcp.json": "claude-mod/.mcp.json",
       "../../../dist/service/": "service/"
     },
     "targets": "all",

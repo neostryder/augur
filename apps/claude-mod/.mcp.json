@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "augur": {
+      "command": "augur-mcp"
+    }
+  }
+}
