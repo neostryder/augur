@@ -1,17 +1,28 @@
 import type { Money, ProviderPlugin } from '../types.js';
 import { json, obj, num } from '../util.js';
 
+const DEFAULT_BASE = 'https://api.typesafe.ai';
+
+/** The address the key is sent to: TypeSafe unless the setting names another Jev-style service. A key only goes over https, or over http to this computer. */
+function baseOf(settings: Record<string, unknown>): string {
+  const raw = typeof settings.baseUrl === 'string' ? settings.baseUrl.trim().replace(/\/+$/, '') : '';
+  if (!raw) return DEFAULT_BASE;
+  if (!/^https:\/\/[^/\s]+/.test(raw) && !/^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/.test(raw)) throw new Error('The base URL must start with https://, or with http:// for a service on this computer.');
+  return raw;
+}
+
 export const jev: ProviderPlugin = {
   id: 'jev', name: 'Jev', needsLocalLogin: false, links: {},
   // The balance comes from the console behind Cloudflare, so it is read weekly unless refreshed by hand.
   refreshSeconds: 7 * 86400,
   fields: [{ key: 'apiKey', label: 'API key', kind: 'secret', required: true },
+    { key: 'baseUrl', label: 'Base URL', kind: 'text', help: `Leave empty for TypeSafe (${DEFAULT_BASE}). A service with the same /v1/systemone shape can go here. The window and terminal apps read it; the web app reaches TypeSafe only.` },
     { key: 'console', label: 'TypeSafe console', kind: 'signin', site: 'typesafe', help: 'Sign in once to show your credit balance and last 7 days of usage.' }, { key: 'ledgerPath', label: 'Ledger path', kind: 'text', help: 'Home-relative JSONL path with ts and input_tokens' }],
   async fetch(host, settings, options) {
     const key = await host.secret('jev.apiKey');
     if (!key) throw new Error('No API key yet. Add one in settings.');
     const start = (host.now?.() ?? new Date()).getTime();
-    const data = obj(await json(host, { url: 'https://api.typesafe.ai/v1/systemone', method: 'POST',
+    const data = obj(await json(host, { url: `${baseOf(settings)}/v1/systemone`, method: 'POST',
       headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: 'jev-latest', state: { message: 'I was charged twice. Please fix this ASAP.' },
         questions: { billing: { type: 'noul', instructions: 'Is this message about a billing problem?' } } }), timeoutMs: 60000 }));

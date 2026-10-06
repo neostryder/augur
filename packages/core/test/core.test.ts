@@ -91,6 +91,19 @@ describe('provider parsers', () => {
     expect(result.meters).toEqual([]);
     expect(result.detail).toContain('answered');
   });
+  it('sends the key to TypeSafe unless a base URL names another Jev-style service', async () => {
+    const urls: string[] = [];
+    const host = fakeHost(url => { urls.push(url); return { model: 'jev-latest', answers: { billing: { noul: 0.9 } } }; });
+    await jev.fetch(host, {});
+    await jev.fetch(host, { baseUrl: ' https://jev.example.test/ ' });
+    await jev.fetch(host, { baseUrl: 'http://localhost:8787' });
+    expect(urls).toEqual(['https://api.typesafe.ai/v1/systemone', 'https://jev.example.test/v1/systemone', 'http://localhost:8787/v1/systemone']);
+  });
+  it('refuses a base URL that would send the key over plain http to another computer', async () => {
+    const host = fakeHost(() => ({ model: 'jev-latest', answers: { billing: { noul: 0.9 } } }));
+    await expect(jev.fetch(host, { baseUrl: 'http://jev.example.test' })).rejects.toThrow(/must start with https/);
+    await expect(jev.fetch(host, { baseUrl: 'ftp://x' })).rejects.toThrow(/must start with https/);
+  });
 });
 
 describe('refresh', () => {

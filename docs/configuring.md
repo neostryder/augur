@@ -50,7 +50,7 @@ A route joins a model to the program or API that runs it. The Routes page has an
 
 An agent passes the key of a route, here `deepseek`, to `augur run`. It starts with a lowercase letter and holds only lowercase letters, digits, `-` and `_`. `model` is the route label the rules use, so that model must be on the Rules page and confirmed before the route runs anything. `adapter` is one of those below and `options` are its settings. A route can also have `notes`, `delegation`, a `budget` (`per` is `day`, `week` or `month`, with a limit in `usd`, `jobs` or both) and a `fallback` list of other route names to try when it cannot run.
 
-An API route never holds its key. It names an environment variable, or it reads the operating system's key store, which the Routes page fills.
+An API route never holds its key. It names an environment variable, or it reads the operating system's key store, which the Routes page fills. `augur key set <route>` fills the same store from a hidden prompt, from an environment variable you set in your own terminal (`--env <NAME>`) or from standard input (`--stdin`), and `augur key status <route>` says whether a key is there without printing it. The command refuses a key typed after the route name, so a key never lands in shell history or in a chat.
 
 <!-- adapter-reference:start -->
 
@@ -135,7 +135,7 @@ Sends one prompt to a chat completions endpoint and returns the text. No tools a
 | --- | --- | --- |
 | `baseUrl` (required) | text | The API address up to and including /v1. It must start with https://, or http:// for localhost. |
 | `model` (required) | text | The model id the endpoint expects. |
-| `keySource` | env, store | Pick env to read the key from an environment variable you name, or store to keep it in this computer's key store. A stored key is saved on the Routes page. |
+| `keySource` | env, store | Pick env to read the key from an environment variable you name, or store to keep it in this computer's key store. A stored key is saved on the Routes page or with `augur key set <route>`. |
 | `apiKeyEnv` (required) | text | The name of the environment variable that holds the API key, when Key kept in is set to env. The key itself is never stored in a route. |
 | `maxTokens` | number | Most tokens the answer may use. Defaults to 4096. |
 | `timeoutS` | number | Defaults to 900. |
@@ -148,7 +148,7 @@ Sends one prompt to a messages endpoint and returns the text. No tools and no fi
 | --- | --- | --- |
 | `baseUrl` (required) | text | The API address. It must start with https://, or http:// for localhost. |
 | `model` (required) | text | The model id the endpoint expects. |
-| `keySource` | env, store | Pick env to read the key from an environment variable you name, or store to keep it in this computer's key store. A stored key is saved on the Routes page. |
+| `keySource` | env, store | Pick env to read the key from an environment variable you name, or store to keep it in this computer's key store. A stored key is saved on the Routes page or with `augur key set <route>`. |
 | `apiKeyEnv` (required) | text | The name of the environment variable that holds the API key, when Key kept in is set to env. The key itself is never stored in a route. |
 | `maxTokens` | number | Most tokens the answer may use. Defaults to 4096. |
 | `timeoutS` | number | Defaults to 900. |

@@ -11,9 +11,10 @@ import type { JobRecord, JobRequest, ToolTier } from '@augur/dispatch-protocol';
 import { STATUS_TEXT, statusLine } from '@augur/view-model';
 import { bridge, stdioBridge } from './bridge.js';
 import { SERVICE_VERSION, ServiceError, call, configLines, dataDir, disableLogin, enableLogin, loginState, setConfigValue, startViaLogin } from '@augur/augurd';
+import { KEY_HELP, keyCmd } from './key.js';
 import { installOf, realFetch, updateAdvice, updateScriptInstall, versionOf } from './update.js';
 
-export interface Io { out(text: string): void; err(text: string): void; stdin(): string; env: NodeJS.ProcessEnv; cwd: string; /** A person is at the terminal: input and output are both attached to it. */ interactive?: boolean }
+export interface Io { out(text: string): void; err(text: string): void; stdin(): string; env: NodeJS.ProcessEnv; cwd: string; /** A person is at the terminal: input and output are both attached to it. */ interactive?: boolean; /** Reads one line with no echo, for a key typed at the terminal. */ readSecret?(prompt: string): Promise<string> }
 
 const HELP = `augur                   at a terminal, opens the full-screen app
 augur run <route> --prompt-file <file|-> | --prompt <text> [options]
@@ -46,6 +47,7 @@ augur routes
 augur refresh                         read every provider's usage now
 augur alerts [dismiss <id>|--all]     list the alerts, or dismiss one or all of them
 augur update [--force]                install the newest version, for a copy the macOS install script put in place
+${KEY_HELP}
 augur claude status | install | remove <code|desktop>     add or take out Augur's part of Claude Code or Claude Desktop
 augur test <route> [--wait]          send a fixed one-word prompt through a route to check it works
 augur config [--json]                 the service's settings and what each is now
@@ -56,7 +58,7 @@ Every command takes --json. Exit codes: 0 completed, 1 usage, 2 rejected, 3 need
 
 interface Parsed { cmd: string[]; flags: Map<string, string | true> }
 function parse(argv: string[]): Parsed {
-  const cmd: string[] = [], flags = new Map<string, string | true>(), boolean = new Set(['json', 'wait', 'named', 'follow', 'stderr', 'help', 'if-idle', 'no-failover', 'waybar', 'all', 'force']);
+  const cmd: string[] = [], flags = new Map<string, string | true>(), boolean = new Set(['json', 'wait', 'named', 'follow', 'stderr', 'help', 'if-idle', 'no-failover', 'waybar', 'all', 'force', 'stdin']);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] as string;
     if (a === '-') { cmd.push(a); continue; }
@@ -158,6 +160,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
       case 'update': return await updateCmd(p.flags.has('force'), io, opts, say);
       case 'refresh': { await engineCall('refresh', [true], io, opts); say(STATUS_TEXT.refreshed, { ok: true }); return 0; }
       case 'alerts': return await alertsCmd(rest, p.flags.has('all'), io, opts, say);
+      case 'key': return await keyCmd(rest, { ...(opt('env') ? { env: opt('env') as string } : {}), stdin: p.flags.has('stdin') }, io, say);
       case 'claude': return await claudeCmd(rest, io, opts, say);
       case 'routes': { const r = await call('routes', undefined, opts); say(r.map(x => `${x.name.padEnd(14)} ${x.model.padEnd(16)} ${x.adapter}${x.problem ? `   cannot run: ${x.problem}` : ''}`).join('\n') || 'No routes.', r); return 0; }
       case 'test': return await testCmd(need(rest[0], 'route'), p, io, opts, say, json);
