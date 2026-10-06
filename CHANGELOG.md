@@ -4,6 +4,8 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-10-05
+
 ### Added
 
 - [Visible] [Providers] **Each pick that lands on Copilot is listed with the month's spend.** The pick log in the balance report names the time, the kind of work, the model and what Copilot's month stood at when the pick was made, and marks the ones past the $150 aim.

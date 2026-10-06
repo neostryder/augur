@@ -1,7 +1,7 @@
 # Maintainer: neostryder <61663569+neostryder@users.noreply.github.com>
 
 pkgname=augur-terminal
-pkgver=1.5.0
+pkgver=1.7.0
 pkgrel=1
 pkgdesc="Terminal app and background service for Augur: AI plan usage, alerts, model rules and jobs"
 arch=('any')
