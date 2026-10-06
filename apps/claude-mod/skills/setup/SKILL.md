@@ -33,6 +33,8 @@ A setup from another computer comes in with `augur profile import <file>`. Run i
 
 ## Routes and keys
 
+A new API that speaks the OpenAI or Anthropic format is one command: `augur provider add openai gpt --model gpt-5`, or `openai-style` or `anthropic-style` with a `--base-url` for one that has no preset. Run it with `--dry-run` first and show the plan. Then run it with `--no-key`, which adds the route and the model without asking for a key. The model goes into the rules unreviewed, so it can't run until the person has looked at its rules and confirmed it in Augur. Offer to queue the activities and the data tier it should get, and leave the confirming to them.
+
 When a route needs a key, give the person `augur key set <route>` to run in their own terminal, then wait. A key is not accepted in the chat, put on a command line or written to a file. Once the keys are in, run `augur test <route> --wait` for each route and report which ones worked and what the failures said.
 
 ## Finish

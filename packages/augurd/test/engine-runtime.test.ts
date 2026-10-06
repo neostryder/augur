@@ -230,6 +230,48 @@ describe('the engine on the control endpoint', () => {
 });
 
 describe('the service with the engine switched on', () => {
+  it('adds a provider for a route to point at, with its model waiting for rules and a balance reading when it has one', async () => {
+    const { makeEnv } = await import('./harness.js');
+    const { startService } = await import('../src/main.js');
+    const e = makeEnv(), appDir = temp();
+    const saved = { app: process.env.AUGUR_APP_DIR, keys: process.env.AUGUR_KEYSTORE };
+    process.env.AUGUR_APP_DIR = appDir; process.env.AUGUR_KEYSTORE = 'file';
+    const pipe = process.platform === 'win32' ? `\\\\.\\pipe\\augurd-engine-${Date.now()}-${Math.floor(Math.random() * 1e6)}` : join(e.root, 'e.sock');
+    const svc = await startService({ dir: e.dir, home: e.home, pipe, routesPath: e.routesPath, engine: true });
+    cleanup.push(async () => {
+      await svc.stop().catch(() => {}); e.dispose();
+      if (saved.app === undefined) delete process.env.AUGUR_APP_DIR; else process.env.AUGUR_APP_DIR = saved.app;
+      if (saved.keys === undefined) delete process.env.AUGUR_KEYSTORE; else process.env.AUGUR_KEYSTORE = saved.keys;
+    });
+    const o = { dir: e.dir, pipe };
+    const state = async () => (await call('engine_state', { keys: ['config'] }, o)).state.config as { rulesOnly?: Array<{ id: string }>; custom: Array<{ id: string }>; providers: Array<{ id: string; enabled: boolean; settings: Record<string, string> }>; policy: { providers: Record<string, { models: Record<string, { id: string; status: string; source: string }> }> } };
+    const add = (input: unknown) => call('engine_call', { method: 'addProvider', args: [input] }, o) as Promise<{ labels: Record<string, string>; added: string[] }>;
+
+    const first = await add({ provider: 'acme', name: 'Acme', models: [{ label: 'acme-1', id: 'acme-1' }] });
+    expect(first).toEqual({ labels: { 'acme-1': 'acme-1' }, added: ['acme-1'] });
+    let config = await state();
+    expect(config.rulesOnly).toEqual([{ id: 'acme', name: 'Acme' }]);
+    expect(config.policy.providers.acme!.models['acme-1']).toMatchObject({ id: 'acme-1', status: 'unreviewed', source: 'manual' });
+
+    // A second add for the same model changes nothing and reports the label it already has.
+    expect(await add({ provider: 'acme', name: 'Acme', models: [{ label: 'other', id: 'acme-1' }] })).toEqual({ labels: { 'acme-1': 'acme-1' }, added: [] });
+    expect((await state()).rulesOnly).toHaveLength(1);
+
+    const def = { id: 'acme2', name: 'Acme Two', auth: { type: 'bearer' }, requests: { balance: { url: 'https://api.acme2.example/balance' } }, money: [{ id: 'balance', label: 'Balance', amount: 'balance:$.balance' }] };
+    await add({ provider: 'acme2', name: 'Acme Two', custom: def, models: [{ label: 'm', id: 'm' }] });
+    config = await state();
+    expect(config.custom.map(d => d.id)).toEqual(['acme2']);
+    expect(config.providers.find(p => p.id === 'acme2')).toMatchObject({ enabled: true });
+
+    await add({ provider: 'jev', name: 'Jev', enable: { settings: { baseUrl: 'https://jev.example.com' } } });
+    expect((await state()).providers.find(p => p.id === 'jev')).toMatchObject({ enabled: true, settings: { baseUrl: 'https://jev.example.com' } });
+
+    await expect(add({ provider: 'openrouter', name: 'OpenRouter', custom: { ...def, id: 'openrouter' } })).rejects.toThrow('built-in provider');
+    await expect(add({ provider: 'acme2', name: 'Again', custom: def })).rejects.toThrow('already exists');
+    await expect(add({ provider: 'Bad Id', name: 'x' })).rejects.toThrow('not a provider id');
+    expect((await state()).custom).toHaveLength(1);
+  }, 30_000);
+
   it('starts the engine on a fresh settings folder and waits for setup before reading anything', async () => {
     const { makeEnv } = await import('./harness.js');
     const { startService } = await import('../src/main.js');

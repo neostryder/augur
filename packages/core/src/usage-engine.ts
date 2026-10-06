@@ -4,7 +4,8 @@
 import { FeedKeeper, UPDATE_ALERT_TEXT, type KeeperShell, type Raise } from './feed-keeper.js';
 import { createPairing, pairingUrl, pullPhoneState, pullRules, pushRules, pushSnapshot, readAsk, sharedConfig, SyncUploadError } from './sync.js';
 import { feedFor, feedFromUsage, type AlertFeed } from './feed.js';
-import { emptyPolicy, mergePolicy, policyDigest, policyFromFile, policyPathFor, buildPolicyFile } from './policy.js';
+import { RULES_ONLY_PROVIDERS, addModels, emptyPolicy, mergePolicy, policyDigest, policyFromFile, policyPathFor, buildPolicyFile } from './policy.js';
+import { genericProvider } from './generic.js';
 import { importPolicy } from './policy-import.js';
 import { DEFAULT_APPROVAL, emptyEditState, parseEditState, parseInbox, processInbox, resolveHeld, INBOX_FILE, RESULTS_FILE, type EditState } from './policy-edits.js';
 import { listDue, syncModelList, type ModelCatalog } from './models.js';
@@ -16,7 +17,7 @@ import {
 } from './registry.js';
 import type { HistoryRow } from './history.js';
 import type { ClaudeStatus, ClaudeTarget, Shell, UpdateInfo } from './shell.js';
-import type { AppConfig, ProviderPlugin, Snapshot } from './types.js';
+import type { AppConfig, ProviderAdded, ProviderAddition, ProviderPlugin, Snapshot } from './types.js';
 
 // Each push is one KV write on the relay, so a paired phone gets a new copy at most every 10 minutes (144 writes a day).
 const SYNC_PUSH_MS = 10 * 60_000;
@@ -95,6 +96,11 @@ export interface EngineCommands {
   /** Stores a provider key and turns the provider on. */
   setProviderKey(provider: string, key: string, value: string): Promise<void>;
   setSecret(name: string, value: string): Promise<void>;
+  /**
+   * Adds a provider for a route to point at: its models by hand (unreviewed, so they wait for the owner's rules), a usage reading when it has one, or a
+   * built-in provider turned on. A provider id already taken by a built-in or a custom reading is refused, and nothing changes.
+   */
+  addProvider(input: ProviderAddition): Promise<ProviderAdded>;
   deleteSecret(name: string): Promise<void>;
   hasSecret(name: string): Promise<boolean>;
   setClaude(target: ClaudeTarget, on: boolean): Promise<void>;
@@ -112,7 +118,7 @@ export interface EngineCommands {
   setInstalling(on: boolean): Promise<void>;
 }
 
-export const ENGINE_COMMANDS = ['refresh', 'refreshSignIns', 'viewShown', 'saveConfig', 'finishSetup', 'dismiss', 'setProviderKey', 'setSecret', 'deleteSecret',
+export const ENGINE_COMMANDS = ['refresh', 'refreshSignIns', 'viewShown', 'saveConfig', 'finishSetup', 'dismiss', 'setProviderKey', 'setSecret', 'addProvider', 'deleteSecret',
   'hasSecret', 'setClaude', 'listModels', 'answerEdit', 'retryPolicy', 'pair', 'pairUrl', 'unpair', 'checkUpdate', 'setInstalling'] as const satisfies ReadonlyArray<keyof EngineCommands>;
 export type EngineCommand = (typeof ENGINE_COMMANDS)[number];
 
@@ -611,6 +617,37 @@ export class UsageEngine implements EngineApi {
     if (pc && !pc.enabled) { pc.enabled = true; await this.persist(); this.emit('config'); }
     await this.refreshSecrets();
     if (!this.state.firstRun) void this.refresh(true, [provider]);
+  }
+
+  async addProvider(input: ProviderAddition): Promise<ProviderAdded> {
+    const id = input.provider;
+    if (!/^[a-z][a-z0-9_-]*$/.test(id)) throw new Error(`"${id}" is not a provider id: it starts with a lowercase letter and holds lowercase letters, digits, - and _.`);
+    const next: AppConfig = structuredClone(this.config);
+    const builtIn = allPlugins({ ...next, custom: [] }).some((p) => p.id === id);
+    const custom = (next.custom ?? []).some((d) => d.id === id);
+    const rulesOnly = RULES_ONLY_PROVIDERS.some((r) => r.id === id) || (next.rulesOnly ?? []).some((r) => r.id === id);
+    if (input.custom) {
+      if (input.custom.id !== id) throw new Error('The usage reading names a different provider than the one being added.');
+      if (builtIn || rulesOnly) throw new Error(`${id} is a built-in provider, so it keeps its own usage reading. Leave the balance reading out.`);
+      if (custom) throw new Error(`A custom provider named ${id} already exists. Change it in Settings.`);
+      try { genericProvider(input.custom); } catch (e) { throw new Error(`The usage reading is not valid: ${e instanceof Error ? e.message : String(e)}`); }
+      next.custom = [...(next.custom ?? []), input.custom];
+      syncProviderList(next);
+    } else if (!builtIn && !custom && !rulesOnly) next.rulesOnly = [...(next.rulesOnly ?? []), { id, name: input.name }];
+    if (input.enable || input.custom) {
+      const pc = next.providers.find((p) => p.id === id);
+      if (!pc) throw new Error(`${id} has no usage reading to turn on.`);
+      pc.settings = { ...pc.settings, ...(input.enable?.settings ?? {}) };
+      pc.enabled = true;
+    }
+    const policy = next.policy ??= emptyPolicy();
+    const added = addModels(policy, id, input.models ?? [], 'manual');
+    const labels: Record<string, string> = {};
+    for (const m of input.models ?? []) labels[m.id] = Object.entries(policy.providers[id]?.models ?? {}).find(([, e]) => e.id === m.id)?.[0] ?? m.label;
+    await this.saveConfig(next);
+    if (added.length) await this.raise([{ id: `models.${Date.now()}`, kind: 'models', severity: 'info', group: 'models', clears: { when: 'flag', flag: 'models' },
+      title: `${added.length} new ${added.length === 1 ? 'model' : 'models'} to review`, body: 'Routers skip a new model until its rules are confirmed. Open Model rules to set them.' }]);
+    return { labels, added };
   }
 
   async setSecret(name: string, value: string): Promise<void> {

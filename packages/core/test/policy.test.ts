@@ -3,6 +3,7 @@ import { addModels, buildPolicyFile, emptyPolicy, fieldPath, mergePolicy, migrat
 import { importPolicy } from '../src/policy-import.js';
 import type { PolicyConfig } from '../src/policy.js';
 import { defaultConfig, migrateConfig } from '../src/config.js';
+import { policyProviders } from '../src/registry.js';
 
 const t0 = new Date('2026-09-27T12:00:00Z'), t1 = new Date('2026-09-27T12:05:00Z'), t2 = new Date('2026-09-27T12:10:00Z');
 const RULES = { providers: {
@@ -260,5 +261,18 @@ describe('policy', () => {
     expect(pauseActive(null, t0)).toBe(false);
     expect(policyPathFor('.augur/usage.json')).toBe('.augur/policy.json');
     expect(policyPathFor('usage.json')).toBe('policy.json');
+  });
+});
+
+describe('providers added for their rules alone', () => {
+  it('reach the rules list and policy.json beside the built-in rules-only providers, once each', () => {
+    const config = { ...migrateConfig(defaultConfig()), rulesOnly: [{ id: 'acme', name: 'Acme' }, { id: 'acme', name: 'Acme again' }, { id: 'laya', name: 'Laya again' }] };
+    const list = policyProviders(config);
+    expect(list.filter(p => p.id === 'acme')).toEqual([{ id: 'acme', name: 'Acme', metered: false }]);
+    expect(list.filter(p => p.id === 'laya')).toHaveLength(1);
+    const policy = emptyPolicy();
+    addModels(policy, 'acme', [{ label: 'acme-1', id: 'acme-1' }], 'manual', t0);
+    const file = buildPolicyFile(policy, list, t0);
+    expect(file.providers.acme).toMatchObject({ name: 'Acme', metered: false, models: { 'acme-1': { id: 'acme-1' } } });
   });
 });

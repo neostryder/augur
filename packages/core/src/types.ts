@@ -229,6 +229,25 @@ export interface AppConfig {
   dispatch?: { runJobs: boolean };
   /** How much of what an agent asks to change in the rules waits for the owner: `all`, `risky` (the default) or `none`. Only the app and the terminal change it. */
   agentApproval?: 'all' | 'risky' | 'none';
+  /** Providers the owner added for their rules alone, such as an API with no usage reading. They sit beside the built-in rules-only providers. */
+  rulesOnly?: Array<{ id: string; name: string }>;
+}
+
+/** What `addProvider` takes: a provider for a route to point at, with the models it serves and, when its usage can be read, a definition for that reading. */
+export interface ProviderAddition {
+  provider: string;
+  name: string;
+  /** Models added by hand, unreviewed, so none can run until the owner confirms their rules. */
+  models?: Array<{ label: string; id: string; name?: string }>;
+  /** A usage reading for a provider that has none built in. */
+  custom?: GenericProviderDef;
+  /** Turns a built-in provider on, with settings such as the Jev base URL. */
+  enable?: { settings?: Record<string, string> };
+}
+export interface ProviderAdded {
+  /** Each model id with the label the rules hold it under, including a model that was already there. */
+  labels: Record<string, string>;
+  added: string[];
 }
 
 // ------------------------------------------------------------------ declarative providers

@@ -18,9 +18,9 @@ const isObj = (v: unknown): v is Raw => typeof v === 'object' && v !== null && !
 // A route holds the name of an environment variable or a store, never a key, but a hand-edited file could. These option names are never exported.
 const SECRET_OPTION = /^(api_?key|key|token|secret|password)$/i;
 
-const routesPath = (env: NodeJS.ProcessEnv): string => env.AUGURD_ROUTES ?? join(augurHome(env), 'dispatch', 'routes.json');
-const readText = (path: string): string | null => { try { return readFileSync(path, 'utf8'); } catch { return null; } };
-const writeAtomic = (path: string, text: string): void => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(`${path}.tmp`, text, 'utf8'); renameSync(`${path}.tmp`, path); };
+export const routesPath = (env: NodeJS.ProcessEnv): string => env.AUGURD_ROUTES ?? join(augurHome(env), 'dispatch', 'routes.json');
+export const readText = (path: string): string | null => { try { return readFileSync(path, 'utf8'); } catch { return null; } };
+export const writeAtomic = (path: string, text: string): void => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(`${path}.tmp`, text, 'utf8'); renameSync(`${path}.tmp`, path); };
 
 /** The profile file for this computer: the balance overrides from policy.json and the routes the service accepts. */
 export function buildProfile(env: NodeJS.ProcessEnv, now = new Date()): { profile: Raw; dropped: string[] } | { error: string } {

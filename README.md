@@ -29,7 +29,7 @@ Augur shows how much of your AI plans and credits you have used, in one place: a
 
 Claude, Codex and Grok only report plan limits to their own signed-in apps, so the desktop app reads those three. An API key for Anthropic, OpenAI or xAI shows API billing, not plan limits, so it cannot stand in for the sign-in. The phone app shows them once you pair it with your desktop (see below).
 
-You can add any other provider whose usage endpoint returns JSON, without writing code. See [Custom providers](#custom-providers).
+You can add any other provider whose usage endpoint returns JSON, without writing code. See [Custom providers](#custom-providers). A route to an API that speaks the OpenAI or Anthropic format needs one command, `augur provider add`, with a base URL, a model and a key. The steps are under [Adding a provider](docs/configuring.md#adding-a-provider).
 
 ## Install
 

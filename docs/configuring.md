@@ -27,6 +27,26 @@ A provider that reports usage from a JSON endpoint is a short definition in Sett
 
 Reading usage and running a model are separate. A provider added for usage still needs a route before an agent can run work on it.
 
+### A provider of a standard shape
+
+Plenty of APIs copy the OpenAI chat format or the Anthropic messages format. For those you don't have to edit routes.json and a custom definition by hand. `augur provider add` takes a base URL, a model and a key and sets up the rest.
+
+```bash
+augur provider add openai gpt --model gpt-5
+augur provider add openai-style acme --provider acme --base-url https://api.acme.example/v1 --model acme-1 --balance-url https://api.acme.example/v1/balance --balance-path '$.data.balance'
+```
+
+The first word names a preset or a shape. The presets are `openai`, `openrouter` and `anthropic`, each with its published base URL, and `typesafe` for the Jev provider. The shapes are `openai-style` and `anthropic-style`, which need a `--base-url`, and `jev-style`, which points the Jev provider at another service that answers `/v1/systemone`. `augur provider templates` prints the list. The second word is the route name, except for a Jev-style service, which has no route.
+
+Nothing is written until every check has passed, and `--dry-run` stops there and shows the plan. After that the command:
+
+- adds the route to `dispatch/routes.json`, with its key in the key store, and leaves the other routes in the file as they were.
+- adds the model to your rules as unreviewed. It goes under the provider you gave with `--provider`, or under the preset's own name. Augur won't run it until you set its rules on the Rules page and confirm it.
+- adds a balance reading if you gave `--balance-url` and `--balance-path`. That reading is a custom provider that sends the key as a bearer token and reads one amount out of the reply. OpenRouter and Jev already read their own balances, so they reject those flags. An API whose usage needs more than one request is a custom provider you write yourself.
+- stores the key. It asks with the typing hidden, or reads the variable named by `--env <NAME>`, or reads standard input with `--stdin`. The key is never taken as an argument. If the command has no way to read a key, or you pass `--no-key`, it prints the `augur key set` commands to run instead.
+
+If the model is already in your rules, it is not added a second time and the route uses the name the rules already give it. A provider id that belongs to a built-in provider can't be given a second balance reading.
+
 ## Adding a route
 
 A route joins a model to the program or API that runs it. The Routes page has an Add route form, and Test route sends one word through to show a bad path or a missing key. The routes are stored in `dispatch/routes.json`:

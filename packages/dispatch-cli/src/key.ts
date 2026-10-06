@@ -22,7 +22,7 @@ export function secretNameFor(name: string): string {
   return routeSecretName(name);
 }
 
-const KINDS: Record<string, string> = { windows: 'the Windows credential store', keychain: 'the macOS keychain', 'secret-service': 'the Secret Service', file: 'a file only this user can read' };
+export const KINDS: Record<string, string> = { windows: 'the Windows credential store', keychain: 'the macOS keychain', 'secret-service': 'the Secret Service', file: 'a file only this user can read' };
 
 export const KEY_HELP = `augur key set <route|provider.field> [--env <NAME>|--stdin]    store a key; a hidden prompt at a terminal, or the named environment variable, or standard input
 augur key status <route|provider.field>    whether a key is stored, never the key itself
@@ -48,7 +48,8 @@ export async function keyCmd(rest: string[], flags: { env?: string; stdin: boole
   } catch (e) { io.err(`${(e as Error).message}\n`); return EXIT_CODES.failed; }
 }
 
-async function readValue(flags: { env?: string; stdin: boolean }, io: KeyIo, name: string): Promise<string | { error: string }> {
+/** The key from the hidden prompt, the named environment variable or standard input, or the reason none could be read. */
+export async function readValue(flags: { env?: string; stdin: boolean }, io: KeyIo, name: string): Promise<string | { error: string }> {
   let raw: string | undefined;
   if (flags.env) {
     raw = io.env[flags.env];
