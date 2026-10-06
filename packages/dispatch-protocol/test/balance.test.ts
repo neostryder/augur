@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildPolicyFile, emptyPolicy, importPolicy, fieldPath, setField } from '@augur/core';
 import type { PolicyFile } from '@augur/core';
-import { DEFAULT_BALANCE, govern, rank, resolveBalance } from '../src/index.js';
+import { DEFAULT_BALANCE, govern, lookup, nameMatches, rank, resolveBalance, resolveLabel } from '../src/index.js';
 
 const now = new Date('2026-09-28T12:00:00Z');
 const level = { write_code: 'normal', review_code: 'normal', draft_prose: 'normal' };
@@ -333,5 +333,76 @@ describe('the route preferences', () => {
     expect(b.prefer['minimax/m3']).toEqual({ long_context: 2 });
     expect(b.prefer['codex/luna']).toBeUndefined();
     expect(b.prefer['x/y']).toEqual({ research: 1.5 });
+  });
+});
+
+describe('profiles', () => {
+  it('start from the classic rules when none is named, or the name is not one', () => {
+    expect(resolveBalance({}).profile).toBe('classic');
+    expect(resolveBalance({ profile: 'bespoke' })).toEqual(DEFAULT_BALANCE);
+  });
+
+  it('start from neutral rules when neutral is named, and still take overrides', () => {
+    const b = resolveBalance({ profile: 'neutral' });
+    expect(b.profile).toBe('neutral');
+    expect(b.exclude).toEqual([]);
+    expect(b.prefer).toEqual({});
+    expect(b.seats.shadow).toBe('');
+    expect(b.tilt.deep.strong).toBe(1);
+    expect(resolveBalance({ profile: 'neutral', exclude: ['kimi'], fallback: { aim: 90 } })).toMatchObject({ exclude: ['kimi'], fallback: { aim: 90, providers: [] } });
+  });
+
+  it('tilt nothing but Claude\'s pace, so a strong model is not favored for deep work', () => {
+    const neutral = (extra: Record<string, unknown> = {}) => policy({ profile: 'neutral', ...extra });
+    const deep = rank(neutral(), null, { activity: 'write_code', dataTier: 'internal' }, now);
+    expect(tiltOf(deep, 'codex/sol')).toBe(1);
+    expect(tiltOf(deep, 'codex/luna')).toBe(1);
+    expect(tiltOf(deep, 'claude/live')).toBe(1);
+    // Fable and Astra are not excluded by words, only by their own ask-first rule.
+    expect(deep.blocked.find(b => b.model === 'codex/astra')?.why).toMatch(/ask first/);
+    const hot = rank(neutral(), claudeUsage([track('weekly', 70, 0.4)]), { activity: 'write_code', dataTier: 'internal' }, now);
+    expect(tiltOf(hot, 'claude/live')).toBeCloseTo(0.8, 3);
+    expect(tiltOf(hot, 'claude/claude-sonnet-5-5')).toBeCloseTo(1.25, 3);
+    expect(tiltOf(hot, 'codex/sol')).toBe(1);
+  });
+});
+
+describe('standard names', () => {
+  const ref = { label: 'codex/sol', provider: 'codex', id: 'gpt-6.1-sol' };
+
+  it('stand for a model by its label, by its provider and model id, or by a pattern', () => {
+    expect(nameMatches('codex/sol', ref)).toBe(true);
+    expect(nameMatches('codex/gpt-6.1-sol', ref)).toBe(true);
+    expect(nameMatches('codex/*sol', ref)).toBe(true);
+    expect(nameMatches('*/gpt-6.1-*', ref)).toBe(true);
+    expect(nameMatches('codex/luna', ref)).toBe(false);
+    expect(nameMatches('codex/gpt-6.1-so', ref)).toBe(false);
+    expect(nameMatches('codex/gpt-6.1-sol.json', ref)).toBe(false);
+  });
+
+  it('give a label\'s own entry the last word over its standard name and a pattern', () => {
+    const map = { 'codex/*': 'light', 'codex/gpt-6.1-sol': 'strong', 'codex/sol': 'light' } as const;
+    expect(lookup(map, ref)).toBe('light');
+    expect(lookup({ 'codex/*': 'light', 'codex/gpt-6.1-sol': 'strong' }, ref)).toBe('strong');
+    expect(lookup({ 'codex/*': 'light' }, ref)).toBe('light');
+    expect(lookup({}, ref)).toBeUndefined();
+  });
+
+  it('reach a person\'s own label in a tier, a preference, a list and a seat', () => {
+    // The neutral profile holds no label entries, so these standard names are the only rules that reach the models.
+    const b = { profile: 'neutral', tiers: { 'codex/gpt-6-luna': 'strong' }, prefer: { 'codex/gpt-6-luna': { review_code: 2 } } };
+    const r = rank(policy(b), null, { activity: 'review_code', dataTier: 'internal' }, now);
+    expect(tiltOf(r, 'codex/luna')).toBeCloseTo(2, 3);
+    expect(tiltOf(r, 'codex/sol')).toBe(1);
+    const seated = rank(policy({ profile: 'neutral', seats: { second: { models: ['claude/claude-opus-5-5'] } } }), null, { activity: 'write_code', dataTier: 'internal' }, now);
+    expect(seated.seats?.second?.model).toBe('claude/live');
+  });
+
+  it('are found among the policy\'s models for a seat', () => {
+    const p = policy();
+    expect(resolveLabel(p, 'claude/claude-opus-5-5')).toBe('claude/live');
+    expect(resolveLabel(p, 'codex/sol')).toBe('codex/sol');
+    expect(resolveLabel(p, 'nobody/none')).toBeNull();
+    expect(resolveLabel(p, '')).toBeNull();
   });
 });

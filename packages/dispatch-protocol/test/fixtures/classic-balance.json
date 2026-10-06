@@ -1,4 +1,5 @@
 {
+  "profile": "classic",
   "enabled": true,
   "depth": {
     "write_code": "deep",

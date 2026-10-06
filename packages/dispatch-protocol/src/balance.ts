@@ -10,12 +10,18 @@ export type Depth = 'deep' | 'everyday';
 /** A strong model suits deep work and is overkill for everyday work. A light one is the reverse. A model with no tier is not tilted. */
 export type ModelTier = 'strong' | 'light';
 
+/** The starting rules. Classic is what every install had before profiles existed and what an install that names none keeps. Neutral tilts only for Claude's pace. */
+export type Profile = 'classic' | 'neutral';
+export const PROFILES: readonly Profile[] = ['classic', 'neutral'];
+
 export interface BalanceRules {
+  /** Which starting rules the overrides sit on. */
+  profile: Profile;
   /** Switches the whole balance off. The pick then ranks on weights and usage alone. */
   enabled: boolean;
   /** The depth of an activity when the caller does not say. */
   depth: Record<ActivityId, Depth>;
-  /** The tier of each route label. */
+  /** The tier of each route, by label or by standard name (provider id, a slash, model id). A `*` in a name matches any text. */
   tiers: Record<string, ModelTier>;
   /** Route labels, or ids containing any of these words, that are never picked. */
   exclude: string[];
@@ -66,6 +72,7 @@ export interface BalanceRules {
 const DEEP: ActivityId[] = ['write_code', 'reason_critique'];
 
 export const DEFAULT_BALANCE: BalanceRules = {
+  profile: 'classic',
   enabled: true,
   depth: Object.fromEntries(ACTIVITIES.map(a => [a, DEEP.includes(a) ? 'deep' : 'everyday'])) as Record<ActivityId, Depth>,
   tiers: {
@@ -96,13 +103,58 @@ export const DEFAULT_BALANCE: BalanceRules = {
   },
 };
 
+/** A fresh install: balance on, and only Claude's pace tilts (Sonnet when hot, Opus when behind). No route is held back, preferred or excluded, and no model is named for a seat. */
+export const NEUTRAL_BALANCE: BalanceRules = {
+  ...DEFAULT_BALANCE,
+  profile: 'neutral',
+  tiers: { 'claude/*opus*': 'strong', 'claude/*sonnet*': 'light', 'claude/*haiku*': 'light' },
+  exclude: [],
+  tilt: { deep: { strong: 1, light: 1 }, everyday: { strong: 1, light: 1 } },
+  prose: { models: [], tilt: 1 },
+  fallback: { providers: [], routes: {}, anthropic: [], aim: DEFAULT_BALANCE.fallback.aim, cap: DEFAULT_BALANCE.fallback.cap, margin: DEFAULT_BALANCE.fallback.margin },
+  prefer: {},
+  seats: { second: { models: [], skip: [...DEFAULT_BALANCE.seats.second.skip] }, web: {}, shadow: '', jev: { route: '', activities: [], tilt: 1 } },
+};
+
+/** A model as the rules see it: the person's label, and the standard name made of its provider and its model id. */
+export interface ModelRef { label: string; provider: string; id: string }
+export const standardName = (provider: string, id: string): string => `${provider}/${id}`;
+const globs = new Map<string, RegExp>();
+const glob = (key: string): RegExp => { let re = globs.get(key); if (!re) { re = new RegExp(`^${key.split('*').map(x => x.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`, 'i'); globs.set(key, re); } return re; };
+
+/** Whether a rule's name stands for this model: its label, its standard name, or a pattern with `*` that either one fits. */
+export function nameMatches(key: string, ref: ModelRef): boolean {
+  if (key === ref.label || key === standardName(ref.provider, ref.id)) return true;
+  return key.includes('*') && (glob(key).test(ref.label) || glob(key).test(standardName(ref.provider, ref.id)));
+}
+
+/** The entry a map holds for a model. A label's own entry wins over its standard name's, which wins over a pattern, so a rule written against a label keeps meaning what it did. */
+export function lookup<T>(map: Record<string, T>, ref: ModelRef): T | undefined {
+  if (Object.hasOwn(map, ref.label)) return map[ref.label];
+  const standard = standardName(ref.provider, ref.id);
+  if (Object.hasOwn(map, standard)) return map[standard];
+  for (const [key, value] of Object.entries(map)) if (key.includes('*') && nameMatches(key, ref)) return value;
+  return undefined;
+}
+
+/** Whether a list of rule names includes this model. */
+export const listed = (list: readonly string[], ref: ModelRef): boolean => list.some(key => nameMatches(key, ref));
+
+/** The label of the first model a rule's name stands for, or null when the policy holds none. Seats and fallbacks name models this way so a standard name reaches a person's own label. */
+export function resolveLabel(policy: PolicyFile, key: string): string | null {
+  if (!key) return null;
+  for (const [provider, p] of Object.entries(policy.providers)) if (Object.hasOwn(p.models, key)) return key;
+  for (const [provider, p] of Object.entries(policy.providers)) for (const [label, m] of Object.entries(p.models)) if (nameMatches(key, { label, provider, id: m.id })) return label;
+  return null;
+}
+
 const num = (v: unknown, fallback: number): number => typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : fallback;
 const strings = (v: unknown): string[] | null => Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.length > 0) : null;
 const rec = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {};
 
 /** The defaults with whatever `policy.balance` overrides. A field of the wrong type keeps its default. */
 export function resolveBalance(raw: unknown): BalanceRules {
-  const s = rec(raw), d = DEFAULT_BALANCE;
+  const s = rec(raw), profile: Profile = s.profile === 'neutral' ? 'neutral' : 'classic', d = profile === 'neutral' ? NEUTRAL_BALANCE : DEFAULT_BALANCE;
   const depth = { ...d.depth }, tiers = { ...d.tiers };
   for (const [a, v] of Object.entries(rec(s.depth))) if ((ACTIVITIES as readonly string[]).includes(a) && (v === 'deep' || v === 'everyday')) depth[a as ActivityId] = v;
   for (const [m, v] of Object.entries(rec(s.tiers))) { if (v === 'strong' || v === 'light') tiers[m] = v; else if (v === null) delete tiers[m]; }
@@ -123,6 +175,7 @@ export function resolveBalance(raw: unknown): BalanceRules {
   const money = (v: unknown, fallback: number): number => typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : fallback;
   const pair = (v: unknown, dflt: Record<ModelTier, number>): Record<ModelTier, number> => ({ strong: num(rec(v).strong, dflt.strong), light: num(rec(v).light, dflt.light) });
   return {
+    profile,
     enabled: typeof s.enabled === 'boolean' ? s.enabled : d.enabled,
     depth, tiers, tilt,
     exclude: strings(s.exclude) ?? [...d.exclude],
@@ -202,7 +255,7 @@ export function govern(policy: PolicyFile, activity: ActivityId, depth?: Depth, 
   if (!rules.enabled) return out;
   const claude = claudeState(usage, rules, now);
   const lean = claude.stance === 'unknown' ? 'hot' : claude.stance === 'on pace' ? null : claude.stance;
-  const candidates: Array<{ label: string; provider: string; claude: boolean }> = [];
+  const candidates: Candidate[] = [];
   for (const [providerId, p] of Object.entries(policy.providers)) {
     for (const [label, m] of Object.entries(p.models)) {
       if (models && !models.includes(label)) continue;
@@ -210,19 +263,20 @@ export function govern(policy: PolicyFile, activity: ActivityId, depth?: Depth, 
       if (why) { out.blocks.push({ model: label, why }); continue; }
       let tilt = 1;
       const reasons: string[] = [];
-      const tier = rules.tiers[label];
+      const ref: ModelRef = { label, provider: providerId, id: m.id };
+      const tier = lookup(rules.tiers, ref);
       const isClaude = providerId === rules.claude.provider;
-      candidates.push({ label, provider: providerId, claude: isClaude });
+      candidates.push({ ...ref, claude: isClaude });
       // The best prose writers are tilted for prose alone, so being a strong model on everyday work does not count against them.
-      const prose = activity === 'draft_prose' && rules.prose.models.includes(label);
+      const prose = activity === 'draft_prose' && listed(rules.prose.models, ref);
       if (prose) { tilt = rules.prose.tilt; reasons.push('writes the best prose'); }
       else if (tier) {
         const t = rules.tilt[used][tier];
         if (t !== 1) { tilt *= t; reasons.push(`${tier} model for ${used} work`); }
       }
-      const likes = rules.prefer[label]?.[activity];
+      const likes = lookup(rules.prefer, ref)?.[activity];
       if (likes && likes !== 1) { tilt *= likes; reasons.push(`suits ${activity.replace(/_/g, ' ')}`); }
-      if (label === rules.seats.jev.route && rules.seats.jev.activities.includes(activity)) { tilt *= rules.seats.jev.tilt; reasons.push('Jev is first for classification and scoring'); }
+      if (rules.seats.jev.route && nameMatches(rules.seats.jev.route, ref) && rules.seats.jev.activities.includes(activity)) { tilt *= rules.seats.jev.tilt; reasons.push('Jev is first for classification and scoring'); }
       // Claude's own pace picks between Opus and Sonnet. Opus for prose is not held back by it.
       if (isClaude && tier && lean && !prose) {
         const t = rules.claude[lean][tier];
@@ -244,6 +298,9 @@ export function govern(policy: PolicyFile, activity: ActivityId, depth?: Depth, 
   return out;
 }
 
+/** A model the governor is weighing, and whether it is a Claude route. */
+type Candidate = ModelRef & { claude: boolean };
+
 /** Copilot's spend this month, in dollars, from the usage figures. Null when they carry none. */
 export function copilotSpend(usage: UsageSnapshot | null, provider = 'copilot'): number | null {
   const m = usage?.providers[provider]?.money?.find(x => x.id === 'spent');
@@ -251,10 +308,10 @@ export function copilotSpend(usage: UsageSnapshot | null, provider = 'copilot'):
 }
 
 /** Holds backup routes out of the running while a subscription route can take the work, and holds Copilot to its budget. Mutates `out`. */
-function backups(out: Governed, policy: PolicyFile, rules: BalanceRules, activity: ActivityId, usage: UsageSnapshot | null, now: Date, candidates: Array<{ label: string; provider: string; claude: boolean }>, claude: ClaudeState, named?: string): void {
+function backups(out: Governed, policy: PolicyFile, rules: BalanceRules, activity: ActivityId, usage: UsageSnapshot | null, now: Date, candidates: Candidate[], claude: ClaudeState, named?: string): void {
   const f = rules.fallback, blocked = new Set(out.blocks.map(b => b.model));
   const live = candidates.filter(c => !blocked.has(c.label));
-  const isBackup = (c: { label: string; provider: string }): boolean => f.providers.includes(c.provider) || (f.routes[c.label]?.includes(activity) ?? false);
+  const isBackup = (c: ModelRef): boolean => f.providers.includes(c.provider) || (lookup(f.routes, c)?.includes(activity) ?? false);
   const press = pressure(policy, usage, now);
   // A subscription route can take the work when it is not spent or down. A spent provider with a limit reset in hand still counts.
   const available = (c: { provider: string }): boolean => { const h = press[c.provider]; return !h?.down && (!h?.spent || (h.resets ?? 0) > 0); };
@@ -263,7 +320,7 @@ function backups(out: Governed, policy: PolicyFile, rules: BalanceRules, activit
   const spend = copilotSpend(usage), counted = spend === null ? null : spend + f.margin;
   for (const c of live.filter(isBackup)) {
     if (c.label === named) continue;
-    const anthropic = f.anthropic.includes(c.label);
+    const anthropic = listed(f.anthropic, c);
     // A model with its own `useAfter` rule is held back by that rule, so the fallback hold leaves it alone.
     const waits = (policy.providers[c.provider]?.models[c.label]?.useAfter?.length ?? 0) > 0;
     const open = anthropic ? claude.atReserve || !claudeOpen : waits || subscription.length === 0;

@@ -1,6 +1,6 @@
 // The seats a pick names beside its model: a second opinion, a free web route to drive from the browser, and the local model that shadows the decision. Pure.
 import type { ActivityId, PolicyFile } from '@augur/core';
-import { resolveBalance } from './balance.js';
+import { resolveBalance, resolveLabel } from './balance.js';
 
 export interface Seat { model: string; why: string }
 export interface WebSeat extends Seat {
@@ -29,12 +29,13 @@ export function seatsFor(policy: PolicyFile, ranking: ReadonlyArray<{ model: str
   const out: Seats = {};
   const allowed = new Set(ranking.map(r => r.model));
   if (!rules.seats.second.skip.includes(activity)) {
-    const model = rules.seats.second.models.find(m => m !== pick && allowed.has(m));
+    const model = rules.seats.second.models.map(m => resolveLabel(policy, m)).find((m): m is string => !!m && m !== pick && allowed.has(m));
     if (model) out.second = { model, why: 'a second opinion from a route with plenty of room' };
   }
-  const web = (rules.seats.web[activity] ?? []).find(m => m !== pick && allowed.has(m));
+  const web = (rules.seats.web[activity] ?? []).map(m => resolveLabel(policy, m)).find((m): m is string => !!m && m !== pick && allowed.has(m));
   if (web) out.web = { model: web, why: 'a free web route that suits this kind of task', how: webHandoff(web, activity, now) };
-  if (rules.seats.shadow && rules.seats.shadow !== pick && pick !== rules.seats.jev.route && confirmed(policy, rules.seats.shadow)) out.shadow = { model: rules.seats.shadow, why: 'the local model answers the same decision, and the two answers are compared' };
+  const shadow = resolveLabel(policy, rules.seats.shadow), jev = resolveLabel(policy, rules.seats.jev.route);
+  if (shadow && shadow !== pick && pick !== jev && confirmed(policy, shadow)) out.shadow = { model: shadow, why: 'the local model answers the same decision, and the two answers are compared' };
   return out;
 }
 

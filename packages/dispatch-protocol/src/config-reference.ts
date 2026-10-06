@@ -5,8 +5,9 @@ import { DEFAULT_BALANCE } from './balance.js';
 
 export interface FieldDoc { path: string; type: string; summary: string }
 
-/** One row for every setting the `balance` section of policy.json reads. `<route>` is a route label such as codex/sol and `<activity>` is one of the activity ids. */
+/** One row for every setting the `balance` section of policy.json reads. `<route>` is a route label such as codex/sol or its standard name, the provider id and the model id joined by a slash (codex/gpt-6.1-sol), and a `*` in it matches any text. `<activity>` is one of the activity ids. */
 export const BALANCE_FIELDS: readonly FieldDoc[] = [
+  { path: 'profile', type: 'classic or neutral', summary: 'The starting rules the other settings sit on. Neutral tilts only for Claude pace; classic is the original rule set and is what an install with no profile uses.' },
   { path: 'enabled', type: 'true or false', summary: 'Switches the whole balance off. A pick then ranks on weights and usage alone.' },
   { path: 'depth.<activity>', type: 'deep or everyday', summary: 'How hard an activity is when the caller does not say. Deep work leans to strong models and everyday work to light ones.' },
   { path: 'tiers.<route>', type: 'strong or light', summary: 'The tier of a route. A route with no tier is never tilted. Set a shipped entry to null to remove it.' },

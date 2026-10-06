@@ -11,7 +11,9 @@ export const DEFAULT_HOTKEY = 'Ctrl+Super+U';
 export function defaultConfig(): AppConfig {
   return { schema: 1, providers: builtinProviders.map(provider => ({ id: provider.id, enabled: true, settings: {} })), custom: [],
     layout: { theme: 'system', columns: 'auto', hiddenMeters: {}, collapsed: [] },
-    alerts: { enabled: false, pctThresholds: [50, 75, 90], paceRatio: { session: 0.8, weekly: 0.8, other: null }, balanceBelow: {}, outlets: defaultOutlets() }, exportPath: null, policy: emptyPolicy() };
+    alerts: { enabled: false, pctThresholds: [50, 75, 90], paceRatio: { session: 0.8, weekly: 0.8, other: null }, balanceBelow: {}, outlets: defaultOutlets() }, exportPath: null,
+    // A new install starts on the neutral balance. An install that already has a config never passes through here, so it keeps whatever it names, or the classic rules when it names none.
+    policy: { ...emptyPolicy(), balance: { profile: 'neutral' } } };
 }
 
 export function migrateConfig(value: unknown): AppConfig {

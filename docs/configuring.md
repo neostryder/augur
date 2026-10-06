@@ -17,6 +17,8 @@ The settings folder is `%APPDATA%\com.neostryder.augur` on Windows, `~/Library/A
 
 Every model has a route label in the form `<provider>/<model>`, such as `codex/sol` or `claude/claude-sonnet-5-5`. The rules, the balance and `routes.json` all go by label. Each label also holds the model id the provider expects, so a label can be shorter or friendlier than the id.
 
+A model also has a standard name: its provider id and its model id joined by a slash, such as `codex/gpt-6.1-sol`. The balance accepts either one wherever it names a model (tiers, preferences, the prose models, the backup lists and the seats), and a `*` in a name matches any text, so `claude/*opus*` covers every Opus a Claude provider lists. A rule written against a label wins over one written against the standard name, and that one wins over a pattern. A label is only your own name for the model, so the same rules work on an install whose labels differ from yours.
+
 Augur reads each provider's model list once a day and keeps the newest model of each family. You can also add a model by hand on the Rules page. A new model is never picked until you confirm it there and say which activities it may do and how sensitive the data it sees can be.
 
 ## Adding a provider
@@ -167,6 +169,8 @@ Runs any command the route names, with no checks on what it does. It is off unle
 
 The balance leans each pick toward the models that suit the work, holds Claude near its pace and keeps backup routes in reserve. The README's [section on it](../README.md#how-a-pick-balances-models) says what it does. Its settings are the `balance` object of the rules. Each has a shipped default, a value of the wrong type is ignored, and `null` removes a shipped entry from a map.
 
+The `profile` setting picks the rules the other settings sit on. `classic` is the original rule set, with tiers, preferences and seats for a particular stack, and it is what an install that names no profile uses, so an update never changes what such an install picks. `neutral` is what a new install starts on: weights, pauses and data tiers apply as always, and the only tilt is Claude's pace (Sonnet when Claude runs ahead, Opus when it runs behind). It holds no preferences, no excluded names and no seats, so each is yours to add.
+
 Put the object in `config.json` under `policy`, with the app closed and the service stopped. Augur copies it into `policy.json` the next time it saves a rule or a setting, and the service reads that file for every pick. This example holds Copilot spend to $90 with a $150 stop, never picks anything with `astra` in its name, and adds a preference:
 
 ```json
@@ -187,6 +191,7 @@ Put the object in `config.json` under `policy`, with the app closed and the serv
 
 | Setting | Value | What it does |
 | --- | --- | --- |
+| `profile` | classic or neutral | The starting rules the other settings sit on. Neutral tilts only for Claude pace; classic is the original rule set and is what an install with no profile uses. |
 | `enabled` | true or false | Switches the whole balance off. A pick then ranks on weights and usage alone. |
 | `depth.<activity>` | deep or everyday | How hard an activity is when the caller does not say. Deep work leans to strong models and everyday work to light ones. |
 | `tiers.<route>` | strong or light | The tier of a route. A route with no tier is never tilted. Set a shipped entry to null to remove it. |
