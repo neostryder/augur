@@ -44,6 +44,13 @@ describe('usage', () => {
     expect(paceInfo(m, [], 'a', NOW).elapsedPct).toBe(75);
   });
 
+  it('calls a window at 99% or more Spent, and not ahead of pace', () => {
+    const m = (usedPct: number) => ({ id: 's', label: 'Session', usedPct, resetsAt: '2026-10-04T13:00:00Z', windowSeconds: 4 * 3600 });
+    expect(paceInfo(m(99), [], 'a', NOW)).toMatchObject({ text: 'Spent', bad: true });
+    expect(paceInfo(m(100), [], 'a', NOW).text).toBe('Spent');
+    expect(paceInfo(m(98), [], 'a', NOW).text).not.toBe('Spent');
+  });
+
   it('words status, notes and errors', () => {
     expect(statusLabel(provider('a', [], { status: { indicator: 'minor', description: 'Slow' } }))).toEqual({ label: 'Degraded', severe: false, description: 'Slow' });
     expect(statusLabel(provider('a', [], { status: { indicator: 'none' } }))).toBeNull();

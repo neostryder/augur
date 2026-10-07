@@ -20,6 +20,9 @@ export function tightest(config: AppConfig, snapshot: Snapshot | null): { p: Pro
   return best;
 }
 
+/** A window at or above this percent reads as spent, not as ahead of pace. */
+export const SPENT_PCT = 99;
+
 /** How the meter is burning against its window: the words, whether they are a warning, and how far through the window it is. */
 export function paceInfo(m: Meter, history: HistoryRow[], pid: string, now = Date.now()): { text: string; bad: boolean; elapsedPct: number | null } {
   const p = pace(m, history, pid, new Date(now));
@@ -28,6 +31,7 @@ export function paceInfo(m: Meter, history: HistoryRow[], pid: string, now = Dat
     const left = (new Date(m.resetsAt).getTime() - now) / 1000;
     elapsedPct = Math.min(100, Math.max(0, 100 * (1 - left / m.windowSeconds)));
   }
+  if ((m.usedPct ?? 0) >= SPENT_PCT) return { text: 'Spent', bad: true, elapsedPct };
   if (!p || p.burnRatio == null) return { text: '', bad: false, elapsedPct };
   if (p.willExhaustBeforeReset && p.projectedExhaustAt) return { text: `Runs out around ${when(p.projectedExhaustAt)}`, bad: true, elapsedPct };
   return { text: p.burnRatio >= 1 ? 'On pace' : 'Ahead of pace', bad: p.burnRatio < 1 && (m.usedPct ?? 0) > 50, elapsedPct };

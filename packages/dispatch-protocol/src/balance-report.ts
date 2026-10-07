@@ -1,8 +1,8 @@
 // The read-only balance report: what the router is doing now and what it has been doing, in one structure that the command, the tool, the apps and the daily file all share. Pure.
 import { ACTIVITIES } from '@augur/core';
 import type { ActivityId, PolicyFile } from '@augur/core';
-import { claudeState, copilotSpend, plural, resolveBalance } from './balance.js';
-import type { ClaudeStance, Depth, PaceTrack } from './balance.js';
+import { claudeState, copilotSpend, plural, proseSwitchState, resolveBalance } from './balance.js';
+import type { ClaudeStance, Depth, PaceTrack, ProseSwitch } from './balance.js';
 import { drainProviders, pressure } from './pace.js';
 import type { UsageSnapshot } from './pace.js';
 import { rank } from './pick.js';
@@ -29,7 +29,7 @@ export interface PickSummary {
 export interface BalanceReport {
   at: string;
   enabled: boolean;
-  claude: { stance: ClaudeStance; lean: string; peak: number | null; reserve: number; band: number; atReserve: boolean; tracks: PaceTrack[] };
+  claude: { stance: ClaudeStance; lean: string; peak: number | null; reserve: number; band: number; atReserve: boolean; tracks: PaceTrack[]; /** Where the prose pace switch stands. Reports written before the switch existed have none. */ prose?: ProseSwitch };
   copilot: { spend: number | null; aim: number; cap: number; zone: 'unknown' | 'under the aim' | 'past the aim' | 'at the cap' };
   providers: ProviderLine[];
   mix: MixLine[];
@@ -37,7 +37,7 @@ export interface BalanceReport {
   picks: PickSummary | null;
 }
 
-export function balanceReport(policy: PolicyFile, usage: UsageSnapshot | null, now: Date, picks: PickSummary | null = null, tier: 'public' | 'internal' | 'sensitive' | 'regulated' = 'internal'): BalanceReport {
+export function balanceReport(policy: PolicyFile, usage: UsageSnapshot | null, now: Date, picks: PickSummary | null = null, tier: 'public' | 'internal' | 'sensitive' | 'regulated' = 'internal', proseSwitched = false): BalanceReport {
   const rules = resolveBalance((policy as { balance?: unknown }).balance);
   const state = claudeState(usage, rules, now);
   const lean = state.stance === 'hot' ? 'Sonnet' : state.stance === 'behind' ? 'Opus' : state.stance === 'unknown' ? 'Sonnet (figures missing)' : 'neither';
@@ -51,12 +51,12 @@ export function balanceReport(policy: PolicyFile, usage: UsageSnapshot | null, n
     return { id, name: p.name, stance, headroom: h ? h.headroom : null, why: h?.why ?? 'no Augur data', spent: !!h?.spent };
   });
   const mix: MixLine[] = ACTIVITIES.map(activity => {
-    const r = rank(policy, usage, { activity, dataTier: tier }, now);
+    const r = rank(policy, usage, { activity, dataTier: tier, proseSwitched }, now);
     return { activity, depth: r.depth, pick: r.pick, next: r.ranking[1]?.model ?? null, reason: r.reason, second: r.seats.second?.model ?? null, web: r.seats.web?.model ?? null };
   });
   return {
     at: now.toISOString(), enabled: rules.enabled,
-    claude: { stance: state.stance, lean, peak: state.peak, reserve: rules.claude.reserve, band: rules.claude.band, atReserve: state.atReserve, tracks: state.tracks },
+    claude: { stance: state.stance, lean, peak: state.peak, reserve: rules.claude.reserve, band: rules.claude.band, atReserve: state.atReserve, tracks: state.tracks, prose: rules.enabled ? proseSwitchState(rules, state, proseSwitched) : { ...proseSwitchState(rules, state, proseSwitched), on: false } },
     copilot: { spend, aim: rules.fallback.aim, cap: rules.fallback.cap, zone },
     providers, mix, excluded: rules.exclude, picks,
   };
@@ -73,9 +73,11 @@ export const reportHeading = (r: BalanceReport): string => `Balance report, ${r.
 export function reportSections(r: BalanceReport): ReportSection[] {
   const out: ReportSection[] = [];
   const c = r.claude, claude: string[] = [];
-  if (c.tracks.length) for (const t of c.tracks) claude.push(`${t.window}: ${pct(t.used)} used, ${pct(t.elapsed)} of the time gone, ${plural(Math.abs(Math.round(t.ahead)), 'point')} ${t.ahead >= 0 ? 'ahead of' : 'behind'} pace`);
+  if (c.tracks.length) for (const t of c.tracks) claude.push(`${t.window}: ${pct(t.used)} used, ${pct(t.elapsed)} of the time gone, ${t.used >= 99 ? 'spent' : `${plural(Math.abs(Math.round(t.ahead)), 'point')} ${t.ahead >= 0 ? 'ahead of' : 'behind'} pace`}`);
   else claude.push('no usable figures');
   claude.push(`stance: ${c.stance}, leaning to ${c.lean}. The band is ${plural(c.band, 'point')} and the reserve is ${c.reserve}%${c.atReserve ? ', and a window is at it' : ''}.`);
+  const sw = c.prose;
+  if (sw && (sw.ahead !== null || sw.on)) claude.push(sw.on ? `prose: moved off Claude (${sw.ahead === null ? 'figures missing' : (c.peak ?? 0) >= 99 ? 'Claude is spent' : `${plural(Math.round(sw.ahead), 'point')} ahead of pace`}); it comes back when the lead falls to ${plural(sw.returnAt, 'point')}` : `prose: stays on Claude; it moves when the lead passes ${plural(sw.threshold, 'point')}`);
   out.push({ title: 'Claude', lines: claude });
   out.push({ title: 'Copilot', lines: [`spend this month: ${r.copilot.spend === null ? 'unknown' : `$${r.copilot.spend.toFixed(2)}`}, ${r.copilot.zone} ($${r.copilot.aim} aim, $${r.copilot.cap} cap)`] });
   out.push({ title: 'Providers', lines: r.providers.map(p => `${p.name.padEnd(22)} ${p.stance.padEnd(7)} ${p.headroom === null ? 'no figures' : `${pct(p.headroom * 100)} room`}${p.spent ? ', spent' : ''}, ${p.why}`) });

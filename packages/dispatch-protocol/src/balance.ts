@@ -28,7 +28,11 @@ export interface BalanceRules {
   /** The score multiplier for a tier at each depth. */
   tilt: Record<Depth, Record<ModelTier, number>>;
   /** Route labels that write the best prose, and the multiplier they get on draft_prose in place of the depth tilt. */
-  prose: { models: string[]; tilt: number };
+  prose: {
+    models: string[]; tilt: number;
+    /** The pace switch: when Claude runs ahead of pace, prose drafting moves off the Claude routes in `models` to the routes that remain (Opus through a backup provider first). */
+    pace: { enabled: boolean; ahead: number; aheadAtReserve: number; returnAt: number };
+  };
   /** The Claude controller: holds Claude's usage near the pace marker and keeps a reserve so it never runs out. */
   claude: {
     /** The provider id the controller steers. */
@@ -83,7 +87,7 @@ export const DEFAULT_BALANCE: BalanceRules = {
   },
   exclude: ['fable', 'astra'],
   tilt: { deep: { strong: 1.4, light: 0.8 }, everyday: { strong: 0.85, light: 1.15 } },
-  prose: { models: ['claude/live', 'claude/opus', 'copilot/claude-opus-5.5'], tilt: 1.3 },
+  prose: { models: ['claude/live', 'claude/opus', 'copilot/claude-opus-5.5'], tilt: 1.3, pace: { enabled: true, ahead: 12, aheadAtReserve: 3, returnAt: 0 } },
   claude: { provider: 'claude', band: 5, reserve: 90, hot: { strong: 0.8, light: 1.25 }, behind: { strong: 1.25, light: 0.85 } },
   fallback: { providers: ['copilot'], routes: { 'deepseek/v4.1-flash': ['write_code'] }, anthropic: ['copilot/claude-opus-5.5', 'copilot/claude-sonnet-5.5'], aim: 150, cap: 250, margin: 5 },
   prefer: {
@@ -110,7 +114,7 @@ export const NEUTRAL_BALANCE: BalanceRules = {
   tiers: { 'claude/*opus*': 'strong', 'claude/*sonnet*': 'light', 'claude/*haiku*': 'light' },
   exclude: [],
   tilt: { deep: { strong: 1, light: 1 }, everyday: { strong: 1, light: 1 } },
-  prose: { models: [], tilt: 1 },
+  prose: { models: [], tilt: 1, pace: DEFAULT_BALANCE.prose.pace },
   fallback: { providers: [], routes: {}, anthropic: [], aim: DEFAULT_BALANCE.fallback.aim, cap: DEFAULT_BALANCE.fallback.cap, margin: DEFAULT_BALANCE.fallback.margin },
   prefer: {},
   seats: { second: { models: [], skip: [...DEFAULT_BALANCE.seats.second.skip] }, web: {}, shadow: '', jev: { route: '', activities: [], tilt: 1 } },
@@ -149,6 +153,7 @@ export function resolveLabel(policy: PolicyFile, key: string): string | null {
 }
 
 const num = (v: unknown, fallback: number): number => typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : fallback;
+const zeroUp = (v: unknown, fallback: number): number => typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : fallback;
 const strings = (v: unknown): string[] | null => Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.length > 0) : null;
 const rec = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {};
 
@@ -160,7 +165,7 @@ export function resolveBalance(raw: unknown): BalanceRules {
   for (const [m, v] of Object.entries(rec(s.tiers))) { if (v === 'strong' || v === 'light') tiers[m] = v; else if (v === null) delete tiers[m]; }
   const tilt = { deep: { ...d.tilt.deep }, everyday: { ...d.tilt.everyday } };
   for (const depthKey of ['deep', 'everyday'] as const) for (const tier of ['strong', 'light'] as const) tilt[depthKey][tier] = num(rec(rec(s.tilt)[depthKey])[tier], tilt[depthKey][tier]);
-  const prose = rec(s.prose), cl = rec(s.claude), fb = rec(s.fallback), st = rec(s.seats);
+  const prose = rec(s.prose), proseSwitch = rec(prose.pace), cl = rec(s.claude), fb = rec(s.fallback), st = rec(s.seats);
   const acts = (v: unknown): ActivityId[] | null => { const a = strings(v); return a ? a.filter((x): x is ActivityId => (ACTIVITIES as readonly string[]).includes(x)) : null; };
   const web: Partial<Record<ActivityId, string[]>> = { ...d.seats.web };
   for (const [a, v] of Object.entries(rec(st.web))) if ((ACTIVITIES as readonly string[]).includes(a)) { const l = strings(v); if (l) web[a as ActivityId] = l; else if (v === null) delete web[a as ActivityId]; }
@@ -179,7 +184,10 @@ export function resolveBalance(raw: unknown): BalanceRules {
     enabled: typeof s.enabled === 'boolean' ? s.enabled : d.enabled,
     depth, tiers, tilt,
     exclude: strings(s.exclude) ?? [...d.exclude],
-    prose: { models: strings(prose.models) ?? [...d.prose.models], tilt: num(prose.tilt, d.prose.tilt) },
+    prose: {
+      models: strings(prose.models) ?? [...d.prose.models], tilt: num(prose.tilt, d.prose.tilt),
+      pace: { enabled: typeof proseSwitch.enabled === 'boolean' ? proseSwitch.enabled : d.prose.pace.enabled, ahead: zeroUp(proseSwitch.ahead, d.prose.pace.ahead), aheadAtReserve: zeroUp(proseSwitch.aheadAtReserve, d.prose.pace.aheadAtReserve), returnAt: zeroUp(proseSwitch.returnAt, d.prose.pace.returnAt) },
+    },
     claude: {
       provider: typeof cl.provider === 'string' && cl.provider ? cl.provider : d.claude.provider,
       band: num(cl.band, d.claude.band), reserve: num(cl.reserve, d.claude.reserve),
@@ -227,8 +235,22 @@ export function claudeState(usage: UsageSnapshot | null, rules: BalanceRules, no
   return { stance, tracks, peak, atReserve: peak !== null && peak >= rules.claude.reserve };
 }
 
+/** Where the prose pace switch stands. `ahead` is how far the stricter Claude window runs ahead of its pace marker, `threshold` is the lead that turns the switch on at the current usage, and `returnAt` is the lead at or below which it turns off again. */
+export interface ProseSwitch { on: boolean; ahead: number | null; threshold: number; returnAt: number }
+
+/**
+ * Whether prose drafting should be off Claude. The lead that turns it on shrinks as usage climbs, from `ahead` points at no usage to `aheadAtReserve` at the reserve, so the closer Claude gets to running out the less lead it takes. Once on, it stays on until the lead falls to `returnAt`. `was` is the last answer, and it carries over when Claude's figures are missing.
+ */
+export function proseSwitchState(rules: BalanceRules, claude: ClaudeState, was: boolean): ProseSwitch {
+  const p = rules.prose.pace, used = Math.min(1, Math.max(0, (claude.peak ?? 0) / rules.claude.reserve));
+  const threshold = Math.round((p.ahead - (p.ahead - p.aheadAtReserve) * used) * 10) / 10;
+  const ahead = claude.tracks.length ? Math.max(...claude.tracks.map(t => t.ahead)) : null;
+  const on = !p.enabled || !rules.prose.models.length ? false : ahead === null ? was : was ? ahead > p.returnAt : ahead > threshold;
+  return { on, ahead, threshold, returnAt: p.returnAt };
+}
+
 export const plural = (n: number, one: string, many = one + 's'): string => `${n} ${n === 1 ? one : many}`;
-const points = (t: PaceTrack): string => `${t.window} is ${plural(Math.abs(Math.round(t.ahead)), 'point')} ${t.ahead >= 0 ? 'ahead of' : 'behind'} pace`;
+const points = (t: PaceTrack): string => t.used >= 99 ? `${t.window} is spent` : `${t.window} is ${plural(Math.abs(Math.round(t.ahead)), 'point')} ${t.ahead >= 0 ? 'ahead of' : 'behind'} pace`;
 
 export interface Governed {
   depth: Depth;
@@ -239,6 +261,8 @@ export interface Governed {
   /** One short phrase per tilt that applied to the model, by label, for the reason line. */
   reasons: Record<string, string[]>;
   notes: string[];
+  /** Where the prose pace switch stands: on when prose drafting has moved off Claude. */
+  proseSwitch: ProseSwitch;
 }
 
 /** A route is excluded when its label or its model id contains an excluded word. */
@@ -248,12 +272,13 @@ const excluded = (rules: BalanceRules, label: string, id: string): string | null
 };
 
 /** The tilt each model gets for this activity and depth. `depth` is the caller's choice, or the activity's default. An excluded model the person named is not excluded. */
-export function govern(policy: PolicyFile, activity: ActivityId, depth?: Depth, models?: readonly string[], named?: string, usage: UsageSnapshot | null = null, now = new Date()): Governed {
+export function govern(policy: PolicyFile, activity: ActivityId, depth?: Depth, models?: readonly string[], named?: string, usage: UsageSnapshot | null = null, now = new Date(), proseWas = false): Governed {
   const rules = resolveBalance((policy as { balance?: unknown }).balance);
   const used: Depth = depth ?? rules.depth[activity] ?? 'everyday';
-  const out: Governed = { depth: used, tilts: {}, blocks: [], reasons: {}, notes: [] };
-  if (!rules.enabled) return out;
   const claude = claudeState(usage, rules, now);
+  const proseSwitch = proseSwitchState(rules, claude, proseWas);
+  const out: Governed = { depth: used, tilts: {}, blocks: [], reasons: {}, notes: [], proseSwitch: rules.enabled ? proseSwitch : { ...proseSwitch, on: false } };
+  if (!rules.enabled) return out;
   const lean = claude.stance === 'unknown' ? 'hot' : claude.stance === 'on pace' ? null : claude.stance;
   const candidates: Candidate[] = [];
   for (const [providerId, p] of Object.entries(policy.providers)) {
@@ -293,7 +318,15 @@ export function govern(policy: PolicyFile, activity: ActivityId, depth?: Depth, 
       delete out.tilts[c.label]; delete out.reasons[c.label];
     }
   }
-  backups(out, policy, rules, activity, usage, now, candidates, claude, named);
+  // While the prose switch is on, drafting leaves the Claude routes that write prose, so Opus through a backup provider (or the next route) takes it.
+  let proseMoved = false;
+  if (proseSwitch.on && activity === 'draft_prose' && candidates.some(c => !c.claude)) {
+    for (const c of candidates.filter(c => c.claude && c.label !== named && listed(rules.prose.models, c) && !out.blocks.some(b => b.model === c.label))) {
+      out.blocks.push({ model: c.label, why: `Claude runs ${plural(Math.round(proseSwitch.ahead as number), 'point')} ahead of pace, so prose is off it until the lead falls to ${plural(proseSwitch.returnAt, 'point')}` });
+      delete out.tilts[c.label]; delete out.reasons[c.label]; proseMoved = true;
+    }
+  }
+  backups(out, policy, rules, activity, usage, now, candidates, claude, named, proseMoved);
   if (claude.stance === 'unknown') out.notes.push('Claude usage figures are missing or old, so the reserve could not be checked and Claude leans light.');
   return out;
 }
@@ -308,7 +341,7 @@ export function copilotSpend(usage: UsageSnapshot | null, provider = 'copilot'):
 }
 
 /** Holds backup routes out of the running while a subscription route can take the work, and holds Copilot to its budget. Mutates `out`. */
-function backups(out: Governed, policy: PolicyFile, rules: BalanceRules, activity: ActivityId, usage: UsageSnapshot | null, now: Date, candidates: Candidate[], claude: ClaudeState, named?: string): void {
+function backups(out: Governed, policy: PolicyFile, rules: BalanceRules, activity: ActivityId, usage: UsageSnapshot | null, now: Date, candidates: Candidate[], claude: ClaudeState, named?: string, proseMoved = false): void {
   const f = rules.fallback, blocked = new Set(out.blocks.map(b => b.model));
   const live = candidates.filter(c => !blocked.has(c.label));
   const isBackup = (c: ModelRef): boolean => f.providers.includes(c.provider) || (lookup(f.routes, c)?.includes(activity) ?? false);
@@ -323,15 +356,20 @@ function backups(out: Governed, policy: PolicyFile, rules: BalanceRules, activit
     const anthropic = listed(f.anthropic, c);
     // A model with its own `useAfter` rule is held back by that rule, so the fallback hold leaves it alone.
     const waits = (policy.providers[c.provider]?.models[c.label]?.useAfter?.length ?? 0) > 0;
-    const open = anthropic ? claude.atReserve || !claudeOpen : waits || subscription.length === 0;
+    const open = anthropic ? claude.atReserve || !claudeOpen || (proseMoved && listed(rules.prose.models, c)) : waits || subscription.length === 0;
     const copilot = f.providers.includes(c.provider);
     let why: string | null = null;
     if (!open) why = anthropic ? 'Anthropic through a backup waits until Claude reaches its reserve' : `a subscription route can take this, so ${c.label} stays in reserve`;
     else if (copilot && counted !== null && counted >= f.cap && !anthropic) why = `Copilot spend is $${spend?.toFixed(2)}, at the $${f.cap} cap`;
     else if (copilot && counted !== null && counted >= f.cap && anthropic && !claude.atReserve) why = `Copilot spend is $${spend?.toFixed(2)}, at the $${f.cap} cap`;
-    if (why) { out.blocks.push({ model: c.label, why }); delete out.tilts[c.label]; delete out.reasons[c.label]; continue; }
+    if (why) {
+      out.blocks.push({ model: c.label, why }); delete out.tilts[c.label]; delete out.reasons[c.label];
+      if (proseMoved && anthropic && listed(rules.prose.models, c)) out.notes.push(`Prose has moved off Claude. ${why}, so it goes to the next route.`);
+      continue;
+    }
     const r = out.reasons[c.label] ?? [];
-    if (anthropic) r.push('Claude is at its reserve, so Anthropic through Copilot takes the work');
+    if (anthropic && proseMoved && !claude.atReserve) r.push('Claude runs ahead of pace, so prose goes to Anthropic through Copilot');
+    else if (anthropic) r.push('Claude is at its reserve, so Anthropic through Copilot takes the work');
     else r.push('no subscription route can take this');
     if (copilot && counted !== null && counted >= f.aim) { const line = `Copilot spend is $${spend?.toFixed(2)}, past the $${f.aim} aim`; r.push(line); out.notes.push(`${line}; ${c.label} is a spend to report.`); }
     out.reasons[c.label] = r;

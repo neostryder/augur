@@ -4,6 +4,14 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+### Added
+
+- [Visible] [Providers] **Prose drafting moves to Copilot while Claude runs hot.** Once Claude gets well ahead of its pace, Augur sends prose writing to Opus 5.5 on Copilot instead, and sends it back when Claude is on pace again. Only prose drafting moves, and a Claude route you ask for by name still runs. If Copilot has reached its $250 cap, prose goes to the next route that can write it, such as ChatGPT on the web, and the pick says why. It never falls back to Sonnet, and it stays on Claude when nothing else can take it. The balance report shows where prose is going, and the switch can be turned off in the balance settings.
+
+### Changed
+
+- [Visible] [UI] **A window at 99% or more reads "Spent".** The pace text in the window and terminal apps used to call a full window "Ahead of pace". The balance report and pick reasons also say "spent" at that point, where they said "N points ahead of pace".
+
 ## [1.7.0] - 2026-10-05
 
 ### Added

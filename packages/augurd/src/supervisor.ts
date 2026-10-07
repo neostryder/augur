@@ -194,6 +194,19 @@ export class Supervisor {
 
   // ------------------------------------------------------------------ picks and pressure
 
+  private proseOn: boolean | undefined;
+  /** Whether the prose pace switch was on at the last pick, read from `prose-switch.json` the first time. It turns off at a lower lead than it turns on at, so the last answer has to outlive a restart. */
+  private proseWas(): boolean {
+    this.proseOn ??= readJson<{ on?: unknown }>(join(this.d.dir, 'prose-switch.json'))?.on === true;
+    return this.proseOn;
+  }
+  /** Keeps the switch's new state when it changed. */
+  private proseKeep(on: boolean): void {
+    if (on === this.proseWas()) return;
+    this.proseOn = on;
+    try { writeFileSync(join(this.d.dir, 'prose-switch.json'), JSON.stringify({ on, at: new Date(this.now()).toISOString() }) + '\n'); } catch { /* the next pick tries again */ }
+  }
+
   /** Ranks the models a task may use, records the pick, and names the routes that reach each model. */
   async pick(req: PickParams): Promise<PickAnswer> {
     const policy = this.d.policy();
@@ -210,7 +223,7 @@ export class Supervisor {
     dataTier ??= 'sensitive';
     if (!ACTIVITIES.includes(activity) || !DATA_TIERS.includes(dataTier)) return { error: 'Unknown activity or data tier.' };
     if (req.task && backend) {
-      const asked = rank(policy, this.d.usage(), { activity, dataTier, ...(req.depth ? { depth: req.depth } : {}) }, new Date(this.now())).ranking.map(r => r.model).filter(m => fits[m] === undefined);
+      const asked = rank(policy, this.d.usage(), { activity, dataTier, proseSwitched: this.proseWas(), ...(req.depth ? { depth: req.depth } : {}) }, new Date(this.now())).ranking.map(r => r.model).filter(m => fits[m] === undefined);
       if (asked.length) {
         const describe = (m: string) => { const e = Object.values(policy.providers).map(p => p.models[m]).find(Boolean); return `${e?.name ?? e?.id ?? m}. Permitted: ${Object.keys(e?.activities ?? {}).join(', ')}. ${e?.notes ?? ''}`.trim(); };
         for (const m of asked) descriptions[m] = describe(m);
@@ -218,7 +231,8 @@ export class Supervisor {
         Object.assign(fits, got.fits); fitError = got.error;
       }
     }
-    const result = rank(policy, this.d.usage(), { activity, dataTier, ...(req.named ? { named: req.named } : {}), ...(req.depth ? { depth: req.depth } : {}), fits }, new Date(this.now()));
+    const result = rank(policy, this.d.usage(), { activity, dataTier, ...(req.named ? { named: req.named } : {}), ...(req.depth ? { depth: req.depth } : {}), fits, proseSwitched: this.proseWas() }, new Date(this.now()));
+    this.proseKeep(result.proseSwitch.on);
     const routes: Record<string, string[]> = {};
     for (const [name, r] of Object.entries(this.d.routes() ?? {})) if (this.d.adapters.has(r.adapter)) (routes[r.model] ??= []).push(name);
     const pickId = this.d.decisions?.pick({ session: req.session ?? null, ...(req.task ? { task: req.task } : {}), activity, dataTier, pick: result.pick ?? null,
@@ -234,7 +248,9 @@ export class Supervisor {
   balance(days = 7): BalanceReport | { error: string } {
     const policy = this.d.policy();
     if (!policy) return { error: 'policy.json was not found. Augur writes it when a rule is saved.' };
-    return balanceReport(policy, this.d.usage(), new Date(this.now()), this.d.decisions ? this.d.decisions.summary(Math.min(Math.max(Math.round(days), 1), 90)) : null);
+    const report = balanceReport(policy, this.d.usage(), new Date(this.now()), this.d.decisions ? this.d.decisions.summary(Math.min(Math.max(Math.round(days), 1), 90)) : null, 'internal', this.proseWas());
+    if (report.claude.prose) this.proseKeep(report.claude.prose.on);
+    return report;
   }
 
   pressure(): { pressure: ReturnType<typeof pressure>; factors: Record<string, number>; scarcity: number } | null {

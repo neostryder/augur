@@ -2,7 +2,7 @@
 import { DATA_TIERS, pauseActive } from '@augur/core';
 import type { ActivityId, DataTier, PolicyFile, WeightLevel } from '@augur/core';
 import { govern, reasonLine } from './balance.js';
-import type { Depth } from './balance.js';
+import type { Depth, ProseSwitch } from './balance.js';
 import { seatsFor } from './seats.js';
 import type { Seats } from './seats.js';
 import { modelOwners, pressure, usageFactors } from './pace.js';
@@ -17,11 +17,13 @@ export interface PickRequest {
   fits?: Record<string, number>;
   /** Whether the task is deep thinking or serious coding, or everyday work. Left out, the activity decides. */
   depth?: Depth;
+  /** Whether the prose pace switch was on at the last pick. The service keeps this, since the switch turns off at a lower lead than it turns on at. */
+  proseSwitched?: boolean;
 }
 
 export interface Ranked { model: string; score: number; fit: number; level: WeightLevel; weight: number; usage: number; /** The balance's multiplier for this model, 1 when it did not tilt it. */ tilt: number; why: string }
 export interface Blocked { model: string; why: string }
-export interface PickResult { pick: string | null; ranking: Ranked[]; blocked: Blocked[]; scarcity: number; unreviewed: string[]; notes: string[]; depth: Depth; /** One sentence on why the top model won and what comes next. */ reason: string; /** The second opinion, web route and shadow that go with the pick. */ seats: Seats }
+export interface PickResult { pick: string | null; ranking: Ranked[]; blocked: Blocked[]; scarcity: number; unreviewed: string[]; notes: string[]; depth: Depth; /** One sentence on why the top model won and what comes next. */ reason: string; /** The second opinion, web route and shadow that go with the pick. */ seats: Seats; /** Where the prose pace switch stands after this pick. */ proseSwitch: ProseSwitch }
 
 /** Score is fit, times the weight of the activity's level, times the usage factor. A model that fails a rule is listed as blocked with the reason. */
 export function rank(policy: PolicyFile, usage: UsageSnapshot | null, req: PickRequest, now = new Date()): PickResult {
@@ -47,7 +49,7 @@ export function rank(policy: PolicyFile, usage: UsageSnapshot | null, req: PickR
     }
   }
   holdBack(policy, press, rows, blocked, notes);
-  const governed = govern(policy, req.activity, req.depth, rows.map(r => r.model), req.named, usage, now);
+  const governed = govern(policy, req.activity, req.depth, rows.map(r => r.model), req.named, usage, now, req.proseSwitched ?? false);
   for (const b of governed.blocks) { const at = rows.findIndex(r => r.model === b.model); if (at >= 0) { rows.splice(at, 1); blocked.push(b); } }
   notes.push(...governed.notes);
   const { factors, scarcity } = usageFactors(policy, press, rows.map(r => r.model));
@@ -56,7 +58,7 @@ export function rank(policy: PolicyFile, usage: UsageSnapshot | null, req: PickR
     return { model: r.model, score: Math.round(fit * weight * factor * tilt * 1000) / 1000, fit, level: r.level, weight, usage: factor, tilt, why: press[r.provider]?.why ?? '' };
   }).sort((a, b) => b.score - a.score);
   const pick = ranking[0]?.model ?? null;
-  return { pick, ranking, blocked, scarcity, unreviewed: policy.unreviewed, notes, depth: governed.depth, reason: reasonLine(ranking[0], ranking[1], governed, req.activity), seats: seatsFor(policy, ranking, pick, req.activity, now) };
+  return { pick, ranking, blocked, scarcity, unreviewed: policy.unreviewed, notes, depth: governed.depth, reason: reasonLine(ranking[0], ranking[1], governed, req.activity), seats: seatsFor(policy, ranking, pick, req.activity, now), proseSwitch: governed.proseSwitch };
 }
 
 /**

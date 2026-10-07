@@ -226,6 +226,10 @@ To set the balance by hand, put the object in `config.json` under `policy`, with
 | `tilt.everyday.light` | number above 0 | The score multiplier for a light route on everyday work. |
 | `prose.models` | list of routes | The routes that write the best prose. They get prose.tilt on draft_prose at any depth. |
 | `prose.tilt` | number above 0 | The multiplier a prose route gets on draft_prose in place of the depth tilt. |
+| `prose.pace.enabled` | true or false | Turns the prose pace switch on or off. While it is on and Claude runs ahead of its pace, draft_prose moves off the Claude routes in prose.models. |
+| `prose.pace.ahead` | points | How many points the stricter Claude window must run ahead of its pace marker, with nothing used, before draft_prose moves off Claude. The lead needed shrinks as usage climbs. |
+| `prose.pace.aheadAtReserve` | points | The lead that moves draft_prose off Claude once a window reaches claude.reserve. Between no usage and the reserve, the lead needed falls in a straight line from prose.pace.ahead to this value. |
+| `prose.pace.returnAt` | points | The lead at or below which draft_prose returns to Claude. Zero means Claude is back on its pace marker. |
 | `claude.provider` | provider id | The provider the Claude controller steers. It reads that provider's session and weekly windows. |
 | `claude.band` | points | How many points of usage ahead of or behind the share of the window that has passed still count as on pace. |
 | `claude.reserve` | percent | A window at or above this moves optional work off Claude while another route can take it. |

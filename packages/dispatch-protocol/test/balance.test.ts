@@ -151,8 +151,8 @@ describe('the Claude controller', () => {
     expect(tiltOf(one, 'claude/live')).toBe(0.85);
   });
 
-  it('leaves Opus for prose alone when Claude runs hot', () => {
-    const r = rank(policy(), claudeUsage([track('weekly', 60, 0.5)]), { activity: 'draft_prose', dataTier: 'internal' }, now);
+  it('leaves Opus for prose alone when Claude runs hot but not far enough to move prose', () => {
+    const r = rank(policy(), claudeUsage([track('weekly', 56, 0.5)]), { activity: 'draft_prose', dataTier: 'internal' }, now);
     expect(tiltOf(r, 'claude/live')).toBe(1.3);
   });
 
