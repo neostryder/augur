@@ -29,7 +29,7 @@ Reading a provider's usage and running its models are separate. A provider added
 
 ### A provider of a standard shape
 
-Many APIs copy the OpenAI chat format or the Anthropic messages format. For those, `augur provider add` takes a base URL, a model and a key and sets up the rest, so you don't have to edit `routes.json` and write a custom definition by hand.
+Many APIs copy the OpenAI chat format or the Anthropic messages format. For those, the Add provider button on the Routes page and the `augur provider add` command each take a base URL, a model and a key and set up the rest, so you don't have to edit `routes.json` and write a custom definition by hand. The two run the same checks and make the same changes, and the command is described first below.
 
 ```bash
 augur provider add openai gpt --model gpt-5
@@ -47,9 +47,11 @@ The command runs every check before it writes anything, and with `--dry-run` it 
 
 If the model is already in your rules, it is not added again, and the route uses the name the rules already give it. A provider id that belongs to a built-in provider can't be given a second balance reading.
 
+On the Routes page, Add provider sits beside Add route and opens a list of services next to a short form. OpenAI, OpenRouter and Anthropic need a route name, a model id and an API key, TypeSafe (Jev) needs only the key, and the two Other entries also ask for a provider id and a base URL. More options adds the model's name in the rules, a reply limit, and a balance address and path. The Plan table under the form updates as you type and lists the route, model, key and balance that will be added, and Show the route entry opens the entry as it will look in `routes.json`. A key left empty can be saved later on the Routes page or with `augur key set <route>`. The terminal app has the same form on its Routes screen, with the plan printed above its Add provider button.
+
 ## Adding a route
 
-A route joins a model to the program or API that runs it. The Routes page has an Add route form, and Test route sends one word through the route to show a bad path or a missing key. Routes are stored in `dispatch/routes.json`:
+A route joins a model to the program or API that runs it. The Routes page has an Add route form, and Test route sends one word through the route to show a bad path or a missing key. For a new API in the OpenAI or Anthropic format, Add provider beside it sets up the route, the model and the key together, as described in [A provider of a standard shape](#a-provider-of-a-standard-shape). Routes are stored in `dispatch/routes.json`:
 
 ```json
 {

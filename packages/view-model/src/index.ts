@@ -9,4 +9,5 @@ export * from './dial-back.js';
 export * from './dispatch.js';
 export * from './routes-model.js';
 export * from './provider-template.js';
+export * from './provider-form.js';
 export * from './status.js';

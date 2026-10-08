@@ -12,6 +12,7 @@ import { inset, tabs, type Key, type Rect, type Screen } from '@augur/terminal';
 import {
   APPROVAL_LEVELS, APPROVAL_TEXT, CLASSIFIER_TEXT, DISPATCH_TEXT, JOB_OUTPUT_LABELS, MODE_TEXT, STATE_LABELS, TOOL_LABELS, ago, checkDraft, draftOf, duration, emptyDraft, isBad, isLive,
   parseRoutesText, writeRoute, type RouteDraft, type RoutesFile,
+  PROVIDER_CHOICES, PROVIDER_FORM_TEXT, applyProvider, emptyProviderForm, planOfForm, planRows, providerFields, routeEntryText, type ProviderFormState,
 } from '@augur/view-model';
 import { Form, type Row } from '../form.js';
 import type { Ctx, Hint, Page } from '../page.js';
@@ -77,7 +78,7 @@ export const DISPATCH_TUI_TEXT = {
 const ROUTE_NAME = /^[a-z][a-z0-9_-]*$/;
 const SETTLED = ['completed', 'failed', 'artifact_validation_failed', 'cancelled', 'killed', 'lost'];
 type Sub = 'jobs' | 'routes' | 'service';
-type FormKey = 'jobs' | 'job' | 'routes' | 'route' | 'service';
+type FormKey = 'jobs' | 'job' | 'routes' | 'route' | 'provider' | 'service';
 
 /** The last lines of a job's output, so a long log does not push the rest of the job's page out of reach. */
 export function tail(text: string, lines = 40): string[] {
@@ -88,7 +89,7 @@ export function tail(text: string, lines = 40): string[] {
 export class DispatchPage implements Page {
   name = 'Dispatch';
   sub: Sub = 'jobs';
-  readonly forms: Record<FormKey, Form> = { jobs: new Form(), job: new Form(), routes: new Form(), route: new Form(), service: new Form() };
+  readonly forms: Record<FormKey, Form> = { jobs: new Form(), job: new Form(), routes: new Form(), route: new Form(), provider: new Form(), service: new Form() };
 
   jobs: {
     list: JobRecord[] | null; accounted: Record<string, Accounted>; sel: string | null; error: string; off: boolean;
@@ -98,7 +99,9 @@ export class DispatchPage implements Page {
   routes: {
     file: RoutesFile | null; error: string; health: Record<string, string | null> | null; sel: string | null; draft: RouteDraft | null; formError: string; note: string;
     confirmDelete: boolean; testing: boolean; testNote: string; keyStored: boolean | null; keyNote: string;
-  } = { file: null, error: '', health: null, sel: null, draft: null, formError: '', note: '', confirmDelete: false, testing: false, testNote: '', keyStored: null, keyNote: '' };
+    /** The Add provider form while it is open. */
+    add: ProviderFormState | null; addError: string; adding: boolean;
+  } = { file: null, error: '', health: null, sel: null, draft: null, formError: '', note: '', confirmDelete: false, testing: false, testNote: '', keyStored: null, keyNote: '', add: null, addError: '', adding: false };
 
   service: { pid: number | null; lines: ConfigLine[] | null; note: string; error: string; busy: boolean } = { pid: null, lines: null, note: '', error: '', busy: false };
 
@@ -116,7 +119,7 @@ export class DispatchPage implements Page {
 
   private get formKey(): FormKey {
     if (this.sub === 'jobs') return this.jobs.sel ? 'job' : 'jobs';
-    if (this.sub === 'routes') return this.routes.sel ? 'route' : 'routes';
+    if (this.sub === 'routes') return this.routes.add ? 'provider' : this.routes.sel ? 'route' : 'routes';
     return 'service';
   }
 
@@ -141,6 +144,7 @@ export class DispatchPage implements Page {
     if (key.label === '[' || key.label === ']') { this.go(['jobs', 'routes', 'service'][(['jobs', 'routes', 'service'].indexOf(this.sub) + (key.label === ']' ? 1 : 2)) % 3] as Sub, ctx); return true; }
     if (key.label === 'escape') {
       if (this.sub === 'jobs' && this.jobs.sel) { this.jobs.sel = null; this.jobs.detail = null; return true; }
+      if (this.sub === 'routes' && this.routes.add) { this.routes.add = null; return true; }
       if (this.sub === 'routes' && this.routes.sel) { this.closeRoute(); return true; }
     }
     return this.form.key(key, this.rows(ctx));
@@ -149,7 +153,7 @@ export class DispatchPage implements Page {
   hints(ctx: Ctx): Hint[] {
     const form = this.form.hints(this.rows(ctx));
     if (this.form.typing()) return form;
-    const back: Hint[] = this.formKey === 'job' || this.formKey === 'route' ? [['Esc', DISPATCH_TUI_TEXT.back]] : [];
+    const back: Hint[] = this.formKey === 'job' || this.formKey === 'route' || this.formKey === 'provider' ? [['Esc', DISPATCH_TUI_TEXT.back]] : [];
     return [...form, ...back, ['[ ]', DISPATCH_TUI_TEXT.tabHint]];
   }
 
@@ -163,6 +167,7 @@ export class DispatchPage implements Page {
       case 'job': return this.jobRows(ctx);
       case 'routes': return this.routeListRows(ctx);
       case 'route': return this.routeRows(ctx);
+      case 'provider': return this.providerRows(ctx);
       case 'service': return this.serviceRows(ctx);
       default: return this.jobListRows(ctx);
     }
@@ -291,7 +296,10 @@ export class DispatchPage implements Page {
     if (page.error) { rows.push({ kind: 'note', text: `${DISPATCH_TEXT.fileBad} ${page.error}`, style: 'crit' }); return rows; }
     if (page.file?.skipped.length) rows.push({ kind: 'note', text: `${DISPATCH_TEXT.skipped(page.file.skipped.length)}: ${page.file.skipped.join(', ')}. ${DISPATCH_TEXT.skippedWhy}`, style: 'warn' });
     if (page.note) rows.push({ kind: 'note', text: page.note, style: 'good' });
-    rows.push({ kind: 'action', id: 'route-new', label: '', button: DISPATCH_TUI_TEXT.add, run: () => this.openRoute(ctx, '+') });
+    rows.push({ kind: 'buttons', id: 'route-new', label: '', buttons: [
+      { button: PROVIDER_FORM_TEXT.add, run: () => this.openProvider() },
+      { button: DISPATCH_TUI_TEXT.add, run: () => this.openRoute(ctx, '+') },
+    ] });
     if (!page.file) { rows.push({ kind: 'note', text: DISPATCH_TUI_TEXT.loading }); return rows; }
     if (!page.file.routes.length) rows.push({ kind: 'note', text: DISPATCH_TEXT.routesEmpty });
     else if (page.health === null) rows.push({ kind: 'note', text: DISPATCH_TUI_TEXT.noHealth });
@@ -312,6 +320,86 @@ export class DispatchPage implements Page {
     Object.assign(this.routes, { sel: name, draft: r ? draftOf(r) : emptyDraft(), formError: '', note: '', confirmDelete: false, testNote: '', keyStored: null, keyNote: '' });
     this.forms.route = new Form();
     void this.checkKey(ctx);
+  }
+
+  // ---------------------------------------------------------------- add provider
+
+  private openProvider(): void {
+    Object.assign(this.routes, { add: emptyProviderForm(), addError: '', note: '', adding: false });
+    this.forms.provider = new Form();
+  }
+
+  private providerRows(ctx: Ctx): Row[] {
+    const page = this.routes, f = page.add, T = PROVIDER_FORM_TEXT;
+    if (!f) return [];
+    const fields = providerFields(f.kind);
+    const existing = new Set([...(page.file?.routes.map((r) => r.name) ?? []), ...(page.file?.skipped ?? [])]);
+    const rows: Row[] = [{ kind: 'heading', text: T.title }, { kind: 'note', text: T.sub }];
+    rows.push({ kind: 'choice', id: 'ap-kind', label: T.service, value: f.kind, options: PROVIDER_CHOICES.map((c) => [c.id, `${c.label} (${c.sub})`] as const),
+      set: (v) => { page.add = emptyProviderForm(v); page.addError = ''; } });
+    const text = (field: keyof typeof T.fields, key: keyof Omit<ProviderFormState, 'kind' | 'more'>): Extract<Row, { kind: 'text' }> => ({ kind: 'text', id: `ap-${field}`, label: T.fields[field].label, desc: T.fields[field].help,
+      value: f[key], placeholder: T.fields[field].placeholder, save: (v) => { f[key] = v.trim(); page.addError = ''; } });
+    if (fields.provider) rows.push(text('provider', 'provider'));
+    if (fields.baseUrl) rows.push(text('baseUrl', 'baseUrl'));
+    if (fields.route) rows.push(text('route', 'route'));
+    if (fields.model) rows.push(text('model', 'model'));
+    rows.push({ kind: 'text', id: 'ap-key', label: T.fields.key.label, desc: T.fields.key.help, value: '', mask: true, placeholder: T.fields.key.placeholder, ...(f.key ? { badge: 'Entered' } : {}),
+      save: (v) => { f.key = v.trim(); page.addError = ''; } });
+    rows.push({ kind: 'toggle', id: 'ap-more', label: T.more, on: f.more, set: (on) => { f.more = on; } });
+    if (f.more) {
+      if (!fields.provider && fields.route) rows.push({ ...text('provider', 'provider'), indent: true });
+      if (!fields.baseUrl) rows.push({ ...text('baseUrl', 'baseUrl'), indent: true });
+      if (fields.model) {
+        rows.push({ ...text('label', 'label'), indent: true }, { ...text('maxTokens', 'maxTokens'), indent: true });
+        if (!PROVIDER_CHOICES.find((c) => c.id === f.kind && c.group === 'preset' && c.sub.includes('balance built in'))) rows.push({ ...text('balanceUrl', 'balanceUrl'), indent: true }, { ...text('balancePath', 'balancePath'), indent: true });
+      }
+    }
+    rows.push({ kind: 'heading', text: T.plan });
+    const got = planOfForm(f, existing);
+    if ('problems' in got) {
+      if (got.fresh || (!fields.route && !got.problems.length)) rows.push({ kind: 'note', text: fields.route ? T.fresh : T.freshJev, style: 'muted' });
+      else for (const p of got.problems) rows.push({ kind: 'note', text: p, style: 'crit' });
+    } else {
+      for (const r of planRows(got.plan)) {
+        rows.push({ kind: 'note', text: `${r.label}: ${r.text}` });
+        if (r.note) rows.push({ kind: 'note', text: r.note, style: 'muted', indent: true });
+      }
+      const entry = routeEntryText(got.plan);
+      if (entry) for (const line of entry.split('\n')) rows.push({ kind: 'note', text: line, style: 'muted', indent: true });
+    }
+    if (page.addError) rows.push({ kind: 'note', text: page.addError, style: 'crit' });
+    rows.push({ kind: 'buttons', id: 'ap-actions', label: '', buttons: [
+      ...('plan' in got ? [{ button: page.adding ? T.adding : T.add, run: () => this.applyProvider(ctx, f, got.plan) }] : []),
+      { button: T.cancel, run: () => { page.add = null; } },
+    ] });
+    return rows;
+  }
+
+  private async applyProvider(ctx: Ctx, f: ProviderFormState, plan: Parameters<typeof applyProvider>[0]): Promise<void> {
+    const page = this.routes;
+    if (page.adding) return;
+    page.adding = true; page.addError = '';
+    ctx.redraw();
+    try {
+      const done = await applyProvider(plan, f.key, {
+        addProvider: (input) => ctx.link.run('addProvider', input),
+        setSecret: async (name, value) => { await ctx.link.run('setSecret', name, value); },
+        setProviderKey: async (provider, field, value) => { await ctx.link.run('setProviderKey', provider, field, value); },
+        readRoutes: async () => (existsSync(this.routesPath) ? readFileSync(this.routesPath, 'utf8') : null),
+        writeRoutes: async (text) => {
+          mkdirSync(dirname(this.routesPath), { recursive: true });
+          const tmp = `${this.routesPath}.${process.pid}.tmp`;
+          writeFileSync(tmp, text);
+          renameSync(tmp, this.routesPath);
+        },
+      });
+      f.key = '';
+      page.add = null;
+      page.note = PROVIDER_FORM_TEXT.done(done.done, done.next);
+      await this.refresh(ctx);
+    } catch (e) { page.addError = PROVIDER_FORM_TEXT.failed((e as Error).message); }
+    page.adding = false;
+    ctx.redraw();
   }
 
   /** Asks the key store whether the route being edited has a key. Only a yes or no comes back. */

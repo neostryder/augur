@@ -351,3 +351,21 @@ input[type=color] { width: 26px; height: 22px; border: 0; padding: 0; background
 .btn.danger { border-color: var(--crit, #c0392b); }
 .rtproblem { padding: 0 8px 6px; }
 .ptr { position: fixed; top: 0; left: 50%; transform: translate(-50%, 0); opacity: 0; z-index: 50; pointer-events: none; padding: 6px 14px; border-radius: 999px; background: var(--surface); color: var(--ink-2); border: 1px solid var(--line); font-size: calc(12px * var(--fs)); transition: opacity 0.15s; margin-top: -40px; }
+/* Add provider */
+.rtrow input[type=password] { width: auto; flex: 0 1 220px; max-width: 55%; }
+.ap-mark { width: 28px; height: 28px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); display: grid; place-items: center; font-weight: 600; font-size: calc(12px * var(--fs)); color: var(--ink-2); flex: none; }
+.jrow.on .ap-mark { border-color: var(--accent); color: var(--ink); }
+.ap-gap { height: 8px; }
+.ap-list-label { margin-top: 0; }
+.ap-more { margin-top: 8px; }
+.ap-planbox { animation: apin 0.18s ease-out; }
+@keyframes apin { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+.ap-plan { width: 100%; border-collapse: collapse; font-size: calc(12px * var(--fs)); }
+.ap-plan th { font-weight: 500; color: var(--ink-2); text-align: left; padding: 6px 8px 6px 0; width: 70px; vertical-align: top; }
+.ap-plan td { padding: 6px 0; vertical-align: top; overflow-wrap: anywhere; }
+.ap-plan tr + tr th, .ap-plan tr + tr td { border-top: 1px solid var(--line); }
+.ap-plan small { display: block; color: var(--muted); font-size: calc(11.5px * var(--fs)); }
+.ap-plan small.ap-warn { color: var(--ink-2); }
+.ap-entry { margin-top: 8px; font-size: calc(12px * var(--fs)); }
+.ap-entry summary { cursor: pointer; color: var(--ink-2); }
+.ap-entry pre { margin: 8px 0 0; padding: 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--surface); font: calc(12px * var(--fs))/1.4 ui-monospace, "Cascadia Code", Consolas, monospace; overflow-x: auto; }

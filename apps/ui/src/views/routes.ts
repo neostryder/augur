@@ -3,6 +3,7 @@ import type { OptionSpec } from '@augur/dispatch-protocol';
 import type { RouteDraft, RoutesFile } from '@augur/view-model';
 import { ICON, esc } from '../util';
 import { dispatchTabs } from './jobs';
+import { renderAddProvider, type AddProviderModel } from './add-provider';
 
 export interface RoutesModel {
   /** Null until routes.json has been read. */
@@ -30,6 +31,10 @@ export interface RoutesModel {
   keyStored: boolean | null;
   /** What the last save or removal of a key said. The key itself is never shown or kept. */
   keyNote: string;
+  /** The Add provider page while it is open. */
+  add: AddProviderModel | null;
+  /** Whether this install can add a provider: it needs the service engine and the home folder. */
+  canAdd: boolean;
 }
 
 const optionField = (spec: OptionSpec, value: string): string => {
@@ -90,6 +95,7 @@ function row(m: RoutesModel, r: RoutesFile['routes'][number]): string {
 }
 
 export function renderRoutes(m: RoutesModel): string {
+  if (m.add) return renderAddProvider(m.add);
   const list = !m.file ? '<div class="rempty big">Reading routes.json.</div>'
     : m.file.routes.length ? m.file.routes.map((r) => row(m, r)).join('') : '<div class="rempty big">No routes yet. A route joins a model to the program that runs it.</div>';
   const skipped = m.file?.skipped.length ? `<div class="card rbanner"><span class="grow"><b>The service skips ${m.file.skipped.length === 1 ? 'one entry' : `${m.file.skipped.length} entries`}:</b> ${m.file.skipped.map((n) => `<code>${esc(n)}</code>`).join(', ')}. A route needs a lowercase name, a model and an adapter. Saving here keeps them as they are.</span></div>` : '';
@@ -97,7 +103,7 @@ export function renderRoutes(m: RoutesModel): string {
   return `<div class="rules-page jobs-page ${m.sel ? 'has-sel' : ''}"><header class="top">
     <button class="icon" data-action="${m.sel ? 'route-close' : 'back'}" title="${m.sel ? 'Back to the routes' : 'Back to usage'}" aria-label="${m.sel ? 'Back to the routes' : 'Back to usage'}">${ICON.back}</button>
     <div><h1>Routes</h1><div class="sub">How agents reach each model</div></div><span class="grow"></span>
-    <button class="btn small" data-action="route-new">Add route</button></header>
+    ${m.canAdd ? '<button class="btn small" data-action="provider-new">Add provider</button>' : ''}<button class="btn small" data-action="route-new">Add route</button></header>
     ${m.sel ? '' : dispatchTabs('routes')}
     ${m.error ? `<div class="card rbanner bad"><span class="grow"><b>routes.json cannot be used.</b> ${esc(m.error)}</span></div>` : ''}${skipped}${m.note ? `<div class="rnote" role="status">${esc(m.note)}</div>` : ''}${health}
     <div class="rules ${m.sel ? 'has-sel' : ''}"><div class="rlist jlist">${m.error ? '' : list}</div><div class="rdetail">${m.error ? '' : form(m)}</div></div></div>`;

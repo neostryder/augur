@@ -8,10 +8,11 @@ import { CUSTOM_EXAMPLE, PUSH_TEXT, renderSettings, type SettingsModel } from '.
 import { renderRules, type RulesFilter, type RulesModel } from './views/rules';
 import { renderJobs, type JobsModel } from './views/jobs';
 import { renderRoutes, type RoutesModel } from './views/routes';
+import { planHtml } from './views/add-provider';
 import { renderBalance, type BalanceModel } from './views/balance';
 import { renderService, type ConfigLine, type ServiceModel } from './views/service';
 import { renderStrip } from './views/strip';
-import { ROUTES_PATH, checkDraft, draftOf, emptyDraft, parseRoutesText, writeRoute } from '@augur/view-model';
+import { PROVIDER_FORM_TEXT, ROUTES_PATH, applyProvider, checkDraft, draftOf, emptyDraft, emptyProviderForm, parseRoutesText, planOfForm, writeRoute, type ProviderFormState } from '@augur/view-model';
 import { routeSecretName } from '@augur/dispatch-protocol';
 import type { Accounted, JobRecord } from '@augur/dispatch-protocol';
 import { renderTrayIcon } from './trayicon';
@@ -75,7 +76,7 @@ export class App {
   private stances: Record<string, string> = {};
   private balancePage: BalanceModel = { report: null, error: '' };
   private servicePage: ServiceModel = { lines: null, service: null, runJobs: false, agentApproval: 'risky', note: '', error: '', busy: false, unavailable: '' };
-  private routesPage: RoutesModel = { file: null, error: '', health: null, sel: null, draft: null, formError: '', note: '', models: [], confirmDelete: false, busy: false, canTest: false, testing: false, testNote: '', keyStored: null, keyNote: '' };
+  private routesPage: RoutesModel = { file: null, error: '', health: null, sel: null, draft: null, formError: '', note: '', models: [], confirmDelete: false, busy: false, canTest: false, testing: false, testNote: '', keyStored: null, keyNote: '', add: null, canAdd: false };
   private timer: ReturnType<typeof setInterval> | undefined;
   private lastRun = 0;
   private sortables: Sortable[] = [];
@@ -671,6 +672,7 @@ export class App {
     this.root.addEventListener('input', (e) => {
       const t = e.target as HTMLElement;
       if (t.matches('[data-custom]')) this.customDraft = (t as HTMLTextAreaElement).value;
+      if (t.matches('[data-ap]')) this.onAddProviderField(t as HTMLInputElement);
       if (t.matches('[data-rules-query]')) { this.rules.query = (t as HTMLInputElement).value; void this.render(); }
       if (t.matches('[data-color]')) {
         const pid = t.dataset.color!;
@@ -689,7 +691,7 @@ export class App {
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
         if (this.view === 'service' || this.view === 'balance') { this.view = 'dashboard'; void this.render(); }
-        else if (this.view === 'routes') { if (this.routesPage.sel) this.closeRoute(); else this.view = 'dashboard'; void this.render(); }
+        else if (this.view === 'routes') { if (this.routesPage.add) this.closeAddProvider(); else if (this.routesPage.sel) this.closeRoute(); else this.view = 'dashboard'; void this.render(); }
         else if (this.view === 'jobs') { if (this.jobs.sel) this.closeJob(); else { this.leaveJobs(); this.view = 'dashboard'; } void this.render(); }
         else if (this.view === 'rules') { if (this.rules.showHistory) this.rules.showHistory = false; else if (this.rules.sel) this.rules.sel = null; else this.view = 'dashboard'; void this.render(); }
         else if (this.view === 'settings' && !this.firstRun) { this.view = 'dashboard'; void this.render(); } else void this.shell.hidePopup?.();
@@ -903,6 +905,51 @@ export class App {
     await this.render();
   }
 
+  private openAddProvider(): void {
+    const page = this.routesPage;
+    this.closeRoute();
+    page.note = '';
+    page.add = { form: emptyProviderForm(), existing: new Set([...(page.file?.routes.map((r) => r.name) ?? []), ...(page.file?.skipped ?? [])]), picked: false, busy: false, error: '' };
+  }
+
+  private closeAddProvider(): void { this.routesPage.add = null; }
+
+  /** A field of the Add provider form changed. Only the plan is redrawn, so the cursor stays where it was. */
+  private onAddProviderField(t: HTMLInputElement): void {
+    const add = this.routesPage.add, field = t.dataset.ap as keyof Omit<ProviderFormState, 'kind' | 'more'> | undefined;
+    if (!add || !field) return;
+    add.form[field] = field === 'key' ? t.value : t.value.trim();
+    add.error = '';
+    const box = document.getElementById('ap-plan');
+    if (box) box.innerHTML = planHtml(add);
+  }
+
+  private async applyAddProvider(): Promise<void> {
+    const page = this.routesPage, add = page.add, engine = this.engine, write = this.shell.host.writeHomeFileAtomic, read = this.shell.host.readHomeFile;
+    if (!add || !engine || !write || !read || add.busy) return;
+    const got = planOfForm(add.form, add.existing);
+    if (!('plan' in got)) return;
+    add.busy = true; add.error = '';
+    await this.render();
+    try {
+      const done = await applyProvider(got.plan, add.form.key, {
+        addProvider: (input) => engine.addProvider(input),
+        setSecret: (name, value) => engine.setSecret(name, value),
+        setProviderKey: (provider, field, value) => engine.setProviderKey(provider, field, value),
+        readRoutes: async () => read(ROUTES_PATH),
+        writeRoutes: (text) => write(ROUTES_PATH, text),
+      });
+      add.form.key = '';
+      this.closeAddProvider();
+      page.note = PROVIDER_FORM_TEXT.done(done.done, done.next);
+      await this.loadRoutes();
+    } catch (e) {
+      add.busy = false;
+      add.error = PROVIDER_FORM_TEXT.failed(e instanceof Error ? e.message : String(e));
+      await this.render();
+    }
+  }
+
   private openRoute(name: string): void {
     const r = this.routesPage.file?.routes.find((x) => x.name === name);
     if (!r) return;
@@ -942,6 +989,7 @@ export class App {
     const read = this.shell.host.readHomeFile;
     const page = this.routesPage;
     page.canTest = this.shell.dispatch !== undefined;
+    page.canAdd = this.engine !== undefined && read !== undefined && this.shell.host.writeHomeFileAtomic !== undefined;
     page.models = this.knownModels();
     try {
       const parsed = parseRoutesText(read ? await read(ROUTES_PATH) : null);
@@ -1034,11 +1082,12 @@ export class App {
   }
 
   private async onClick(e: MouseEvent): Promise<void> {
-    const t = (e.target as HTMLElement).closest<HTMLElement>('[data-action],[data-open],[data-collapse],[data-meter],[data-secret-save],[data-secret-del],[data-set],[data-open-provider],[data-color-reset],[data-signin],[data-rsel],[data-rprov],[data-rfilter],[data-status],[data-bulk],[data-undo],[data-add-model],[data-pause-clear],[data-list-now],[data-job],[data-route],[data-dial]');
+    const t = (e.target as HTMLElement).closest<HTMLElement>('[data-action],[data-open],[data-collapse],[data-meter],[data-secret-save],[data-secret-del],[data-set],[data-open-provider],[data-color-reset],[data-signin],[data-rsel],[data-rprov],[data-rfilter],[data-status],[data-bulk],[data-undo],[data-add-model],[data-pause-clear],[data-list-now],[data-job],[data-route],[data-dial],[data-provider-kind]');
     if (!t) return;
     if (this.view === 'rules' && await this.onRulesClick(t)) return;
     if (t.dataset.job) { await this.openJob(t.dataset.job); return; }
     if (t.dataset.route) { this.openRoute(t.dataset.route); await this.render(); return; }
+    if (t.dataset.providerKind && this.routesPage.add) { const add = this.routesPage.add; add.form = { ...emptyProviderForm(t.dataset.providerKind), key: '' }; add.picked = true; add.error = ''; await this.render(); return; }
     if (t.dataset.open) { e.preventDefault(); await this.shell.openUrl(t.dataset.open); return; }
     if (t.dataset.signin) { await this.shell.openSignIn?.(t.dataset.signin); return; }
     if (t.dataset.collapse) {
@@ -1105,6 +1154,11 @@ export class App {
         break;
       }
       case 'service-restart': await this.restartService(); break;
+      case 'provider-new': this.openAddProvider(); await this.render(); break;
+      case 'provider-close': this.closeAddProvider(); await this.render(); break;
+      case 'provider-list': if (this.routesPage.add) this.routesPage.add.picked = false; await this.render(); break;
+      case 'provider-more': if (this.routesPage.add) { this.routesPage.add.form.more = !this.routesPage.add.form.more; await this.render(); } break;
+      case 'provider-apply': await this.applyAddProvider(); break;
       case 'route-new': this.routesPage.sel = '+'; this.routesPage.draft = emptyDraft(); this.routesPage.formError = ''; this.routesPage.note = ''; this.routesPage.confirmDelete = false; await this.render(); break;
       case 'route-key-save': await this.saveRouteKey(); break;
       case 'route-key-clear': await this.clearRouteKey(); break;
@@ -1328,7 +1382,7 @@ export class App {
   /** Back to the main usage view, closing whatever page or detail was open. Every way of opening the panel starts here. */
   private goHome(): void {
     if (this.view === 'jobs') { if (this.jobs.sel) this.closeJob(); this.leaveJobs(); }
-    if (this.view === 'routes' && this.routesPage.sel) this.closeRoute();
+    if (this.view === 'routes') { this.closeAddProvider(); if (this.routesPage.sel) this.closeRoute(); }
     this.rules.showHistory = false; this.rules.sel = null;
     this.view = 'dashboard';
   }

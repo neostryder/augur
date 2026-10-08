@@ -14,7 +14,7 @@ const job = (over: Partial<JobRecord> = {}): JobRecord => ({
   caller: { kind: 'cli', label: 'claude' }, named: false, harnessVersion: null, usage: null, workspace: null, patch: null, ...over,
 });
 
-function dispatch(answers: Record<string, unknown> = {}, runJobs = true) {
+function dispatch(answers: Record<string, unknown> = {}, runJobs = true, results: Record<string, unknown> = {}) {
   const home = mkdtempSync(join(tmpdir(), 'augur-tui-'));
   const env = { AUGURD_DATA: join(home, 'data'), AUGUR_HOME: join(home, 'home') } as NodeJS.ProcessEnv;
   const page = new DispatchPage({ env, wait: async () => {}, restart: async () => 'Restarted.' });
@@ -22,7 +22,7 @@ function dispatch(answers: Record<string, unknown> = {}, runJobs = true) {
   list[3] = page;
   const s = state();
   s.config.dispatch = { runJobs };
-  const t = setup(s, { pages: list, answers });
+  const t = setup(s, { pages: list, answers, results });
   t.app.active = 3;
   const ctx = () => t.app.ctx()!;
   const load = async () => { await page.refresh(ctx()); };
@@ -103,6 +103,7 @@ describe('dispatch page: routes', () => {
     t.page.sub = 'routes';
     await t.load();
     t.page.form.focus = 'route-new';
+    t.page.form.cell = 1;
     await t.app.key(k('enter'));
     const d = t.page.routes.draft!;
     d.name = 'sol'; d.model = 'not a model';
@@ -140,6 +141,70 @@ describe('dispatch page: routes', () => {
     await (t.page as unknown as { testRoute(c: unknown, n: string): Promise<void> }).testRoute(t.ctx(), 'luna');
     expect(t.page.routes.testNote).toBe('luna works. The model answered: ok');
     expect(t.page.routes.testing).toBe(false);
+  });
+});
+
+describe('dispatch page: add provider', () => {
+  const open = async (t: ReturnType<typeof dispatch>) => {
+    t.page.sub = 'routes';
+    await t.load();
+    t.page.form.focus = 'route-new';
+    t.page.form.cell = 0;
+    await t.app.key(k('enter'));
+  };
+  const added = { addProvider: { labels: { 'gpt-5': 'gpt-5' }, added: ['gpt-5'] } };
+  const TAKEN = '{"routes":{"luna":{"model":"codex/luna","adapter":"codex-exec"}}}';
+
+  it('opens from the Routes screen, shows the plan as the fields are filled, and leaves with Esc', async () => {
+    const t = dispatch({ routes: [] });
+    await open(t);
+    expect(t.page.routes.add).not.toBeNull();
+    let text = t.draw(110, 40);
+    expect(text).toContain('Add provider');
+    expect(text).toContain('Fill in the route name and the model');
+    const f = t.page.routes.add!;
+    f.route = 'gpt'; f.model = 'gpt-5';
+    text = t.draw(110, 50);
+    expect(text).toContain('Route: gpt, a chat route to https://api.openai.com/v1');
+    expect(text).toContain('Model: gpt-5 under OpenAI');
+    await t.app.key(k('escape'));
+    expect(t.page.routes.add).toBeNull();
+  });
+
+  it('adds the provider: rules entry, route file and key, then reports what to do next', async () => {
+    const t = dispatch({ routes: [] }, true, added);
+    t.writeRoutes('{"routes":{}}');
+    await open(t);
+    const f = t.page.routes.add!;
+    f.route = 'gpt'; f.model = 'gpt-5'; f.key = 'sk-test';
+    t.page.forms.provider.focus = 'ap-actions';
+    await t.app.key(k('enter'));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(JSON.parse(readFileSync(t.routesPath, 'utf8')).routes.gpt).toMatchObject({ model: 'openai/gpt-5', adapter: 'openai-api' });
+    expect(t.calls.map((c) => c[0])).toEqual(expect.arrayContaining(['addProvider', 'setSecret']));
+    expect(t.calls.find((c) => c[0] === 'setSecret')![1]).toEqual(['dispatch.gpt', 'sk-test']);
+    expect(t.page.routes.add).toBeNull();
+    expect(t.page.routes.note).toContain('Added the route gpt, openai/gpt-5 in the rules, a key for the gpt route.');
+    expect(t.page.routes.note).toContain('Open Model rules and confirm openai/gpt-5');
+  });
+
+  it('shows the problem and offers no Add button until the plan is valid', async () => {
+    const t = dispatch({ routes: [] });
+    await open(t);
+    const f = t.page.routes.add!;
+    f.route = 'gpt';
+    const text = t.draw(110, 50);
+    expect(text).toContain('--model needs the model id');
+    expect(text).not.toMatch(/\[ ?Add provider ?\]/);
+  });
+
+  it('refuses a route name that is already in routes.json', async () => {
+    const t = dispatch({ routes: [] });
+    t.writeRoutes(TAKEN);
+    await open(t);
+    const f = t.page.routes.add!;
+    f.route = 'luna'; f.model = 'gpt-5';
+    expect(t.draw(110, 50)).toContain('A route named luna already exists');
   });
 });
 

@@ -6,6 +6,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Added
 
+- [Visible] [UI] [Providers] **The Routes page adds a provider in one form.** Add provider, beside Add route, lists OpenAI, OpenRouter, Anthropic, TypeSafe and any other OpenAI-style or Anthropic-style API, and the plan under the form shows what will be added as you type. It makes the same changes as `augur provider add`, with the same checks: the route, the model waiting in the rules for your confirmation, the key in the key store, and the built-in balance reading for OpenRouter and Jev. The key can be left empty and saved later, and the terminal app has the same form on its Routes screen.
 - [Visible] [Providers] **Prose drafting moves to Copilot while Claude runs hot.** Once Claude gets well ahead of its pace, Augur sends prose writing to Opus 5.5 on Copilot instead, and sends it back when Claude is on pace again. Only prose drafting moves, and a Claude route you ask for by name still runs. If Copilot has reached its $250 cap, prose goes to the next route that can write it, such as ChatGPT on the web, and the pick says why. It never falls back to Sonnet, and it stays on Claude when nothing else can take it. The balance report shows where prose is going, and the switch can be turned off in the balance settings.
 
 ### Changed

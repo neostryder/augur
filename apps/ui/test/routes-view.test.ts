@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { emptyDraft, parseRoutesText } from '@augur/view-model';
+import { emptyDraft, emptyProviderForm, parseRoutesText } from '@augur/view-model';
+import { planHtml } from '../src/views/add-provider';
 import { renderRoutes, type RoutesModel } from '../src/views/routes';
 
 const fileOf = (text: string) => { const p = parseRoutesText(text); if (!p.ok) throw new Error('bad fixture'); return p.file; };
 const model = (over: Partial<RoutesModel> = {}): RoutesModel => ({ file: fileOf(JSON.stringify({ routes: { luna: { model: 'codex/luna', adapter: 'codex-exec' }, Bad: { adapter: 'exec' } } })),
-  error: '', health: null, sel: null, draft: null, formError: '', note: '', models: ['codex/luna', 'codex/sol'], confirmDelete: false, busy: false, canTest: true, testing: false, testNote: '', keyStored: null, keyNote: '', ...over });
+  error: '', health: null, sel: null, draft: null, formError: '', note: '', models: ['codex/luna', 'codex/sol'], confirmDelete: false, busy: false, canTest: true, testing: false, testNote: '', keyStored: null, keyNote: '', add: null, canAdd: true, ...over });
 
 describe('the routes page', () => {
   const apiDraft = (over: Record<string, string> = {}) => ({ ...emptyDraft(), name: 'chat', model: 'openai/gpt', adapter: 'openai-api', options: { baseUrl: 'https://api.example.com/v1', model: 'x', ...over } });
@@ -79,5 +80,54 @@ describe('the routes page', () => {
     expect(renderRoutes(model({ sel: 'luna', draft: saved, canTest: false }))).not.toContain('route-test');
     expect(renderRoutes(model({ sel: 'luna', draft: saved, testing: true }))).toMatch(/route-test[^>]*disabled/);
     expect(renderRoutes(model({ sel: 'luna', draft: saved, testNote: 'luna works. The model answered: ok' }))).toContain('luna works.');
+  });
+});
+
+describe('the Add provider page', () => {
+  const add = (over: Record<string, unknown> = {}, form: Record<string, unknown> = {}) => ({ form: { ...emptyProviderForm('openai'), ...form }, existing: new Set(['luna']), picked: true, busy: false, error: '', ...over });
+
+  it('offers Add provider beside Add route only where it can run', () => {
+    expect(renderRoutes(model())).toContain('data-action="provider-new"');
+    expect(renderRoutes(model({ canAdd: false }))).not.toContain('data-action="provider-new"');
+  });
+
+  it('lists the services with the chosen one pressed, and shows the fields that service needs', () => {
+    const html = renderRoutes(model({ add: add() }));
+    expect(html).toContain('data-provider-kind="openrouter"');
+    expect(html).toContain('<button class="jrow on" data-provider-kind="openai" aria-pressed="true">');
+    expect(html).toContain('id="ap-route"');
+    expect(html).toContain('id="ap-model"');
+    expect(html).not.toContain('id="ap-baseUrl"');
+    expect(/<input type="password"[^>]*>/.exec(html)![0]).not.toContain('value="sk');
+    const other = renderRoutes(model({ add: add({}, { kind: 'openai-style' }) }));
+    expect(other).toContain('id="ap-baseUrl"');
+    expect(other).toContain('id="ap-provider"');
+    const jev = renderRoutes(model({ add: add({}, { kind: 'typesafe' }) }));
+    expect(jev).not.toContain('id="ap-route"');
+    expect(jev).toContain('id="ap-key"');
+  });
+
+  it('keeps the list first on a narrow screen until a service is picked', () => {
+    expect(renderRoutes(model({ add: add({ picked: false }) }))).not.toContain('has-sel');
+    expect(renderRoutes(model({ add: add() }))).toContain('has-sel');
+  });
+
+  it('shows a hint while empty, the problem once typing starts, and the plan with Add enabled when it is valid', () => {
+    expect(planHtml(add())).toContain('Fill in the route name and the model');
+    expect(planHtml(add())).toContain('data-action="provider-apply" disabled');
+    expect(planHtml(add({}, { route: 'gpt' }))).toContain('--model needs the model id');
+    const ok = planHtml(add({}, { route: 'gpt', model: 'gpt-5' }));
+    expect(ok).toContain('gpt, a chat route to https://api.openai.com/v1');
+    expect(ok).toContain('waits for you to confirm its rules');
+    expect(ok).toContain('Show the route entry');
+    expect(ok).not.toContain('provider-apply" disabled');
+    expect(planHtml(add({}, { route: 'luna', model: 'gpt-5' }))).toContain('already exists');
+  });
+
+  it('disables Add while it works and shows what went wrong', () => {
+    const html = planHtml(add({ busy: true, error: 'Could not add the provider. routes.json is not valid JSON.' }, { route: 'gpt', model: 'gpt-5' }));
+    expect(html).toContain('provider-apply" disabled');
+    expect(html).toContain('>Adding<');
+    expect(html).toContain('Could not add the provider.');
   });
 });
