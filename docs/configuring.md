@@ -232,13 +232,20 @@ To set the balance by hand, put the object in `config.json` under `policy`, with
 | `prose.pace.ahead` | points | How many points the stricter Claude window must run ahead of its pace marker, with nothing used, before draft_prose moves off Claude. The lead needed shrinks as usage climbs. |
 | `prose.pace.aheadAtReserve` | points | The lead that moves draft_prose off Claude once a window reaches claude.reserve. Between no usage and the reserve, the lead needed falls in a straight line from prose.pace.ahead to this value. |
 | `prose.pace.returnAt` | points | The lead at or below which draft_prose returns to Claude. Zero means Claude is back on its pace marker. |
-| `claude.provider` | provider id | The provider the Claude controller steers. It reads that provider's session and weekly windows. |
-| `claude.band` | points | How many points of usage ahead of or behind the share of the window that has passed still count as on pace. |
-| `claude.reserve` | percent | A window at or above this moves optional work off Claude while another route can take it. |
-| `claude.hot.strong` | number above 0 | The multiplier for a strong route when Claude runs ahead of pace. |
-| `claude.hot.light` | number above 0 | The multiplier for a light route when Claude runs ahead of pace. |
-| `claude.behind.strong` | number above 0 | The multiplier for a strong route when Claude runs behind pace. |
-| `claude.behind.light` | number above 0 | The multiplier for a light route when Claude runs behind pace. |
+| `claude.provider` | provider id | The older spelling of the pace provider id. The controller steers this provider and reads its session and weekly windows. |
+| `claude.band` | points | The older spelling of pace.claude.band. How many points of usage ahead of or behind the share of the window that has passed still count as on pace. |
+| `claude.reserve` | percent | The older spelling of pace.claude.reserve. A window at or above this moves optional work off Claude while another route can take it. |
+| `claude.hot.strong` | number above 0 | The older spelling of pace.claude.hot.strong. The multiplier for a strong route when Claude runs ahead of pace. |
+| `claude.hot.light` | number above 0 | The older spelling of pace.claude.hot.light. The multiplier for a light route when Claude runs ahead of pace. |
+| `claude.behind.strong` | number above 0 | The older spelling of pace.claude.behind.strong. The multiplier for a strong route when Claude runs behind pace. |
+| `claude.behind.light` | number above 0 | The older spelling of pace.claude.behind.light. The multiplier for a light route when Claude runs behind pace. |
+| `pace.<provider>.reserve` | percent | A window at or above this moves optional work off that provider while another route can take it. |
+| `pace.<provider>.band` | points | How many points of usage ahead of or behind the share of the window that has passed still count as on pace for that provider. |
+| `pace.<provider>.hot.strong` | number above 0 | The multiplier for a strong route when that provider runs ahead of pace. |
+| `pace.<provider>.hot.light` | number above 0 | The multiplier for a light route when that provider runs ahead of pace. |
+| `pace.<provider>.behind.strong` | number above 0 | The multiplier for a strong route when that provider runs behind pace. |
+| `pace.<provider>.behind.light` | number above 0 | The multiplier for a light route when that provider runs behind pace. |
+| `pace.<provider>.boost` | number of 1 or more | The peak multiplier of the unused-allowance boost for that provider, with 1 turning the boost off. |
 | `fallback.providers` | list of provider ids | Providers whose routes are backups. They compete only when no subscription route can take the work. |
 | `fallback.routes.<route>` | list of activities | A single route that is a backup for these activities only. |
 | `fallback.anthropic` | list of routes | Claude models reached through a backup provider. They are allowed once Claude is at its reserve, since a Claude stop halts everything. |

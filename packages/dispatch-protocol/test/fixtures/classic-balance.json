@@ -74,6 +74,21 @@
       "light": 0.85
     }
   },
+  "pace": {
+    "claude": {
+      "band": 5,
+      "reserve": 90,
+      "hot": {
+        "strong": 0.8,
+        "light": 1.25
+      },
+      "behind": {
+        "strong": 1.25,
+        "light": 0.85
+      },
+      "boost": 1.5
+    }
+  },
   "fallback": {
     "providers": [
       "copilot"

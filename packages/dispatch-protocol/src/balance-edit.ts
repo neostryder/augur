@@ -8,7 +8,7 @@ const isText = (v: unknown): v is string => typeof v === 'string' && v.length > 
 const listOf = (v: unknown, each: (x: string) => boolean): boolean => Array.isArray(v) && v.length <= 50 && v.every(x => isText(x) && each(x));
 
 function matches(pattern: readonly string[], path: readonly string[]): boolean {
-  return pattern.length === path.length && pattern.every((p, i) => p === '<route>' ? !!path[i] : p === '<activity>' ? ACTIVITIES.includes(path[i] as never) : p === path[i]);
+  return pattern.length === path.length && pattern.every((p, i) => p === '<route>' || p === '<provider>' ? !!path[i] : p === '<activity>' ? ACTIVITIES.includes(path[i] as never) : p === path[i]);
 }
 
 function valueProblem(type: string, value: unknown): string | null {
@@ -16,6 +16,7 @@ function valueProblem(type: string, value: unknown): string | null {
   if (choices) return choices.includes(String(value)) && (type !== 'true or false' || typeof value === 'boolean') ? null : `The value is one of: ${choices.join(', ')}.`;
   switch (type) {
     case 'number above 0': return typeof value === 'number' && Number.isFinite(value) && value > 0 ? null : 'The value is a number above 0.';
+    case 'number of 1 or more': return typeof value === 'number' && Number.isFinite(value) && value >= 1 ? null : 'The value is a number of 1 or more.';
     case 'points': case 'dollars': return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? null : 'The value is a number of 0 or more.';
     case 'percent': return typeof value === 'number' && value >= 0 && value <= 100 ? null : 'The value is a percent from 0 to 100.';
     case 'provider id': case 'route': return isText(value) ? null : 'The value is a name.';

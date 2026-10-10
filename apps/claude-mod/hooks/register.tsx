@@ -38,8 +38,10 @@ async function poll($: EngineInterface) {
   try { usage = usageText ? (JSON.parse(usageText) as Usage) : null } catch { usage = null }
   // The owner may have moved the pace band, so the line reads it from the rules Augur writes beside the usage file.
   try {
-    const rules = JSON.parse((await readText($, `${folderOf(usageFile)}/policy.json`)) ?? '{}') as { balance?: { claude?: { band?: unknown } } }
-    const set = rules.balance?.claude?.band
+    const rules = JSON.parse((await readText($, `${folderOf(usageFile)}/policy.json`)) ?? '{}') as { balance?: { claude?: { provider?: unknown; band?: unknown }; pace?: Record<string, { band?: unknown } | undefined> } }
+    // A saved file keeps the band on pace.<provider>; a file not yet saved since the upgrade still has it on claude.
+    const steered = typeof rules.balance?.claude?.provider === 'string' && rules.balance.claude.provider ? rules.balance.claude.provider : 'claude'
+    const set = rules.balance?.pace?.[steered]?.band ?? rules.balance?.claude?.band
     band = typeof set === 'number' && Number.isFinite(set) && set >= 0 ? set : PACE_BAND
   } catch { band = PACE_BAND }
   const text = await readText($, `${folderOf(usageFile)}/alerts.json`)

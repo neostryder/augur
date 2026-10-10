@@ -7,7 +7,7 @@ import { feedFor, feedFromUsage, type AlertFeed } from './feed.js';
 import { RULES_ONLY_PROVIDERS, addModels, emptyPolicy, mergePolicy, policyDigest, policyFromFile, policyPathFor, buildPolicyFile } from './policy.js';
 import { genericProvider } from './generic.js';
 import { importPolicy } from './policy-import.js';
-import { DEFAULT_APPROVAL, emptyEditState, parseEditState, parseInbox, processInbox, resolveHeld, INBOX_FILE, RESULTS_FILE, type EditState } from './policy-edits.js';
+import { DEFAULT_APPROVAL, emptyEditState, parseEditState, parseInbox, processInbox, resolveHeld, upgradeStoredBalance, INBOX_FILE, RESULTS_FILE, type EditState } from './policy-edits.js';
 import { listDue, syncModelList, type ModelCatalog } from './models.js';
 import { releaseChanges, type ReleaseChanges } from './changelog.js';
 import { defaultConfig, migrateConfig } from './config.js';
@@ -450,6 +450,8 @@ export class UsageEngine implements EngineApi {
 
   /** Writes the config and the policy file beside the usage file. */
   private async persist(): Promise<void> {
+    // A legacy balance block is rewritten the first time the rules are saved.
+    if (this.config.policy) upgradeStoredBalance(this.config.policy);
     await this.shell.saveConfig(this.config);
     await this.writePolicy();
   }
@@ -491,6 +493,7 @@ export class UsageEngine implements EngineApi {
   /** policy.json changes only when a rule does, so it is written with the config, never on a usage refresh. */
   private async writePolicy(): Promise<void> {
     if (!this.shell.exportSnapshot || !this.config.exportPath || !this.config.policy) return;
+    upgradeStoredBalance(this.config.policy);
     const file = buildPolicyFile(this.config.policy, policyProviders(this.config));
     try {
       await this.shell.exportSnapshot(policyPathFor(this.config.exportPath), JSON.stringify(file, null, 2));

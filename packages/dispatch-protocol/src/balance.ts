@@ -14,6 +14,26 @@ export type ModelTier = 'strong' | 'light';
 export type Profile = 'classic' | 'neutral';
 export const PROFILES: readonly Profile[] = ['classic', 'neutral'];
 
+/** Pace for one provider. `boost` is the peak of the unused-allowance boost; 1 turns it off. */
+export interface PaceRules {
+  /** Points of usage ahead of or behind the share of the window elapsed that still count as on pace. */
+  band: number;
+  /** A window at or above this percent moves optional work off this provider. */
+  reserve: number;
+  /** The score multiplier for each tier when this provider runs hot (ahead of pace) and when it runs behind. */
+  hot: Record<ModelTier, number>;
+  behind: Record<ModelTier, number>;
+  /** The peak multiplier of the unused-allowance boost. 1 turns the boost off. */
+  boost: number;
+}
+
+/** Pace for a provider the rules do not name. Claude's own entry uses a tighter band. */
+export const DEFAULT_PACE_RULES: PaceRules = {
+  band: 10, reserve: 90, hot: { strong: 0.8, light: 1.25 }, behind: { strong: 1.25, light: 0.85 }, boost: 1.5,
+};
+
+const CLAUDE_PACE: PaceRules = { band: 5, reserve: 90, hot: { strong: 0.8, light: 1.25 }, behind: { strong: 1.25, light: 0.85 }, boost: 1.5 };
+
 export interface BalanceRules {
   /** Which starting rules the overrides sit on. */
   profile: Profile;
@@ -33,7 +53,9 @@ export interface BalanceRules {
     /** The pace switch: when Claude runs ahead of pace, prose drafting moves off the Claude routes in `models` to the routes that remain (Opus through a backup provider first). */
     pace: { enabled: boolean; ahead: number; aheadAtReserve: number; returnAt: number };
   };
-  /** The Claude controller: holds Claude's usage near the pace marker and keeps a reserve so it never runs out. */
+  /** Pace per provider id. */
+  pace: Record<string, PaceRules>;
+  /** The steered provider, taken from `pace` after overrides resolve. `provider` names it and the numbers are that entry. */
   claude: {
     /** The provider id the controller steers. */
     provider: string;
@@ -88,7 +110,8 @@ export const DEFAULT_BALANCE: BalanceRules = {
   exclude: ['fable', 'astra'],
   tilt: { deep: { strong: 1.4, light: 0.8 }, everyday: { strong: 0.85, light: 1.15 } },
   prose: { models: ['claude/live', 'claude/opus', 'copilot/claude-opus-5.5'], tilt: 1.3, pace: { enabled: true, ahead: 12, aheadAtReserve: 3, returnAt: 0 } },
-  claude: { provider: 'claude', band: 5, reserve: 90, hot: { strong: 0.8, light: 1.25 }, behind: { strong: 1.25, light: 0.85 } },
+  pace: { claude: CLAUDE_PACE },
+  claude: { provider: 'claude', band: CLAUDE_PACE.band, reserve: CLAUDE_PACE.reserve, hot: CLAUDE_PACE.hot, behind: CLAUDE_PACE.behind },
   fallback: { providers: ['copilot'], routes: { 'deepseek/v4.1-flash': ['write_code'] }, anthropic: ['copilot/claude-opus-5.5', 'copilot/claude-sonnet-5.5'], aim: 150, cap: 250, margin: 5 },
   prefer: {
     'minimax/m3': { long_context: 1.6, summarize_extract: 1.4 },
@@ -111,6 +134,7 @@ export const DEFAULT_BALANCE: BalanceRules = {
 export const NEUTRAL_BALANCE: BalanceRules = {
   ...DEFAULT_BALANCE,
   profile: 'neutral',
+  pace: DEFAULT_BALANCE.pace,
   tiers: { 'claude/*opus*': 'strong', 'claude/*sonnet*': 'light', 'claude/*haiku*': 'light' },
   exclude: [],
   tilt: { deep: { strong: 1, light: 1 }, everyday: { strong: 1, light: 1 } },
@@ -179,6 +203,24 @@ export function resolveBalance(raw: unknown): BalanceRules {
   for (const [label, v] of Object.entries(rec(fb.routes))) { const a = strings(v); if (a) routes[label] = a; else if (v === null) delete routes[label]; }
   const money = (v: unknown, fallback: number): number => typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : fallback;
   const pair = (v: unknown, dflt: Record<ModelTier, number>): Record<ModelTier, number> => ({ strong: num(rec(v).strong, dflt.strong), light: num(rec(v).light, dflt.light) });
+  // 1 turns the boost off, so a number below 1 is left at the lower layer.
+  const boostOf = (v: unknown, fallback: number): number => typeof v === 'number' && Number.isFinite(v) && v >= 1 ? v : fallback;
+  const applyPace = (base: PaceRules, layer: unknown): PaceRules => {
+    const o = rec(layer);
+    return { band: num(o.band, base.band), reserve: num(o.reserve, base.reserve), hot: pair(o.hot, base.hot), behind: pair(o.behind, base.behind), boost: boostOf(o.boost, base.boost) };
+  };
+  const steered = typeof cl.provider === 'string' && cl.provider ? cl.provider : d.claude.provider;
+  const paceRaw = rec(s.pace);
+  const names = new Set<string>([...Object.keys(d.pace), ...Object.keys(paceRaw), steered]);
+  const pace: Record<string, PaceRules> = {};
+  for (const id of names) {
+    const builtin = d.pace[id] ?? (id === 'claude' ? CLAUDE_PACE : DEFAULT_PACE_RULES);
+    let entry: PaceRules = { band: builtin.band, reserve: builtin.reserve, hot: { ...builtin.hot }, behind: { ...builtin.behind }, boost: builtin.boost };
+    if (id === steered) entry = applyPace(entry, cl);
+    if (Object.hasOwn(paceRaw, id)) entry = applyPace(entry, paceRaw[id]);
+    pace[id] = entry;
+  }
+  const steeredPace = pace[steered] as PaceRules;
   return {
     profile,
     enabled: typeof s.enabled === 'boolean' ? s.enabled : d.enabled,
@@ -188,11 +230,8 @@ export function resolveBalance(raw: unknown): BalanceRules {
       models: strings(prose.models) ?? [...d.prose.models], tilt: num(prose.tilt, d.prose.tilt),
       pace: { enabled: typeof proseSwitch.enabled === 'boolean' ? proseSwitch.enabled : d.prose.pace.enabled, ahead: zeroUp(proseSwitch.ahead, d.prose.pace.ahead), aheadAtReserve: zeroUp(proseSwitch.aheadAtReserve, d.prose.pace.aheadAtReserve), returnAt: zeroUp(proseSwitch.returnAt, d.prose.pace.returnAt) },
     },
-    claude: {
-      provider: typeof cl.provider === 'string' && cl.provider ? cl.provider : d.claude.provider,
-      band: num(cl.band, d.claude.band), reserve: num(cl.reserve, d.claude.reserve),
-      hot: pair(cl.hot, d.claude.hot), behind: pair(cl.behind, d.claude.behind),
-    },
+    pace,
+    claude: { provider: steered, band: steeredPace.band, reserve: steeredPace.reserve, hot: { ...steeredPace.hot }, behind: { ...steeredPace.behind } },
     fallback: {
       providers: strings(fb.providers) ?? [...d.fallback.providers], routes, anthropic: strings(fb.anthropic) ?? [...d.fallback.anthropic],
       aim: money(fb.aim, d.fallback.aim), cap: money(fb.cap, d.fallback.cap), margin: money(fb.margin, d.fallback.margin),
@@ -205,6 +244,46 @@ export function resolveBalance(raw: unknown): BalanceRules {
       jev: { route: typeof jev.route === 'string' && jev.route ? jev.route : d.seats.jev.route, activities: acts(jev.activities) ?? [...d.seats.jev.activities], tilt: num(jev.tilt, d.seats.jev.tilt) },
     },
   };
+}
+
+const plain = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+
+/** Fills one pace entry from a legacy block. A key already on the new entry wins, including each side of `hot` and `behind`. */
+function mergePace(legacy: Record<string, unknown>, existing: unknown): Record<string, unknown> {
+  const ex = plain(existing) ? existing : {};
+  const out: Record<string, unknown> = { ...ex };
+  for (const key of ['band', 'reserve'] as const) if (!Object.hasOwn(out, key) && Object.hasOwn(legacy, key)) out[key] = legacy[key];
+  for (const key of ['hot', 'behind'] as const) {
+    if (!Object.hasOwn(legacy, key)) continue;
+    if (Object.hasOwn(ex, key) && !plain(ex[key])) continue;
+    if (!plain(legacy[key])) { if (!Object.hasOwn(ex, key)) out[key] = legacy[key]; continue; }
+    out[key] = { ...legacy[key], ...(plain(ex[key]) ? ex[key] : {}) };
+  }
+  return out;
+}
+
+/**
+ * A stored `policy.balance` in the pace shape. Numbers on a legacy `claude` block move onto `pace.<provider>`, an existing pace value wins, and `schema` becomes 2.
+ * The same value twice gives the same result. `null` and values that are not plain objects come back unchanged, and the input is not modified.
+ */
+export function upgradeBalance(raw: unknown): unknown {
+  if (!plain(raw) || Object.keys(raw).length === 0) return raw;
+  if (!Object.hasOwn(raw, 'claude')) return { ...raw, schema: 2 };
+  const out: Record<string, unknown> = { ...raw, schema: 2 };
+  const cl = plain(raw.claude) ? raw.claude : {};
+  const provider = typeof cl.provider === 'string' && cl.provider ? cl.provider : 'claude';
+  const moved: Record<string, unknown> = {};
+  for (const key of ['band', 'reserve', 'hot', 'behind'] as const) if (Object.hasOwn(cl, key)) moved[key] = cl[key];
+  // A pace key does not record which provider the controller steers, so a provider other than claude stays on `claude`.
+  if (provider === 'claude') delete out.claude; else out.claude = { provider };
+  if (Object.hasOwn(raw, 'pace') && !plain(raw.pace)) return out;
+  const pace = plain(raw.pace) ? { ...raw.pace } : {};
+  const haveEntry = Object.hasOwn(pace, provider);
+  if (!haveEntry && Object.keys(moved).length === 0) return out;
+  if (haveEntry && !plain(pace[provider])) return out;
+  pace[provider] = mergePace(moved, pace[provider]);
+  out.pace = pace;
+  return out;
 }
 
 /** One of Claude's two windows set against the share of it that has passed. `ahead` is in points of usage and is negative when behind. */

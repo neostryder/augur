@@ -35,7 +35,7 @@ export const BALANCE_PREFIX = 'balance:';
 export const balanceField = (segments: readonly string[]): string => BALANCE_PREFIX + segments.join('|');
 export const isBalanceField = (field: string): boolean => field.startsWith(BALANCE_PREFIX);
 export const balanceSegments = (field: string): string[] => field.slice(BALANCE_PREFIX.length).split('|');
-const BALANCE_ROOTS = ['profile', 'enabled', 'depth', 'tiers', 'exclude', 'tilt', 'prose', 'claude', 'fallback', 'prefer', 'seats'];
+const BALANCE_ROOTS = ['profile', 'enabled', 'depth', 'tiers', 'exclude', 'tilt', 'prose', 'claude', 'pace', 'fallback', 'prefer', 'seats'];
 
 /** The value that puts a field back to the provider's default, since JSON has no undefined. */
 export const INHERIT = 'inherit';
@@ -124,6 +124,20 @@ function setBalance(policy: PolicyConfig, segments: readonly string[], value: un
   }
   policy.history.push({ at: now.toISOString(), device, path: balanceField(segments), from: from ?? null, to: value ?? null });
   if (policy.history.length > HISTORY_LIMIT) policy.history.splice(0, policy.history.length - HISTORY_LIMIT);
+}
+
+type BalanceSave = (raw: unknown) => unknown;
+let balanceSave: BalanceSave | null = null;
+
+/** Registers the rewrite applied to `policy.balance` when the rules are saved. */
+export function registerBalanceSave(fn: BalanceSave): void { balanceSave = fn; }
+
+/** Rewrites a stored balance into the pace shape when a save function is registered. No change until one is. */
+export function upgradeStoredBalance(policy: { balance?: Record<string, unknown> }): void {
+  if (!balanceSave || !policy.balance) return;
+  const next = balanceSave(policy.balance);
+  if (!next || typeof next !== 'object' || Array.isArray(next)) return;
+  if (JSON.stringify(next) !== JSON.stringify(policy.balance)) policy.balance = next as Record<string, unknown>;
 }
 
 /** Checks an edit's shape and value, and that its model exists in `has`. Returns the problem, or null. */

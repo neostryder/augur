@@ -66,6 +66,13 @@ describe('the Augur mod', () => {
     files.set(`${HOME}/.augur/policy.json`, JSON.stringify({ balance: { claude: { band: 25 } } }))
     await w.clock.advance(30_000)
     expect(w.status.at(-1)).toBe('Claude 5h 60% | wk 48% | on pace')
+    // A file saved since the upgrade keeps the band on the pace entry for the provider.
+    files.set(`${HOME}/.augur/policy.json`, JSON.stringify({ balance: { schema: 2, pace: { claude: { band: 10 } } } }))
+    await w.clock.advance(30_000)
+    expect(w.status.at(-1)).toBe('Claude 5h 60% | wk 48% | hot +20')
+    files.set(`${HOME}/.augur/policy.json`, JSON.stringify({ balance: { schema: 2, pace: { claude: { band: 25 } } } }))
+    await w.clock.advance(30_000)
+    expect(w.status.at(-1)).toBe('Claude 5h 60% | wk 48% | on pace')
   })
 
   test('toasts an alert once when it first appears, and not the ones already there on the first run', async ($, on) => {

@@ -22,13 +22,20 @@ export const BALANCE_FIELDS: readonly FieldDoc[] = [
   { path: 'prose.pace.ahead', type: 'points', summary: 'How many points the stricter Claude window must run ahead of its pace marker, with nothing used, before draft_prose moves off Claude. The lead needed shrinks as usage climbs.' },
   { path: 'prose.pace.aheadAtReserve', type: 'points', summary: 'The lead that moves draft_prose off Claude once a window reaches claude.reserve. Between no usage and the reserve, the lead needed falls in a straight line from prose.pace.ahead to this value.' },
   { path: 'prose.pace.returnAt', type: 'points', summary: 'The lead at or below which draft_prose returns to Claude. Zero means Claude is back on its pace marker.' },
-  { path: 'claude.provider', type: 'provider id', summary: 'The provider the Claude controller steers. It reads that provider\'s session and weekly windows.' },
-  { path: 'claude.band', type: 'points', summary: 'How many points of usage ahead of or behind the share of the window that has passed still count as on pace.' },
-  { path: 'claude.reserve', type: 'percent', summary: 'A window at or above this moves optional work off Claude while another route can take it.' },
-  { path: 'claude.hot.strong', type: 'number above 0', summary: 'The multiplier for a strong route when Claude runs ahead of pace.' },
-  { path: 'claude.hot.light', type: 'number above 0', summary: 'The multiplier for a light route when Claude runs ahead of pace.' },
-  { path: 'claude.behind.strong', type: 'number above 0', summary: 'The multiplier for a strong route when Claude runs behind pace.' },
-  { path: 'claude.behind.light', type: 'number above 0', summary: 'The multiplier for a light route when Claude runs behind pace.' },
+  { path: 'claude.provider', type: 'provider id', summary: 'The older spelling of the pace provider id. The controller steers this provider and reads its session and weekly windows.' },
+  { path: 'claude.band', type: 'points', summary: 'The older spelling of pace.claude.band. How many points of usage ahead of or behind the share of the window that has passed still count as on pace.' },
+  { path: 'claude.reserve', type: 'percent', summary: 'The older spelling of pace.claude.reserve. A window at or above this moves optional work off Claude while another route can take it.' },
+  { path: 'claude.hot.strong', type: 'number above 0', summary: 'The older spelling of pace.claude.hot.strong. The multiplier for a strong route when Claude runs ahead of pace.' },
+  { path: 'claude.hot.light', type: 'number above 0', summary: 'The older spelling of pace.claude.hot.light. The multiplier for a light route when Claude runs ahead of pace.' },
+  { path: 'claude.behind.strong', type: 'number above 0', summary: 'The older spelling of pace.claude.behind.strong. The multiplier for a strong route when Claude runs behind pace.' },
+  { path: 'claude.behind.light', type: 'number above 0', summary: 'The older spelling of pace.claude.behind.light. The multiplier for a light route when Claude runs behind pace.' },
+  { path: 'pace.<provider>.reserve', type: 'percent', summary: 'A window at or above this moves optional work off that provider while another route can take it.' },
+  { path: 'pace.<provider>.band', type: 'points', summary: 'How many points of usage ahead of or behind the share of the window that has passed still count as on pace for that provider.' },
+  { path: 'pace.<provider>.hot.strong', type: 'number above 0', summary: 'The multiplier for a strong route when that provider runs ahead of pace.' },
+  { path: 'pace.<provider>.hot.light', type: 'number above 0', summary: 'The multiplier for a light route when that provider runs ahead of pace.' },
+  { path: 'pace.<provider>.behind.strong', type: 'number above 0', summary: 'The multiplier for a strong route when that provider runs behind pace.' },
+  { path: 'pace.<provider>.behind.light', type: 'number above 0', summary: 'The multiplier for a light route when that provider runs behind pace.' },
+  { path: 'pace.<provider>.boost', type: 'number of 1 or more', summary: 'The peak multiplier of the unused-allowance boost for that provider, with 1 turning the boost off.' },
   { path: 'fallback.providers', type: 'list of provider ids', summary: 'Providers whose routes are backups. They compete only when no subscription route can take the work.' },
   { path: 'fallback.routes.<route>', type: 'list of activities', summary: 'A single route that is a backup for these activities only.' },
   { path: 'fallback.anthropic', type: 'list of routes', summary: 'Claude models reached through a backup provider. They are allowed once Claude is at its reserve, since a Claude stop halts everything.' },
@@ -45,7 +52,7 @@ export const BALANCE_FIELDS: readonly FieldDoc[] = [
   { path: 'seats.jev.tilt', type: 'number above 0', summary: 'The multiplier the classifier route gets on those activities.' },
 ];
 
-const MAP_NODES: Record<string, string> = { depth: '<activity>', tiers: '<route>', prefer: '<route>', 'fallback.routes': '<route>', 'seats.web': '<activity>', 'prefer.<route>': '<activity>' };
+const MAP_NODES: Record<string, string> = { depth: '<activity>', tiers: '<route>', prefer: '<route>', 'fallback.routes': '<route>', 'seats.web': '<activity>', 'prefer.<route>': '<activity>', pace: '<provider>' };
 
 /** The settings of the shipped balance rules, with each map's keys written as <route> or <activity>. */
 export function balancePaths(rules: object = DEFAULT_BALANCE): string[] {

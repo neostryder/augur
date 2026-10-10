@@ -3,7 +3,8 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { LayaBackend, ServerPool, ShadowBackend, createBackend, DEFAULT_SERVERS } from '@augur/decision';
 import type { DecisionBackend } from '@augur/decision';
-import { HOSTED, UsageEngine } from '@augur/core';
+import { HOSTED, UsageEngine, registerBalanceSave } from '@augur/core';
+import { upgradeBalance } from '@augur/dispatch-protocol';
 import { parseRates } from './accounting.js';
 import { enabledAdapters, loadLocalAdapters } from './adapters/index.js';
 import { loadConfig } from './config.js';
@@ -16,6 +17,8 @@ import { policySource, routeSource, usageSource } from './sources.js';
 import { Store } from './store.js';
 import { Supervisor } from './supervisor.js';
 import { ViewHub } from './views.js';
+
+registerBalanceSave(upgradeBalance);
 
 /** The backend behind `augur pick --task`, from the service settings. With a shadow set, its answers are compared and logged, never used. */
 export function buildDecision(config: ReturnType<typeof loadConfig>, dir: string, env: NodeJS.ProcessEnv = process.env): { primary: DecisionBackend; local?: DecisionBackend } | undefined {
