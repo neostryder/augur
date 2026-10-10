@@ -1,7 +1,7 @@
 // The read-only balance report: what the router is doing now and what it has been doing, in one structure that the command, the tool, the apps and the daily file all share. Pure.
 import { ACTIVITIES } from '@augur/core';
 import type { ActivityId, PolicyFile } from '@augur/core';
-import { claudeState, copilotSpend, plural, proseSwitchState, resolveBalance } from './balance.js';
+import { DEFAULT_PACE_RULES, claudeState, copilotSpend, pacedProviders, paceState, plural, proseSwitchState, resolveBalance } from './balance.js';
 import type { ClaudeStance, Depth, PaceTrack, ProseSwitch } from './balance.js';
 import { drainProviders, pressure } from './pace.js';
 import type { UsageSnapshot } from './pace.js';
@@ -30,6 +30,8 @@ export interface BalanceReport {
   at: string;
   enabled: boolean;
   claude: { stance: ClaudeStance; lean: string; peak: number | null; reserve: number; band: number; atReserve: boolean; tracks: PaceTrack[]; /** Where the prose pace switch stands. Reports written before the switch existed have none. */ prose?: ProseSwitch };
+  /** One row per paced provider, hot first, then unknown, behind, and on pace. A higher used percent wins a tie. */
+  pace: Array<{ provider: string; name: string; stance: ClaudeStance; tracks: PaceTrack[]; peak: number | null; atReserve: boolean; band: number; reserve: number }>;
   copilot: { spend: number | null; aim: number; cap: number; zone: 'unknown' | 'under the aim' | 'past the aim' | 'at the cap' };
   providers: ProviderLine[];
   mix: MixLine[];
@@ -41,6 +43,12 @@ export function balanceReport(policy: PolicyFile, usage: UsageSnapshot | null, n
   const rules = resolveBalance((policy as { balance?: unknown }).balance);
   const state = claudeState(usage, rules, now);
   const lean = state.stance === 'hot' ? 'Sonnet' : state.stance === 'behind' ? 'Opus' : state.stance === 'unknown' ? 'Sonnet (figures missing)' : 'neither';
+  const attention: Record<ClaudeStance, number> = { hot: 0, unknown: 1, behind: 2, 'on pace': 3 };
+  const pace = pacedProviders(usage, rules, now).map(id => {
+    const s = paceState(usage, rules, id, now);
+    const rule = rules.pace[id] ?? DEFAULT_PACE_RULES;
+    return { provider: id, name: policy.providers[id]?.name || id, stance: s.stance, tracks: s.tracks, peak: s.peak, atReserve: s.atReserve, band: rule.band, reserve: rule.reserve };
+  }).sort((a, b) => attention[a.stance] - attention[b.stance] || (b.peak ?? -1) - (a.peak ?? -1) || (a.provider < b.provider ? -1 : a.provider > b.provider ? 1 : 0));
   const spend = copilotSpend(usage), counted = spend === null ? null : spend + rules.fallback.margin;
   const zone = counted === null ? 'unknown' : counted >= rules.fallback.cap ? 'at the cap' : counted >= rules.fallback.aim ? 'past the aim' : 'under the aim';
   const press = pressure(policy, usage, now), drain = drainProviders(policy);
@@ -57,6 +65,7 @@ export function balanceReport(policy: PolicyFile, usage: UsageSnapshot | null, n
   return {
     at: now.toISOString(), enabled: rules.enabled,
     claude: { stance: state.stance, lean, peak: state.peak, reserve: rules.claude.reserve, band: rules.claude.band, atReserve: state.atReserve, tracks: state.tracks, prose: rules.enabled ? proseSwitchState(rules, state, proseSwitched) : { ...proseSwitchState(rules, state, proseSwitched), on: false } },
+    pace,
     copilot: { spend, aim: rules.fallback.aim, cap: rules.fallback.cap, zone },
     providers, mix, excluded: rules.exclude, picks,
   };

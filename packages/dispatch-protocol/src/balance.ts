@@ -10,7 +10,7 @@ export type Depth = 'deep' | 'everyday';
 /** A strong model suits deep work and is overkill for everyday work. A light one is the reverse. A model with no tier is not tilted. */
 export type ModelTier = 'strong' | 'light';
 
-/** The starting rules. Classic is what every install had before profiles existed and what an install that names none keeps. Neutral tilts only for Claude's pace. */
+/** The starting rules. Classic is what every install had before profiles existed and what an install that names none keeps. Neutral tilts only for pace. */
 export type Profile = 'classic' | 'neutral';
 export const PROFILES: readonly Profile[] = ['classic', 'neutral'];
 
@@ -50,7 +50,7 @@ export interface BalanceRules {
   /** Route labels that write the best prose, and the multiplier they get on draft_prose in place of the depth tilt. */
   prose: {
     models: string[]; tilt: number;
-    /** The pace switch: when Claude runs ahead of pace, prose drafting moves off the Claude routes in `models` to the routes that remain (Opus through a backup provider first). */
+    /** The pace switch: when a provider that serves one of these routes runs ahead of pace, prose drafting moves off that provider. */
     pace: { enabled: boolean; ahead: number; aheadAtReserve: number; returnAt: number };
   };
   /** Pace per provider id. */
@@ -286,22 +286,31 @@ export function upgradeBalance(raw: unknown): unknown {
   return out;
 }
 
-/** One of Claude's two windows set against the share of it that has passed. `ahead` is in points of usage and is negative when behind. */
+/** One window set against the share of it that has passed. `ahead` is in points of usage and is negative when behind. */
 export interface PaceTrack { window: 'week' | '5-hour window'; used: number; elapsed: number; ahead: number }
 export type ClaudeStance = 'hot' | 'on pace' | 'behind' | 'unknown';
 export interface ClaudeState { stance: ClaudeStance; tracks: PaceTrack[]; /** The highest used percent of the two windows, or null with no figures. */ peak: number | null; atReserve: boolean }
+/** `ClaudeState` for one provider. */
+export interface PaceState extends ClaudeState { provider: string }
 
-/** Reads Claude's session (5-hour) and weekly windows. The stricter track wins: hot if either is hot, behind only when every known track is behind. With Claude's figures present but unusable the stance is unknown, and it is treated as hot because the reserve cannot be checked. With no Claude figures at all, the controller is off. */
-export function claudeState(usage: UsageSnapshot | null, rules: BalanceRules, now: Date): ClaudeState {
-  const p = usage?.providers[rules.claude.provider];
+const paceOf = (rules: BalanceRules, provider: string): PaceRules => rules.pace[provider] ?? DEFAULT_PACE_RULES;
+/** A session or weekly window with a numeric used percent. A meter scoped to one model is that model's own week, not the subscription. */
+const paceMeter = (m: { id?: string; usedPct?: number | null; windowKind?: string }): boolean =>
+  typeof m.usedPct === 'number' && (m.windowKind === 'session' || m.windowKind === 'weekly') && !/scoped/.test(m.id ?? '');
+
+/**
+ * One provider's session (5-hour) and weekly windows. The stricter track wins: hot if either is hot, behind only when every known track is behind.
+ * Figures older than `PACE.ignoreMin` are ignored. With an entry but no usable track the stance is unknown. With no entry the provider is on pace.
+ */
+export function paceState(usage: UsageSnapshot | null, rules: BalanceRules, provider: string, now: Date): PaceState {
+  const pace = paceOf(rules, provider);
+  const p = usage?.providers[provider];
   const tracks: PaceTrack[] = [];
   let peak: number | null = null;
   if (p && ageMinutes(p, now) <= PACE.ignoreMin) {
     for (const m of p.meters ?? []) {
-      // Claude marks only the window that is limiting right now as active, but the week is the pace marker even while the 5-hour window is the active one, so inactive windows count here.
-      if (typeof m.usedPct !== 'number' || (m.windowKind !== 'session' && m.windowKind !== 'weekly')) continue;
-      // A window scoped to one model (Fable's own week) is not the pace of the subscription, and the models it covers are never picked anyway.
-      if (/scoped/.test(m.id ?? '')) continue;
+      // A provider marks only the window that is limiting right now as active, but the week is the pace marker even while the 5-hour window is the active one, so inactive windows count here.
+      if (!paceMeter(m)) continue;
       const used = m.usedPct as number, reset = m.resetsAt ? Date.parse(m.resetsAt) : NaN;
       peak = Math.max(peak ?? 0, used);
       if (!Number.isFinite(reset) || !m.windowSeconds) continue;
@@ -309,21 +318,45 @@ export function claudeState(usage: UsageSnapshot | null, rules: BalanceRules, no
       tracks.push({ window: m.windowKind === 'weekly' ? 'week' : '5-hour window', used, elapsed, ahead: Math.round((used - elapsed) * 10) / 10 });
     }
   }
-  const band = rules.claude.band;
-  const stance: ClaudeStance = !p ? 'on pace' : !tracks.length ? 'unknown' : tracks.some(t => t.ahead > band) ? 'hot' : tracks.every(t => t.ahead < -band) ? 'behind' : 'on pace';
-  return { stance, tracks, peak, atReserve: peak !== null && peak >= rules.claude.reserve };
+  const stance: ClaudeStance = !p ? 'on pace' : !tracks.length ? 'unknown' : tracks.some(t => t.ahead > pace.band) ? 'hot' : tracks.every(t => t.ahead < -pace.band) ? 'behind' : 'on pace';
+  return { provider, stance, tracks, peak, atReserve: peak !== null && peak >= pace.reserve };
 }
 
-/** Where the prose pace switch stands. `ahead` is how far the stricter Claude window runs ahead of its pace marker, `threshold` is the lead that turns the switch on at the current usage, and `returnAt` is the lead at or below which it turns off again. */
+/** The steered provider's pace. Same result as `paceState` for `rules.claude.provider`. */
+export function claudeState(usage: UsageSnapshot | null, rules: BalanceRules, now: Date): ClaudeState {
+  const s = paceState(usage, rules, rules.claude.provider, now);
+  return { stance: s.stance, tracks: s.tracks, peak: s.peak, atReserve: s.atReserve };
+}
+
+/**
+ * Providers paced this run: each one in `usage.providers` with a session or weekly window.
+ * The steered provider is included whenever it has a usage entry, so unreadable Claude figures still count.
+ * Any other provider whose figures are stale or have no such window is left out. `PaceRules` has no opt-out.
+ */
+export function pacedProviders(usage: UsageSnapshot | null, rules: BalanceRules, now: Date = new Date()): string[] {
+  if (!usage) return [];
+  const steered = rules.claude.provider;
+  const ids: string[] = [];
+  for (const [id, entry] of Object.entries(usage.providers)) {
+    if (id === steered) { ids.push(id); continue; }
+    if (ageMinutes(entry, now) > PACE.ignoreMin) continue;
+    if ((entry.meters ?? []).some(paceMeter)) ids.push(id);
+  }
+  return ids;
+}
+
+/** Where one provider's prose pace switch stands. `ahead` is how far its stricter window runs ahead of its pace marker, `threshold` is the lead that turns the switch on at the current usage, and `returnAt` is the lead at or below which it turns off again. */
 export interface ProseSwitch { on: boolean; ahead: number | null; threshold: number; returnAt: number }
 
 /**
- * Whether prose drafting should be off Claude. The lead that turns it on shrinks as usage climbs, from `ahead` points at no usage to `aheadAtReserve` at the reserve, so the closer Claude gets to running out the less lead it takes. Once on, it stays on until the lead falls to `returnAt`. `was` is the last answer, and it carries over when Claude's figures are missing.
+ * Whether prose drafting should leave this provider. The lead that turns it on shrinks as usage climbs, from `ahead` points at no usage to `aheadAtReserve` at the reserve.
+ * Once on, it stays on until the lead falls to `returnAt`. `was` is the last answer, and it carries over when the provider's figures are missing.
  */
-export function proseSwitchState(rules: BalanceRules, claude: ClaudeState, was: boolean): ProseSwitch {
-  const p = rules.prose.pace, used = Math.min(1, Math.max(0, (claude.peak ?? 0) / rules.claude.reserve));
+export function proseSwitchState(rules: BalanceRules, state: ClaudeState | PaceState, was: boolean): ProseSwitch {
+  const provider = 'provider' in state ? state.provider : rules.claude.provider;
+  const p = rules.prose.pace, used = Math.min(1, Math.max(0, (state.peak ?? 0) / paceOf(rules, provider).reserve));
   const threshold = Math.round((p.ahead - (p.ahead - p.aheadAtReserve) * used) * 10) / 10;
-  const ahead = claude.tracks.length ? Math.max(...claude.tracks.map(t => t.ahead)) : null;
+  const ahead = state.tracks.length ? Math.max(...state.tracks.map(t => t.ahead)) : null;
   const on = !p.enabled || !rules.prose.models.length ? false : ahead === null ? was : was ? ahead > p.returnAt : ahead > threshold;
   return { on, ahead, threshold, returnAt: p.returnAt };
 }
@@ -340,8 +373,10 @@ export interface Governed {
   /** One short phrase per tilt that applied to the model, by label, for the reason line. */
   reasons: Record<string, string[]>;
   notes: string[];
-  /** Where the prose pace switch stands: on when prose drafting has moved off Claude. */
+  /** The steered provider's prose pace switch. On when prose drafting has moved off it. */
   proseSwitch: ProseSwitch;
+  /** One switch per paced provider that serves a prose-listed model. The steered provider's entry matches `proseSwitch`. */
+  proseSwitches: Record<string, ProseSwitch>;
 }
 
 /** A route is excluded when its label or its model id contains an excluded word. */
@@ -350,15 +385,28 @@ const excluded = (rules: BalanceRules, label: string, id: string): string | null
   return word ? `${word} is excluded by the balance rules` : null;
 };
 
-/** The tilt each model gets for this activity and depth. `depth` is the caller's choice, or the activity's default. An excluded model the person named is not excluded. */
-export function govern(policy: PolicyFile, activity: ActivityId, depth?: Depth, models?: readonly string[], named?: string, usage: UsageSnapshot | null = null, now = new Date(), proseWas = false): Governed {
+/** The tilt each model gets for this activity and depth. `depth` is the caller's choice, or the activity's default. An excluded model the person named is not excluded. `proseWas` is the steered provider's last switch, or one boolean per provider. */
+export function govern(policy: PolicyFile, activity: ActivityId, depth?: Depth, models?: readonly string[], named?: string, usage: UsageSnapshot | null = null, now = new Date(), proseWas: boolean | Record<string, boolean> = false): Governed {
   const rules = resolveBalance((policy as { balance?: unknown }).balance);
   const used: Depth = depth ?? rules.depth[activity] ?? 'everyday';
-  const claude = claudeState(usage, rules, now);
-  const proseSwitch = proseSwitchState(rules, claude, proseWas);
-  const out: Governed = { depth: used, tilts: {}, blocks: [], reasons: {}, notes: [], proseSwitch: rules.enabled ? proseSwitch : { ...proseSwitch, on: false } };
+  const steeredId = rules.claude.provider;
+  const wasOf = (id: string): boolean => typeof proseWas === 'boolean' ? id === steeredId && proseWas : proseWas[id] === true;
+  const paced = pacedProviders(usage, rules, now);
+  const states = new Map<string, PaceState>(paced.map(id => [id, paceState(usage, rules, id, now)]));
+  const steered = states.get(steeredId) ?? paceState(usage, rules, steeredId, now);
+  const serves = (id: string): boolean => {
+    const provider = policy.providers[id];
+    if (!provider) return false;
+    return Object.entries(provider.models).some(([label, m]) => listed(rules.prose.models, { label, provider: id, id: m.id }));
+  };
+  const mute = (sw: ProseSwitch): ProseSwitch => rules.enabled ? sw : { ...sw, on: false };
+  const raw: Record<string, ProseSwitch> = {};
+  for (const id of paced) if (serves(id)) raw[id] = proseSwitchState(rules, states.get(id) as PaceState, wasOf(id));
+  const proseSwitch = mute(raw[steeredId] ?? proseSwitchState(rules, steered, wasOf(steeredId)));
+  const proseSwitches: Record<string, ProseSwitch> = {};
+  for (const [id, sw] of Object.entries(raw)) proseSwitches[id] = id === steeredId ? proseSwitch : mute(sw);
+  const out: Governed = { depth: used, tilts: {}, blocks: [], reasons: {}, notes: [], proseSwitch, proseSwitches };
   if (!rules.enabled) return out;
-  const lean = claude.stance === 'unknown' ? 'hot' : claude.stance === 'on pace' ? null : claude.stance;
   const candidates: Candidate[] = [];
   for (const [providerId, p] of Object.entries(policy.providers)) {
     for (const [label, m] of Object.entries(p.models)) {
@@ -369,7 +417,7 @@ export function govern(policy: PolicyFile, activity: ActivityId, depth?: Depth, 
       const reasons: string[] = [];
       const ref: ModelRef = { label, provider: providerId, id: m.id };
       const tier = lookup(rules.tiers, ref);
-      const isClaude = providerId === rules.claude.provider;
+      const isClaude = providerId === steeredId;
       candidates.push({ ...ref, claude: isClaude });
       // The best prose writers are tilted for prose alone, so being a strong model on everyday work does not count against them.
       const prose = activity === 'draft_prose' && listed(rules.prose.models, ref);
@@ -381,33 +429,74 @@ export function govern(policy: PolicyFile, activity: ActivityId, depth?: Depth, 
       const likes = lookup(rules.prefer, ref)?.[activity];
       if (likes && likes !== 1) { tilt *= likes; reasons.push(`suits ${activity.replace(/_/g, ' ')}`); }
       if (rules.seats.jev.route && nameMatches(rules.seats.jev.route, ref) && rules.seats.jev.activities.includes(activity)) { tilt *= rules.seats.jev.tilt; reasons.push('Jev is first for classification and scoring'); }
-      // Claude's own pace picks between Opus and Sonnet. Opus for prose is not held back by it.
-      if (isClaude && tier && lean && !prose) {
-        const t = rules.claude[lean][tier];
-        if (t !== 1) { tilt *= t; reasons.push(claudeWhy(claude, lean)); }
+      // Pace picks between a provider's strong and light routes. A prose-listed model is not tilted by it.
+      const state = states.get(providerId);
+      const lean = !state ? null : state.stance === 'unknown' ? (providerId === steeredId ? 'hot' as const : null) : state.stance === 'on pace' ? null : state.stance;
+      if (state && tier && lean && !prose) {
+        const t = paceOf(rules, providerId)[lean][tier];
+        if (t !== 1) { tilt *= t; reasons.push(paceWhy(policy, state, lean)); }
       }
       if (tilt !== 1) out.tilts[label] = Math.round(tilt * 1000) / 1000;
       if (reasons.length) out.reasons[label] = reasons;
     }
   }
-  // At the reserve, optional work leaves Claude while another route can take it, so Claude never runs out.
-  if (claude.atReserve && candidates.some(c => !c.claude)) {
-    for (const c of candidates.filter(c => c.claude && c.label !== named)) {
-      out.blocks.push({ model: c.label, why: `Claude is at ${Math.round(claude.peak as number)}% of a window, past the ${rules.claude.reserve}% reserve, so other routes take optional work` });
+  // At its own reserve, a provider's models leave while another provider can still take the work.
+  const held = new Set<string>();
+  for (const id of paced) {
+    const state = states.get(id) as PaceState;
+    if (!state.atReserve) continue;
+    const own = candidates.filter(c => c.provider === id && c.label !== named);
+    if (!own.length) continue;
+    // Claude's reserve protects the owner's own sessions, so a backup route can take its work. Another subscription at its reserve never pushes work onto a paid backup.
+    const isBackup = (c: ModelRef): boolean => rules.fallback.providers.includes(c.provider) || (lookup(rules.fallback.routes, c)?.includes(activity) ?? false);
+    if (!candidates.some(c => c.provider !== id && !held.has(c.provider) && (id === steeredId || !isBackup(c)))) continue;
+    held.add(id);
+    const reserve = paceOf(rules, id).reserve;
+    for (const c of own) {
+      out.blocks.push({ model: c.label, why: reserveWhy(policy, id, state.peak as number, reserve) });
       delete out.tilts[c.label]; delete out.reasons[c.label];
     }
   }
-  // While the prose switch is on, drafting leaves the Claude routes that write prose, so Opus through a backup provider (or the next route) takes it.
+  // While a provider's prose switch is on, drafting leaves that provider's prose routes when another route can take them.
   let proseMoved = false;
-  if (proseSwitch.on && activity === 'draft_prose' && candidates.some(c => !c.claude)) {
-    for (const c of candidates.filter(c => c.claude && c.label !== named && listed(rules.prose.models, c) && !out.blocks.some(b => b.model === c.label))) {
-      out.blocks.push({ model: c.label, why: `Claude runs ${plural(Math.round(proseSwitch.ahead as number), 'point')} ahead of pace, so prose is off it until the lead falls to ${plural(proseSwitch.returnAt, 'point')}` });
-      delete out.tilts[c.label]; delete out.reasons[c.label]; proseMoved = true;
+  if (activity === 'draft_prose') {
+    const switched = new Set(Object.entries(proseSwitches).filter(([, sw]) => sw.on).map(([id]) => id));
+    if (proseSwitch.on) switched.add(steeredId);
+    const onlySteered = paced.every(id => id === steeredId);
+    for (const id of switched) {
+      const sw = id === steeredId ? proseSwitch : proseSwitches[id] as ProseSwitch;
+      const dest = candidates.some(c => c.provider !== id && listed(rules.prose.models, c) && !out.blocks.some(b => b.model === c.label) && !switched.has(c.provider));
+      const legacy = id === steeredId && onlySteered && candidates.some(c => c.provider !== id);
+      if (!dest && !legacy) continue;
+      for (const c of candidates.filter(c => c.provider === id && c.label !== named && listed(rules.prose.models, c) && !out.blocks.some(b => b.model === c.label))) {
+        out.blocks.push({ model: c.label, why: proseWhy(policy, id, sw) });
+        delete out.tilts[c.label]; delete out.reasons[c.label];
+        if (id === steeredId) proseMoved = true;
+      }
     }
   }
-  backups(out, policy, rules, activity, usage, now, candidates, claude, named, proseMoved);
-  if (claude.stance === 'unknown') out.notes.push('Claude usage figures are missing or old, so the reserve could not be checked and Claude leans light.');
+  backups(out, policy, rules, activity, usage, now, candidates, steered, named, proseMoved);
+  if (steered.stance === 'unknown') out.notes.push(unknownNote(policy, steeredId));
   return out;
+}
+
+/** Claude's sentences stay worded as they were. Any other provider uses its display name, or its id when the policy has none. */
+function spokenName(policy: PolicyFile, id: string): string {
+  if (id === 'claude') return 'Claude';
+  return policy.providers[id]?.name || id;
+}
+
+function reserveWhy(policy: PolicyFile, id: string, peak: number, reserve: number): string {
+  return `${spokenName(policy, id)} is at ${Math.round(peak)}% of a window, past the ${reserve}% reserve, so other routes take optional work`;
+}
+
+function proseWhy(policy: PolicyFile, id: string, sw: ProseSwitch): string {
+  return `${spokenName(policy, id)} runs ${plural(Math.round(sw.ahead as number), 'point')} ahead of pace, so prose is off it until the lead falls to ${plural(sw.returnAt, 'point')}`;
+}
+
+function unknownNote(policy: PolicyFile, id: string): string {
+  if (id === 'claude') return 'Claude usage figures are missing or old, so the reserve could not be checked and Claude leans light.';
+  return `${spokenName(policy, id)} usage figures are missing or old, so the reserve could not be checked and it leans light.`;
 }
 
 /** A model the governor is weighing, and whether it is a Claude route. */
@@ -455,9 +544,15 @@ function backups(out: Governed, policy: PolicyFile, rules: BalanceRules, activit
   }
 }
 
-function claudeWhy(c: ClaudeState, lean: 'hot' | 'behind'): string {
-  if (c.stance === 'unknown') return 'Claude figures are missing, so it leans to Sonnet';
-  return `the ${c.tracks.map(points).join(' and the ')}, so Claude leans to ${lean === 'hot' ? 'Sonnet' : 'Opus'}`;
+function paceWhy(policy: PolicyFile, c: PaceState, lean: 'hot' | 'behind'): string {
+  if (c.provider === 'claude') {
+    if (c.stance === 'unknown') return 'Claude figures are missing, so it leans to Sonnet';
+    return `the ${c.tracks.map(points).join(' and the ')}, so Claude leans to ${lean === 'hot' ? 'Sonnet' : 'Opus'}`;
+  }
+  const name = spokenName(policy, c.provider);
+  const toward = lean === 'hot' ? 'its light models' : 'its strong models';
+  if (c.stance === 'unknown') return `${name} figures are missing, so it leans to its light models`;
+  return `the ${c.tracks.map(points).join(' and the ')}, so ${name} leans to ${toward}`;
 }
 
 /** One sentence on why the top model won, and what comes next. */
