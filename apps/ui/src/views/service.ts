@@ -6,7 +6,7 @@ export { CLASSIFIER_TEXT, MODE_TEXT };
 
 /** One setting as `augur config --json` reports it. */
 export interface ConfigLine {
-  key: string; label: string; help: string; kind: 'number' | 'bool' | 'choice' | 'list'; choices?: string[]; min?: number; max?: number;
+  key: string; label: string; help: string; kind: 'number' | 'bool' | 'choice' | 'list' | 'text'; choices?: string[]; min?: number; max?: number;
   weakens: boolean; value: string; default: string;
 }
 
@@ -56,6 +56,7 @@ function control(l: ConfigLine, locked: boolean): string {
     return `<div class="cfglist" ${attrs.replace(' disabled', '')}>${(l.choices ?? []).filter((c) => c !== 'exec' || on.has('exec')).map((c) =>
       `<label><input type="checkbox" data-cfg-item="${esc(l.key)}" value="${esc(c)}" ${on.has(c) ? 'checked' : ''} ${locked ? 'disabled' : ''}> ${esc(c)}</label>`).join('')}</div>`;
   }
+  if (l.kind === 'text') return `<input type="text" ${attrs} value="${esc(l.value)}" spellcheck="false" autocomplete="off">`;
   return `<input type="number" ${attrs} value="${esc(l.value)}" min="${l.min ?? 0}" max="${l.max ?? ''}">`;
 }
 

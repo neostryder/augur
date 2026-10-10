@@ -50,6 +50,8 @@ export function buildServer(tools: Tools, version: string): McpServer {
       cwd: z.string().optional().describe('The folder the job works in. Defaults to the server\'s folder.'),
       timeout_s: z.number().int().positive().optional().describe('Seconds the job may run before it is stopped.'),
       wait_s: z.number().int().min(0).max(900).optional().describe('Seconds to wait for the answer. 300 by default.'),
+      packs: z.array(z.string()).optional().describe('Charter packs to include, by name.'),
+      no_charter: z.boolean().optional().describe('Send the prompt with no charter.'),
     },
   }, async (a) => out(await tools.run(a)));
 

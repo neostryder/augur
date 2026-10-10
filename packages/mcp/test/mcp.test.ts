@@ -95,6 +95,11 @@ describe('run', () => {
     expect((await t.run({ ...args, activity: 'bogus' })).isError).toBe(true);
     expect(calls).toHaveLength(0);
   });
+  it('passes packs and no_charter through on the job request', async () => {
+    const calls: Calls[] = [];
+    await createTools(deps({ submit: { id: 'abc', warnings: [] }, result: { job: { id: 'abc', state: 'completed', route: 'luna' }, answer: 'done' } }, calls)).run({ ...args, packs: ['prose', 'review'], no_charter: true });
+    expect(calls[0]!.params).toMatchObject({ packs: ['prose', 'review'], noCharter: true, prompt: { text: 'hi' } });
+  });
   it('submits as an mcp caller with read tools and text output by default', async () => {
     const calls: Calls[] = [];
     await createTools(deps({ submit: { id: 'abc', warnings: [] }, result: { job: { id: 'abc', state: 'completed', route: 'luna' }, answer: 'done' } }, calls)).run(args);
@@ -149,6 +154,7 @@ describe('the server', () => {
     expect(client.getInstructions()).toContain('data tier is never assumed');
     const run = tools.find(t => t.name === 'augur_run')!;
     expect(run.inputSchema.required).toEqual(expect.arrayContaining(['route', 'prompt', 'activity', 'data_tier']));
+    expect(run.inputSchema.properties).toMatchObject({ packs: { type: 'array' }, no_charter: { type: 'boolean' } });
     const res = await client.callTool({ name: 'augur_routes', arguments: {} });
     expect(JSON.stringify(res.content)).toContain('cannot run: no program');
     expect((res.structuredContent as { routes: unknown[] }).routes).toHaveLength(2);

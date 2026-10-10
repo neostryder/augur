@@ -40,8 +40,10 @@ export interface RouteBudget { per: BudgetPeriod; usd?: number; jobs?: number }
 
 export interface PlanContext {
   jobDir: string;
-  /** The prompt as the caller gave it. Adapters add whatever framing their harness needs, such as `tierNote`. */
+  /** The prompt for this job. A charter, when one was built, is already prefixed. Adapters add framing their harness needs, such as `tierNote`. */
   prompt: string;
+  /** Service setting `runner.ambient`. The route option `ambient` overrides it. Absent means keep. */
+  ambient?: 'keep' | 'trim';
   /** For an adapter that works on a copy of the workspace: the folder the service copies the working directory into, as the host sees it. */
   workspace: string | null;
 }
@@ -80,6 +82,11 @@ export interface ExtractInput {
 
 export interface Adapter {
   id: string;
+  /**
+   * Charter file under charter/engines. Null means this adapter gets no charter (it keeps its own persona).
+   * Omitted means core and packs only, with no engine file.
+   */
+  charterEngine?: string | null;
   transport: Transport;
   capabilities: AdapterCapabilities;
   /** Names of the service's own environment variables the child may receive, beyond the platform basics. */

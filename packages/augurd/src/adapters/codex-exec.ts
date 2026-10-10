@@ -3,6 +3,7 @@ import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tierNote } from '@augur/dispatch-protocol';
 import type { Adapter, ExtractInput, Extraction, JobRequest, LaunchPlan, PlanContext, RouteConfig, UsageReport } from '@augur/dispatch-protocol';
+import { resolveAmbient } from '../charter.js';
 import { readTextIfExists, resolveExecutable } from './util.js';
 
 /** The OpenAI-managed install keeps itself current and ships the host binary next to codex.exe. Prefer it over whatever is on PATH. */
@@ -15,6 +16,8 @@ export function findMaintainedCodex(env: NodeJS.ProcessEnv = process.env): strin
 }
 
 const SANDBOXES = ['read-only', 'workspace-write', 'danger-full-access'];
+// From the ai-cli-toolkit codex dispatch. Measured 2026-09-29: these features added input tokens a one-shot job does not use (17.3k down to 14.2k).
+const CODEX_AMBIENT_OFF = ['plugins', 'apps', 'multi_agent', 'skill_search', 'browser_use', 'computer_use', 'in_app_browser', 'image_generation', 'goals', 'tool_suggest'];
 const versions = new Map<string, string | null>();
 
 interface TurnUsage { input_tokens?: number; cached_input_tokens?: number; cache_write_input_tokens?: number; output_tokens?: number; reasoning_output_tokens?: number }
@@ -24,7 +27,7 @@ interface TurnUsage { input_tokens?: number; cached_input_tokens?: number; cache
  * Route options: `model`, `effort`, `command`, `prefixArgsJson` (arguments placed before `exec`, for wrappers), `sandbox`.
  */
 export const codexExec: Adapter = {
-  id: 'codex-exec', transport: 'exec',
+  id: 'codex-exec', charterEngine: 'codex', transport: 'exec',
   capabilities: { permissionRequests: false, sessions: false, reportsUsage: true, sandboxed: false, isolatesWorkspace: false, enforcesReadOnly: false },
   envAllow: ['CODEX_HOME', 'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY', 'SSL_CERT_FILE'],
   validate(route: RouteConfig) {
@@ -39,6 +42,7 @@ export const codexExec: Adapter = {
     const prefix: string[] = typeof o.prefixArgsJson === 'string' ? JSON.parse(o.prefixArgsJson) as string[] : [];
     const sandbox = typeof o.sandbox === 'string' ? o.sandbox : 'danger-full-access';
     const args = [...prefix, 'exec', '--skip-git-repo-check', '--json', '-o', join(ctx.jobDir, 'last-message.txt'), '--sandbox', sandbox];
+    if (resolveAmbient(o.ambient, ctx.ambient) === 'trim') for (const feature of CODEX_AMBIENT_OFF) args.push('--disable', feature);
     if (typeof o.model === 'string') args.push('-m', o.model);
     if (typeof o.effort === 'string') args.push('-c', `model_reasoning_effort=${o.effort}`);
     args.push('-');

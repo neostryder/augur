@@ -14,11 +14,14 @@ import type { ServiceConfig } from './config.js';
 import { buildEnv } from './env.js';
 import type { Store } from './store.js';
 import type { DecisionLog } from './decisions.js';
-import { scriptPath } from './paths.js';
+import { buildCharter, resolveAmbient, resolveCharterDir } from './charter.js';
+import { augurHome, scriptPath } from './paths.js';
 import { hasStoredKey } from './secrets.js';
 
 export interface SupervisorDeps {
   store: Store; config: ServiceConfig; dir: string; adapters: Map<string, Adapter>;
+  /** Augur home. The charter folder is `<home>/charter` unless `runner.charterDir` is set. */
+  home?: string;
   routes: () => Record<string, RouteConfig> | null; policy: () => PolicyFile | null; usage: () => UsageSnapshot | null;
   /** Answers the typed questions behind a pick by task description. `local` is a backend that runs on this network, for text about students. */
   decision?: { primary: DecisionBackend; local?: DecisionBackend };
@@ -163,8 +166,15 @@ export class Supervisor {
     try { prompt = req.prompt.text ?? readFileSync(req.prompt.file as string, 'utf8'); } catch { return reject('bad_request', 'The prompt file could not be read.'); }
     const id = randomBytes(6).toString('hex'), dir = this.jobDir(id);
     const workspace = adapter.isolation ? join(adapter.isolation.root(route), 'jobs', id) : null;
+    // The charter is prefixed before the adapter plans, so every transport receives it. The stored prompt length stays the caller's text.
+    const ambient = resolveAmbient(route.options?.ambient, this.d.config.runner.ambient);
+    const charter = req.noCharter === true || adapter.charterEngine === null ? null : buildCharter({
+      dir: resolveCharterDir(this.d.config.runner.charterDir, this.d.home ?? augurHome(this.d.env)),
+      engine: adapter.charterEngine, tools: req.tools, cwd: req.cwd, packs: req.packs,
+    });
+    const sent = charter?.text ? charter.text + prompt : prompt;
     let plan: LaunchPlan;
-    try { plan = adapter.plan(req, route, { jobDir: dir, prompt, workspace }); } catch (e) { return reject('bad_request', `Route ${req.route}: ${(e as Error).message}`); }
+    try { plan = adapter.plan(req, route, { jobDir: dir, prompt: sent, workspace, ambient: this.d.config.runner.ambient }); } catch (e) { return reject('bad_request', `Route ${req.route}: ${(e as Error).message}`); }
     if (process.platform === 'win32') {
       const len = plan.command.length + 1 + plan.args.reduce((n, a) => n + a.length + 3, 0);
       if (len > MAX_COMMAND_LINE) return reject('prompt_too_large', `The command for ${adapter.id} would be ${len} characters, over the Windows limit of about 32767. This harness takes its prompt as an argument.`);
@@ -181,7 +191,7 @@ export class Supervisor {
     this.d.store.insert({ id, route: req.route, adapter: adapter.id, activity: req.activity, dataTier: req.dataTier, tools: req.tools, output: req.output, cwd: req.cwd,
       createdAt: this.now(), rootJobId: root ?? id, parentJobId: parentId, depth, caller: req.caller, named: !!req.named, expectFile: req.expectFile ?? null,
       timeoutS: req.timeoutS ?? null, harnessVersion: null, workspace });
-    this.d.store.setChars(id, { prompt: prompt.length });
+    this.d.store.setLaunchMeta(id, { promptChars: prompt.length, ambient, ...(charter?.text ? { charter: charter.parts, charterChars: charter.text.length } : {}), ...(charter?.notes.length ? { charterNotes: charter.notes } : {}) });
     const s = this.d.store;
     s.event(id, 'requested', `${req.caller.kind}${req.caller.label ? ' ' + req.caller.label : ''}`, this.now());
     s.event(id, 'policy_evaluated', warnings.join(' | '), this.now());
@@ -316,6 +326,8 @@ export class Supervisor {
       if (target !== resolve(req.cwd) && !target.startsWith(resolve(req.cwd) + sep)) return 'expectFile must stay inside cwd.';
     }
     if (req.timeoutS !== undefined && !(req.timeoutS > 0 && req.timeoutS <= 86400)) return 'timeoutS must be between 1 and 86400.';
+    if (req.packs !== undefined && (!Array.isArray(req.packs) || req.packs.some(p => typeof p !== 'string'))) return 'packs must be a list of strings.';
+    if (req.noCharter !== undefined && typeof req.noCharter !== 'boolean') return 'noCharter must be true or false.';
     return null;
   }
 

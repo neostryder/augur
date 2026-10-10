@@ -11,11 +11,20 @@ export interface DecisionSettings {
   shadow?: 'laya' | 'jev' | null;
 }
 
+export interface RunnerSettings {
+  /** Folder of charter files. Empty uses the charter folder in the Augur home when that folder exists. */
+  charterDir: string;
+  /** `keep` leaves each harness's ambient context on. `trim` turns it off where the harness has a switch. */
+  ambient: 'keep' | 'trim';
+}
+
 export interface ServiceConfig {
   /** Days a finished job's folder (logs and results) is kept. Job records stay. */
   retentionDays: number;
   /** Keep the prompt of each job in its folder. Off by default. */
   persistPrompts: boolean;
+  /** Charter folder and whether a harness's own instructions stay on. */
+  runner: RunnerSettings;
   maxConcurrent: number;
   maxDepth: number;
   maxDescendants: number;
@@ -38,7 +47,8 @@ export interface ServiceConfig {
 }
 
 export const DEFAULT_CONFIG: ServiceConfig = { retentionDays: 30, persistPrompts: false, maxConcurrent: 8, maxDepth: 2, maxDescendants: 16,
-  jobhostPath: null, adapters: ['codex-exec'], requirePick: true, promptRoots: [], verifyNamed: 'enforce', decision: { backend: 'none' }, learn: { recordTasks: false }, runnerStaleS: 20, engine: true };
+  jobhostPath: null, adapters: ['codex-exec'], requirePick: true, promptRoots: [], verifyNamed: 'enforce', decision: { backend: 'none' }, learn: { recordTasks: false }, runnerStaleS: 20, engine: true,
+  runner: { charterDir: '', ambient: 'keep' } };
 
 /** The launcher built by `pnpm build:jobhost` sits beside the package's sources, and a packaged install places it next to the service. */
 export function defaultJobhost(): string | null {
@@ -49,6 +59,11 @@ export function defaultJobhost(): string | null {
 }
 
 const num = (v: unknown, d: number, min: number, max: number) => typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max ? v : d;
+
+function runnerSettings(v: unknown): RunnerSettings {
+  const d = (typeof v === 'object' && v !== null && !Array.isArray(v) ? v : {}) as Record<string, unknown>;
+  return { charterDir: typeof d.charterDir === 'string' ? d.charterDir.trim() : '', ambient: d.ambient === 'trim' ? 'trim' : 'keep' };
+}
 
 function decisionSettings(v: unknown): DecisionSettings {
   const d = (typeof v === 'object' && v !== null ? v : {}) as Record<string, unknown>;
@@ -71,6 +86,7 @@ export function loadConfig(dir: string): ServiceConfig {
     requirePick: raw.requirePick !== false, promptRoots: Array.isArray(raw.promptRoots) ? raw.promptRoots.filter((r): r is string => typeof r === 'string') : c.promptRoots,
     verifyNamed: raw.verifyNamed === 'off' || raw.verifyNamed === 'record' || raw.verifyNamed === 'enforce' ? raw.verifyNamed : c.verifyNamed,
     decision: decisionSettings(raw.decision),
+    runner: runnerSettings(raw.runner),
     learn: { recordTasks: (raw.learn as { recordTasks?: unknown } | undefined)?.recordTasks === true },
     runnerStaleS: num(raw.runnerStaleS, c.runnerStaleS, 5, 600),
     engine: typeof raw.engine === 'boolean' ? raw.engine : c.engine,

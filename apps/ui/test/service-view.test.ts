@@ -12,6 +12,13 @@ describe('the service page', () => {
     expect(html).not.toContain('service-restart');
   });
 
+  it('edits a text setting as text', () => {
+    const html = renderService(model({ lines: [line({ key: 'runner.charterDir', label: 'Charter folder', kind: 'text', value: 'C:/charter', default: '' })] }));
+    expect(html).toContain('type="text"');
+    expect(html).toContain('value="C:/charter"');
+    expect(html).not.toContain('type="number"');
+  });
+
   it('lists the settings when jobs are on, and marks a changed value', () => {
     const html = renderService(model({ lines: [line({ value: '3' })] }));
     expect(html).toContain('data-cfg="maxConcurrent"');

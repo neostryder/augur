@@ -10,7 +10,7 @@ export interface ConfigKey {
   key: string;
   label: string;
   help: string;
-  kind: 'number' | 'bool' | 'choice' | 'list';
+  kind: 'number' | 'bool' | 'choice' | 'list' | 'text';
   choices?: string[];
   min?: number;
   max?: number;
@@ -21,6 +21,8 @@ export interface ConfigKey {
 export const CONFIG_KEYS: readonly ConfigKey[] = [
   { key: 'retentionDays', label: 'Keep finished jobs', help: "Logs and results stay on disk this many days after a job ends, 30 by default. The job's record stays.", kind: 'number', min: 0, max: 3650 },
   { key: 'persistPrompts', label: 'Keep prompts', help: "Saves each job's prompt in its folder. Off by default, so a prompt is deleted as soon as the job starts.", kind: 'bool' },
+  { key: 'runner.charterDir', label: 'Charter folder', help: 'Folder of standing instructions prefixed to each job. Empty uses the charter folder in the Augur home when it exists.', kind: 'text' },
+  { key: 'runner.ambient', label: 'Harness context', help: "keep leaves each harness's own instructions on. trim turns them off where the harness has a switch. A route's ambient option overrides this.", kind: 'choice', choices: ['keep', 'trim'] },
   { key: 'maxConcurrent', label: 'Jobs at once', help: 'How many jobs run together while the rest wait. 8 by default.', kind: 'number', min: 1, max: 64 },
   { key: 'maxDepth', label: 'Nesting depth', help: 'How many levels deep jobs may start jobs of their own. 2 by default.', kind: 'number', min: 0, max: 8 },
   { key: 'maxDescendants', label: 'Jobs one job can start', help: 'The most that one job, and the jobs it starts, can add up to. 16 by default.', kind: 'number', min: 0, max: 256 },
@@ -44,6 +46,8 @@ function valueOf(config: ServiceConfig, key: string): string {
     case 'decision.backend': return config.decision.backend;
     case 'decision.shadow': return config.decision.shadow ?? 'none';
     case 'learn.recordTasks': return String(config.learn.recordTasks);
+    case 'runner.charterDir': return config.runner.charterDir;
+    case 'runner.ambient': return config.runner.ambient;
     case 'adapters': return config.adapters.join(',');
     default: return String((config as unknown as Record<string, unknown>)[key]);
   }
@@ -77,6 +81,7 @@ export function parseValue(k: ConfigKey, text: string): { ok: true; stored: unkn
     if (!(k.choices ?? []).includes(t)) return { ok: false, error: `${k.key} is one of ${(k.choices ?? []).join(', ')}.` };
     return { ok: true, stored: t, shown: t };
   }
+  if (k.kind === 'text') return { ok: true, stored: t, shown: t };
   const items = t.split(',').map(s => s.trim()).filter(Boolean);
   const unknown = items.filter(i => !(k.choices ?? []).includes(i));
   if (!items.length || unknown.length) return { ok: false, error: `${k.key} is a comma-separated list from ${(k.choices ?? []).join(', ')}${unknown.length ? `; not known: ${unknown.join(', ')}` : ''}.` };

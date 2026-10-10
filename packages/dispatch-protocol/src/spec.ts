@@ -36,6 +36,10 @@ export interface JobRequest {
   allow?: Array<'unpicked' | 'exhausted'>;
   /** Set to false to keep the job on the route named, even when a fallback route could take it. */
   failover?: boolean;
+  /** Charter packs to add. Each entry is one name or a comma-separated list. */
+  packs?: string[];
+  /** Send the prompt with no charter. */
+  noCharter?: boolean;
 }
 
 /** Token counts as one figure set. `inputTokens` is the total input, including cached tokens, whatever the source counts. */
@@ -73,9 +77,17 @@ export interface JobRecord {
   named: boolean;
   harnessVersion: string | null;
   usage: UsageReport | null;
-  /** Length in characters of the prompt sent and of the answer received. Only the lengths are kept, so token counts can be estimated for a harness that reports none. */
+  /** Length in characters of the prompt sent and of the answer received. Only the lengths are kept, so token counts can be estimated for a harness that reports none. The prompt length is the caller's prompt, not a charter prefixed to it. */
   promptChars?: number | null;
   answerChars?: number | null;
+  /** Charter parts prefixed to the prompt, when a charter was built. Absent on rows from before charters. */
+  charter?: string[];
+  /** Length of that charter text. */
+  charterChars?: number;
+  /** Packs that were named and not found, and other charter notes. */
+  charterNotes?: string[];
+  /** Whether the harness ambient context was left on or trimmed. Absent on rows from before this field. */
+  ambient?: 'keep' | 'trim';
   /** Folder the job ran in when the adapter works on a copy of the workspace. */
   workspace: string | null;
   /** Patch of what the job changed in that copy, and how many files it touches. */

@@ -1,4 +1,4 @@
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { startService } from '@augur/augurd';
@@ -256,6 +256,29 @@ describe('augur claude hook subagent', () => {
     const on = await run(['claude', 'hook', 'subagent'], JSON.stringify({ session_id: 's1', tool_input: { description: 'Survey the tests' } }), { CLAUDE_PLUGIN_OPTION_PICK_BEFORE_SUBAGENT: 'true' });
     expect(on.code).toBe(0);
     if (on.out) expect(JSON.parse(on.out).hookSpecificOutput.hookEventName).toBe('PreToolUse');
+  });
+});
+
+describe('augur run charter flags', () => {
+  it('passes --pack through to the charter and --no-charter sends the prompt alone', async () => {
+    const { e, run } = await boot();
+    const dir = join(e.home, 'charter');
+    mkdirSync(join(dir, 'packs'), { recursive: true });
+    writeFileSync(join(dir, 'core.md'), 'Core body.');
+    writeFileSync(join(dir, 'packs', 'code.md'), 'Code body.');
+    writeFileSync(join(dir, 'packs', 'extra.md'), 'Extra body.');
+    writeFileSync(join(dir, 'packs', 'review.md'), 'Review body.');
+    const packed = await run(['run', 'fake', '--prompt', 'SLEEP 0', '--pack', 'extra,review', '--json']);
+    expect(packed.code).toBe(0);
+    const id = (JSON.parse(packed.out) as { id: string }).id;
+    expect(e.store.get(id)?.charter).toEqual(['core', 'extra', 'review', 'code']);
+    expect(e.store.get(id)?.promptChars).toBe('SLEEP 0'.length);
+    const bare = await run(['run', 'fake', '--prompt', 'SLEEP 0', '--no-charter', '--json']);
+    expect(bare.code).toBe(0);
+    const id2 = (JSON.parse(bare.out) as { id: string }).id;
+    expect(e.store.get(id2)).not.toHaveProperty('charter');
+    expect(e.store.get(id2)?.promptChars).toBe('SLEEP 0'.length);
+    expect((await run(['run', 'fake', '--prompt', 'x', '--pack'])).code).toBe(1);
   });
 });
 

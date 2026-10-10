@@ -100,6 +100,31 @@ describe('command lines', () => {
     expect(rd.args).toEqual(expect.arrayContaining(['--allow', 'Read', '--deny', 'Edit']));
     expect(rd.args).not.toContain('--always-approve');
   });
+  it('codex and copilot trim ambient context only when asked, and a route option overrides the setting', () => {
+    const off = ['plugins', 'apps', 'multi_agent', 'skill_search', 'browser_use', 'computer_use', 'in_app_browser', 'image_generation', 'goals', 'tool_suggest'];
+    const codexRoute = route('codex-exec', { command: 'C:/c/codex.exe', model: 'm' });
+    const cctx = ctx('hi', 'C:/jobs/j1');
+    const base = codexExec.plan(req(), codexRoute, cctx);
+    expect(codexExec.plan(req(), codexRoute, { ...cctx, ambient: 'keep' })).toEqual(base);
+    expect(base.args).not.toContain('--disable');
+    const trimmed = codexExec.plan(req(), codexRoute, { ...cctx, ambient: 'trim' });
+    const at = trimmed.args.indexOf('--sandbox');
+    expect(trimmed.args.slice(at + 2, at + 2 + off.length * 2)).toEqual(off.flatMap(f => ['--disable', f]));
+    expect(trimmed.args.slice(at + 2 + off.length * 2)).toEqual(['-m', 'm', '-']);
+    expect(codexExec.plan(req(), route('codex-exec', { command: 'C:/c/codex.exe', model: 'm', ambient: 'trim' }), { ...cctx, ambient: 'keep' }).args).toEqual(trimmed.args);
+    expect(codexExec.plan(req(), route('codex-exec', { command: 'C:/c/codex.exe', model: 'm', ambient: 'keep' }), { ...cctx, ambient: 'trim' })).toEqual(base);
+
+    const copilotRoute = route('copilot-exec', { model: 'gpt-5-mini', command: 'C:/c/copilot.exe' });
+    const plain = copilotExec.plan(req({ tools: 'read' }), copilotRoute, ctx('hi'));
+    expect(copilotExec.plan(req({ tools: 'read' }), copilotRoute, { ...ctx('hi'), ambient: 'keep' })).toEqual(plain);
+    expect(plain.args).not.toContain('--no-custom-instructions');
+    expect(copilotExec.plan(req({ tools: 'read' }), copilotRoute, { ...ctx('hi'), ambient: 'trim' }).args).toEqual([...plain.args, '--no-custom-instructions', '--disable-builtin-mcps']);
+    const effortTrim = copilotExec.plan(req({ tools: 'read' }), route('copilot-exec', { model: 'gpt-5-mini', command: 'C:/c/copilot.exe', effort: 'high', ambient: 'trim' }), { ...ctx('hi'), ambient: 'keep' });
+    expect(effortTrim.args.slice(effortTrim.args.indexOf('--no-color') + 1)).toEqual(['--no-custom-instructions', '--disable-builtin-mcps', '--reasoning-effort', 'high']);
+    const held = copilotExec.plan(req({ tools: 'read' }), route('copilot-exec', { model: 'gpt-5-mini', command: 'C:/c/copilot.exe', effort: 'high', ambient: 'keep' }), { ...ctx('hi'), ambient: 'trim' });
+    expect(held.args).not.toContain('--disable-builtin-mcps');
+    expect(held.args).toContain('--reasoning-effort');
+  });
   it('copilot: all tools allowed, tier stated in the prompt, prompt marked for redaction', () => {
     const p = copilotExec.plan(req({ tools: 'read' }), route('copilot-exec', { model: 'gpt-5-mini', command: 'C:/c/copilot.exe' }), ctx('hi'));
     expect(p.args.slice(0, 2)).toEqual(['-p', expect.stringMatching(/^READ-ONLY TASK\.[\s\S]*hi$/)]);

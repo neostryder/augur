@@ -34,6 +34,7 @@ export interface PreviewArgs { activity: string; data_tier: string; edits?: Edit
 
 export interface RunArgs {
   route: string; prompt: string; activity: string; data_tier: string; tools?: string; output?: string; cwd?: string; timeout_s?: number; wait_s?: number;
+  packs?: string[]; no_charter?: boolean;
 }
 
 const WAIT_DEFAULT_S = 300, WAIT_MAX_S = 900, POLL_MS = 1500;
@@ -91,7 +92,8 @@ export function createTools(d: McpDeps) {
     if (!activity || !dataTier || !tools || !output) return fail('An activity, a data tier, tools or output is not a known value. The data tier is never assumed: say how sensitive the task is.');
     if (!a.route || !a.prompt) return fail('A route and a prompt are required.');
     const req: JobRequest = { route: a.route, activity: activity as ActivityId, dataTier: dataTier as DataTier, tools: tools as ToolTier, output: output as OutputMode, cwd: a.cwd ?? d.cwd,
-      prompt: { text: a.prompt }, ...(a.timeout_s ? { timeoutS: a.timeout_s } : {}), caller: { kind: 'mcp', label: 'augur-mcp', session: d.session } };
+      prompt: { text: a.prompt }, ...(a.timeout_s ? { timeoutS: a.timeout_s } : {}), ...(a.packs ? { packs: a.packs } : {}), ...(a.no_charter ? { noCharter: true } : {}),
+      caller: { kind: 'mcp', label: 'augur-mcp', session: d.session } };
     let sub;
     try { sub = await d.call('submit', req, d.opts); } catch (e) { return fail(e instanceof Error ? e.message : String(e)); }
     if ('rejected' in sub) return fail(`Rejected (${sub.rejected.code}): ${sub.rejected.reason}`, { rejected: sub.rejected });

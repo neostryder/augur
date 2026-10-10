@@ -11,7 +11,7 @@ interface McodeResult { type?: string; status?: string; output?: string; error?:
  * Route options: `sandbox`, `workRoot`, `model`, `effort`, `maxSteps`, `sbx`, `envAllow`.
  */
 export const mcodeSbx: Adapter = {
-  id: 'mcode-sbx', transport: 'exec',
+  id: 'mcode-sbx', charterEngine: 'mcode', transport: 'exec',
   capabilities: { permissionRequests: false, sessions: false, reportsUsage: true, sandboxed: true, isolatesWorkspace: true, enforcesReadOnly: false },
   envAllow: [],
   isolation: { root: workRoot },

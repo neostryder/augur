@@ -31,6 +31,8 @@ augur run <route> --prompt-file <file|-> | --prompt <text> [options]
   --named            the route was named for this task by the person
   --allow <checks>   skip checks, comma separated: unpicked, exhausted (each use is recorded with the job)
   --no-failover      keep the job on this route even if a fallback route could take it
+  --pack <names>     charter packs, comma separated
+  --no-charter       send the prompt with no charter
   --wait             wait for the job and print its result
 augur jobs [--state <s>] [--root <id>] [--limit <n>]
 augur status                          one line: Claude's use, anything running hot, and the alert count (--waybar for a status bar's JSON)
@@ -65,7 +67,7 @@ Every command takes --json. Exit codes: 0 completed, 1 usage, 2 rejected, 3 need
 
 interface Parsed { cmd: string[]; flags: Map<string, string | true> }
 function parse(argv: string[]): Parsed {
-  const cmd: string[] = [], flags = new Map<string, string | true>(), boolean = new Set(['json', 'wait', 'named', 'follow', 'stderr', 'help', 'if-idle', 'no-failover', 'waybar', 'all', 'force', 'stdin', 'dry-run', 'no-key', 'best', 'snippet']);
+  const cmd: string[] = [], flags = new Map<string, string | true>(), boolean = new Set(['json', 'wait', 'named', 'follow', 'stderr', 'help', 'if-idle', 'no-failover', 'no-charter', 'waybar', 'all', 'force', 'stdin', 'dry-run', 'no-key', 'best', 'snippet']);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] as string;
     if (a === '-') { cmd.push(a); continue; }
@@ -305,6 +307,7 @@ async function run(rest: string[], p: Parsed, io: Io, opts: Opts, say: (h: strin
   const parentId = io.env.AUGUR_JOB_ID;
   const allow = (opt('allow') ?? '').split(',').map(x => x.trim()).filter(Boolean) as Array<'unpicked' | 'exhausted'>;
   if (allow.some(x => x !== 'unpicked' && x !== 'exhausted')) { io.err('--allow takes unpicked, exhausted, or both.\n'); return EXIT_CODES.usage; }
+  const packs = opt('pack')?.split(',').map(s => s.trim()).filter(Boolean);
   const req: JobRequest = {
     route, activity: activity as ActivityId, dataTier: dataTier as DataTier, tools: tools as ToolTier, output: output as OutputMode, cwd: resolve(io.cwd, opt('cwd') ?? '.'),
     prompt: { text: promptText as string },
@@ -312,6 +315,7 @@ async function run(rest: string[], p: Parsed, io: Io, opts: Opts, say: (h: strin
     ...(p.flags.has('named') ? { named: true } : {}),
     caller: { kind: parentId ? 'job' : 'cli', ...(parentId ? { label: parentId } : {}), ...(io.env.CLAUDE_CODE_SESSION_ID ? { session: io.env.CLAUDE_CODE_SESSION_ID } : {}), ...(io.interactive ? { interactive: true } : {}) },
     ...(allow.length ? { allow } : {}), ...(p.flags.has('no-failover') ? { failover: false } : {}),
+    ...(packs?.length ? { packs } : {}), ...(p.flags.has('no-charter') ? { noCharter: true } : {}),
     ...(parentId ? { parent: { jobId: parentId, rootJobId: io.env.AUGUR_ROOT_JOB_ID ?? parentId, depth: 0 } } : {}),
   };
   const res = await call('submit', req, opts);

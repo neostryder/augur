@@ -23,6 +23,8 @@ function command(route: RouteConfig): { command: string; prefix: string[] } | nu
  */
 export const hermesExec: Adapter = {
   id: 'hermes-exec', transport: 'exec',
+  // Hermes keeps its own persona, so a dispatch adds no charter.
+  charterEngine: null,
   capabilities: { permissionRequests: false, sessions: false, reportsUsage: true, sandboxed: false, isolatesWorkspace: false, enforcesReadOnly: false },
   envAllow: ['HERMES_HOME', 'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY', 'SSL_CERT_FILE'],
   validate(route: RouteConfig) {

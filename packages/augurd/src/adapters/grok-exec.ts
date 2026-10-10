@@ -16,7 +16,7 @@ function command(route: RouteConfig): { command: string; prefix: string[] } | nu
  * Route options: `model`, `effort`, `maxTurns`, `command`, `envAllow`.
  */
 export const grokExec: Adapter = {
-  id: 'grok-exec', transport: 'exec',
+  id: 'grok-exec', charterEngine: 'grok', transport: 'exec',
   capabilities: { permissionRequests: false, sessions: false, reportsUsage: true, sandboxed: false, isolatesWorkspace: false, enforcesReadOnly: true },
   envAllow: ['GROK_HOME', 'XAI_API_KEY', 'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY', 'SSL_CERT_FILE'],
   validate(route: RouteConfig) {

@@ -42,6 +42,22 @@ describe('config editing', () => {
     expect(configLines(dir).every(l => l.value === l.default)).toBe(true);
   });
 
+  it('stores the charter folder and the ambient choice', () => {
+    const dir = fresh();
+    expect(configLines(dir).find(l => l.key === 'runner.charterDir')).toMatchObject({ value: '', default: '', kind: 'text' });
+    expect(configLines(dir).find(l => l.key === 'runner.ambient')).toMatchObject({ value: 'keep', default: 'keep', kind: 'choice', choices: ['keep', 'trim'] });
+    expect(setConfigValue(dir, 'runner.charterDir', 'C:/charter')).toEqual({ ok: true, value: 'C:/charter' });
+    expect(setConfigValue(dir, 'runner.ambient', 'trim')).toEqual({ ok: true, value: 'trim' });
+    expect(loadConfig(dir).runner).toEqual({ charterDir: 'C:/charter', ambient: 'trim' });
+    expect(setConfigValue(dir, 'runner.ambient', 'loud')).toMatchObject({ ok: false });
+    expect(loadConfig(dir).runner.ambient).toBe('trim');
+    expect(setConfigValue(dir, 'runner.charterDir', '  ')).toEqual({ ok: true, value: '' });
+    expect(loadConfig(dir).runner.charterDir).toBe('');
+    writeFileSync(join(dir, 'config.json'), JSON.stringify({ runner: { ambient: 'nope', charterDir: 4 }, retentionDays: 9 }));
+    expect(loadConfig(dir).runner).toEqual({ charterDir: '', ambient: 'keep' });
+    expect(loadConfig(dir).retentionDays).toBe(9);
+  });
+
   it('takes a list of adapters once each', () => {
     const dir = fresh();
     expect(setConfigValue(dir, 'adapters', 'codex-exec, grok-exec,codex-exec')).toEqual({ ok: true, value: 'codex-exec,grok-exec' });

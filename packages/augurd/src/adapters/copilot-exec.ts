@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { tierNote } from '@augur/dispatch-protocol';
 import type { Adapter, ExtractInput, Extraction, JobRequest, LaunchPlan, PlanContext, RouteConfig, UsageReport } from '@augur/dispatch-protocol';
+import { resolveAmbient } from '../charter.js';
 import { optStr, resolveExecutable } from './util.js';
 
 /** The CLI prints its cost in AI credits. One credit is billed at a hundredth of a dollar. */
@@ -24,7 +25,7 @@ export function parseCount(text: string): number {
  * Route options: `model`, `command`, `effort`, `envAllow`.
  */
 export const copilotExec: Adapter = {
-  id: 'copilot-exec', transport: 'exec',
+  id: 'copilot-exec', charterEngine: 'copilot', transport: 'exec',
   capabilities: { permissionRequests: false, sessions: false, reportsUsage: true, sandboxed: false, isolatesWorkspace: false, enforcesReadOnly: false },
   envAllow: ['COPILOT_HOME', 'GH_TOKEN', 'GITHUB_TOKEN', 'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY', 'SSL_CERT_FILE'],
   validate(route: RouteConfig) {
@@ -34,6 +35,8 @@ export const copilotExec: Adapter = {
   plan(request: JobRequest, route: RouteConfig, ctx: PlanContext): LaunchPlan {
     const exe = command(route) as { command: string; prefix: string[] };
     const args = [...exe.prefix, '-p', tierNote(request.tools, ctx.prompt), '--model', optStr(route.options, 'model') as string, '--allow-all-tools', '--no-color'];
+    // From the ai-cli-toolkit copilot dispatch. Measured 2026-09-29: 103.8k input tokens with the ambient instruction file against 14.1k with these flags, plus the built-in MCP schemas.
+    if (resolveAmbient(route.options?.ambient, ctx.ambient) === 'trim') args.push('--no-custom-instructions', '--disable-builtin-mcps');
     const effort = optStr(route.options, 'effort');
     if (effort) args.push('--reasoning-effort', effort);
     return { command: exe.command, args, cwd: request.cwd, env: {}, stdin: null, promptArgs: [exe.prefix.length + 1] };
