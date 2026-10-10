@@ -19,7 +19,7 @@ Augur itself has to be running, because the tools and the skills talk to its ser
 
 ## The status line
 
-The line reads `Claude 5h 27% | wk 48% | hot +8 | Grok wk 81% | 1 Augur alert`. Claude's pace comes after its two windows: `hot +8` means the busiest window is 8 points ahead of the share of it that has passed. The pace reads `hot` when any window is further ahead than the pace band, `behind` when every window is further behind than the band, and `on pace` otherwise. The band is `claude.band` in the balance settings, 5 points unless you change it, and the plugin reads your value from `policy.json`. While Claude is hot the balance leans to Sonnet and other models, and while it is behind the balance leans to Opus.
+The line reads `Claude 5h 27% | wk 48% | hot +8 | Grok wk 81% | 1 Augur alert`. Claude's pace comes after its two windows: `hot +8` means the busiest window is 8 points ahead of the share of it that has passed. The pace reads `hot` when any window is further ahead than the pace band, `behind` when every window is further behind than the band, and `on pace` otherwise. The band is `pace.claude.band` in the balance settings (`claude.band` in an older file), 5 points unless you change it, and the plugin reads your value from `policy.json`. While Claude is hot the balance leans to Sonnet and other models, and while it is behind the balance leans to Opus. Every other provider with a usage window is paced the same way against its own band. The status line shows only Claude's pace, and `/augur:balance` shows every provider's.
 
 When Augur has not refreshed Claude's numbers for 15 minutes, the pace is left out, since an old figure would give the wrong stance, and the line shows how old the numbers are instead.
 
@@ -33,7 +33,7 @@ Plugin skills take the plugin's name as a prefix, so you run them as `/augur:set
 | --- | --- |
 | `/augur:setup` | Reads what is configured, asks a few questions and makes the changes through `augur_policy_edit`. It sends you to `augur key set` for any key and runs `augur test` on each route. It never accepts a key in the chat. |
 | `/augur:pick [task]` | Asks Augur which model should do the task, says why, and offers to run it with `augur_run`. It asks how sensitive the task's data is before it picks. |
-| `/augur:balance` | Summarises what the balance is doing: Claude's stance, where each kind of work goes, Copilot's spend and the latest picks. |
+| `/augur:balance` | Summarizes what the balance is doing: each paced provider's stance and boost, where each kind of work goes, Copilot's spend and the latest picks. |
 
 Changes made by the setup skill go through the same edit inbox as any agent's edits. Your approval setting on the Service page decides whether they apply at once or wait in Augur for you, and the skill cannot change that setting.
 

@@ -9,8 +9,8 @@ argument-hint: "[what the task is]"
 Use the task the person gave in the arguments, or ask for one. Then:
 
 1. Decide how sensitive the task's data is: public, internal, sensitive or regulated. Take the highest tier the task touches, and ask when it is unclear. A model is only used for data at or below the tier its rules allow.
-2. Call `augur_pick` with the task, the activity if it is obvious, and that data tier.
-3. Report the pick, the reason Augur gave and the routes that reach it. If no model is permitted, say that and give the reason Augur returned.
+2. Call `augur_pick` with the task, the activity if it is obvious, and that data tier. Augur draws the pick from each route's odds, so two calls for the same task can land on different models. Pass `best_only` when the person wants the top score every time, and `snippet` when the task is drafting one sentence or one bullet with no other prose to go with it.
+3. Report the pick, its odds, the reason Augur gave and the routes that reach it. When the pick was drawn over a route that scored higher, the reason says so. If no model is permitted, say that and give the reason Augur returned.
 4. Offer to run the task with `augur_run` on one of those routes. The run is refused unless the pick was made in this session within the last hour, so pick again if it has been longer.
 
-Augur's rules cannot be argued with from here. If the pick is not what the person wanted, `augur_pick_preview` shows what an edit to the rules would change, and `augur_policy_edit` queues it under the owner's approval setting.
+Augur's rules cannot be argued with from here. If the pick is not what the person wanted, `augur_pick_preview` shows every route's odds and what an edit to the rules would change without drawing or recording anything, and `augur_policy_edit` queues the edit under the owner's approval setting.

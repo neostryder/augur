@@ -40,10 +40,10 @@ augur result <job>
 augur logs <job> [--stderr] [--follow]
 augur cancel <job>
 augur apply <job> [--check]
-augur pick (--task <description> | --activity <a> --data <tier>) [--depth deep|everyday] [--named <model>] [--fit <model>=<0-1>,...] [--best] [--snippet]
-augur pick-preview (--task <description> | --activity <a> --data <tier>) [--depth deep|everyday] [--named <model>] [--fit <model>=<0-1>,...] [--snippet]   odds for each route, no draw, nothing recorded
+augur pick (--task <description> | --activity <a> --data <tier>) [--depth deep|everyday] [--named <model>] [--fit <model>=<0-1>,...] [--best] [--snippet]   a route drawn by its odds; --best takes the top score, --snippet marks a one-sentence draft
+augur pick-preview (--task <description> | --activity <a> --data <tier>) [--depth deep|everyday] [--named <model>] [--fit <model>=<0-1>,...] [--snippet]   every route's score and odds; no draw is made and nothing is recorded
 augur pressure
-augur balance [--days <n>]            where each kind of work goes now, Claude's pace, Copilot's spend and the last days' picks
+augur balance [--days <n>]            where each kind of work goes now, each provider's pace and boost, Copilot's spend and the last days' picks
 augur label <pick or job id> --brief met|partly|missed [--note <text>]     record how a job's report met its brief, beside the pick in the decision log
 augur usage                             tokens and cost per route, each labelled reported, derived or imputed
 augur note-prompt --session <id>     tell the service a person sent the message on standard input; it keeps only the models named

@@ -19,7 +19,7 @@ export interface PickEntry {
   classified?: { activity: boolean; dataTier: boolean };
   /** What the fit questions said about each ranked model, needed to rebuild those questions for training. */
   descriptions?: Record<string, string>;
-  /** The balance's reading of the task and why the top model won, and the models named beside it. A job that used another model than the pick is the override label. */
+  /** The balance's reading of the task, the reason line for the pick (why it won, or the odds it was drawn at when it was not the top score), and the models named beside it. A job that used another model than the pick is the override label. */
   depth?: string; reason?: string; seats?: { second?: string; web?: string; shadow?: string };
   /** Copilot's spend for the month when a pick landed on a Copilot model, so each such spend can be reported. */
   spend?: number | null;

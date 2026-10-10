@@ -45,7 +45,7 @@ describe('the decision record', () => {
   it('records a pick made through the service and the outcome of the job that follows', async () => {
     const e = makeEnv(); envs.push(e);
     (e.sup as unknown as { d: { decisions: DecisionLog } }).d.decisions = new DecisionLog(e.dir, { recordTasks: true });
-    const pick = await e.sup.pick({ activity: 'write_code', dataTier: 'internal', session: 'sx' });
+    const pick = await e.sup.pick({ activity: 'write_code', dataTier: 'internal', session: 'sx', best: true });
     if ('error' in pick) throw new Error(pick.error);
     expect(pick.pickId).toMatch(/^[0-9a-f]{12}$/);
     const route = Object.entries(ROUTES).find(([, r]) => r.model === pick.pick)?.[0] ?? 'fake';

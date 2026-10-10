@@ -189,9 +189,13 @@ Runs any command the route names, with no checks on what it does. It is off unle
 
 ## Tuning the balance
 
-The balance leans each pick toward the models that suit the work, keeps Claude near its pace and holds backup routes in reserve. The README's [section on it](../README.md#how-a-pick-balances-models) describes how. Its settings are the `balance` object of the rules. Each setting has a shipped default, a value of the wrong type is ignored, and `null` removes a shipped entry from a map.
+The balance leans each pick toward the models that suit the work, keeps each provider that reports a usage window near its pace, boosts the providers with allowance left to spend, and holds backup routes in reserve. The README's [section on it](../README.md#how-a-pick-balances-models) describes how. Its settings are the `balance` object of the rules. Each setting has a shipped default, a value of the wrong type is ignored, and `null` removes a shipped entry from a map.
 
-The `profile` setting chooses the base rules the other settings build on. `classic` is the original rule set, with tiers, preferences and seats for one particular stack. An install that names no profile uses it, so an update never changes what such an install picks. A new install starts on `neutral`, where weights, pauses and data tiers apply as always and the only tilt follows Claude's pace, toward Sonnet when Claude runs ahead and toward Opus when it runs behind. Neutral has no preferences, excluded names or seats, so you add the ones you want.
+Pace settings sit in one block per provider, `pace.<provider>`, with `band`, `reserve`, `hot.strong`, `hot.light`, `behind.strong`, `behind.light` and `boost`. A provider with no block of its own gets the built-in values: a band of 10 points, a reserve of 90%, hot multipliers of 0.8 for strong routes and 1.25 for light ones, behind multipliers of 1.25 and 0.85, and a boost of 1.5. Claude's built-in band is 5. The older `claude.*` settings still work as another spelling of `pace.claude.*`. The first time Augur saves the rules, it moves those numbers into `pace.<provider>` and marks the section `"schema": 2`, keeping any value already set under `pace`, and a file that has not been saved since is read the same way.
+
+The `profile` setting chooses the base rules the other settings build on. `classic` is the original rule set, with tiers, preferences and seats for one particular stack, and an install that names no profile uses it. A new install starts on `neutral`, where weights, pauses and data tiers apply as always and only Claude's own models have a tier, so the pace lean moves work toward Sonnet when Claude runs ahead and toward Opus when it runs behind. Neutral has no preferences, excluded names or seats, so you add the ones you want. The unused-allowance boost and the draw work the same under both profiles.
+
+`boostFitFloor` keeps the boost off routes the caller rated as a poor fit, and `draw.enabled` and `draw.tail` control the draw. With the draw on, `augur pick` and `augur_pick` choose a route at random by its odds, its score over the sum of the scores still in the draw, and a route under `draw.tail` of the top score is left out. With the draw off, every pick takes the top score.
 
 An agent can change a balance setting through `augur_policy_edit` with `field` set to `balance` and a `path`, as [mcp.md](mcp.md) describes. `agentApproval` in `config.json` decides how many of an agent's edits wait for the owner. `all` holds every edit, `risky` (the default) holds the edits that change what data a model may see or whether it runs, and `none` applies everything. The setting is changed on the Service page or in the terminal app, and no tool an agent can call reads or changes it.
 
@@ -211,17 +215,17 @@ To set the balance by hand, put the object in `config.json` under `policy`, with
 }
 ```
 
-`augur balance` shows what the settings are doing, and `augur_pick_preview` ranks a task against them before an agent runs it.
+`augur balance` shows what the settings are doing. `augur_pick_preview` and `augur pick-preview` rank a task against them and show each route's odds without drawing or recording a pick, and `augur_pick_preview` can also apply edits that have not been made yet.
 
 <!-- balance-reference:start -->
 
 | Setting | Value | What it does |
 | --- | --- | --- |
-| `profile` | classic or neutral | The starting rules the other settings sit on. Neutral tilts only for Claude pace; classic is the original rule set and is what an install with no profile uses. |
-| `enabled` | true or false | Switches the whole balance off. A pick then ranks on weights and usage alone. |
-| `boostFitFloor` | number from 0 to 1 | A route is boosted only when its fit for the task is at or above this. A route with no fit from the caller is still boosted. |
-| `draw.enabled` | true or false | Turns the weighted draw on or off. Off, a caller that asks for a draw gets the top score. |
-| `draw.tail` | number from 0 to 1 | A route scoring under this share of the top score is left out of the draw. |
+| `profile` | classic or neutral | The starting rules the other settings sit on. Classic is the original rule set and is what an install with no profile uses. Neutral gives a tier only to Claude's own models, so pace moves work between Opus and Sonnet and leaves other routes alone. Both profiles boost providers with unused allowance. |
+| `enabled` | true or false | Switches the whole balance off, pace and the boost with it. Scores then come from fit, weights and usage alone. |
+| `boostFitFloor` | number from 0 to 1 | The lowest caller fit that still gets the unused-allowance boost. A route the caller gave no fit for is boosted. |
+| `draw.enabled` | true or false | Draws each pick at random by its odds. Off, every pick takes the top score. |
+| `draw.tail` | number from 0 to 1 | The share of the top score a route needs to stay in the draw. A route below it gets 0% odds and stays in the ranking. |
 | `depth.<activity>` | deep or everyday | How hard an activity is when the caller does not say. Deep work leans to strong models and everyday work to light ones. |
 | `tiers.<route>` | strong or light | The tier of a route. A route with no tier is never tilted. Set a shipped entry to null to remove it. |
 | `exclude` | list of words | Route labels, or ids containing any of these words, that are never picked unless a caller names one. |
@@ -231,24 +235,24 @@ To set the balance by hand, put the object in `config.json` under `policy`, with
 | `tilt.everyday.light` | number above 0 | The score multiplier for a light route on everyday work. |
 | `prose.models` | list of routes | The routes that write the best prose. They get prose.tilt on draft_prose at any depth. |
 | `prose.tilt` | number above 0 | The multiplier a prose route gets on draft_prose in place of the depth tilt. |
-| `prose.pace.enabled` | true or false | Turns the prose pace switch on or off. While it is on and Claude runs ahead of its pace, draft_prose moves off the Claude routes in prose.models. |
-| `prose.pace.ahead` | points | How many points the stricter Claude window must run ahead of its pace marker, with nothing used, before draft_prose moves off Claude. The lead needed shrinks as usage climbs. |
-| `prose.pace.aheadAtReserve` | points | The lead that moves draft_prose off Claude once a window reaches claude.reserve. Between no usage and the reserve, the lead needed falls in a straight line from prose.pace.ahead to this value. |
-| `prose.pace.returnAt` | points | The lead at or below which draft_prose returns to Claude. Zero means Claude is back on its pace marker. |
-| `claude.provider` | provider id | The older spelling of the pace provider id. The controller steers this provider and reads its session and weekly windows. |
-| `claude.band` | points | The older spelling of pace.claude.band. How many points of usage ahead of or behind the share of the window that has passed still count as on pace. |
-| `claude.reserve` | percent | The older spelling of pace.claude.reserve. A window at or above this moves optional work off Claude while another route can take it. |
-| `claude.hot.strong` | number above 0 | The older spelling of pace.claude.hot.strong. The multiplier for a strong route when Claude runs ahead of pace. |
-| `claude.hot.light` | number above 0 | The older spelling of pace.claude.hot.light. The multiplier for a light route when Claude runs ahead of pace. |
-| `claude.behind.strong` | number above 0 | The older spelling of pace.claude.behind.strong. The multiplier for a strong route when Claude runs behind pace. |
-| `claude.behind.light` | number above 0 | The older spelling of pace.claude.behind.light. The multiplier for a light route when Claude runs behind pace. |
-| `pace.<provider>.reserve` | percent | A window at or above this moves optional work off that provider while another route can take it. |
-| `pace.<provider>.band` | points | How many points of usage ahead of or behind the share of the window that has passed still count as on pace for that provider. |
-| `pace.<provider>.hot.strong` | number above 0 | The multiplier for a strong route when that provider runs ahead of pace. |
-| `pace.<provider>.hot.light` | number above 0 | The multiplier for a light route when that provider runs ahead of pace. |
-| `pace.<provider>.behind.strong` | number above 0 | The multiplier for a strong route when that provider runs behind pace. |
-| `pace.<provider>.behind.light` | number above 0 | The multiplier for a light route when that provider runs behind pace. |
-| `pace.<provider>.boost` | number of 1 or more | The peak multiplier of the unused-allowance boost for that provider, with 1 turning the boost off. |
+| `prose.pace.enabled` | true or false | Turns the prose pace switches on or off. Each provider with a route in prose.models has its own switch. While a provider's switch is on, draft_prose moves off its prose routes if another route can take the work. |
+| `prose.pace.ahead` | points | How many points a provider's stricter window must run ahead of its pace marker, with nothing used, before draft_prose moves off that provider. The lead needed shrinks as usage climbs. |
+| `prose.pace.aheadAtReserve` | points | The lead that moves draft_prose off a provider once a window reaches that provider's reserve. Between no usage and the reserve, the lead needed falls in a straight line from prose.pace.ahead to this value. |
+| `prose.pace.returnAt` | points | The lead at or below which draft_prose returns to a provider. Zero means the provider is back on its pace marker. |
+| `claude.provider` | provider id | The provider the older claude settings apply to, claude unless set. Its reserve can send work to backup routes, and while its figures are missing it leans to its light models. Pace settings for every provider sit under pace.<provider>. |
+| `claude.band` | points | The older spelling of pace.claude.band. Other providers set theirs under pace.<provider>. |
+| `claude.reserve` | percent | The older spelling of pace.claude.reserve. Other providers set theirs under pace.<provider>. |
+| `claude.hot.strong` | number above 0 | The older spelling of pace.claude.hot.strong: Claude's multiplier for a strong route while it runs ahead of pace. |
+| `claude.hot.light` | number above 0 | The older spelling of pace.claude.hot.light: Claude's multiplier for a light route while it runs ahead of pace. |
+| `claude.behind.strong` | number above 0 | The older spelling of pace.claude.behind.strong: Claude's multiplier for a strong route while it runs behind pace. |
+| `claude.behind.light` | number above 0 | The older spelling of pace.claude.behind.light: Claude's multiplier for a light route while it runs behind pace. |
+| `pace.<provider>.reserve` | percent | The percent of a window at which optional work moves off that provider while another provider can take it, 90 by default. Claude's work can then go to a backup route. Any other provider's work goes only to a subscription route. |
+| `pace.<provider>.band` | points | How many points of usage ahead of or behind the share of the window that has passed still count as on pace for that provider. 10 by default and 5 for Claude. |
+| `pace.<provider>.hot.strong` | number above 0 | The multiplier for that provider's strong routes while it runs ahead of pace, 0.8 by default. |
+| `pace.<provider>.hot.light` | number above 0 | The multiplier for that provider's light routes while it runs ahead of pace, 1.25 by default. |
+| `pace.<provider>.behind.strong` | number above 0 | The multiplier for that provider's strong routes while it runs behind pace, 1.25 by default. |
+| `pace.<provider>.behind.light` | number above 0 | The multiplier for that provider's light routes while it runs behind pace, 0.85 by default. |
+| `pace.<provider>.boost` | number of 1 or more | The most the unused-allowance boost can multiply that provider's scores, reached at a fresh window and shrinking as its fullest window fills. 1.5 by default, and 1 turns it off. |
 | `fallback.providers` | list of provider ids | Providers whose routes are backups. They compete only when no subscription route can take the work. |
 | `fallback.routes.<route>` | list of activities | A single route that is a backup for these activities only. |
 | `fallback.anthropic` | list of routes | Claude models reached through a backup provider. They are allowed once Claude is at its reserve, since a Claude stop halts everything. |
@@ -266,4 +270,4 @@ To set the balance by hand, put the object in `config.json` under `policy`, with
 
 <!-- balance-reference:end -->
 
-A route that no setting names is never tilted, so a stack with different routes still works. The `neutral` profile, which a new install gets, names only Claude's own Opus and Sonnet models and tilts nothing else. The `classic` profile tilts the routes of the maintainer's own stack. To tilt your own routes on classic instead, add them to `tiers` and `prefer`, and set the shipped entries to `null`.
+A route that no setting names is never tilted, though its provider's boost still applies to it, so a stack with different routes still works. The `neutral` profile, which a new install gets, names only Claude's own Opus, Sonnet and Haiku models and tilts nothing else. The `classic` profile tilts the routes of the maintainer's own stack. To tilt your own routes on classic instead, add them to `tiers` and `prefer`, and set the shipped entries to `null`.

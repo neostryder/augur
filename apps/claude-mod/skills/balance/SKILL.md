@@ -1,14 +1,15 @@
 ---
 name: balance
-description: Shows what Augur's automatic balance is doing: where each kind of work goes, Claude's pace, Copilot's spend and the latest picks.
+description: Shows what Augur's automatic balance is doing: each paced provider's stance and boost, where each kind of work goes, Copilot's spend and the latest picks.
 ---
 
 # Show the balance
 
-Call `augur_balance`, with `days` when the person names a period, and summarise it in a few lines:
+Call `augur_balance`, with `days` when the person names a period, and summarize it in a few lines:
 
-- Claude's stance (hot, on pace or behind), which way the controller leans because of it, and whether a window is at its reserve.
-- The providers that are paced, draining, free or held as backups, and any with no figures.
+- Each provider that needs attention, in the order the report gives them (hot, figures missing, behind): its stance, how far each window runs ahead of or behind pace, and whether a window is at its reserve. For Claude, also say which way the controller leans.
+- The providers on pace in one line, with any boost they have for unused allowance and their rough odds, and the providers that are not paced.
+- How each provider is treated: paced, draining, free or held as a backup, and any with no figures.
 - Copilot's spend against the aim and the cap, when backups are in use.
 - The last days' picks, with any that were labelled as missing their brief.
 

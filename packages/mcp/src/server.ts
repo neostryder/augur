@@ -26,7 +26,7 @@ export function buildServer(tools: Tools, version: string): McpServer {
 
   server.registerTool('augur_pick', {
     title: 'Pick a model', annotations: readOnly,
-    description: 'Ranks the models permitted for an activity and data tier, weighing the rules and current plan usage, and draws one from the odds. best_only takes the top score. snippet is one sentence with no prose batch, so prose routes are not preferred. Give an activity and a data tier, or a description of the task and Augur classifies it.',
+    description: 'Ranks the models permitted for an activity and data tier by the rules and current plan usage, gives each its odds, and draws the pick by those odds. A named model always wins, and best_only takes the top score. Set snippet when drafting one sentence or one bullet with no other prose, so the prose routes get no extra weight. Give an activity and a data tier, or describe the task and Augur classifies it.',
     inputSchema: {
       activity: z.enum(ACTIVITIES).optional().describe('What the work is.'),
       data_tier: z.enum(DATA_TIERS).optional().describe('The most sensitive data the task touches.'),
@@ -73,7 +73,7 @@ export function buildServer(tools: Tools, version: string): McpServer {
 
   server.registerTool('augur_balance', {
     title: 'Model balance report', annotations: readOnly,
-    description: 'Shows what the automatic balance is doing: where each kind of work goes now, how Claude is pacing against its week and 5-hour window, how much Copilot has cost this month, each provider stance, and what recent picks were. Read only.',
+    description: 'Shows what the automatic balance is doing. Each provider paced against a usage window gets its stance, how far each window runs ahead of or behind pace, its boost and its rough odds. The report also gives Copilot\'s spend this month, how each provider is treated, where each kind of work goes now, and recent picks. Read only.',
     inputSchema: { days: z.number().int().min(1).max(90).optional().describe('How many days of picks to summarize. Defaults to 7.') },
   }, async (a) => out(await tools.balance(a)));
 
@@ -109,13 +109,13 @@ export function buildServer(tools: Tools, version: string): McpServer {
 
   server.registerTool('augur_pick_preview', {
     title: 'Try a pick under edits', annotations: readOnly,
-    description: 'Ranks the models for an activity and data tier as the rules stand now and again with the given edits applied, and shows each route\'s odds. It records nothing, draws nothing, and does not count as a pick for running jobs. With include_pending it also applies the edits already queued or waiting for the owner.',
+    description: 'Ranks the models for an activity and data tier as the rules stand now and again with the given edits applied, with each route\'s odds. Nothing is drawn or recorded, and the preview does not count as a pick for running jobs. With include_pending it also applies the edits already queued or waiting for the owner.',
     inputSchema: {
       activity: z.enum(ACTIVITIES).describe('What the work is.'),
       data_tier: z.enum(DATA_TIERS).describe('The most sensitive data the task touches.'),
       edits: z.array(editShape).max(20).optional().describe('Edits to try. A preview cannot use "inherit".'),
       include_pending: z.boolean().optional().describe('Also apply the edits queued or waiting for the owner.'),
-      best_only: z.boolean().optional().describe('Accepted, and unused: a preview never draws, so the top score is the one it reports.'),
+      best_only: z.boolean().optional().describe('Accepted and ignored. A preview never draws, so it always reports the top score as the pick.'),
       snippet: z.boolean().optional().describe('One sentence or one bullet, with no prose batch to attach it to.'),
     },
   }, async (a) => out(await tools.pickPreview(a)));

@@ -46,13 +46,13 @@ export interface Methods {
   cancel: { params: { id: string }; result: { ok: boolean; state: JobState } | null };
   /** Applies the patch a job left in its isolated workspace to the working directory the job was started for. */
   apply: { params: { id: string; check?: boolean }; result: { ok: boolean; output: string } | null };
-  /** Ranks the models a task may use and records the pick, so later jobs for the same caller are cleared against it. */
+  /** Ranks the models a task may use, draws the pick from the odds unless `best` or `preview` is set, and records it, so later jobs for the same caller are cleared against it. A preview records nothing. */
   pick: { params: PickParams; result: PickAnswer };
   /** Tells the service a person sent a message in a session. It keeps which models the message named, and drops the text. */
   human_prompt: { params: { session: string; text: string }; result: { models: string[] } | { error: string } };
   /** Headroom per provider and the usage factor of every model. */
   pressure: { params: undefined; result: { pressure: Record<string, Headroom>; factors: Record<string, number>; scarcity: number } | null };
-  /** The read-only balance report: Claude's pace, Copilot's spend, each provider's stance, where each kind of work goes now, and what the pick log shows for the last few days. */
+  /** The read-only balance report: one pace row per paced provider, Copilot's spend, each provider's stance, where each kind of work goes now, and what the pick log shows for the last few days. */
   balance: { params: { days?: number } | undefined; result: BalanceReport | { error: string } };
   /** Records how a job's report met its brief, beside the pick in the decision log. `id` is a pick id or a job id; the check itself runs in the caller's tooling. */
   label: { params: { id: string; result: 'met' | 'partly' | 'missed'; note?: string }; result: { ok: true; pick: string; job: string | null } | { error: string } };

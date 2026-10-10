@@ -4,6 +4,21 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+### Added
+
+- [Visible] [Providers] **Codex, Grok and other providers with a usage window now have their own pace.** Each one is checked against its 5-hour and weekly windows the way Claude is, so a provider that runs hot leans to its light models and one that runs behind leans to its strong ones. When a window reaches its reserve, the provider's optional work goes to another subscription, and only Claude's reserve sends work to a backup route such as Copilot.
+- [Visible] [Providers] **Pace settings sit in one block per provider.** `pace.<provider>` holds `band`, `reserve`, `hot`, `behind` and `boost`, and a provider with no block uses the built-in values. The older `claude.*` settings still work, and the first save of the rules moves them into `pace.claude` and marks the balance section as schema 2.
+- [Visible] [Providers] **A provider with allowance left gets a boost.** Its routes score up to 1.5 times higher at a fresh window, less as its fullest window fills, and no higher over the last 10% of that window. A hot provider, one at its reserve, and a route the caller rated below `boostFitFloor` (0.6 by default) get no boost.
+- [Visible] [Providers] **Picks are drawn from the odds.** Each route's odds are its score over the sum of the scores still in the draw, so a Preferred route at 2.5 wins against a Normal one at 1.0 about 71% of the time, and a named model always wins. `draw.enabled` turns the draw off, `draw.tail` sets how far under the top score a route drops out, and each pick records its odds, whether it was drawn, and the seed.
+- [Visible] [Providers] **A pick can ask for the top score or mark a snippet.** `--best` on `augur pick` and `best_only` on `augur_pick` take the top score. `--snippet` and `snippet` mark a draft of one sentence or one bullet, which is not held to the Opus routes.
+- [Visible] [Providers] **`augur pick-preview` shows every route's odds without drawing.** It takes the same arguments as `augur pick`, prints `preview: no draw made` and records nothing, and `augur_pick_preview` shows the odds as well.
+- [Visible] [UI] **The balance report has a pace row for each paced provider.** The providers that need attention come first, each with its windows against pace, its boost and its rough odds. Providers on pace share one group, and those with no usage window are named under Not paced.
+
+### Changed
+
+- [Visible] [Providers] **A default install picks differently from 1.8.0.** The boost, the draw and the pacing of providers other than Claude apply to every install, including one that names no profile, so the same task can now go to a different model than it did on 1.8.0. Setting `pace.<provider>.boost` to 1 turns off that provider's boost, and setting `draw.enabled` to false makes every pick take the top score.
+- [Visible] [Providers] **Each provider that serves Opus has its own prose switch.** Prose drafting leaves a provider's Opus route while that provider runs hot and another Opus route can take the work, where before only Claude had the switch.
+
 ## [1.8.0] - 2026-10-10
 
 ### Added

@@ -38,7 +38,7 @@ The data tier is required on every run and is never assumed. An agent has to say
 | Tool | Arguments | What it returns |
 | --- | --- | --- |
 | `augur_models` | none | Every model in the rules: status, cost, the most sensitive data it may see, ask-first, pause, and the routes that reach it. |
-| `augur_pick` | `activity` and `data_tier`, or `task`; optional `depth` (`deep` or `everyday`) | The permitted models ranked by score, with the routes for each, the pick, and one line saying why it won. `depth` overrides the activity's default, so a hard review can ask for a strong model. With `task`, the classifier the owner chose sets the activity and data tier. |
+| `augur_pick` | `activity` and `data_tier`, or `task`; optional `depth` (`deep` or `everyday`), `best_only`, `snippet` | The permitted models ranked by score, with each one's odds and routes, the pick, and a line on why it won. The pick is drawn at random by those odds, and the line gives the odds when the draw passes over the top score. `best_only` takes the top score every time. Set `snippet` when drafting one sentence or one bullet with no other prose, so the prose routes get no extra weight. `depth` overrides the activity's default, so a hard review can ask for a strong model. With `task`, the classifier the owner chose sets the activity and data tier. |
 | `augur_run` | `route`, `prompt`, `activity`, `data_tier`; optional `tools`, `output`, `cwd`, `timeout_s`, `wait_s` | The model's answer. `tools` is `read`, `write` or `full` and defaults to `read`. `output` is `text_only`, `patch_only` or `write_files` and defaults to `text_only`. `wait_s` is how long to wait, 300 by default and 900 at most. |
 | `augur_job` | `id` | A job's state and, once it has finished, its answer. |
 | `augur_jobs` | optional `limit` | Recent jobs, newest first. |
@@ -47,8 +47,8 @@ The data tier is required on every run and is never assumed. An agent has to say
 | `augur_routes` | none | Each route, its model and adapter, and any reason it cannot run. |
 | `augur_policy` | none | The full rules from `policy.json`: every model with its status, data tier, weights, pause, data handling, hold rules and notes, each provider's limits, the edits still queued, the ones waiting for the owner, and what became of recent ones. |
 | `augur_policy_edit` | `edits`: a list of `model`, `field`, `value` and an optional `reason` (a limit edit names its `provider` instead of a model; a balance edit has `field` set to `balance` and a `path`) | Each edit with its value before the request, and whether it was queued, is waiting for the owner, or was rejected and why. |
-| `augur_balance` | optional `days` | What the automatic balance is doing: where each kind of work goes now, Claude's pace against its week and 5-hour window, Copilot's spend, each provider's stance and a summary of recent picks. Read only. |
-| `augur_pick_preview` | `activity`, `data_tier`; optional `edits`, `include_pending` | The ranking now and again with the given edits applied, so a change can be tried first. It records nothing and does not count as a pick for a run. |
+| `augur_balance` | optional `days` | What the automatic balance is doing. Each provider paced against a usage window has a row with its stance, its windows, its boost and its rough odds. Then come Copilot's spend, how each provider is treated, where each kind of work goes now, and a summary of recent picks. Read only. |
+| `augur_pick_preview` | `activity`, `data_tier`; optional `edits`, `include_pending`, `best_only`, `snippet` | Each route's score and odds, now and again with the given edits applied, so a change can be tried first. Nothing is drawn, and the text says `preview: no draw made`. It records nothing and does not count as a pick for a run. `best_only` is accepted and has no effect. |
 
 Each result has a text form for the model and, where there is structure, a `structuredContent` object with the same facts. A refusal, a failed job and a service that is not running all come back as an error result with the reason in the text. A refusal carries the service's code, such as `not_picked`, in `structuredContent.rejected`.
 
@@ -64,7 +64,7 @@ To edit a balance setting, set `field` to `balance` and give a `path` with one n
 
 The owner's approval setting, on the app's Service page and the terminal app's Service screen, decides what waits. `Ask me for risky edits` is the default and holds the edits listed above as waiting for the owner. `Ask me for everything` holds every edit. `Apply everything` holds none, which lets an agent change what data a model may see, though each change is still checked, stamped and recorded in the history. No tool here reads or changes the setting, and an edit that names it is rejected.
 
-`augur_pick_preview` ranks with the edits applied to a copy of `policy.json`, using the current usage, so an agent can see what a change would do before it asks for it. With `include_pending` it also applies the edits that are queued or waiting for the owner. It cannot preview `"inherit"`, since `policy.json` no longer carries the provider's defaults.
+`augur_pick_preview` ranks with the edits applied to a copy of `policy.json`, using the current usage, and shows each route's odds, so an agent can see what a change would do before it asks for it. With `include_pending` it also applies the edits that are queued or waiting for the owner. It cannot preview `"inherit"`, since `policy.json` no longer carries the provider's defaults.
 
 ## Changing the tools
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { applyEdit, balanceField, checkEdit, editKind, emptyEditState, parseEditState, parseInbox, previewEdits, processInbox, resolveHeld, resolvedValue } from '../src/policy-edits.js';
+import { applyEdit, balanceField, checkBalanceEdit, checkEdit, editKind, emptyEditState, parseEditState, parseInbox, previewEdits, processInbox, resolveHeld, resolvedValue } from '../src/policy-edits.js';
 import type { PolicyEdit } from '../src/policy-edits.js';
 import { buildPolicyFile, emptyPolicy, migratePolicy } from '../src/policy.js';
 import type { PolicyConfig } from '../src/policy.js';
@@ -170,5 +170,12 @@ describe('balance edits', () => {
     expect(r.applied).toBe(1);
     expect((r.file.balance as Record<string, any>).tilt['minimax/m3']).toBe(0.5);
     expect(file.balance).toBeUndefined();
+  });
+});
+
+describe('the balance settings an edit may name', () => {
+  it('takes the pace block, the boost fit floor and the draw settings', () => {
+    for (const path of [['pace', 'grok', 'reserve'], ['pace', 'codex', 'boost'], ['boostFitFloor'], ['draw', 'enabled'], ['draw', 'tail']]) expect(checkBalanceEdit(path, 0.5), path.join('.')).toBeNull();
+    expect(checkBalanceEdit(['bogus'], 1)).toMatch(/not a balance setting/);
   });
 });
