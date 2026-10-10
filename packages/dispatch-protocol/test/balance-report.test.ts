@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { buildPolicyFile, emptyPolicy, importPolicy, fieldPath, setField } from '@augur/core';
 import { ACTIVITIES } from '@augur/core';
-import { balanceReport, renderReport } from '../src/index.js';
+import { balanceReport, renderReport, reportSections } from '../src/index.js';
+import type { UsageMeter } from '../src/index.js';
 
 const now = new Date('2026-09-28T12:00:00Z');
 const level = Object.fromEntries(ACTIVITIES.map(a => [a, 'normal']));
@@ -50,7 +51,8 @@ describe('the balance report', () => {
   it('renders plain lines with no non-ASCII punctuation', () => {
     const text = renderReport(r).join('\n');
     expect(text).toContain('spend this month: $160.00, past the aim ($150 aim, $250 cap)');
-    expect(text).toContain('week: 60% used, 50% of the time gone, 10 points ahead of pace');
+    expect(text).toContain('week: 60% used, 50% of the week gone, 10 points ahead of pace');
+    expect(text).toContain('stance: hot, leaning to Sonnet');
     expect(text).toContain('Last 7 days: 3 picks, 2 jobs, 1 ran on a model other than the pick.');
     expect(text).toContain('claude/live 2, codex/sol 1');
     expect(/[^\x00-\x7F]/.test(text)).toBe(false);
@@ -62,5 +64,106 @@ describe('the balance report', () => {
     const none = balanceReport(policy(), null, now);
     expect(none.copilot.zone).toBe('unknown');
     expect(none.claude.stance).toBe('on pace');
+  });
+
+  it('gives the only paced provider its own section and names the rest once', () => {
+    const sections = reportSections(r);
+    const head = sections[0];
+    const claude = r.pace.find(row => row.provider === 'claude');
+    expect(r.pace.map(row => row.provider)).toEqual(['claude']);
+    expect(claude).toMatchObject({ stance: 'hot', boost: 1, boostWhy: '' });
+    expect(claude?.odds).toEqual(expect.any(Number));
+    expect(head?.title).toBe('claude');
+    expect(head?.lines[0]).toMatch(/^stance: hot, leaning to Sonnet\. The band is \d+ points? and the reserve is \d+%/);
+    expect(head?.lines).toContain('week: 60% used, 50% of the week gone, 10 points ahead of pace');
+    expect(head?.lines).toContain(`odds: ${Math.round((claude?.odds ?? 0) * 100)}%`);
+    expect(head?.lines).toContain('prose: moved off Claude (10 points ahead of pace); it comes back when the lead falls to 0 points');
+    expect(head?.lines.some(l => l.startsWith('boost:'))).toBe(false);
+    expect(sections.map(s => s.title)).not.toContain('On pace');
+    expect(sections.find(s => s.title === 'Not paced')?.lines).toEqual(['codex, copilot, minimax.']);
+    expect(r.claude).toMatchObject({ stance: 'hot', lean: 'Sonnet', peak: 60, atReserve: false });
+  });
+
+  it('prints both windows on an attention row', () => {
+    const session = { id: 'session', usedPct: 20, windowKind: 'session', windowSeconds: 18000, resetsAt: new Date(now.getTime() + 0.7 * 18000e3).toISOString() };
+    const lines = reportSections(balanceReport(policy(), { providers: { claude: { fetchedAt: now.toISOString(), meters: [week, session] } } }, now))[0]?.lines ?? [];
+    expect(lines).toContain('week: 60% used, 50% of the week gone, 10 points ahead of pace');
+    expect(lines).toContain('5-hour window: 20% used, 30% of the 5-hour window gone, 10 points behind pace');
+  });
+});
+
+describe('pace rows in the balance report', () => {
+  const owned = (id: string, activities: Record<string, string>) => ({ defaults: { dataTier: 'internal', output: 'write_files', cost: 'moderate' }, models: { [`${id}/m`]: { id: `${id}-m`, rule: { activities } } } });
+  const owners = {
+    quiet: owned('quiet', { research: 'normal' }),
+    hot: owned('hot', level),
+    mystery: owned('mystery', level),
+    'behind-high': owned('behind-high', level),
+    'behind-low': owned('behind-low', level),
+    'calm-a': owned('calm-a', level),
+    'calm-b': owned('calm-b', level),
+    idle: owned('idle', level),
+    later: owned('later', level),
+  };
+  const names: Record<string, string> = { quiet: 'Quiet', hot: 'Hot', mystery: 'Mystery', 'behind-high': 'BehindHigh', 'behind-low': 'BehindLow', 'calm-a': 'CalmA', 'calm-b': 'CalmB', idle: 'Idle', later: 'Later' };
+  const meter = (used: number, elapsed: number, kind: 'weekly' | 'session' = 'weekly') => {
+    const seconds = kind === 'weekly' ? 604800 : 18000;
+    return { id: kind, usedPct: used, windowKind: kind, windowSeconds: seconds, resetsAt: new Date(now.getTime() + (1 - elapsed) * seconds * 1000).toISOString() };
+  };
+  const entry = (meters: UsageMeter[]) => ({ fetchedAt: now.toISOString(), meters });
+  const p = (() => {
+    const built = emptyPolicy(); importPolicy(built, { providers: owners }, now);
+    for (const [id, provider] of Object.entries(built.providers)) for (const label of Object.keys(provider.models)) setField(built, fieldPath(id, label, 'status'), 'confirmed', 'test', now);
+    return buildPolicyFile(built, Object.keys(built.providers).map(id => ({ id, name: names[id] ?? id, metered: true })), now);
+  })();
+  const usage = { providers: {
+    quiet: entry([meter(95, 0.4)]),
+    hot: entry([meter(60, 0.3), meter(20, 0.3, 'session')]),
+    mystery: entry([{ id: 'weekly', usedPct: 70, windowKind: 'weekly' }]),
+    'behind-high': entry([meter(40, 0.8)]),
+    'behind-low': entry([meter(10, 0.8)]),
+    'calm-a': entry([meter(50, 0.5)]),
+    'calm-b': entry([meter(20, 0.2)]),
+  } };
+  const report = balanceReport(p, usage, now);
+  const sections = reportSections(report);
+
+  it('orders attention first, hot then unknown then behind, and breaks ties by used percent', () => {
+    expect(report.pace.map(row => [row.provider, row.stance, row.peak])).toEqual([
+      ['quiet', 'hot', 95],
+      ['hot', 'hot', 60],
+      ['mystery', 'unknown', 70],
+      ['behind-high', 'behind', 40],
+      ['behind-low', 'behind', 10],
+      ['calm-a', 'on pace', 50],
+      ['calm-b', 'on pace', 20],
+    ]);
+    expect(sections.map(s => s.title).slice(0, 7)).toEqual(['Quiet', 'Hot', 'Mystery', 'BehindHigh', 'BehindLow', 'On pace', 'Not paced']);
+  });
+
+  it('prints stance, both windows, the boost when it is above 1, and odds', () => {
+    expect(sections.find(s => s.title === 'Quiet')?.lines).toEqual([expect.stringMatching(/^stance: hot\. The band is/), 'week: 95% used, 40% of the week gone, 55 points ahead of pace', 'odds: none']);
+    expect(sections.find(s => s.title === 'Hot')?.lines).toEqual([
+      expect.stringMatching(/^stance: hot\. The band is/),
+      'week: 60% used, 30% of the week gone, 30 points ahead of pace',
+      '5-hour window: 20% used, 30% of the 5-hour window gone, 10 points behind pace',
+      expect.stringMatching(/^odds: \d+%$/),
+    ]);
+    expect(sections.find(s => s.title === 'Mystery')?.lines[0]).toMatch(/^stance: unknown\. The band is/);
+    expect(sections.find(s => s.title === 'BehindLow')?.lines.slice(0, 3)).toEqual([expect.stringMatching(/^stance: behind\. The band is/), 'week: 10% used, 80% of the week gone, 70 points behind pace', 'boost: 1.45x']);
+    expect(report.pace.find(row => row.provider === 'behind-low')).toMatchObject({ boost: 1.45 });
+    expect(report.pace.find(row => row.provider === 'behind-low')?.boostWhy).toMatch(/1\.45x/);
+    expect(report.pace.find(row => row.provider === 'quiet')).toMatchObject({ odds: null, boost: 1, boostWhy: '' });
+    expect(report.pace.find(row => row.provider === 'hot')?.odds).toEqual(expect.any(Number));
+  });
+
+  it('folds calm providers under one group and names providers with no window once', () => {
+    expect(sections.map(s => s.title)).not.toContain('CalmA');
+    expect(sections.find(s => s.title === 'On pace')?.lines).toEqual([
+      'CalmA, week 50% used, boost 1.25x, odds ' + Math.round((report.pace.find(row => row.provider === 'calm-a')?.odds ?? 0) * 100) + '%',
+      'CalmB, week 20% used, boost 1.4x, odds ' + Math.round((report.pace.find(row => row.provider === 'calm-b')?.odds ?? 0) * 100) + '%',
+    ]);
+    expect(sections.find(s => s.title === 'Not paced')?.lines).toEqual(['Idle, Later.']);
+    expect(report.pace.map(row => row.provider)).not.toContain('idle');
   });
 });

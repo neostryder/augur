@@ -113,7 +113,8 @@ describe('the prose pace switch', () => {
 
   it('calls a window at 99% or more spent in the report and the reasons', () => {
     const text = renderReport(balanceReport(policy(), usage([track('weekly', 100, 0.8)]), now)).join('\n');
-    expect(text).toContain('week: 100% used, 80% of the time gone, spent');
+    expect(text).toContain('week: 100% used, 80% of the week gone');
+    expect(text).toContain('Claude is spent');
     expect(text).not.toContain('ahead of pace');
   });
 

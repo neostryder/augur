@@ -1,7 +1,7 @@
 // The read-only balance report: what the router is doing now and what it has been doing, in one structure that the command, the tool, the apps and the daily file all share. Pure.
 import { ACTIVITIES } from '@augur/core';
 import type { ActivityId, PolicyFile } from '@augur/core';
-import { DEFAULT_PACE_RULES, claudeState, copilotSpend, pacedProviders, paceState, plural, proseSwitchState, resolveBalance } from './balance.js';
+import { DEFAULT_PACE_RULES, boostFor, claudeState, copilotSpend, pacedProviders, paceState, plural, proseSwitchState, resolveBalance } from './balance.js';
 import type { ClaudeStance, Depth, PaceTrack, ProseSwitch } from './balance.js';
 import { drainProviders, pressure } from './pace.js';
 import type { UsageSnapshot } from './pace.js';
@@ -9,6 +9,22 @@ import { rank } from './pick.js';
 
 /** How a provider is treated: paced against its windows, spent in full before others wait on it, held as a backup, or free. */
 export type Stance = 'paced' | 'drain' | 'backup' | 'free';
+
+/** One paced provider, attention first. A higher used percent wins a tie inside one stance. */
+export interface PaceLine {
+  provider: string;
+  name: string;
+  stance: ClaudeStance;
+  tracks: PaceTrack[];
+  peak: number | null;
+  atReserve: boolean;
+  band: number;
+  reserve: number;
+  boost: number;
+  boostWhy: string;
+  /** Rough guide: its share of one write_code task on internal data, with no caller fits. Null when it has no route in that ranking. */
+  odds: number | null;
+}
 
 export interface ProviderLine { id: string; name: string; stance: Stance; /** 0 to 1, or null with no figures. */ headroom: number | null; why: string; spent: boolean }
 export interface MixLine { activity: ActivityId; depth: Depth; pick: string | null; next: string | null; reason: string; second: string | null; web: string | null }
@@ -31,7 +47,7 @@ export interface BalanceReport {
   enabled: boolean;
   claude: { stance: ClaudeStance; lean: string; peak: number | null; reserve: number; band: number; atReserve: boolean; tracks: PaceTrack[]; /** Where the prose pace switch stands. Reports written before the switch existed have none. */ prose?: ProseSwitch };
   /** One row per paced provider, hot first, then unknown, behind, and on pace. A higher used percent wins a tie. */
-  pace: Array<{ provider: string; name: string; stance: ClaudeStance; tracks: PaceTrack[]; peak: number | null; atReserve: boolean; band: number; reserve: number }>;
+  pace: PaceLine[];
   copilot: { spend: number | null; aim: number; cap: number; zone: 'unknown' | 'under the aim' | 'past the aim' | 'at the cap' };
   providers: ProviderLine[];
   mix: MixLine[];
@@ -42,12 +58,23 @@ export interface BalanceReport {
 export function balanceReport(policy: PolicyFile, usage: UsageSnapshot | null, now: Date, picks: PickSummary | null = null, tier: 'public' | 'internal' | 'sensitive' | 'regulated' = 'internal', proseSwitched = false): BalanceReport {
   const rules = resolveBalance((policy as { balance?: unknown }).balance);
   const state = claudeState(usage, rules, now);
+  const steeredId = rules.claude.provider;
   const lean = state.stance === 'hot' ? 'Sonnet' : state.stance === 'behind' ? 'Opus' : state.stance === 'unknown' ? 'Sonnet (figures missing)' : 'neither';
   const attention: Record<ClaudeStance, number> = { hot: 0, unknown: 1, behind: 2, 'on pace': 3 };
+  const guide = rank(policy, usage, { activity: 'write_code', dataTier: 'internal', draw: false }, now);
+  const oddsFor = (id: string): number | null => {
+    const models = policy.providers[id]?.models;
+    if (!models) return null;
+    let sum = 0, n = 0;
+    for (const row of guide.ranking) if (Object.hasOwn(models, row.model)) { sum += row.odds; n += 1; }
+    return n ? Math.round(sum * 1000) / 1000 : null;
+  };
   const pace = pacedProviders(usage, rules, now).map(id => {
     const s = paceState(usage, rules, id, now);
     const rule = rules.pace[id] ?? DEFAULT_PACE_RULES;
-    return { provider: id, name: policy.providers[id]?.name || id, stance: s.stance, tracks: s.tracks, peak: s.peak, atReserve: s.atReserve, band: rule.band, reserve: rule.reserve };
+    const lifted = boostFor(s, usage, rules, now);
+    // The Claude block is this provider's state, so the report can find the row from that same tracks array.
+    return { provider: id, name: policy.providers[id]?.name || id, stance: s.stance, tracks: id === steeredId ? state.tracks : s.tracks, peak: s.peak, atReserve: s.atReserve, band: rule.band, reserve: rule.reserve, boost: lifted.boost, boostWhy: lifted.why, odds: oddsFor(id) };
   }).sort((a, b) => attention[a.stance] - attention[b.stance] || (b.peak ?? -1) - (a.peak ?? -1) || (a.provider < b.provider ? -1 : a.provider > b.provider ? 1 : 0));
   const spend = copilotSpend(usage), counted = spend === null ? null : spend + rules.fallback.margin;
   const zone = counted === null ? 'unknown' : counted >= rules.fallback.cap ? 'at the cap' : counted >= rules.fallback.aim ? 'past the aim' : 'under the aim';
@@ -72,6 +99,18 @@ export function balanceReport(policy: PolicyFile, usage: UsageSnapshot | null, n
 }
 
 const pct = (n: number) => `${Math.round(n)}%`;
+const boostText = (n: number) => `${n.toFixed(3).replace(/0+$/, '').replace(/\.$/, '')}x`;
+const oddsText = (n: number | null) => n === null ? 'none' : pct(n * 100);
+const windowLine = (t: PaceTrack) => `${t.window}: ${pct(t.used)} used, ${pct(t.elapsed)} of the ${t.window} gone, ${t.used >= 99 ? 'spent' : `${plural(Math.abs(Math.round(t.ahead)), 'point')} ${t.ahead >= 0 ? 'ahead of' : 'behind'} pace`}`;
+
+/** The prose switch sentence, worded as it was when the report had a single Claude section. */
+function proseLine(c: BalanceReport['claude']): string | null {
+  const sw = c.prose;
+  if (!sw || (sw.ahead === null && !sw.on)) return null;
+  return sw.on
+    ? `prose: moved off Claude (${sw.ahead === null ? 'figures missing' : (c.peak ?? 0) >= 99 ? 'Claude is spent' : `${plural(Math.round(sw.ahead), 'point')} ahead of pace`}); it comes back when the lead falls to ${plural(sw.returnAt, 'point')}`
+    : `prose: stays on Claude; it moves when the lead passes ${plural(sw.threshold, 'point')}`;
+}
 
 export interface ReportSection { title: string; lines: string[] }
 
@@ -81,13 +120,36 @@ export const reportHeading = (r: BalanceReport): string => `Balance report, ${r.
 /** The report as titled groups of plain lines. The window app, the terminal app, the command and the daily file all show these same words. */
 export function reportSections(r: BalanceReport): ReportSection[] {
   const out: ReportSection[] = [];
-  const c = r.claude, claude: string[] = [];
-  if (c.tracks.length) for (const t of c.tracks) claude.push(`${t.window}: ${pct(t.used)} used, ${pct(t.elapsed)} of the time gone, ${t.used >= 99 ? 'spent' : `${plural(Math.abs(Math.round(t.ahead)), 'point')} ${t.ahead >= 0 ? 'ahead of' : 'behind'} pace`}`);
-  else claude.push('no usable figures');
-  claude.push(`stance: ${c.stance}, leaning to ${c.lean}. The band is ${plural(c.band, 'point')} and the reserve is ${c.reserve}%${c.atReserve ? ', and a window is at it' : ''}.`);
-  const sw = c.prose;
-  if (sw && (sw.ahead !== null || sw.on)) claude.push(sw.on ? `prose: moved off Claude (${sw.ahead === null ? 'figures missing' : (c.peak ?? 0) >= 99 ? 'Claude is spent' : `${plural(Math.round(sw.ahead), 'point')} ahead of pace`}); it comes back when the lead falls to ${plural(sw.returnAt, 'point')}` : `prose: stays on Claude; it moves when the lead passes ${plural(sw.threshold, 'point')}`);
-  out.push({ title: 'Claude', lines: claude });
+  const rows = r.pace ?? [];
+  const prose = proseLine(r.claude);
+  const steered = rows.find(row => row.tracks === r.claude.tracks);
+  const weekUsed = (row: PaceLine) => { const week = row.tracks.find(t => t.window === 'week'); return week ? `${pct(week.used)} used` : 'none'; };
+  for (const row of rows) {
+    if (row.stance === 'on pace') continue;
+    const lean = row === steered ? `, leaning to ${r.claude.lean}` : '';
+    const lines = [`stance: ${row.stance}${lean}. The band is ${plural(row.band, 'point')} and the reserve is ${row.reserve}%${row.atReserve ? ', and a window is at it' : ''}.`, ...row.tracks.map(windowLine)];
+    if (row.boost > 1) lines.push(`boost: ${boostText(row.boost)}`);
+    lines.push(`odds: ${oddsText(row.odds)}`);
+    if (prose && row === steered) lines.push(prose);
+    out.push({ title: row.name, lines });
+  }
+  const calm = rows.filter(row => row.stance === 'on pace');
+  if (calm.length) {
+    const lines: string[] = [];
+    for (const row of calm) {
+      lines.push(`${row.name}, week ${weekUsed(row)}, boost ${boostText(row.boost)}, odds ${oddsText(row.odds)}`);
+      if (prose && row === steered) lines.push(prose);
+    }
+    out.push({ title: 'On pace', lines });
+  }
+  const paced = new Set(rows.map(row => row.provider));
+  const quiet = (r.providers ?? []).filter(p => !paced.has(p.id)).map(p => p.name);
+  if (quiet.length || (prose && !steered)) {
+    const lines: string[] = [];
+    if (quiet.length) lines.push(`${quiet.join(', ')}.`);
+    if (prose && !steered) lines.push(prose);
+    out.push({ title: 'Not paced', lines });
+  }
   out.push({ title: 'Copilot', lines: [`spend this month: ${r.copilot.spend === null ? 'unknown' : `$${r.copilot.spend.toFixed(2)}`}, ${r.copilot.zone} ($${r.copilot.aim} aim, $${r.copilot.cap} cap)`] });
   out.push({ title: 'Providers', lines: r.providers.map(p => `${p.name.padEnd(22)} ${p.stance.padEnd(7)} ${p.headroom === null ? 'no figures' : `${pct(p.headroom * 100)} room`}${p.spent ? ', spent' : ''}, ${p.why}`) });
   out.push({ title: 'What each kind of work goes to now', lines: r.mix.map(m => `${m.activity.padEnd(18)} ${m.depth.padEnd(9)} ${(m.pick ?? 'nothing allowed').padEnd(26)} next ${m.next ?? '-'}${m.second ? `, second opinion ${m.second}` : ''}${m.web ? `, web ${m.web}` : ''}`) });

@@ -22,7 +22,7 @@ describe('balance page', () => {
     await app.poll();
     const text = draw(110, 60);
     expect(text).toContain('Balance report');
-    expect(text).toContain('Claude');
+    expect(text).toContain('Copilot');
     expect(text).toContain('What each kind of work goes to now');
   });
 

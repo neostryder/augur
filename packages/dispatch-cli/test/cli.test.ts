@@ -192,14 +192,20 @@ describe('augur pick and augur pressure', () => {
   });
 
   it('prints the balance report, and the same report as JSON', async () => {
-    const { run } = await boot();
+    const { run, e } = await boot();
+    const at = Date.now(), week = 604800;
+    writeFileSync(join(e.home, 'usage.json'), JSON.stringify({ providers: { test: { fetchedAt: new Date(at).toISOString(), meters: [{ id: 'weekly', usedPct: 40, windowKind: 'weekly', windowSeconds: week, resetsAt: new Date(at + week * 500).toISOString() }] } } }));
     const text = await run(['balance']);
     expect(text.code).toBe(0);
     expect(text.out).toContain('Balance report');
+    expect(text.out).toContain('On pace');
+    expect(text.out).toContain('Test, week 40% used, boost 1.3x, odds 100%');
     expect(text.out).toContain('What each kind of work goes to now');
-    const json = JSON.parse((await run(['balance', '--days', '3', '--json'])).out);
+    const json = JSON.parse((await run(['balance', '--days', '3', '--json'])).out) as { picks: { days: number }; mix: unknown[]; pace: Array<{ provider: string; stance: string; boost: number; odds: number | null }> };
     expect(json.picks.days).toBe(3);
     expect(json.mix.length).toBeGreaterThan(0);
+    expect(json.pace).toEqual([expect.objectContaining({ provider: 'test', stance: 'on pace', boost: 1.3 })]);
+    expect(json.pace[0]?.odds).toBeCloseTo(1, 2);
   });
 
   it('asks for a brief result and says when the id is not in the decision log', async () => {

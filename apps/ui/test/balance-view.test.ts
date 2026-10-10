@@ -14,8 +14,8 @@ describe('the balance page', () => {
   it('shows the report in the same groups as the command', () => {
     const report = balanceReport(emptyPolicy() as never, null, new Date('2026-10-04T12:00:00Z'));
     const html = renderBalance({ report, error: '' });
-    expect(html).toContain('Claude');
     expect(html).toContain('Copilot');
+    expect(html).toContain('Never picked');
     expect(html).toContain('What each kind of work goes to now');
     expect(html).toContain('Balance report, 2026-10-04 12:00 UTC');
   });

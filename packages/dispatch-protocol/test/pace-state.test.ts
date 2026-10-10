@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildPolicyFile, emptyPolicy, fieldPath, importPolicy, setField } from '@augur/core';
 import type { PolicyFile } from '@augur/core';
-import { DEFAULT_BALANCE, balanceReport, claudeState, govern, paceState, pacedProviders, rank, resolveBalance } from '../src/index.js';
+import { DEFAULT_BALANCE, balanceReport, claudeState, govern, paceState, pacedProviders, rank, reportSections, resolveBalance } from '../src/index.js';
 import type { Governed, UsageMeter, UsageSnapshot } from '../src/index.js';
 
 const now = new Date('2026-09-28T12:00:00Z');
@@ -283,6 +283,13 @@ describe('one pace state per provider', () => {
     expect(r.pace.find(row => row.provider === 'codex')).toMatchObject({ band: 10, reserve: 90, atReserve: false });
     const claude = r.pace.find(row => row.provider === 'claude');
     expect(r.claude).toMatchObject({ stance: 'on pace', lean: 'neither', peak: 40, atReserve: false, band: 5, reserve: 90, tracks: claude?.tracks });
+    expect(r.pace.find(row => row.provider === 'openrouter')).toMatchObject({ boost: 1, boostWhy: '', odds: null });
+    expect(r.pace.find(row => row.provider === 'jev')).toMatchObject({ boost: 1.35 });
+    expect(r.pace.find(row => row.provider === 'grok')).toMatchObject({ boost: 1.45 });
+    expect(claude).toMatchObject({ boost: 1.3 });
+    expect(claude?.odds).toEqual(expect.any(Number));
+    expect(reportSections(r).map(s => s.title).slice(0, 6)).toEqual(['OpenRouter', 'Codex', 'MiniMax', 'Jev', 'Grok', 'On pace']);
+    expect(reportSections(r).find(s => s.title === 'On pace')?.lines[0]).toBe(`Claude, week 40% used, boost 1.3x, odds ${Math.round((claude?.odds ?? 0) * 100)}%`);
   });
 
   it('moves prose off a hot Opus provider and brings it back at returnAt', () => {
