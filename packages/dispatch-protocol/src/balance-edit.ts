@@ -17,6 +17,7 @@ function valueProblem(type: string, value: unknown): string | null {
   switch (type) {
     case 'number above 0': return typeof value === 'number' && Number.isFinite(value) && value > 0 ? null : 'The value is a number above 0.';
     case 'number of 1 or more': return typeof value === 'number' && Number.isFinite(value) && value >= 1 ? null : 'The value is a number of 1 or more.';
+    case 'number from 0 to 1': return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1 ? null : 'The value is a number from 0 to 1.';
     case 'points': case 'dollars': return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? null : 'The value is a number of 0 or more.';
     case 'percent': return typeof value === 'number' && value >= 0 && value <= 100 ? null : 'The value is a percent from 0 to 100.';
     case 'provider id': case 'route': return isText(value) ? null : 'The value is a name.';

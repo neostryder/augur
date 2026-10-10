@@ -1,4 +1,7 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { DecisionLog } from '../src/decisions.js';
 import { ROUTES, makeEnv, request, submitOk, terminal } from './harness.js';
 import type { Env } from './harness.js';
 
@@ -58,6 +61,34 @@ describe('picks through the service', () => {
     const forced = other.sup.submit({ ...request({ text: 'SLEEP 0' }, other.root), allow: ['unpicked'], caller: caller('s9') });
     expect('id' in forced).toBe(true);
     expect(other.store.events((forced as { id: string }).id).map(x => x.kind)).toContain('checks_overridden');
+  });
+
+  it('draws unless the caller asks for the top, and a preview records nothing', async () => {
+    const e = setup();
+    (e.sup as unknown as { d: { decisions: DecisionLog } }).d.decisions = new DecisionLog(e.dir, { recordTasks: false });
+    const preview = await e.sup.pick({ activity: 'write_code', dataTier: 'internal', fits: { 'test/fake': 1 }, preview: true, seed: 7 });
+    if ('error' in preview) throw new Error(preview.error);
+    expect(preview.drawn).toBe(false);
+    expect(preview.seed).toBeNull();
+    expect(preview.pick).toBe('test/fake');
+    expect(existsSync(join(e.dir, 'decisions.jsonl'))).toBe(false);
+    expect(e.store.picksSince(0)).toEqual([]);
+    const best = await e.sup.pick({ activity: 'write_code', dataTier: 'internal', best: true, seed: 7 });
+    if ('error' in best) throw new Error(best.error);
+    expect(best.drawn).toBe(false);
+    expect(best.seed).toBeNull();
+    expect(best.pick).toBe(best.ranking[0]?.model);
+    const drawn = await e.sup.pick({ activity: 'write_code', dataTier: 'internal', fits: { 'test/fake': 1 }, seed: 7 });
+    if ('error' in drawn) throw new Error(drawn.error);
+    expect(drawn).toMatchObject({ pick: 'test/fake', drawn: true, seed: '7' });
+    const row = e.store.picksSince(0).find(p => p.seed === '7');
+    expect(row).toMatchObject({ model: 'test/fake', drawn: true, seed: '7' });
+    expect(row?.odds).toBeGreaterThan(0);
+    const lines = readFileSync(join(e.dir, 'decisions.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l) as { seed?: string; odds?: number; drawn?: boolean });
+    expect(lines.find(l => l.seed === '7')).toMatchObject({ drawn: true, odds: row?.odds });
+    e.store.db.prepare('insert into picks(at,session,model,activity,data_tier,named,cleared) values(1,null,?,?,?,null,?)').run('test/old', 'write_code', 'internal', '[]');
+    const old = e.store.picksSince(0).find(p => p.at === 1);
+    expect(old).toEqual({ at: 1, session: null, model: 'test/old', activity: 'write_code', dataTier: 'internal', named: null, cleared: [] });
   });
 
   it('leaves picks unchecked when they are not required', () => {

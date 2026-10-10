@@ -76,6 +76,14 @@ describe('pick', () => {
     const r = await createTools(deps({ pick: { error: 'could not classify' } })).pick({ task: 'do a thing' });
     expect(r).toMatchObject({ isError: true, text: 'could not classify' });
   });
+  it('passes best_only and snippet, and prints each route odds', async () => {
+    const calls: Calls[] = [];
+    const r = await createTools(deps({ pick: { pick: 'codex/luna', activity: 'write_code', dataTier: 'internal', ranking: [{ model: 'codex/luna', score: 0.8, odds: 0.71 }], routes: {}, reason: 'codex/luna for deep write code.', seats: {} } }, calls))
+      .pick({ activity: 'write_code', data_tier: 'internal', best_only: true, snippet: true });
+    expect(calls[0]?.params).toMatchObject({ best: true, snippet: true, session: 'mcp-test' });
+    expect(r.text).toContain('odds 71%');
+    expect(r.text).toContain('Pick: codex/luna');
+  });
 });
 
 describe('run', () => {

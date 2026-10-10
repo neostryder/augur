@@ -97,6 +97,16 @@ describe('augur_pick_preview', () => {
     expect(d.now.ranking.map(x => x.model)).toContain('deepseek/v4.1-flash');
     expect(d.withEdits.ranking.map(x => x.model)).not.toContain('deepseek/v4.1-flash');
   });
+  it('shows each route odds and does not draw', async () => {
+    const r = await rig().tools.pickPreview({ activity: 'long_context', data_tier: 'public', best_only: true });
+    expect(r.text).toContain('preview: no draw made');
+    expect(r.text).toContain('long_context on public data.');
+    expect(r.text).toMatch(/minimax\/m3 \d+\.\d{2} \d+%/);
+    const one = await rig().tools.pickPreview({ activity: 'review_code', data_tier: 'public', snippet: true });
+    expect((one.data as { now: { notes: string[] } }).now.notes).toContain('snippet: prose routes are not preferred');
+    const plain = await rig().tools.pickPreview({ activity: 'review_code', data_tier: 'public' });
+    expect((plain.data as { now: { notes: string[] } }).now.notes ?? []).not.toContain('snippet: prose routes are not preferred');
+  });
   it('can include the edits already waiting', async () => {
     const edit: PolicyEdit = { id: 'w1', at: now.toISOString(), by: 'a', provider: 'minimax', model: 'minimax/m3', field: 'dataTier', value: 'internal' };
     const r = await rig({ inbox: `${JSON.stringify(edit)}\n` }).tools.pickPreview({ activity: 'long_context', data_tier: 'internal', include_pending: true });

@@ -222,8 +222,11 @@ export class Supervisor {
     if (!activity) return { error: req.task ? 'The task could not be classified. Pass the activity, or configure a decision backend.' : 'Give an activity and data tier, or a task description.' };
     dataTier ??= 'sensitive';
     if (!ACTIVITIES.includes(activity) || !DATA_TIERS.includes(dataTier)) return { error: 'Unknown activity or data tier.' };
+    const preview = req.preview === true;
+    const snippet = req.snippet === true ? { snippet: true as const } : {};
+    const depth = req.depth ? { depth: req.depth } : {};
     if (req.task && backend) {
-      const asked = rank(policy, this.d.usage(), { activity, dataTier, proseSwitched: this.proseWas(), ...(req.depth ? { depth: req.depth } : {}) }, new Date(this.now())).ranking.map(r => r.model).filter(m => fits[m] === undefined);
+      const asked = rank(policy, this.d.usage(), { activity, dataTier, proseSwitched: this.proseWas(), ...depth, ...snippet }, new Date(this.now())).ranking.map(r => r.model).filter(m => fits[m] === undefined);
       if (asked.length) {
         const describe = (m: string) => { const e = Object.values(policy.providers).map(p => p.models[m]).find(Boolean); return `${e?.name ?? e?.id ?? m}. Permitted: ${Object.keys(e?.activities ?? {}).join(', ')}. ${e?.notes ?? ''}`.trim(); };
         for (const m of asked) descriptions[m] = describe(m);
@@ -231,16 +234,22 @@ export class Supervisor {
         Object.assign(fits, got.fits); fitError = got.error;
       }
     }
-    const result = rank(policy, this.d.usage(), { activity, dataTier, ...(req.named ? { named: req.named } : {}), ...(req.depth ? { depth: req.depth } : {}), fits, proseSwitched: this.proseWas() }, new Date(this.now()));
-    this.proseKeep(result.proseSwitch.on);
+    const result = rank(policy, this.d.usage(), {
+      activity, dataTier, ...(req.named ? { named: req.named } : {}), ...depth, fits, proseSwitched: this.proseWas(), ...snippet,
+      draw: !preview && req.best !== true, ...(req.best === true ? { best: true } : {}), ...(req.seed !== undefined ? { seed: req.seed } : {}),
+    }, new Date(this.now()));
     const routes: Record<string, string[]> = {};
     for (const [name, r] of Object.entries(this.d.routes() ?? {})) if (this.d.adapters.has(r.adapter)) (routes[r.model] ??= []).push(name);
+    if (preview) return { ...result, routes, activity, dataTier, ...(backend ? { decision: { backend: backend.primary.id, ...(classified ? { classified } : {}), ...(fitError ? { fitError } : {}) } } : {}) };
+    this.proseKeep(result.proseSwitch.on);
+    const picked = result.ranking.find(r => r.model === result.pick);
     const pickId = this.d.decisions?.pick({ session: req.session ?? null, ...(req.task ? { task: req.task } : {}), activity, dataTier, pick: result.pick ?? null,
       ranking: result.ranking.map(r => ({ model: r.model, ...(fits[r.model] !== undefined ? { fit: fits[r.model] } : {}) })), named: req.named ?? null,
       ...(backend ? { backend: backend.primary.id } : {}), classified: { activity: !declared.activity, dataTier: !declared.dataTier }, descriptions,
       ...(result.pick?.startsWith('copilot/') ? { spend: copilotSpend(this.d.usage()) } : {}),
-      depth: result.depth, reason: result.reason, seats: { ...(result.seats.second ? { second: result.seats.second.model } : {}), ...(result.seats.web ? { web: result.seats.web.model } : {}), ...(result.seats.shadow ? { shadow: result.seats.shadow.model } : {}) } });
-    if (result.pick) this.d.store.addPick({ at: this.now(), session: req.session ?? null, model: result.pick, activity, dataTier, named: req.named ?? null, cleared: result.ranking.map(r => r.model) });
+      depth: result.depth, reason: result.reason, seats: { ...(result.seats.second ? { second: result.seats.second.model } : {}), ...(result.seats.web ? { web: result.seats.web.model } : {}), ...(result.seats.shadow ? { shadow: result.seats.shadow.model } : {}) },
+      ...(picked ? { odds: picked.odds } : {}), drawn: result.drawn, seed: result.seed });
+    if (result.pick) this.d.store.addPick({ at: this.now(), session: req.session ?? null, model: result.pick, activity, dataTier, named: req.named ?? null, cleared: result.ranking.map(r => r.model), ...(picked ? { odds: picked.odds } : {}), drawn: result.drawn, seed: result.seed });
     return { ...result, routes, activity, dataTier, ...(pickId ? { pickId } : {}), ...(backend ? { decision: { backend: backend.primary.id, ...(classified ? { classified } : {}), ...(fitError ? { fitError } : {}) } } : {}) };
   }
 

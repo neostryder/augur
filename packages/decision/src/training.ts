@@ -6,6 +6,8 @@ import type { Question } from './questions.js';
 export interface PickRow {
   kind: 'pick'; id: string; at?: number; task?: string; named?: string | null; depth?: string; seats?: { second?: string; web?: string; shadow?: string }; activity: string; dataTier: string; pick: string | null;
   classified?: { activity: boolean; dataTier: boolean }; descriptions?: Record<string, string>;
+  /** Present on a pick recorded after draws were logged. Training does not read them. */
+  odds?: number; drawn?: boolean; seed?: string | null;
 }
 export interface JobRow { kind: 'job'; job: string; pick: string; model: string; overridden: boolean }
 export interface OutcomeRow { kind: 'outcome'; job: string; pick: string | null; model: string; state: string }

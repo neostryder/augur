@@ -9,6 +9,9 @@ export interface FieldDoc { path: string; type: string; summary: string }
 export const BALANCE_FIELDS: readonly FieldDoc[] = [
   { path: 'profile', type: 'classic or neutral', summary: 'The starting rules the other settings sit on. Neutral tilts only for Claude pace; classic is the original rule set and is what an install with no profile uses.' },
   { path: 'enabled', type: 'true or false', summary: 'Switches the whole balance off. A pick then ranks on weights and usage alone.' },
+  { path: 'boostFitFloor', type: 'number from 0 to 1', summary: 'A route is boosted only when its fit for the task is at or above this. A route with no fit from the caller is still boosted.' },
+  { path: 'draw.enabled', type: 'true or false', summary: 'Turns the weighted draw on or off. Off, a caller that asks for a draw gets the top score.' },
+  { path: 'draw.tail', type: 'number from 0 to 1', summary: 'A route scoring under this share of the top score is left out of the draw.' },
   { path: 'depth.<activity>', type: 'deep or everyday', summary: 'How hard an activity is when the caller does not say. Deep work leans to strong models and everyday work to light ones.' },
   { path: 'tiers.<route>', type: 'strong or light', summary: 'The tier of a route. A route with no tier is never tilted. Set a shipped entry to null to remove it.' },
   { path: 'exclude', type: 'list of words', summary: 'Route labels, or ids containing any of these words, that are never picked unless a caller names one.' },

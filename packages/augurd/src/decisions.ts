@@ -23,6 +23,10 @@ export interface PickEntry {
   depth?: string; reason?: string; seats?: { second?: string; web?: string; shadow?: string };
   /** Copilot's spend for the month when a pick landed on a Copilot model, so each such spend can be reported. */
   spend?: number | null;
+  /** The picked route's share of the draw, whether a draw was made, and the seed that made it. Absent on a line written before draws were logged. */
+  odds?: number;
+  drawn?: boolean;
+  seed?: string | null;
 }
 
 /** Tiers whose task text may be written to disk for training. */

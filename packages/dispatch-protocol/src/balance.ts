@@ -2,7 +2,7 @@
 // `rank()` multiplies the tilt into the score it already computes, so the weights, pauses, ask-first, data tiers and the usage factor all still apply.
 import { ACTIVITIES } from '@augur/core';
 import type { ActivityId, PolicyFile } from '@augur/core';
-import { PACE, ageMinutes, pressure } from './pace.js';
+import { BOOST, PACE, ageMinutes, pressure } from './pace.js';
 import type { UsageSnapshot } from './pace.js';
 
 /** Deep work is hard reasoning, serious coding and long chains. Everyday work is review, research, summaries and bulk work. */
@@ -39,6 +39,10 @@ export interface BalanceRules {
   profile: Profile;
   /** Switches the whole balance off. The pick then ranks on weights and usage alone. */
   enabled: boolean;
+  /** A route is boosted only when the caller fit is at or above this. No caller fit still counts. */
+  boostFitFloor: number;
+  /** Whether a caller that asks for a draw gets one, and the share of the top score a route must reach to stay in it. */
+  draw: { enabled: boolean; tail: number };
   /** The depth of an activity when the caller does not say. */
   depth: Record<ActivityId, Depth>;
   /** The tier of each route, by label or by standard name (provider id, a slash, model id). A `*` in a name matches any text. */
@@ -100,6 +104,8 @@ const DEEP: ActivityId[] = ['write_code', 'reason_critique'];
 export const DEFAULT_BALANCE: BalanceRules = {
   profile: 'classic',
   enabled: true,
+  boostFitFloor: BOOST.fitFloor,
+  draw: { enabled: true, tail: 0.25 },
   depth: Object.fromEntries(ACTIVITIES.map(a => [a, DEEP.includes(a) ? 'deep' : 'everyday'])) as Record<ActivityId, Depth>,
   tiers: {
     'claude/live': 'strong', 'claude/opus': 'strong', 'codex/sol': 'strong', 'xai/grok': 'strong',
@@ -177,6 +183,7 @@ export function resolveLabel(policy: PolicyFile, key: string): string | null {
 }
 
 const num = (v: unknown, fallback: number): number => typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : fallback;
+const unit = (v: unknown, fallback: number): number => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1 ? v : fallback;
 const zeroUp = (v: unknown, fallback: number): number => typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : fallback;
 const strings = (v: unknown): string[] | null => Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.length > 0) : null;
 const rec = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {};
@@ -221,9 +228,12 @@ export function resolveBalance(raw: unknown): BalanceRules {
     pace[id] = entry;
   }
   const steeredPace = pace[steered] as PaceRules;
+  const draw = rec(s.draw);
   return {
     profile,
     enabled: typeof s.enabled === 'boolean' ? s.enabled : d.enabled,
+    boostFitFloor: unit(s.boostFitFloor, d.boostFitFloor),
+    draw: { enabled: typeof draw.enabled === 'boolean' ? draw.enabled : d.draw.enabled, tail: unit(draw.tail, d.draw.tail) },
     depth, tiers, tilt,
     exclude: strings(s.exclude) ?? [...d.exclude],
     prose: {
@@ -345,6 +355,44 @@ export function pacedProviders(usage: UsageSnapshot | null, rules: BalanceRules,
   return ids;
 }
 
+const boostName = (id: string): string => id === 'claude' ? 'Claude' : id.slice(0, 1).toUpperCase() + id.slice(1);
+const boostText = (n: number): string => n.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
+
+/** How long is left in a window, in days once it is more than a day and a half, otherwise in hours. */
+function leftWords(seconds: number): string {
+  if (seconds >= 36 * 3600) return plural(Math.max(1, Math.round(seconds / 86400)), 'day');
+  return plural(Math.max(1, Math.round(seconds / 3600)), 'hour');
+}
+
+/**
+ * The unused-allowance multiplier for one paced provider.
+ * Hot, at the reserve, stale, or with no reset to spend toward, it is 1. Otherwise it follows the unused share and fades over the last `BOOST.rampEnd` of the limiting window.
+ */
+export function boostFor(state: PaceState, usage: UsageSnapshot | null, rules: BalanceRules, now: Date): { boost: number; why: string } {
+  const one = { boost: 1, why: '' };
+  // Hot and reserve already move work off this provider, so the boost does not put it back.
+  if (state.stance === 'hot' || state.atReserve) return one;
+  const entry = usage?.providers[state.provider];
+  // Figures older than the pace window are ignored, the same cutoff paceState uses.
+  if (!entry || ageMinutes(entry, now) > PACE.ignoreMin) return one;
+  const meters = (entry.meters ?? []).filter(paceMeter);
+  if (!meters.length) return one;
+  let limit = meters[0] as (typeof meters)[number];
+  for (const m of meters) if ((m.usedPct as number) > (limit.usedPct as number)) limit = m;
+  const reset = limit.resetsAt ? Date.parse(limit.resetsAt) : NaN;
+  // No reset means there is no moment left to spend the allowance toward.
+  if (!Number.isFinite(reset) || !limit.windowSeconds) return one;
+  const timeLeft = Math.min(1, Math.max(0, (reset - now.getTime()) / 1000 / limit.windowSeconds));
+  const unused = 1 - (limit.usedPct as number) / 100;
+  const peak = (rules.pace[state.provider] ?? DEFAULT_PACE_RULES).boost;
+  const ramp = Math.min(1, timeLeft / BOOST.rampEnd);
+  const boost = Math.max(1, Math.round((1 + (peak - 1) * unused * ramp) * 1000) / 1000);
+  if (boost <= 1) return one;
+  const kind = limit.windowKind === 'weekly' ? 'week' : 'session';
+  const why = `${boostName(state.provider)} has used ${Math.round(limit.usedPct as number)}% of its ${kind} with ${leftWords(timeLeft * limit.windowSeconds)} left, so it gets a ${boostText(boost)}x boost`;
+  return { boost, why };
+}
+
 /** Where one provider's prose pace switch stands. `ahead` is how far its stricter window runs ahead of its pace marker, `threshold` is the lead that turns the switch on at the current usage, and `returnAt` is the lead at or below which it turns off again. */
 export interface ProseSwitch { on: boolean; ahead: number | null; threshold: number; returnAt: number }
 
@@ -385,8 +433,8 @@ const excluded = (rules: BalanceRules, label: string, id: string): string | null
   return word ? `${word} is excluded by the balance rules` : null;
 };
 
-/** The tilt each model gets for this activity and depth. `depth` is the caller's choice, or the activity's default. An excluded model the person named is not excluded. `proseWas` is the steered provider's last switch, or one boolean per provider. */
-export function govern(policy: PolicyFile, activity: ActivityId, depth?: Depth, models?: readonly string[], named?: string, usage: UsageSnapshot | null = null, now = new Date(), proseWas: boolean | Record<string, boolean> = false): Governed {
+/** The tilt each model gets for this activity and depth. `depth` is the caller's choice, or the activity's default. An excluded model the person named is not excluded. `proseWas` is the steered provider's last switch, or one boolean per provider. `snippet` is one sentence with no prose batch, so the prose tilt and the prose switch stay off. */
+export function govern(policy: PolicyFile, activity: ActivityId, depth?: Depth, models?: readonly string[], named?: string, usage: UsageSnapshot | null = null, now = new Date(), proseWas: boolean | Record<string, boolean> = false, snippet = false): Governed {
   const rules = resolveBalance((policy as { balance?: unknown }).balance);
   const used: Depth = depth ?? rules.depth[activity] ?? 'everyday';
   const steeredId = rules.claude.provider;
@@ -405,7 +453,7 @@ export function govern(policy: PolicyFile, activity: ActivityId, depth?: Depth, 
   const proseSwitch = mute(raw[steeredId] ?? proseSwitchState(rules, steered, wasOf(steeredId)));
   const proseSwitches: Record<string, ProseSwitch> = {};
   for (const [id, sw] of Object.entries(raw)) proseSwitches[id] = id === steeredId ? proseSwitch : mute(sw);
-  const out: Governed = { depth: used, tilts: {}, blocks: [], reasons: {}, notes: [], proseSwitch, proseSwitches };
+  const out: Governed = { depth: used, tilts: {}, blocks: [], reasons: {}, notes: snippet ? ['snippet: prose routes are not preferred'] : [], proseSwitch, proseSwitches };
   if (!rules.enabled) return out;
   const candidates: Candidate[] = [];
   for (const [providerId, p] of Object.entries(policy.providers)) {
@@ -420,7 +468,7 @@ export function govern(policy: PolicyFile, activity: ActivityId, depth?: Depth, 
       const isClaude = providerId === steeredId;
       candidates.push({ ...ref, claude: isClaude });
       // The best prose writers are tilted for prose alone, so being a strong model on everyday work does not count against them.
-      const prose = activity === 'draft_prose' && listed(rules.prose.models, ref);
+      const prose = activity === 'draft_prose' && !snippet && listed(rules.prose.models, ref);
       if (prose) { tilt = rules.prose.tilt; reasons.push('writes the best prose'); }
       else if (tier) {
         const t = rules.tilt[used][tier];
@@ -459,7 +507,7 @@ export function govern(policy: PolicyFile, activity: ActivityId, depth?: Depth, 
   }
   // While a provider's prose switch is on, drafting leaves that provider's prose routes when another route can take them.
   let proseMoved = false;
-  if (activity === 'draft_prose') {
+  if (activity === 'draft_prose' && !snippet) {
     const switched = new Set(Object.entries(proseSwitches).filter(([, sw]) => sw.on).map(([id]) => id));
     if (proseSwitch.on) switched.add(steeredId);
     const onlySteered = paced.every(id => id === steeredId);
@@ -555,8 +603,9 @@ function paceWhy(policy: PolicyFile, c: PaceState, lean: 'hot' | 'behind'): stri
   return `the ${c.tracks.map(points).join(' and the ')}, so ${name} leans to ${toward}`;
 }
 
-/** One sentence on why the top model won, and what comes next. */
-export function reasonLine(top: { model: string; why: string } | undefined, next: { model: string } | undefined, governed: Governed, activity: ActivityId): string {
+/** One sentence on why the pick won, and what comes next. When `drawn` names a route other than `top`, the sentence is the draw instead. */
+export function reasonLine(top: { model: string; why: string; odds?: number } | undefined, next: { model: string } | undefined, governed: Governed, activity: ActivityId, drawn?: { model: string; odds: number }): string {
+  if (drawn && top && drawn.model !== top.model) return `Drawn at ${Math.round(drawn.odds * 100)}% odds; ${top.model} led at ${Math.round((top.odds ?? 0) * 100)}%.`;
   if (!top) return `No model can take this ${activity} task.`;
   const parts = [`${top.model} for ${governed.depth} ${activity.replace(/_/g, ' ')}`];
   const g = governed.reasons[top.model];

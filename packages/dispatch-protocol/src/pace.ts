@@ -45,6 +45,14 @@ export const PACE = {
   lowBalanceUsd: 1,
 } as const;
 
+/** The unused-allowance boost. `pace.<provider>.boost` is the peak; these two shape the fade and the fit guard. */
+export const BOOST = {
+  /** The boost fades across this last share of a window, and is gone when no time is left. */
+  rampEnd: 0.1,
+  /** A route the caller scored below this is not boosted. A route with no caller fit still is. */
+  fitFloor: 0.6,
+} as const;
+
 export const COST_EXPONENT: Record<string, number> = { free: 0, very_cheap: 0.1, cheap: 0.2, moderate: 0.6, high: 1, very_high: 1.5, expensive: 1 };
 
 /** `spent` means a window is at its deny threshold. `down` means the provider's status page reports a major or critical outage. `resets` is how many limit resets the provider says are in hand. */

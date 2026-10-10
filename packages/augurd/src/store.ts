@@ -51,6 +51,10 @@ export class Store {
     for (const [name, type] of [['workspace', 'text'], ['patch_path', 'text'], ['changed_files', 'integer'], ['prompt_chars', 'integer'], ['answer_chars', 'integer']] as const) {
       if (!have.has(name)) this.db.exec(`alter table jobs add column ${name} ${type}`);
     }
+    const pickCols = new Set((this.db.prepare('pragma table_info(picks)').all() as Array<{ name: string }>).map(c => c.name));
+    for (const [name, type] of [['odds', 'real'], ['drawn', 'integer'], ['seed', 'text']] as const) {
+      if (!pickCols.has(name)) this.db.exec(`alter table picks add column ${name} ${type}`);
+    }
   }
 
   close(): void { this.db.close(); }
@@ -109,11 +113,20 @@ export class Store {
   setVersion(id: string, version: string | null): void { this.db.prepare('update jobs set harness_version=? where id=?').run(version, id); }
   setPatch(id: string, path: string, files: number): void { this.db.prepare('update jobs set patch_path=?, changed_files=? where id=?').run(path, files, id); }
   addPick(p: PickRecord): void {
-    this.db.prepare('insert into picks(at,session,model,activity,data_tier,named,cleared) values(?,?,?,?,?,?,?)').run(p.at, p.session, p.model, p.activity, p.dataTier, p.named, JSON.stringify(p.cleared));
+    this.db.prepare('insert into picks(at,session,model,activity,data_tier,named,cleared,odds,drawn,seed) values(?,?,?,?,?,?,?,?,?,?)')
+      .run(p.at, p.session, p.model, p.activity, p.dataTier, p.named, JSON.stringify(p.cleared), p.odds ?? null, p.drawn == null ? null : p.drawn ? 1 : 0, p.seed ?? null);
   }
   picksSince(since: number): PickRecord[] {
-    return (this.db.prepare('select at, session, model, activity, data_tier, named, cleared from picks where at>=? order by id').all(since) as Array<{ at: number; session: string | null; model: string; activity: string; data_tier: string; named: string | null; cleared: string }>)
-      .map(r => ({ at: r.at, session: r.session, model: r.model, activity: r.activity, dataTier: r.data_tier, named: r.named, cleared: JSON.parse(r.cleared) as string[] }));
+    return (this.db.prepare('select at, session, model, activity, data_tier, named, cleared, odds, drawn, seed from picks where at>=? order by id').all(since) as Array<{ at: number; session: string | null; model: string; activity: string; data_tier: string; named: string | null; cleared: string; odds: number | null; drawn: number | null; seed: string | null }>)
+      .map(r => {
+        const row: PickRecord = { at: r.at, session: r.session, model: r.model, activity: r.activity, dataTier: r.data_tier, named: r.named, cleared: JSON.parse(r.cleared) as string[] };
+        // A row from before draws were logged has none of the three, and stays shaped as it was.
+        if (r.odds == null && r.drawn == null && r.seed == null) return row;
+        if (typeof r.odds === 'number') row.odds = r.odds;
+        if (r.drawn === 0 || r.drawn === 1) row.drawn = r.drawn === 1;
+        row.seed = r.seed;
+        return row;
+      });
   }
   dropPicksBefore(cutoff: number): void { this.db.prepare('delete from picks where at<?').run(cutoff); this.db.prepare('delete from prompts where at<?').run(cutoff); }
   addPrompt(p: PromptRecord): void { this.db.prepare('insert into prompts(at,session,models) values(?,?,?)').run(p.at, p.session, JSON.stringify(p.models)); }

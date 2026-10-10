@@ -30,7 +30,7 @@ export interface McpDeps {
 /** `field: 'balance'` with a `path` edits a balance setting, one name per level; the route labels in it stay whole. */
 export interface EditArg { model?: string; provider?: string; field: string; path?: string[]; value: unknown; reason?: string }
 export interface PolicyEditArgs { edits: EditArg[]; by?: string }
-export interface PreviewArgs { activity: string; data_tier: string; edits?: EditArg[]; include_pending?: boolean }
+export interface PreviewArgs { activity: string; data_tier: string; edits?: EditArg[]; include_pending?: boolean; best_only?: boolean; snippet?: boolean }
 
 export interface RunArgs {
   route: string; prompt: string; activity: string; data_tier: string; tools?: string; output?: string; cwd?: string; timeout_s?: number; wait_s?: number;
@@ -73,14 +73,14 @@ export function createTools(d: McpDeps) {
     return { text: `${usable.length} of ${rows.length} models can take jobs now.\n${lines.join('\n')}`, data: { models: rows } };
   }
 
-  async function pick(a: { activity?: string; data_tier?: string; task?: string; depth?: string }): Promise<ToolResult> {
+  async function pick(a: { activity?: string; data_tier?: string; task?: string; depth?: string; best_only?: boolean; snippet?: boolean }): Promise<ToolResult> {
     const activity = oneOf(ACTIVITIES, a.activity), dataTier = oneOf(DATA_TIERS, a.data_tier);
     if (a.activity && !activity) return fail(`${a.activity} is not an activity. Use one of: ${ACTIVITIES.join(', ')}.`);
     if (a.data_tier && !dataTier) return fail(`${a.data_tier} is not a data tier. Use one of: ${DATA_TIERS.join(', ')}.`);
     if (!a.task && (!activity || !dataTier)) return fail('Give a task, or both an activity and a data tier, each one of the known values.');
-    return guarded(() => d.call('pick', { ...(activity ? { activity: activity as ActivityId } : {}), ...(dataTier ? { dataTier: dataTier as DataTier } : {}), ...(a.depth === 'deep' || a.depth === 'everyday' ? { depth: a.depth } : {}), ...(a.task ? { task: a.task } : {}), session: d.session }, d.opts), r => {
+    return guarded(() => d.call('pick', { ...(activity ? { activity: activity as ActivityId } : {}), ...(dataTier ? { dataTier: dataTier as DataTier } : {}), ...(a.depth === 'deep' || a.depth === 'everyday' ? { depth: a.depth } : {}), ...(a.task ? { task: a.task } : {}), ...(a.best_only ? { best: true } : {}), ...(a.snippet ? { snippet: true } : {}), session: d.session }, d.opts), r => {
       if ('error' in r) return fail(r.error);
-      const lines = r.ranking.map(x => `${x.model.padEnd(24)} score ${x.score.toFixed(2)}  routes ${(r.routes[x.model] ?? []).join(', ') || 'none'}`);
+      const lines = r.ranking.map(x => `${x.model.padEnd(24)} score ${x.score.toFixed(2)}  odds ${Math.round((x.odds ?? 0) * 100)}%  routes ${(r.routes[x.model] ?? []).join(', ') || 'none'}`);
       return { text: r.pick ? `Pick: ${r.pick} (${r.activity}, ${r.dataTier} data). ${[r.reason, ...seatLines(r.seats ?? {})].filter(Boolean).join('\n')}\n${lines.join('\n')}` : `No model is permitted ${r.activity} on ${r.dataTier} data.\n${lines.join('\n')}`, data: r as unknown as Record<string, unknown> };
     });
   }
@@ -228,10 +228,11 @@ export function createTools(d: McpDeps) {
     const waiting = a.include_pending ? [...pending(), ...parseEditState(d.editStateText?.() ?? null).held] : [];
     const preview = previewEdits(file, [...waiting, ...given]);
     problems.push(...preview.problems);
-    const show = (f: PolicyFile) => rank(f, usage, { activity, dataTier });
+    const show = (f: PolicyFile) => rank(f, usage, { activity, dataTier, ...(a.snippet ? { snippet: true } : {}) });
     const before = show(file), after = show(preview.file);
-    const names = (r: ReturnType<typeof rank>) => r.ranking.map(x => `${x.model} ${x.score.toFixed(2)}`);
+    const names = (r: ReturnType<typeof rank>) => r.ranking.map(x => `${x.model} ${x.score.toFixed(2)} ${Math.round(x.odds * 100)}%`);
     const text = [`${activity} on ${dataTier} data. Now: ${before.pick ?? 'no model is permitted'}. With ${preview.applied} edit${preview.applied === 1 ? '' : 's'}: ${after.pick ?? 'no model is permitted'}.`,
+      'preview: no draw made',
       `Now:        ${names(before).join(', ') || '(none)'}`, `With edits: ${names(after).join(', ') || '(none)'}`, ...(problems.length ? ['Not applied:', ...problems.map(p => `  ${p}`)] : [])].join('\n');
     return { text, data: { activity, dataTier, now: before, withEdits: after, applied: preview.applied, problems } };
   }

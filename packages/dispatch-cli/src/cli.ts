@@ -40,7 +40,8 @@ augur result <job>
 augur logs <job> [--stderr] [--follow]
 augur cancel <job>
 augur apply <job> [--check]
-augur pick (--task <description> | --activity <a> --data <tier>) [--depth deep|everyday] [--named <model>] [--fit <model>=<0-1>,...]
+augur pick (--task <description> | --activity <a> --data <tier>) [--depth deep|everyday] [--named <model>] [--fit <model>=<0-1>,...] [--best] [--snippet]
+augur pick-preview (--task <description> | --activity <a> --data <tier>) [--depth deep|everyday] [--named <model>] [--fit <model>=<0-1>,...] [--snippet]   odds for each route, no draw, nothing recorded
 augur pressure
 augur balance [--days <n>]            where each kind of work goes now, Claude's pace, Copilot's spend and the last days' picks
 augur label <pick or job id> --brief met|partly|missed [--note <text>]     record how a job's report met its brief, beside the pick in the decision log
@@ -64,7 +65,7 @@ Every command takes --json. Exit codes: 0 completed, 1 usage, 2 rejected, 3 need
 
 interface Parsed { cmd: string[]; flags: Map<string, string | true> }
 function parse(argv: string[]): Parsed {
-  const cmd: string[] = [], flags = new Map<string, string | true>(), boolean = new Set(['json', 'wait', 'named', 'follow', 'stderr', 'help', 'if-idle', 'no-failover', 'waybar', 'all', 'force', 'stdin', 'dry-run', 'no-key']);
+  const cmd: string[] = [], flags = new Map<string, string | true>(), boolean = new Set(['json', 'wait', 'named', 'follow', 'stderr', 'help', 'if-idle', 'no-failover', 'waybar', 'all', 'force', 'stdin', 'dry-run', 'no-key', 'best', 'snippet']);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] as string;
     if (a === '-') { cmd.push(a); continue; }
@@ -133,7 +134,8 @@ export async function main(argv: string[], io: Io): Promise<number> {
         if ('error' in r) { io.err(r.error + String.fromCharCode(10)); return EXIT_CODES.failed; }
         say(r.models.join(', ') || 'No models named.', r); return 0;
       }
-      case 'pick': return await pickCmd(io, opts, say, opt);
+      case 'pick': return await pickCmd(io, opts, say, opt, n => p.flags.has(n));
+      case 'pick-preview': return await pickCmd(io, opts, say, opt, n => p.flags.has(n), true);
       case 'balance': {
         const r = await call('balance', opt('days') ? { days: Number(opt('days')) } : undefined, opts);
         if ('error' in r) { io.err(r.error + String.fromCharCode(10)); return EXIT_CODES.failed; }
@@ -346,7 +348,7 @@ async function testCmd(route: string, p: Parsed, io: Io, opts: Opts, say: (h: st
   return code;
 }
 
-async function pickCmd(io: Io, opts: Opts, say: (h: string, d: unknown) => void, opt: (n: string) => string | undefined): Promise<number> {
+async function pickCmd(io: Io, opts: Opts, say: (h: string, d: unknown) => void, opt: (n: string) => string | undefined, flag: (n: string) => boolean, preview = false): Promise<number> {
   const activity = opt('activity'), dataTier = opt('data'), task = opt('task');
   const okA = !activity || ACTIVITIES.includes(activity as ActivityId), okD = !dataTier || DATA_TIERS.includes(dataTier as DataTier);
   if (!okA || !okD || (!task && (!activity || !dataTier))) { io.err('Give --task, or both --activity and --data, each one of the known values.' + String.fromCharCode(10)); return EXIT_CODES.usage; }
@@ -359,12 +361,13 @@ async function pickCmd(io: Io, opts: Opts, say: (h: string, d: unknown) => void,
     fits[model] = n;
   }
   const r = await call('pick', { ...(activity ? { activity: activity as ActivityId } : {}), ...(dataTier ? { dataTier: dataTier as DataTier } : {}), ...(task ? { task } : {}),
-    ...(opt('named') ? { named: opt('named') as string } : {}), ...(depth ? { depth: depth as 'deep' | 'everyday' } : {}), fits, ...(io.env.CLAUDE_CODE_SESSION_ID ? { session: io.env.CLAUDE_CODE_SESSION_ID } : {}) }, opts);
+    ...(opt('named') ? { named: opt('named') as string } : {}), ...(depth ? { depth: depth as 'deep' | 'everyday' } : {}), fits, ...(flag('best') ? { best: true } : {}), ...(flag('snippet') ? { snippet: true } : {}), ...(preview ? { preview: true } : {}), ...(io.env.CLAUDE_CODE_SESSION_ID ? { session: io.env.CLAUDE_CODE_SESSION_ID } : {}) }, opts);
   if ('error' in r) { io.err(r.error + String.fromCharCode(10)); return EXIT_CODES.failed; }
-  const lines = r.ranking.map(x => `  ${x.model.padEnd(22)} ${x.score.toFixed(2)}   fit ${x.fit.toFixed(2)} x ${x.level} ${x.weight.toFixed(2)} x usage ${x.usage.toFixed(2)}   routes ${(r.routes[x.model] ?? []).join(', ') || 'none'}`);
+  const lines = r.ranking.map(x => `  ${x.model.padEnd(22)} ${x.score.toFixed(2)}   fit ${x.fit.toFixed(2)} x ${x.level} ${x.weight.toFixed(2)} x usage ${x.usage.toFixed(2)}   odds ${Math.round((x.odds ?? 0) * 100)}%   routes ${(r.routes[x.model] ?? []).join(', ') || 'none'}`);
   for (const b of r.blocked) lines.push(`  ${b.model.padEnd(22)} --     ${b.why}`);
   const nl = String.fromCharCode(10);
-  say(r.pick ? `Pick: ${r.pick}   (${r.activity}, ${r.dataTier} data; scarcity ${r.scarcity}${r.decision ? `; ${r.decision.backend}` : ''})${nl}${[r.reason, ...seatLines(r.seats)].join(nl)}${nl}${lines.join(nl)}` : `No model is permitted ${r.activity} on ${r.dataTier} data.${nl}${lines.join(nl)}`, r);
+  const note = preview ? `${nl}preview: no draw made` : '';
+  say(r.pick ? `Pick: ${r.pick}   (${r.activity}, ${r.dataTier} data; scarcity ${r.scarcity}${r.decision ? `; ${r.decision.backend}` : ''})${note}${nl}${[r.reason, ...seatLines(r.seats)].join(nl)}${nl}${lines.join(nl)}` : `No model is permitted ${r.activity} on ${r.dataTier} data.${note}${nl}${lines.join(nl)}`, r);
   return r.pick ? 0 : EXIT_CODES.rejected;
 }
 

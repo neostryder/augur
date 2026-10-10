@@ -19,6 +19,8 @@ export interface PickParams extends Omit<PickRequest, 'activity' | 'dataTier'> {
   dataTier?: DataTier;
   task?: string;
   session?: string;
+  /** Rank and report the odds, and do not draw or record a pick. */
+  preview?: boolean;
 }
 export type PickAnswer = (PickResult & {
   routes: Record<string, string[]>;

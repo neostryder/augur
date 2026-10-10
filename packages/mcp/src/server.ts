@@ -26,12 +26,14 @@ export function buildServer(tools: Tools, version: string): McpServer {
 
   server.registerTool('augur_pick', {
     title: 'Pick a model', annotations: readOnly,
-    description: 'Ranks the models permitted for an activity and data tier, weighing the rules and current plan usage, and names the routes to run the best one. Give an activity and a data tier, or a description of the task and Augur classifies it.',
+    description: 'Ranks the models permitted for an activity and data tier, weighing the rules and current plan usage, and draws one from the odds. best_only takes the top score. snippet is one sentence with no prose batch, so prose routes are not preferred. Give an activity and a data tier, or a description of the task and Augur classifies it.',
     inputSchema: {
       activity: z.enum(ACTIVITIES).optional().describe('What the work is.'),
       data_tier: z.enum(DATA_TIERS).optional().describe('The most sensitive data the task touches.'),
       task: z.string().optional().describe('A description of the task, when no activity and data tier are given. Its text goes to the classifier the owner chose.'),
       depth: z.enum(['deep', 'everyday']).optional().describe('Deep for hard reasoning and serious coding, everyday for routine review, research and summaries. Left out, the activity decides.'),
+      best_only: z.boolean().optional().describe('Take the top score. Left out, the pick is drawn from the odds.'),
+      snippet: z.boolean().optional().describe('One sentence or one bullet, with no prose batch to attach it to.'),
     },
   }, async (a) => out(await tools.pick(a)));
 
@@ -107,12 +109,14 @@ export function buildServer(tools: Tools, version: string): McpServer {
 
   server.registerTool('augur_pick_preview', {
     title: 'Try a pick under edits', annotations: readOnly,
-    description: 'Ranks the models for an activity and data tier as the rules stand now and again with the given edits applied, so a change can be tested before it lands. It records nothing and does not count as a pick for running jobs. With include_pending it also applies the edits already queued or waiting for the owner.',
+    description: 'Ranks the models for an activity and data tier as the rules stand now and again with the given edits applied, and shows each route\'s odds. It records nothing, draws nothing, and does not count as a pick for running jobs. With include_pending it also applies the edits already queued or waiting for the owner.',
     inputSchema: {
       activity: z.enum(ACTIVITIES).describe('What the work is.'),
       data_tier: z.enum(DATA_TIERS).describe('The most sensitive data the task touches.'),
       edits: z.array(editShape).max(20).optional().describe('Edits to try. A preview cannot use "inherit".'),
       include_pending: z.boolean().optional().describe('Also apply the edits queued or waiting for the owner.'),
+      best_only: z.boolean().optional().describe('Accepted, and unused: a preview never draws, so the top score is the one it reports.'),
+      snippet: z.boolean().optional().describe('One sentence or one bullet, with no prose batch to attach it to.'),
     },
   }, async (a) => out(await tools.pickPreview(a)));
 

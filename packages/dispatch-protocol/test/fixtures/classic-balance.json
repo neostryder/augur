@@ -1,6 +1,11 @@
 {
   "profile": "classic",
   "enabled": true,
+  "boostFitFloor": 0.6,
+  "draw": {
+    "enabled": true,
+    "tail": 0.25
+  },
   "depth": {
     "write_code": "deep",
     "review_code": "everyday",

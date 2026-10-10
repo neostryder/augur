@@ -219,6 +219,9 @@ To set the balance by hand, put the object in `config.json` under `policy`, with
 | --- | --- | --- |
 | `profile` | classic or neutral | The starting rules the other settings sit on. Neutral tilts only for Claude pace; classic is the original rule set and is what an install with no profile uses. |
 | `enabled` | true or false | Switches the whole balance off. A pick then ranks on weights and usage alone. |
+| `boostFitFloor` | number from 0 to 1 | A route is boosted only when its fit for the task is at or above this. A route with no fit from the caller is still boosted. |
+| `draw.enabled` | true or false | Turns the weighted draw on or off. Off, a caller that asks for a draw gets the top score. |
+| `draw.tail` | number from 0 to 1 | A route scoring under this share of the top score is left out of the draw. |
 | `depth.<activity>` | deep or everyday | How hard an activity is when the caller does not say. Deep work leans to strong models and everyday work to light ones. |
 | `tiers.<route>` | strong or light | The tier of a route. A route with no tier is never tilted. Set a shipped entry to null to remove it. |
 | `exclude` | list of words | Route labels, or ids containing any of these words, that are never picked unless a caller names one. |

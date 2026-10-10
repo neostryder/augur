@@ -163,6 +163,26 @@ describe('augur pick and augur pressure', () => {
     expect((await run(['pick', '--activity', 'write_code', '--data', 'internal', '--fit', 'test/fake=2'])).code).toBe(1);
   });
 
+  it('prints odds, takes the top score with --best, and previews without a draw', async () => {
+    const { run } = await boot();
+    const best = await run(['pick', '--activity', 'write_code', '--data', 'internal', '--best', '--json']);
+    expect(best.code).toBe(0);
+    const body = JSON.parse(best.out) as { pick: string; drawn: boolean; seed: string | null; ranking: Array<{ model: string; odds: number }> };
+    expect(body.drawn).toBe(false);
+    expect(body.seed).toBeNull();
+    expect(body.pick).toBe(body.ranking[0]?.model);
+    expect(body.ranking[0]?.odds).toBeGreaterThan(0);
+    const text = await run(['pick', '--activity', 'write_code', '--data', 'internal', '--best', '--snippet']);
+    expect(text.out).toMatch(/odds \d+%/);
+    const preview = await run(['pick-preview', '--activity', 'write_code', '--data', 'internal', '--snippet']);
+    expect(preview.code).toBe(0);
+    expect(preview.out).toContain('preview: no draw made');
+    expect(preview.out).toMatch(/odds \d+%/);
+    const json = JSON.parse((await run(['pick-preview', '--activity', 'write_code', '--data', 'internal', '--json'])).out) as { drawn: boolean; seed: string | null };
+    expect(json.drawn).toBe(false);
+    expect(json.seed).toBeNull();
+  });
+
   it('reports a usage factor for each model once there is a usage snapshot', async () => {
     const { run, e } = await boot();
     expect((await run(['pressure'])).code).toBe(4);
