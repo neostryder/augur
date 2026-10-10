@@ -4,6 +4,8 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-10-10
+
 ### Added
 
 - [Visible] [UI] [Providers] **The Routes page adds a provider in one form.** Add provider, beside Add route, lists OpenAI, OpenRouter, Anthropic, TypeSafe and any other OpenAI-style or Anthropic-style API, and the plan under the form shows what will be added as you type. It makes the same changes as `augur provider add`, with the same checks: the route, the model waiting in the rules for your confirmation, the key in the key store, and the built-in balance reading for OpenRouter and Jev. The key can be left empty and saved later, and the terminal app has the same form on its Routes screen.
