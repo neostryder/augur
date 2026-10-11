@@ -82,6 +82,7 @@ class LoadWatch:
         self.unloaded = False
         self.unload_reason = None   # "busy", "game" or "idle": only a busy card brings the checkpoints back by itself
         self.last_active = None
+        self.requests = 0
         self._busy_since = None
         self._free_since = None
         self._nvml = None
@@ -119,6 +120,11 @@ class LoadWatch:
     def touch(self, now=None):
         """A request started or finished."""
         self.last_active = time.time() if now is None else now
+
+    def idle_seconds(self, now=None):
+        if self.last_active is None:
+            return None
+        return round((time.time() if now is None else now) - self.last_active, 1)
 
     def mark_loaded(self):
         """The checkpoints came back through a request, not through the watcher."""
@@ -177,7 +183,7 @@ class LoadWatch:
             ready = not self.unloaded or self.unload_reason in ("idle", "game")
             return {"ready": ready, "busy": self.busy, "reasons": list(self.reasons), "device": self.device,
                     "gpu_util_pct": self.gpu_util, "vram_other_pct": self.vram_other_pct, "limit_pct": self.limit,
-                    "checkpoints_in_memory": not self.unloaded, "unload_reason": self.unload_reason, "watching": self.enabled}
+                    "checkpoints_in_memory": not self.unloaded, "unload_reason": self.unload_reason, "idle_s": self.idle_seconds(), "requests": self.requests, "watching": self.enabled}
 
 
 class LoadGate:
@@ -197,6 +203,7 @@ class LoadGate:
                 body = {"error": "busy", "reasons": self.watch.reasons, "retry_after_s": 5}
                 return await self._json(send, 503, body, [(b"retry-after", b"5")])
             self.watch.inflight += 1
+            self.watch.requests += 1
             self.watch.touch()
             try:
                 return await self.app(scope, receive, send)
