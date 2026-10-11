@@ -6,6 +6,7 @@ import type { AlertConfig, AppConfig, GenericProviderDef, Host, HttpRequest, Lay
 import type { FeedAlert } from './feed.js';
 import type { PushSubscriptionInfo } from './webpush.js';
 import type { HistoryRow } from './history.js';
+import { withCompactFleet } from './fleet.js';
 
 /** The shared relay and web app. It serves the phone app and forwards its requests, so a fresh install can pair a phone without setup. */
 export const HOSTED = 'https://augur.rpgm.tools';
@@ -117,7 +118,7 @@ export async function pushSnapshot(host: Host, link: SyncLink, snapshot: Snapsho
   const [keyText, writeSecret] = await Promise.all([host.secret(KEY_SECRET), host.secret(WRITE_SECRET)]);
   if (!keyText || !writeSecret) return;
   const cut = Date.now() - 7 * 86400e3;
-  const payload = JSON.stringify({ snapshot, history: history.filter((r) => new Date(r.t).getTime() >= cut), config, secrets, ...extra } satisfies SyncPayload);
+  const payload = JSON.stringify({ snapshot: withCompactFleet(snapshot), history: history.filter((r) => new Date(r.t).getTime() >= cut), config, secrets, ...extra } satisfies SyncPayload);
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const data = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await aesKey(unb64(keyText)), await gzip(payload)));
   const res = await host.http({

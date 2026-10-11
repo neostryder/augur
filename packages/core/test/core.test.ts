@@ -282,7 +282,7 @@ describe('engine, pace, history and alerts', () => {
     const config = migrateConfig({ providers: [{ id: 'unknown', enabled: true }, { id: 'claude', enabled: false }] });
     expect(config.providers.some(p => p.id === 'unknown')).toBe(false);
     expect(config.providers.find(p => p.id === 'claude')?.enabled).toBe(false);
-    expect(config.providers).toHaveLength(8);
+    expect(config.providers).toHaveLength(9);
   });
   it('keeps jobs off until they are chosen, and reads only an explicit yes', () => {
     expect(migrateConfig({}).dispatch).toEqual({ runJobs: false });

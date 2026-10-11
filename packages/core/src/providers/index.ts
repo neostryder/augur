@@ -6,7 +6,8 @@ import { openrouter } from './openrouter.js';
 import { fal } from './fal.js';
 import { jev } from './jev.js';
 import { copilot } from './copilot.js';
+import { cogitator } from './cogitator.js';
 
-export { claude, codex, grok, minimax, openrouter, fal, jev, copilot };
+export { claude, codex, grok, minimax, openrouter, fal, jev, copilot, cogitator };
 export { openrouterDef } from './openrouter.def.js';
-export const builtinProviders = [claude, codex, grok, minimax, openrouter, fal, jev, copilot];
+export const builtinProviders = [claude, codex, grok, minimax, openrouter, fal, jev, copilot, cogitator];
