@@ -178,6 +178,9 @@ describe('command lines', () => {
     const long = opencodeSbx.plan(req(), r, ctx('y'.repeat(9000), 'C:/jobs/j1', 'C:/w/jobs/j1'));
     expect(long.files).toEqual([{ name: '.ai-task.md', content: 'y'.repeat(9000), inWorkspace: true }]);
     expect(long.args.at(-1)).toMatch(/\.ai-task\.md/);
+    const hard = opencodeSbx.plan(req(), route('opencode-sbx', { sandbox: 'oc-ds', workRoot: 'C:/w', model: 'm', sbx: process.execPath, effort: 'xhigh' }), ctx('hi', 'C:/jobs/j1', 'C:/w/jobs/j1'));
+    expect(hard.args.slice(-3)).toEqual(['--variant', 'high', 'hi']);
+    expect(hard.promptArgs).toEqual([hard.args.length - 1]);
   });
   it('finds a command without cmd.exe, and turns an npm shim into node plus its script', () => {
     const found = resolveExecutable('node');

@@ -44,7 +44,7 @@ export const ADAPTER_INFO: readonly AdapterInfo[] = [
     options: [sandbox, workRoot, model('The model id mcode uses.'), effort,
       { key: 'maxSteps', label: 'Step limit', kind: 'number', help: 'Most steps a job may take. Defaults to 60 for a read job and 400 otherwise.' }, sbx, sbxPrefixJson, envAllow] },
   { id: 'opencode-sbx', label: 'OpenCode in a Docker sandbox', summary: 'Runs OpenCode inside a Docker sandbox on a copy of the job folder, and returns changes as a patch.',
-    options: [sandbox, workRoot, model('The provider/model id OpenCode uses.', 'openrouter/deepseek-v4.1-flash'), sbx, sbxPrefixJson, envAllow] },
+    options: [sandbox, workRoot, model('The provider/model id OpenCode uses.', 'openrouter/deepseek-v4.1-flash'), effort, sbx, sbxPrefixJson, envAllow] },
   { id: 'openai-api', label: 'OpenAI-style API', summary: 'Sends one prompt to a chat completions endpoint and returns the text. No tools and no files.',
     options: [{ key: 'baseUrl', label: 'Base URL', kind: 'text', required: true, help: 'The API address up to and including /v1. It must start with https://, or http:// for localhost.', placeholder: 'https://api.openai.com/v1' },
       model('The model id the endpoint expects.'),

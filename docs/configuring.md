@@ -148,6 +148,7 @@ Runs OpenCode inside a Docker sandbox on a copy of the job folder, and returns c
 | `sandbox` (required) | text | The Docker sandbox the harness runs inside. |
 | `workRoot` (required) | text | The folder on this computer that the sandbox mounts as its workspace. Each job gets a copy of its folder there. |
 | `model` (required) | text | The provider/model id OpenCode uses. |
+| `effort` | text | Passed to the harness as its effort setting. Leave empty for its default. |
 | `sbx` | text | Full path to the sbx command, for when it is not on the search path. |
 | `sbxPrefixJson` | json | A JSON array of arguments placed before every sbx call, for wrappers. |
 | `envAllow` | text | Names of environment variables the harness may read, separated by commas. Nothing else from the service is passed on. |

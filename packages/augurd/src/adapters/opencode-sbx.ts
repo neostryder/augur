@@ -12,7 +12,7 @@ interface OpencodeEvent { type?: string; part?: { type?: string; text?: string; 
 
 /**
  * OpenCode (`opencode run`) inside a Docker Sandboxes sandbox, on a copy of the working directory. What it changes comes back as a patch.
- * Route options: `sandbox`, `workRoot`, `model` (provider/model), `sbx`, `envAllow`.
+ * Route options: `sandbox`, `workRoot`, `model` (provider/model), `effort`, `sbx`, `envAllow`.
  */
 export const opencodeSbx: Adapter = {
   id: 'opencode-sbx', charterEngine: 'opencode', transport: 'exec',
@@ -28,7 +28,11 @@ export const opencodeSbx: Adapter = {
       files.push({ name: TASK_FILE, content: framed, inWorkspace: true });
       message = `Your complete task is in the file ${TASK_FILE} in the current directory. Read it in full and follow it. Do not edit or delete that file.`;
     }
-    const args = [...sbxPrefix(route), 'exec', '-e', 'NO_COLOR=1', '-w', insidePath(ws), optStr(route.options, 'sandbox') as string, 'opencode', 'run', '--format', 'json', '--model', optStr(route.options, 'model') as string, message];
+    const args = [...sbxPrefix(route), 'exec', '-e', 'NO_COLOR=1', '-w', insidePath(ws), optStr(route.options, 'sandbox') as string, 'opencode', 'run', '--format', 'json', '--model', optStr(route.options, 'model') as string];
+    // OpenCode names reasoning levels variants, and has none above high.
+    const effort = optStr(route.options, 'effort');
+    if (effort) args.push('--variant', effort === 'xhigh' ? 'high' : effort);
+    args.push(message);
     return { command: sbx, args, cwd: request.cwd, env: {}, stdin: null, files, promptArgs: [args.length - 1] };
   },
   extract(input: ExtractInput): Extraction {
