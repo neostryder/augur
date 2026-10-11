@@ -190,7 +190,7 @@ python packages\laya\deploy.py
 pwsh -NoProfile -File packages\laya\windows\install-task.ps1
 ```
 
-The last line registers a logon task named Augur Laya that serves the model at `http://127.0.0.1:8010`. Then choose Laya on the Service page. To use several machines, list them in `~/.augur/laya.json`; Augur tries them in order and skips one that is busy or down.
+The last line registers a logon task named Augur Laya that serves the model at `http://127.0.0.1:8010`. Then choose Laya on the Service page. The server takes the model out of video memory while a game runs, while other programs keep the card busy, and after 10 minutes with no request. It loads the model again when the next request arrives, or by itself once a busy card is free. A Laya that another tool starts from the same `serve_lora.py` on port 8010 behaves the same way, and Augur uses it with no extra setting. To use several machines, list each one, this computer included, as `{"name": "...", "url": "http://...:8010"}` under `decision.servers` in the service's `config.json`, which is in `%LOCALAPPDATA%\Augur\dispatch` on Windows. Augur tries them in order and skips one that is busy or down.
 
 ## Phone app
 
