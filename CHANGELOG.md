@@ -4,6 +4,14 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+### Added
+
+- [Visible] [Providers] **The opencode-sbx adapter takes an `effort` route option.** Set it in routes.json, for example `options: { effort: "high" }`, and OpenCode receives it as its reasoning variant. OpenCode's variants stop at `high`, so `xhigh` is sent as `high`. The option is for routes that run OpenCode inside a Docker Sandbox, such as DeepSeek, and a route without it runs as before.
+
+### Changed
+
+- [Visible] [UI] **Augur has a new icon.** It shows a lituus, the curved staff an augur carried, inside a glowing mint ring with gold accents, with a small hawk and mist against a night sky. The new icon replaces the old one in the app and its installer, the Windows tiles, the Mac icon, the phone home-screen icon, and the browser tab, and the phone app has its own padded version for Android's round and squircle crops. The live percentage ring in the tray stays as it was.
+
 ## [1.9.0] - 2026-10-11
 
 ### Added
