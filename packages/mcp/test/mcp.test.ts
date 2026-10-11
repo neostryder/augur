@@ -17,7 +17,7 @@ function deps(answers: Record<string, unknown | (() => unknown)>, calls: Calls[]
     call: (async (method: string, params: unknown) => {
       calls.push({ method, params });
       const a = answers[method];
-      const v = typeof a === 'function' ? (a as () => unknown)() : a;
+      const v = typeof a === 'function' ? (a as (params: unknown) => unknown)(params) : a;
       if (v instanceof Error) throw v;
       return v;
     }) as never,
@@ -134,6 +134,17 @@ describe('job, jobs, cancel, pressure, routes', () => {
     const t = createTools(deps({ result: null, cancel: null }));
     expect((await t.job({ id: 'nope' })).text).toBe('No such job.');
     expect((await t.cancel({ id: 'nope' })).isError).toBe(true);
+  });
+  it('follows a retried job to the one that replaced it', async () => {
+    const result = (p: unknown) => {
+      const id = (p as { id?: string }).id;
+      if (id === 'next') return { job: { id: 'next', state: 'completed', route: 'raw', retryOf: 'abc' }, answer: 'done' };
+      return { job: { id: 'abc', state: 'failed', route: 'luna', reason: 'exit 1', retriedAs: 'next' }, answer: null };
+    };
+    const r = await createTools(deps({ result })).job({ id: 'abc' });
+    expect(r.isError).toBeUndefined();
+    expect(r.text).toBe('retried on raw as next\ndone');
+    expect(r.data).toMatchObject({ id: 'next', chain: ['abc', 'next'], retriedAs: 'next', answer: 'done' });
   });
   it('lists jobs and routes and turns a service error into an error result', async () => {
     const t = createTools(deps({ list: [{ id: 'abc', state: 'completed', route: 'luna', activity: 'write_code', createdAt: 0 }], routes: ROUTES, pressure: new Error('service is not running') }));

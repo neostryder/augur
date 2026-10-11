@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { startService } from '@augur/augurd';
-import { JOBHOST, makeEnv } from '../../augurd/test/harness.js';
+import { JOBHOST, ROUTES, makeEnv } from '../../augurd/test/harness.js';
 import type { Env } from '../../augurd/test/harness.js';
 import { main } from '../src/cli.js';
 
@@ -10,10 +10,10 @@ vi.setConfig({ testTimeout: 90000 });
 const cleanup: Array<() => Promise<void> | void> = [];
 afterEach(async () => { while (cleanup.length) await cleanup.pop()!(); });
 
-async function boot() {
+async function boot(extra: Record<string, unknown> = {}) {
   const e: Env = makeEnv();
   const pipe = process.platform === 'win32' ? `\\\\.\\pipe\\augurd-cli-${Date.now()}-${Math.floor(Math.random() * 1e6)}` : join(e.root, 'cli.sock');
-  writeFileSync(join(e.dir, 'config.json'), JSON.stringify({ requirePick: false, verifyNamed: 'record', adapters: ['codex-exec', 'exec'], jobhostPath: existsSync(JOBHOST) ? JOBHOST : null }));
+  writeFileSync(join(e.dir, 'config.json'), JSON.stringify({ requirePick: false, verifyNamed: 'record', adapters: ['codex-exec', 'exec'], jobhostPath: existsSync(JOBHOST) ? JOBHOST : null, ...extra }));
   const svc = await startService({ dir: e.dir, home: e.home, pipe, routesPath: e.routesPath, engine: false });
   cleanup.push(async () => { await svc.stop().catch(() => {}); e.dispose(); });
   // `run` has no default activity or data tier and defaults to read tools and text output, so most tests state the usual authority once here. `--bare` skips that.
@@ -82,6 +82,42 @@ describe('augur run', () => {
     await run(['cancel', plainParent]);
     await run(['cancel', bossId]); await run(['cancel', childId]);
     expect(e.store.get(bossId)).toBeTruthy();
+  });
+});
+
+describe('a job retried after it failed', () => {
+  const limit = {
+    model: 'test/fake', adapter: 'exec', fallback: ['fake'],
+    options: { command: process.execPath, argsJson: JSON.stringify(['-e', 'process.stderr.write("rate limit\\n");process.exit(1)']) },
+  };
+
+  it('follows the chain from wait, result and run --wait', async () => {
+    const { run, e } = await boot({ runner: { failover: 'on' } });
+    e.writeRoutes({ ...ROUTES, limited: limit });
+    const start = await run(['run', 'limited', '--prompt', 'SLEEP 0', '--json']);
+    expect(start.code).toBe(0);
+    const id = (JSON.parse(start.out) as { id: string }).id;
+    const wait = await run(['wait', id, '--timeout', '40']);
+    expect(wait.code).toBe(0);
+    expect(wait.out).toMatch(/retried on fake as [0-9a-f]+/);
+    const again = JSON.parse((await run(['wait', id, '--json'])).out) as { id: string; state: string; chain: string[] };
+    expect(again.chain[0]).toBe(id);
+    expect(again.chain).toHaveLength(2);
+    expect(again.id).toBe(again.chain[1]);
+    expect(again.state).toBe('completed');
+    const res = await run(['result', id]);
+    expect(res.code).toBe(0);
+    expect(res.out).toMatch(/retried on fake as [0-9a-f]+/);
+    expect(res.out).toContain('final message');
+    const body = JSON.parse((await run(['result', id, '--json'])).out) as { answer: string; chain: string[]; retriedAs: string; job: { id: string; state: string } };
+    expect(body.chain).toEqual(again.chain);
+    expect(body.retriedAs).toBe(body.job.id);
+    expect(body.answer).toBe('final message');
+    expect(body.job.state).toBe('completed');
+    const waited = await run(['run', 'limited', '--prompt', 'SLEEP 0', '--wait']);
+    expect(waited.code).toBe(0);
+    expect(waited.out).toMatch(/retried on fake as [0-9a-f]+/);
+    expect(waited.out).toContain('final message');
   });
 });
 

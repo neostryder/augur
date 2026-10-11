@@ -37,8 +37,8 @@ augur run <route> --prompt-file <file|-> | --prompt <text> [options]
 augur jobs [--state <s>] [--root <id>] [--limit <n>]
 augur status                          one line: Claude's use, anything running hot, and the alert count (--waybar for a status bar's JSON)
 augur status <job>
-augur wait <job> [--timeout <s>]
-augur result <job>
+augur wait <job> [--timeout <s>]      reports the last job when the one named was retried
+augur result <job>                    prints that job's answer, or the last retry's answer
 augur logs <job> [--stderr] [--follow]
 augur cancel <job>
 augur apply <job> [--check]
@@ -112,11 +112,13 @@ export async function main(argv: string[], io: Io): Promise<number> {
         if (!j) { io.err('No such job.\n'); return EXIT_CODES.usage; }
         say(describe(j), j); return 0;
       }
-      case 'wait': return await waitFor(need(rest[0], 'job id'), opt('timeout') ? Number(opt('timeout')) : null, io, opts, json);
+      case 'wait': return (await waitFor(need(rest[0], 'job id'), opt('timeout') ? Number(opt('timeout')) : null, io, opts, json)).code;
       case 'result': {
-        const r = await call('result', { id: need(rest[0], 'job id') }, opts);
+        const r = await resultChain(need(rest[0], 'job id'), opts);
         if (!r) { io.err('No such job.\n'); return EXIT_CODES.usage; }
-        say(r.answer ?? '', r); return isTerminal(r.job.state) ? exitCodeForState(r.job.state) : EXIT_CODES.wait_timeout;
+        const body = r.chain.length > 1 ? { job: r.job, answer: r.answer, chain: r.chain, retriedAs: r.job.id } : { job: r.job, answer: r.answer };
+        say(`${r.lines.length ? r.lines.join('\n') + '\n' : ''}${r.answer ?? ''}`, body);
+        return isTerminal(r.job.state) ? exitCodeForState(r.job.state) : EXIT_CODES.wait_timeout;
       }
       case 'logs': return await logs(need(rest[0], 'job id'), p.flags.has('stderr') ? 'stderr' : 'stdout', p.flags.has('follow'), io, opts);
       case 'cancel': {
@@ -322,10 +324,10 @@ async function run(rest: string[], p: Parsed, io: Io, opts: Opts, say: (h: strin
   if ('rejected' in res) { io.err(`Rejected (${res.rejected.code}): ${res.rejected.reason}\n`); if (json) io.out(JSON.stringify(res) + '\n'); return EXIT_CODES.rejected; }
   for (const w of res.warnings) io.err(`Warning: ${w}\n`);
   if (!p.flags.has('wait')) { say(res.id, res); return EXIT_CODES.completed; }
-  const code = await waitFor(res.id, req.timeoutS ? req.timeoutS + 60 : null, io, opts, json, true);
-  const r = await call('result', { id: res.id }, opts);
-  if (r) io.out(json ? JSON.stringify(r) + '\n' : (r.answer ?? '') + (r.answer?.endsWith('\n') ? '' : '\n'));
-  return code;
+  const w = await waitFor(res.id, req.timeoutS ? req.timeoutS + 60 : null, io, opts, json, true);
+  const r = await call('result', { id: w.id }, opts);
+  if (r) io.out(json ? JSON.stringify(w.chain.length > 1 ? { ...r, chain: w.chain, retriedAs: w.id } : r) + '\n' : (r.answer ?? '') + (r.answer?.endsWith('\n') ? '' : '\n'));
+  return w.code;
 }
 
 /**
@@ -346,10 +348,10 @@ async function testCmd(route: string, p: Parsed, io: Io, opts: Opts, say: (h: st
   if (!res) return EXIT_CODES.failed;
   if ('rejected' in res) { io.err(`Rejected (${res.rejected.code}): ${res.rejected.reason}\n`); if (json) io.out(JSON.stringify(res) + '\n'); return EXIT_CODES.rejected; }
   if (!p.flags.has('wait')) { say(res.id, res); return EXIT_CODES.completed; }
-  const code = await waitFor(res.id, 180, io, opts, json, true);
-  const r = await call('result', { id: res.id }, opts);
-  if (r) io.out(json ? JSON.stringify(r) + '\n' : (r.answer ?? '') + '\n');
-  return code;
+  const w = await waitFor(res.id, 180, io, opts, json, true);
+  const r = await call('result', { id: w.id }, opts);
+  if (r) io.out(json ? JSON.stringify(w.chain.length > 1 ? { ...r, chain: w.chain, retriedAs: w.id } : r) + '\n' : (r.answer ?? '') + '\n');
+  return w.code;
 }
 
 async function pickCmd(io: Io, opts: Opts, say: (h: string, d: unknown) => void, opt: (n: string) => string | undefined, flag: (n: string) => boolean, preview = false): Promise<number> {
@@ -375,18 +377,49 @@ async function pickCmd(io: Io, opts: Opts, say: (h: string, d: unknown) => void,
   return r.pick ? 0 : EXIT_CODES.rejected;
 }
 
-async function waitFor(id: string, timeoutS: number | null, io: Io, opts: Opts, json: boolean, quiet = false): Promise<number> {
+async function waitFor(id: string, timeoutS: number | null, io: Io, opts: Opts, json: boolean, quiet = false): Promise<{ code: number; id: string; chain: string[] }> {
   const t0 = Date.now();
+  const chain = [id];
+  let current = id;
   for (;;) {
-    const j = await call('status', { id }, opts);
-    if (!j) { io.err('No such job.\n'); return EXIT_CODES.usage; }
-    if (isTerminal(j.state) || j.state === 'needs_approval') {
-      if (!quiet) io.out(json ? JSON.stringify(j) + '\n' : describe(j) + '\n');
-      return exitCodeForState(j.state);
+    const j = await call('status', { id: current }, opts);
+    if (!j) { io.err('No such job.\n'); return { code: EXIT_CODES.usage, id: current, chain }; }
+    if (isTerminal(j.state) && j.retriedAs && !chain.includes(j.retriedAs) && chain.length < 8) {
+      const next = await call('status', { id: j.retriedAs }, opts);
+      if (next) {
+        if (!json) io.out(`retried on ${next.route} as ${next.id}\n`);
+        chain.push(next.id);
+        current = next.id;
+        continue;
+      }
     }
-    if (timeoutS !== null && Date.now() - t0 > timeoutS * 1000) { if (!quiet) io.err(`Still ${j.state} after ${timeoutS}s.\n`); return EXIT_CODES.wait_timeout; }
+    if (isTerminal(j.state) || j.state === 'needs_approval') {
+      if (!quiet) io.out(json ? JSON.stringify(chain.length > 1 ? { ...j, chain } : j) + '\n' : describe(j) + '\n');
+      return { code: exitCodeForState(j.state), id: current, chain };
+    }
+    if (timeoutS !== null && Date.now() - t0 > timeoutS * 1000) { if (!quiet) io.err(`Still ${j.state} after ${timeoutS}s.\n`); return { code: EXIT_CODES.wait_timeout, id: current, chain }; }
     await sleep(500);
   }
+}
+
+/** The job named, or the last one that replaced it once each earlier job has finished. */
+async function resultChain(id: string, opts: Opts): Promise<{ job: JobRecord; answer: string | null; chain: string[]; lines: string[] } | null> {
+  const chain = [id];
+  const lines: string[] = [];
+  const first = await call('result', { id }, opts);
+  if (!first) return null;
+  let job = first.job, answer = first.answer;
+  for (;;) {
+    const nextId = isTerminal(job.state) ? job.retriedAs : undefined;
+    if (!nextId || chain.includes(nextId) || chain.length >= 8) break;
+    const next = await call('result', { id: nextId }, opts);
+    if (!next) break;
+    lines.push(`retried on ${next.job.route} as ${next.job.id}`);
+    chain.push(next.job.id);
+    job = next.job;
+    answer = next.answer;
+  }
+  return { job, answer, chain, lines };
 }
 
 async function logs(id: string, stream: 'stdout' | 'stderr', follow: boolean, io: Io, opts: Opts): Promise<number> {

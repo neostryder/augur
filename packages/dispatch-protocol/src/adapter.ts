@@ -29,7 +29,7 @@ export interface RouteConfig {
   notes?: string;
   /** A ceiling on what the route may use in a rolling period. A submit past it is refused. Every job in the period counts toward a job limit, and a dollar limit counts the jobs whose cost is known. */
   budget?: RouteBudget;
-  /** Routes tried in order when this one cannot take a job for a reason that may pass: its budget, a pause, plan usage, or a missing adapter or key. */
+  /** Routes tried in order when this one cannot take a job for a reason that may pass: its budget, a pause, plan usage, or a missing adapter or key. With runner.failover on, a failed job is retried on this list too. */
   fallback?: string[];
 }
 

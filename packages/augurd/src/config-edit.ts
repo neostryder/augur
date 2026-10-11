@@ -23,6 +23,7 @@ export const CONFIG_KEYS: readonly ConfigKey[] = [
   { key: 'persistPrompts', label: 'Keep prompts', help: "Saves each job's prompt in its folder. Off by default, so a prompt is deleted as soon as the job starts.", kind: 'bool' },
   { key: 'runner.charterDir', label: 'Charter folder', help: 'Folder of standing instructions prefixed to each job. Empty uses the charter folder in the Augur home when it exists.', kind: 'text' },
   { key: 'runner.ambient', label: 'Harness context', help: "keep leaves each harness's own instructions on. trim turns them off where the harness has a switch. A route's ambient option overrides this.", kind: 'choice', choices: ['keep', 'trim'] },
+  { key: 'runner.failover', label: 'Retry on failure', help: "off leaves a job that failed after it started. on submits it again on each fallback route when a spawn error, a provider limit, or a read-only timeout stopped it.", kind: 'choice', choices: ['off', 'on'] },
   { key: 'maxConcurrent', label: 'Jobs at once', help: 'How many jobs run together while the rest wait. 8 by default.', kind: 'number', min: 1, max: 64 },
   { key: 'maxDepth', label: 'Nesting depth', help: 'How many levels deep jobs may start jobs of their own. 2 by default.', kind: 'number', min: 0, max: 8 },
   { key: 'maxDescendants', label: 'Jobs one job can start', help: 'The most that one job, and the jobs it starts, can add up to. 16 by default.', kind: 'number', min: 0, max: 256 },
@@ -48,6 +49,7 @@ function valueOf(config: ServiceConfig, key: string): string {
     case 'learn.recordTasks': return String(config.learn.recordTasks);
     case 'runner.charterDir': return config.runner.charterDir;
     case 'runner.ambient': return config.runner.ambient;
+    case 'runner.failover': return config.runner.failover;
     case 'adapters': return config.adapters.join(',');
     default: return String((config as unknown as Record<string, unknown>)[key]);
   }

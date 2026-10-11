@@ -15,6 +15,7 @@ import { buildEnv } from './env.js';
 import type { Store } from './store.js';
 import type { DecisionLog } from './decisions.js';
 import { buildCharter, resolveAmbient, resolveCharterDir } from './charter.js';
+import { MAX_HOPS, classifyFailure } from './failover.js';
 import { augurHome, scriptPath } from './paths.js';
 import { hasStoredKey } from './secrets.js';
 
@@ -65,6 +66,8 @@ export const SCOPE_ENV = ['XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS'] as cons
 export class Supervisor {
   private adopted = new Set<string>();
   private outputSeen = new Set<string>();
+  /** The request and the routes already used for each job this process launched. A restart drops the map, and then that job is not retried. */
+  private readonly submitted = new Map<string, { req: JobRequest; hops: string[] }>();
   private readonly now: () => number;
   private readonly runner: string;
   constructor(private d: SupervisorDeps) {
@@ -120,7 +123,7 @@ export class Supervisor {
     return first;
   }
 
-  private submitTo(input: JobRequest): SubmitResult {
+  private submitTo(input: JobRequest, chain?: { req: JobRequest; hops: string[] }): SubmitResult {
     let req = input;
     const bad = this.validate(req);
     if (bad) return reject('bad_request', bad);
@@ -198,6 +201,7 @@ export class Supervisor {
     if (req.allow?.length) s.event(id, 'checks_overridden', req.allow.join(', '), this.now());
     this.d.store.event(id, 'queued', '', this.now());
     this.d.decisions?.linkJob(req.caller.session ?? null, route.model, id);
+    this.submitted.set(id, chain ?? { req, hops: [req.route] });
     this.tick();
     return { id, warnings };
   }
@@ -430,15 +434,18 @@ export class Supervisor {
 
   private finalize(rec: JobRecord, res: RunnerResult): void {
     const store = this.d.store, adapter = this.d.adapters.get(rec.adapter), inner = store.internal(rec.id), at = this.now(), dir = this.jobDir(rec.id);
+    // submitTo ticks again while a retry is launched, and that tick may already have finalized this job.
+    if (isTerminal(store.get(rec.id)?.state ?? rec.state)) return;
     if (this.adopted.delete(rec.id)) store.event(rec.id, 'reconciled', 'finished while the service was not watching', at);
     store.event(rec.id, 'process_exited', `exit ${res.exitCode}${res.killedBy ? ` after ${res.killedBy}` : ''}`, at);
     if (res.killedBy === 'cancel') store.event(rec.id, 'cancellation_acknowledged', '', at);
     this.collectPatch(rec);
 
     let answer: string | null = null, failure: string | undefined;
+    const stderr = this.tail(join(dir, 'stderr.log'), 1024 * 1024);
     if (adapter) {
       const stdoutPath = join(dir, 'stdout.log');
-      const x = adapter.extract({ stdout: this.tail(stdoutPath, 4 * 1024 * 1024), stdoutPath, stderr: this.tail(join(dir, 'stderr.log'), 1024 * 1024), exitCode: res.exitCode, jobDir: dir, workspace: rec.workspace });
+      const x = adapter.extract({ stdout: this.tail(stdoutPath, 4 * 1024 * 1024), stdoutPath, stderr, exitCode: res.exitCode, jobDir: dir, workspace: rec.workspace });
       answer = x.answer?.trim() ? x.answer : null; failure = x.failure;
       if (answer) { writeFileSync(join(dir, 'answer.txt'), answer); store.setChars(rec.id, { answer: answer.length }); }
       if (x.usage) { store.setUsage(rec.id, x.usage); store.event(rec.id, 'usage_recorded', `${x.usage.inputTokens} in, ${x.usage.outputTokens} out`, at); }
@@ -461,11 +468,40 @@ export class Supervisor {
     store.event(rec.id, 'finalized', '', this.now());
     const done = store.get(rec.id), model = this.d.routes()?.[rec.route]?.model ?? rec.route;
     if (done) this.d.decisions?.outcome(rec.id, model, done.state, done.reason, done.endedAt && done.startedAt ? done.endedAt - done.startedAt : null);
+    this.retryFailed(rec, res, failure, answer, stderr);
     this.cleanup(rec.id);
+  }
+
+  /** Submits the original request on the next fallback route when the failure can be retried. The failed job keeps its state. */
+  private retryFailed(rec: JobRecord, res: RunnerResult, failure: string | undefined, answer: string | null, stderrTail: string): void {
+    if (this.d.config.runner.failover !== 'on') return;
+    const held = this.submitted.get(rec.id);
+    if (!held) return;
+    const done = this.d.store.get(rec.id);
+    if (!done || (done.state !== 'failed' && done.state !== 'killed')) return;
+    if (held.req.failover === false || held.hops.length >= MAX_HOPS) return;
+    const fallbacks = this.d.routes()?.[rec.route]?.fallback;
+    if (!fallbacks?.length) return;
+    const verdict = classifyFailure({
+      ...(res.spawnError ? { spawnError: res.spawnError } : {}), killedBy: res.killedBy, exitCode: res.exitCode,
+      ...(failure ? { failure } : {}), stderrTail, tools: rec.tools, answer, changed: (done.patch?.files ?? 0) > 0,
+    });
+    if (!verdict.retry) return;
+    for (const next of fallbacks) {
+      if (next === rec.route || held.hops.includes(next)) continue;
+      const submitted = this.submitTo({ ...held.req, route: next }, { req: held.req, hops: [...held.hops, next] });
+      if ('rejected' in submitted) continue;
+      this.d.store.linkRetry(rec.id, submitted.id);
+      const at = this.now();
+      this.d.store.event(rec.id, 'failover_retry', `${rec.route} to ${next}: ${verdict.why}, as ${submitted.id}`, at);
+      this.d.store.event(submitted.id, 'failover', `${rec.route} to ${next}: ${verdict.why}`, at);
+      return;
+    }
   }
 
   private cleanup(id: string): void {
     this.outputSeen.delete(id);
+    this.submitted.delete(id);
     if (this.d.config.persistPrompts) return;
     try { unlinkSync(join(this.jobDir(id), 'prompt.in')); } catch { /* already read by the runner */ }
     const file = readJson<JobFile>(join(this.jobDir(id), 'job.json')), rec = this.d.store.get(id);

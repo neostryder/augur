@@ -108,7 +108,7 @@ describe('the supervisor prefixes a charter', () => {
 
   it('gives the adapter the charter plus the prompt, and keeps the stored prompt length', async () => {
     const folder = tree({ 'core.md': 'Core body.', 'engines/codex.md': 'Codex body.', 'packs/code.md': 'Code body.', 'packs/prose.md': 'Prose body.' });
-    const e = makeEnv({ adapters: ['probe', 'persona'], runner: { charterDir: folder, ambient: 'keep' } }, process.env, { extra: [probe('probe', 'codex'), probe('persona', null)] });
+    const e = makeEnv({ adapters: ['probe', 'persona'], runner: { charterDir: folder, ambient: 'keep', failover: 'off' } }, process.env, { extra: [probe('probe', 'codex'), probe('persona', null)] });
     envs.push(e);
     e.writeRoutes({
       probe: { model: 'test/fake', adapter: 'probe', options: {} },

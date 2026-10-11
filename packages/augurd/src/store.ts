@@ -12,6 +12,7 @@ interface Row {
   usage: string | null; runner_pid: number | null; child_pid: number | null; expect_file: string | null; timeout_s: number | null;
   purged: number; workspace: string | null; patch_path: string | null; changed_files: number | null; prompt_chars: number | null; answer_chars: number | null;
   charter: string | null; charter_chars: number | null; charter_notes: string | null; ambient: string | null;
+  retry_of: string | null; retried_as: string | null;
 }
 
 const stringList = (text: string | null): string[] | undefined => {
@@ -29,6 +30,7 @@ const toRecord = (r: Row): JobRecord => {
     promptChars: r.prompt_chars, answerChars: r.answer_chars,
     ...(charter ? { charter } : {}), ...(r.charter_chars != null ? { charterChars: r.charter_chars } : {}), ...(charterNotes?.length ? { charterNotes } : {}),
     ...(r.ambient === 'keep' || r.ambient === 'trim' ? { ambient: r.ambient } : {}),
+    ...(r.retry_of ? { retryOf: r.retry_of } : {}), ...(r.retried_as ? { retriedAs: r.retried_as } : {}),
     workspace: r.workspace, patch: r.patch_path ? { path: r.patch_path, files: r.changed_files ?? 0 } : null,
   };
 };
@@ -59,7 +61,7 @@ export class Store {
       create table if not exists picks(id integer primary key autoincrement, at integer not null, session text, model text not null, activity text not null, data_tier text not null, named text, cleared text not null);
       create table if not exists prompts(id integer primary key autoincrement, at integer not null, session text not null, models text not null);`);
     const have = new Set((this.db.prepare('pragma table_info(jobs)').all() as Array<{ name: string }>).map(c => c.name));
-    for (const [name, type] of [['workspace', 'text'], ['patch_path', 'text'], ['changed_files', 'integer'], ['prompt_chars', 'integer'], ['answer_chars', 'integer'], ['charter', 'text'], ['charter_chars', 'integer'], ['charter_notes', 'text'], ['ambient', 'text']] as const) {
+    for (const [name, type] of [['workspace', 'text'], ['patch_path', 'text'], ['changed_files', 'integer'], ['prompt_chars', 'integer'], ['answer_chars', 'integer'], ['charter', 'text'], ['charter_chars', 'integer'], ['charter_notes', 'text'], ['ambient', 'text'], ['retry_of', 'text'], ['retried_as', 'text']] as const) {
       if (!have.has(name)) this.db.exec(`alter table jobs add column ${name} ${type}`);
     }
     const pickCols = new Set((this.db.prepare('pragma table_info(picks)').all() as Array<{ name: string }>).map(c => c.name));
@@ -126,6 +128,11 @@ export class Store {
     this.db.prepare('update jobs set prompt_chars=?, ambient=?, charter=?, charter_chars=?, charter_notes=? where id=?').run(
       meta.promptChars, meta.ambient, meta.charter ? JSON.stringify(meta.charter) : null, meta.charterChars ?? null,
       meta.charterNotes?.length ? JSON.stringify(meta.charterNotes) : null, id);
+  }
+  /** Records that `next` was submitted to replace `id`. Both columns stay null on a row from before retries. */
+  linkRetry(id: string, next: string): void {
+    this.db.prepare('update jobs set retried_as=? where id=?').run(next, id);
+    this.db.prepare('update jobs set retry_of=? where id=?').run(id, next);
   }
   setVersion(id: string, version: string | null): void { this.db.prepare('update jobs set harness_version=? where id=?').run(version, id); }
   setPatch(id: string, path: string, files: number): void { this.db.prepare('update jobs set patch_path=?, changed_files=? where id=?').run(path, files, id); }

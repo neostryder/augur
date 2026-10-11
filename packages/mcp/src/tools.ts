@@ -98,22 +98,55 @@ export function createTools(d: McpDeps) {
     try { sub = await d.call('submit', req, d.opts); } catch (e) { return fail(e instanceof Error ? e.message : String(e)); }
     if ('rejected' in sub) return fail(`Rejected (${sub.rejected.code}): ${sub.rejected.reason}`, { rejected: sub.rejected });
     const waitS = Math.min(Math.max(a.wait_s ?? WAIT_DEFAULT_S, 0), WAIT_MAX_S), until = Date.now() + waitS * 1000;
+    let lastId = sub.id;
     while (Date.now() < until) {
-      const r = await d.call('result', { id: sub.id }, d.opts).catch(() => null);
-      if (r && isTerminal(r.job.state)) return describeResult(r.job, r.answer, sub.warnings);
+      const r = await followed(sub.id).catch(() => null);
+      if (r) lastId = r.job.id;
+      if (r && isTerminal(r.job.state)) return describeResult(r.job, r.answer, sub.warnings, r.notes, r.chain);
       await sleep(POLL_MS);
     }
-    return { text: `Job ${sub.id} is still running. Read it later with augur_job.${sub.warnings.length ? `\nWarnings: ${sub.warnings.join(' ')}` : ''}`, data: { id: sub.id, state: 'running', warnings: sub.warnings } };
+    return { text: `Job ${lastId} is still running. Read it later with augur_job.${sub.warnings.length ? `\nWarnings: ${sub.warnings.join(' ')}` : ''}`, data: { id: lastId, state: 'running', warnings: sub.warnings } };
   }
 
-  function describeResult(job: JobRecord, answer: string | null, warnings: string[] = []): ToolResult {
+  /** Walks `retriedAs` while each job has finished. A successor that is still running stops the walk. */
+  async function followed(start: string): Promise<{ job: JobRecord; answer: string | null; chain: string[]; notes: string[] } | null> {
+    const chain: string[] = [];
+    const notes: string[] = [];
+    let id = start;
+    let seen: { job: JobRecord; answer: string | null } | null = null;
+    for (let hop = 0; hop < 8; hop++) {
+      const r = await d.call('result', { id }, d.opts);
+      if (!r) return seen ? { ...seen, chain, notes } : null;
+      seen = r;
+      if (!chain.includes(id)) chain.push(id);
+      const nextId = isTerminal(r.job.state) ? r.job.retriedAs : undefined;
+      if (!nextId || chain.includes(nextId)) return { job: r.job, answer: r.answer, chain, notes };
+      const next = await d.call('result', { id: nextId }, d.opts);
+      if (!next) return { job: r.job, answer: r.answer, chain, notes };
+      notes.push(`retried on ${next.job.route} as ${next.job.id}`);
+      chain.push(next.job.id);
+      if (!isTerminal(next.job.state)) return { job: next.job, answer: next.answer, chain, notes };
+      id = next.job.id;
+    }
+    return seen ? { job: seen.job, answer: seen.answer, chain, notes } : null;
+  }
+
+  function describeResult(job: JobRecord, answer: string | null, warnings: string[] = [], notes: string[] = [], chain: string[] = []): ToolResult {
     const ok = job.state === 'completed';
+    const head = [...(warnings.length ? [`Warnings: ${warnings.join(' ')}`] : []), ...notes];
     const body = ok ? (answer ?? '(no answer text)') : `The job ended as ${job.state}.${job.reason ? ` ${job.reason}` : ''}${answer ? `\n${answer}` : ''}`;
-    return { text: `${warnings.length ? `Warnings: ${warnings.join(' ')}\n` : ''}${body}`, ...(ok ? {} : { isError: true }), data: { id: job.id, state: job.state, answer, reason: job.reason, patch: job.patch, usage: job.usage } };
+    return { text: head.length ? `${head.join('\n')}\n${body}` : body, ...(ok ? {} : { isError: true }), data: { id: job.id, state: job.state, answer, reason: job.reason, patch: job.patch, usage: job.usage, ...(chain.length > 1 ? { chain, retriedAs: job.id } : {}) } };
   }
 
   async function job(a: { id: string }): Promise<ToolResult> {
-    return guarded(() => d.call('result', { id: a.id }, d.opts), r => r ? (isTerminal(r.job.state) ? describeResult(r.job, r.answer) : { text: `Job ${r.job.id} is ${r.job.state}.`, data: { id: r.job.id, state: r.job.state } }) : fail('No such job.'));
+    return guarded(() => followed(a.id), r => {
+      if (!r) return fail('No such job.');
+      if (!isTerminal(r.job.state)) {
+        const note = r.notes.length ? `${r.notes.join('\n')}\n` : '';
+        return { text: `${note}Job ${r.job.id} is ${r.job.state}.`, data: { id: r.job.id, state: r.job.state, ...(r.chain.length > 1 ? { chain: r.chain } : {}) } };
+      }
+      return describeResult(r.job, r.answer, [], r.notes, r.chain);
+    });
   }
 
   async function jobs(a: { limit?: number }): Promise<ToolResult> {

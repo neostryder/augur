@@ -233,6 +233,127 @@ describe.runIf(process.platform === 'win32' ? existsSync(JOBHOST) : systemdScope
   });
 });
 
+describe('runtime failover', () => {
+  const runnerOn = { charterDir: '', ambient: 'keep' as const, failover: 'on' as const };
+  const limit = (fallback: string[]) => ({
+    model: 'test/fake', adapter: 'exec', fallback,
+    options: { command: process.execPath, argsJson: JSON.stringify(['-e', 'process.stderr.write("rate limit\\n");process.exit(1)']) },
+  });
+  const add = (e: Env, routes: Record<string, unknown>) => {
+    const current = JSON.parse(readFileSync(e.routesPath, 'utf8')).routes as Record<string, unknown>;
+    e.writeRoutes({ ...current, ...routes });
+  };
+  const settled = (e: Env) => until(e.sup, () => {
+    const jobs = e.store.list({ limit: 20 });
+    return jobs.length && jobs.every(j => !['queued', 'running', 'cancel_requested', 'needs_approval'].includes(j.state)) ? jobs : null;
+  });
+
+  it('does not retry when runner.failover is off', async () => {
+    const e = setup();
+    add(e, { limited: limit(['fake']) });
+    const id = submitOk(e.sup, request({ route: 'limited', text: 'SLEEP 0', cwd: e.root }));
+    expect(await terminal(e.sup, e.store, id)).toMatchObject({ state: 'failed', route: 'limited' });
+    expect(e.store.get(id)!.retriedAs).toBeUndefined();
+    expect(e.store.list({ limit: 10 })).toHaveLength(1);
+    expect(kinds(e, id)).not.toContain('failover_retry');
+  });
+
+  it('retries a limit failure on the fallback and the successor completes', async () => {
+    const e = setup({ runner: runnerOn });
+    add(e, { limited: limit(['fake']) });
+    const id = submitOk(e.sup, request({ route: 'limited', text: 'SLEEP 0', cwd: e.root }));
+    const jobs = await settled(e);
+    const failed = jobs.find(j => j.id === id)!;
+    const next = e.store.get(failed.retriedAs!)!;
+    expect(failed.state).toBe('failed');
+    expect(next).toMatchObject({ state: 'completed', route: 'fake', retryOf: id });
+    expect(e.sup.result(next.id)?.answer).toBe('final message');
+    expect(e.store.events(id).find(ev => ev.kind === 'failover_retry')?.detail).toBe(`limited to fake: provider limit, as ${next.id}`);
+    expect(e.store.events(next.id).find(ev => ev.kind === 'failover')?.detail).toBe('limited to fake: provider limit');
+  });
+
+  it('skips a fallback a rule rejects and tries the next', async () => {
+    const e = setup({ runner: runnerOn });
+    add(e, { limited: limit(['ghost', 'fake']) });
+    const id = submitOk(e.sup, request({ route: 'limited', text: 'SLEEP 0', cwd: e.root }));
+    const jobs = await settled(e);
+    const next = e.store.get(jobs.find(j => j.id === id)!.retriedAs!)!;
+    expect(next).toMatchObject({ state: 'completed', route: 'fake', retryOf: id });
+    expect(jobs.some(j => j.route === 'ghost')).toBe(false);
+  });
+
+  it('keeps a job whose request set failover to false', async () => {
+    const e = setup({ runner: runnerOn });
+    add(e, { limited: limit(['fake']) });
+    const id = submitOk(e.sup, request({ route: 'limited', text: 'SLEEP 0', cwd: e.root, failover: false }));
+    expect(await terminal(e.sup, e.store, id)).toMatchObject({ state: 'failed' });
+    expect(e.store.get(id)!.retriedAs).toBeUndefined();
+    expect(e.store.list({ limit: 10 })).toHaveLength(1);
+  });
+
+  it('stops after three jobs in the chain', async () => {
+    const e = setup({ runner: runnerOn });
+    add(e, { a: limit(['b']), b: limit(['c']), c: limit(['d']), d: limit(['e']) });
+    const id = submitOk(e.sup, request({ route: 'a', text: 'SLEEP 0', cwd: e.root }));
+    const jobs = await settled(e);
+    expect(jobs.map(j => j.route).sort()).toEqual(['a', 'b', 'c']);
+    expect(e.store.get(id)!.retriedAs).toBeTruthy();
+    expect(jobs.find(j => j.route === 'c')!.retriedAs).toBeUndefined();
+  });
+
+  it('skips a route the chain already used', async () => {
+    const e = setup({ runner: runnerOn });
+    add(e, { a: limit(['b']), b: limit(['a']) });
+    submitOk(e.sup, request({ route: 'a', text: 'SLEEP 0', cwd: e.root }));
+    const jobs = await settled(e);
+    expect(jobs.map(j => j.route).sort()).toEqual(['a', 'b']);
+    expect(jobs.find(j => j.route === 'b')!.retriedAs).toBeUndefined();
+  });
+
+  it('does not retry a write job that timed out', async () => {
+    const e = setup({ runner: runnerOn });
+    const routes = JSON.parse(readFileSync(e.routesPath, 'utf8')).routes as Record<string, Record<string, unknown>>;
+    routes.fake = { ...routes.fake, fallback: ['raw'] };
+    e.writeRoutes(routes);
+    const id = submitOk(e.sup, request({ text: 'HANG', timeoutS: 3, tools: 'write', cwd: e.root }));
+    expect(await terminal(e.sup, e.store, id)).toMatchObject({ state: 'killed', reason: 'timed out after 3s' });
+    expect(e.store.get(id)!.retriedAs).toBeUndefined();
+    expect(e.store.list({ limit: 10 })).toHaveLength(1);
+  });
+
+  it('does not retry a cancelled job', async () => {
+    const e = setup({ runner: runnerOn });
+    const routes = JSON.parse(readFileSync(e.routesPath, 'utf8')).routes as Record<string, Record<string, unknown>>;
+    routes.fake = { ...routes.fake, fallback: ['raw'] };
+    e.writeRoutes(routes);
+    const id = submitOk(e.sup, request({ text: 'HANG', cwd: e.root }));
+    await until(e.sup, () => e.store.get(id)!.state === 'running');
+    expect(e.sup.cancel(id)).toMatchObject({ ok: true });
+    expect(await terminal(e.sup, e.store, id)).toMatchObject({ state: 'cancelled' });
+    expect(e.store.get(id)!.retriedAs).toBeUndefined();
+    expect(e.store.list({ limit: 10 })).toHaveLength(1);
+  });
+
+  it('does not retry a job whose request was lost with the process', async () => {
+    const e = setup({ runner: runnerOn });
+    add(e, { limited: limit(['fake']) });
+    const id = submitOk(e.sup, request({ route: 'limited', text: 'SLEEP 0', cwd: e.root }));
+    const result = join(e.dir, 'jobs', id, 'result.json');
+    const t0 = Date.now();
+    while (!existsSync(result)) {
+      if (Date.now() - t0 > 30000) throw new Error('timed out waiting for result.json');
+      await sleep(40);
+    }
+    const second = e.make();
+    second.reconcile();
+    const job = await terminal(second, e.store, id);
+    expect(job.state).toBe('failed');
+    expect(job.retriedAs).toBeUndefined();
+    expect(e.store.list({ limit: 10 })).toHaveLength(1);
+    expect(kinds(e, id)).not.toContain('failover_retry');
+  });
+});
+
 describe('retention', () => {
   it('removes the folders of old finished jobs and keeps their records', async () => {
     const e = setup({ retentionDays: 1 });

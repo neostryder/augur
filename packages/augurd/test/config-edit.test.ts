@@ -48,14 +48,25 @@ describe('config editing', () => {
     expect(configLines(dir).find(l => l.key === 'runner.ambient')).toMatchObject({ value: 'keep', default: 'keep', kind: 'choice', choices: ['keep', 'trim'] });
     expect(setConfigValue(dir, 'runner.charterDir', 'C:/charter')).toEqual({ ok: true, value: 'C:/charter' });
     expect(setConfigValue(dir, 'runner.ambient', 'trim')).toEqual({ ok: true, value: 'trim' });
-    expect(loadConfig(dir).runner).toEqual({ charterDir: 'C:/charter', ambient: 'trim' });
+    expect(loadConfig(dir).runner).toEqual({ charterDir: 'C:/charter', ambient: 'trim', failover: 'off' });
     expect(setConfigValue(dir, 'runner.ambient', 'loud')).toMatchObject({ ok: false });
     expect(loadConfig(dir).runner.ambient).toBe('trim');
     expect(setConfigValue(dir, 'runner.charterDir', '  ')).toEqual({ ok: true, value: '' });
     expect(loadConfig(dir).runner.charterDir).toBe('');
     writeFileSync(join(dir, 'config.json'), JSON.stringify({ runner: { ambient: 'nope', charterDir: 4 }, retentionDays: 9 }));
-    expect(loadConfig(dir).runner).toEqual({ charterDir: '', ambient: 'keep' });
+    expect(loadConfig(dir).runner).toEqual({ charterDir: '', ambient: 'keep', failover: 'off' });
     expect(loadConfig(dir).retentionDays).toBe(9);
+  });
+
+  it('stores whether a failed job is retried on a fallback route', () => {
+    const dir = fresh();
+    expect(configLines(dir).find(l => l.key === 'runner.failover')).toMatchObject({ value: 'off', default: 'off', kind: 'choice', choices: ['off', 'on'] });
+    expect(setConfigValue(dir, 'runner.failover', 'on')).toEqual({ ok: true, value: 'on' });
+    expect(loadConfig(dir).runner.failover).toBe('on');
+    expect(setConfigValue(dir, 'runner.failover', 'sometimes')).toMatchObject({ ok: false });
+    expect(loadConfig(dir).runner.failover).toBe('on');
+    writeFileSync(join(dir, 'config.json'), JSON.stringify({ runner: { failover: 'yes', ambient: 'trim' } }));
+    expect(loadConfig(dir).runner).toEqual({ charterDir: '', ambient: 'trim', failover: 'off' });
   });
 
   it('takes a list of adapters once each', () => {

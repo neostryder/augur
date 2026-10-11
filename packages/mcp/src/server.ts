@@ -57,7 +57,7 @@ export function buildServer(tools: Tools, version: string): McpServer {
 
   server.registerTool('augur_job', {
     title: 'Read a job', annotations: readOnly,
-    description: 'Returns the state of a job and, once it has finished, its answer.',
+    description: 'Returns the state of a job and, once it has finished, its answer. When that job was retried, the answer is the last job in the chain.',
     inputSchema: { id: z.string().describe('The job id.') },
   }, async (a) => out(await tools.job(a)));
 

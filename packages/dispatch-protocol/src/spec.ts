@@ -34,7 +34,7 @@ export interface JobRequest {
   parent?: Lineage;
   /** Checks the caller means to skip. Each use is recorded with the job. */
   allow?: Array<'unpicked' | 'exhausted'>;
-  /** Set to false to keep the job on the route named, even when a fallback route could take it. */
+  /** Set to false to keep the job on the route named. A fallback is not tried at submit, and a failure is not retried. */
   failover?: boolean;
   /** Charter packs to add. Each entry is one name or a comma-separated list. */
   packs?: string[];
@@ -88,6 +88,10 @@ export interface JobRecord {
   charterNotes?: string[];
   /** Whether the harness ambient context was left on or trimmed. Absent on rows from before this field. */
   ambient?: 'keep' | 'trim';
+  /** The failed job this one replaced. Absent when the job is not a retry, and on rows from before retries. */
+  retryOf?: string;
+  /** The job submitted to replace this one. Absent when this job was not retried. */
+  retriedAs?: string;
   /** Folder the job ran in when the adapter works on a copy of the workspace. */
   workspace: string | null;
   /** Patch of what the job changed in that copy, and how many files it touches. */

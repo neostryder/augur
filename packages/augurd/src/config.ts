@@ -16,6 +16,8 @@ export interface RunnerSettings {
   charterDir: string;
   /** `keep` leaves each harness's ambient context on. `trim` turns it off where the harness has a switch. */
   ambient: 'keep' | 'trim';
+  /** `off` leaves a job that failed after it started. `on` retries it on the route's fallback list when the failure can be retried. */
+  failover: 'off' | 'on';
 }
 
 export interface ServiceConfig {
@@ -48,7 +50,7 @@ export interface ServiceConfig {
 
 export const DEFAULT_CONFIG: ServiceConfig = { retentionDays: 30, persistPrompts: false, maxConcurrent: 8, maxDepth: 2, maxDescendants: 16,
   jobhostPath: null, adapters: ['codex-exec'], requirePick: true, promptRoots: [], verifyNamed: 'enforce', decision: { backend: 'none' }, learn: { recordTasks: false }, runnerStaleS: 20, engine: true,
-  runner: { charterDir: '', ambient: 'keep' } };
+  runner: { charterDir: '', ambient: 'keep', failover: 'off' } };
 
 /** The launcher built by `pnpm build:jobhost` sits beside the package's sources, and a packaged install places it next to the service. */
 export function defaultJobhost(): string | null {
@@ -62,7 +64,11 @@ const num = (v: unknown, d: number, min: number, max: number) => typeof v === 'n
 
 function runnerSettings(v: unknown): RunnerSettings {
   const d = (typeof v === 'object' && v !== null && !Array.isArray(v) ? v : {}) as Record<string, unknown>;
-  return { charterDir: typeof d.charterDir === 'string' ? d.charterDir.trim() : '', ambient: d.ambient === 'trim' ? 'trim' : 'keep' };
+  return {
+    charterDir: typeof d.charterDir === 'string' ? d.charterDir.trim() : '',
+    ambient: d.ambient === 'trim' ? 'trim' : 'keep',
+    failover: d.failover === 'on' ? 'on' : 'off',
+  };
 }
 
 function decisionSettings(v: unknown): DecisionSettings {
