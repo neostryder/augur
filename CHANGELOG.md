@@ -4,6 +4,8 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-10-11
+
 ### Added
 
 - [Visible] [Providers] **Codex, Grok and other providers with a usage window now have their own pace.** Each one is checked against its 5-hour and weekly windows the way Claude is, so a provider that runs hot leans to its light models and one that runs behind leans to its strong ones. When a window reaches its reserve, the provider's optional work goes to another subscription, and only Claude's reserve sends work to a backup route such as Copilot.
