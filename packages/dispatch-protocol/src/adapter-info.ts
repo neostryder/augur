@@ -27,15 +27,16 @@ const sandbox: OptionSpec = { key: 'sandbox', label: 'Sandbox name', kind: 'text
 const workRoot: OptionSpec = { key: 'workRoot', label: 'Sandbox workspace', kind: 'text', required: true, help: 'The folder on this computer that the sandbox mounts as its workspace. Each job gets a copy of its folder there.' };
 const sbx: OptionSpec = { key: 'sbx', label: 'sbx command', kind: 'text', help: 'Full path to the sbx command, for when it is not on the search path.' };
 const sbxPrefixJson: OptionSpec = { key: 'sbxPrefixJson', label: 'sbx arguments', kind: 'json', help: 'A JSON array of arguments placed before every sbx call, for wrappers.' };
+const ambient: OptionSpec = { key: 'ambient', label: 'Harness context', kind: 'choice', choices: ['keep', 'trim'], help: "Whether the harness loads its own extra instructions, tools and plugins on this route. trim turns them off, keep leaves them on, and Default follows the service's Harness context setting." };
 
 export const ADAPTER_INFO: readonly AdapterInfo[] = [
-  { id: 'codex-exec', label: 'Codex CLI', summary: 'Runs codex exec. A read-only job is stated in the prompt, and Codex is not held to it.',
+  { id: 'codex-exec', label: 'Codex CLI', summary: 'Runs codex exec. A read-only job is stated in the prompt, and Codex is not held to it. A named conversation resumes the same Codex session and keeps the tool tier of its first turn.',
     options: [{ key: 'model', label: 'Model', kind: 'text', help: 'Passed to codex as its model. Leave empty for the model codex chooses.' }, effort, command,
       { key: 'sandbox', label: 'Codex sandbox', kind: 'choice', choices: ['read-only', 'workspace-write', 'danger-full-access'], help: 'The sandbox codex runs in. On Windows the stricter ones can fail to start, which is why the default is danger-full-access.' },
-      { key: 'prefixArgsJson', label: 'Arguments before exec', kind: 'json', help: 'A JSON array of arguments placed before exec, for wrappers.' }] },
+      { key: 'prefixArgsJson', label: 'Arguments before exec', kind: 'json', help: 'A JSON array of arguments placed before exec, for wrappers.' }, ambient] },
   { id: 'copilot-exec', label: 'GitHub Copilot CLI', summary: 'Runs the Copilot CLI in prompt mode with all tools allowed, so a read-only job is stated in the prompt and not enforced.',
-    options: [model('The Copilot model id, for example claude-opus-5.5.', 'claude-opus-5.5'), command, effort, envAllow] },
-  { id: 'grok-exec', label: 'Grok CLI', summary: 'Runs the Grok CLI, which has a real read mode, so a read job is held to reading.',
+    options: [model('The Copilot model id, for example claude-opus-5.5.', 'claude-opus-5.5'), command, effort, envAllow, ambient] },
+  { id: 'grok-exec', label: 'Grok CLI', summary: 'Runs the Grok CLI, which has a real read mode, so a read job is held to reading. A named conversation resumes the same Grok session.',
     options: [model('The Grok model id.', 'grok-4.7'), effort, { key: 'maxTurns', label: 'Turn limit', kind: 'number', help: 'Most turns a job may take. Defaults to 60 for a read job and 400 otherwise.' }, command, envAllow] },
   { id: 'hermes-exec', label: 'Hermes Agent', summary: 'Runs the Hermes command line with a prompt and reads its usage file.',
     options: [model('The model id Hermes passes to its provider.'), command, envAllow] },

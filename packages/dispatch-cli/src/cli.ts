@@ -30,11 +30,11 @@ augur run <route> --prompt-file <file|-> | --prompt <text> [options]
   --timeout <s>      wall time limit in seconds
   --named            the route was named for this task by the person
   --allow <checks>   skip checks, comma separated: unpicked, exhausted (each use is recorded with the job)
-  --no-failover      keep the job on this route even if a fallback route could take it
+  --no-failover      no fallback route at submit and no retry after a failure
   --pack <names>     charter packs, comma separated
   --no-charter       send the prompt with no charter
-  --conversation <n> named conversation to open or resume on this route
-  --wait             wait for the job and print its result
+  --conversation <n> open or resume a named conversation (Grok and Codex routes)
+  --wait             wait for the job, following any retry, and print its result
 augur jobs [--state <s>] [--root <id>] [--limit <n>]
 augur conversations [--forget <name>]   list named conversations, or forget one
 augur status                          one line: Claude's use, anything running hot, and the alert count (--waybar for a status bar's JSON)

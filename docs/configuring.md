@@ -10,6 +10,7 @@ The app covers most of this. The Rules page says what each model may do, the Rou
 | Providers, where their keys come from, custom providers, alerts, and `agentApproval` | `config.json` in the app's settings folder | Settings, or by hand. `agentApproval` is set on the Service page or the terminal app's Service screen |
 | Routes | `dispatch/routes.json` in `~/.augur` | The Routes page, or by hand |
 | Service settings | Listed by `augur config` | The Service page |
+| Standing instructions for jobs, the charter | The `charter` folder in `~/.augur`, or the folder `runner.charterDir` names | By hand. [Standing instructions for every job](#standing-instructions-for-every-job) has the layout |
 
 The settings folder is `%APPDATA%\com.neostryder.augur` on Windows, `~/Library/Application Support/com.neostryder.augur` on macOS and `~/.config/com.neostryder.augur` on Linux. `AUGUR_APP_DIR` moves it and `AUGUR_HOME` moves `~/.augur`. Both the app and the service write `config.json`, so close the app and run `augur service stop` before you edit it. A hand edit to `policy.json` is overwritten the next time a rule is saved.
 
@@ -70,7 +71,7 @@ A route joins a model to the program or API that runs it. The Routes page has an
 }
 ```
 
-The route's key, `deepseek` here, is the name an agent passes to `augur run`. It starts with a lowercase letter and holds only lowercase letters, digits, `-` and `_`. `model` is the route label the rules use, so that model must be on the Rules page and confirmed before the route runs anything. `adapter` is one of the adapters below, and `options` holds its settings. A route can also have `notes`, `delegation`, a `budget` (`per` is `day`, `week` or `month`, with a limit in `usd`, `jobs` or both) and a `fallback` list of other route names to try when it cannot run.
+The route's key, `deepseek` here, is the name an agent passes to `augur run`. It starts with a lowercase letter and holds only lowercase letters, digits, `-` and `_`. `model` is the route label the rules use, so that model must be on the Rules page and confirmed before the route runs anything. `adapter` is one of the adapters below, and `options` holds its settings. A route can also have `notes`, `delegation`, a `budget` (`per` is `day`, `week` or `month`, with a limit in `usd`, `jobs` or both) and a `fallback` list of other route names to try when it cannot take a job. With the service's `runner.failover` setting on, a job that fails on the route can also run again on that list, as [Budgets and fallback routes](accounting.md#budgets-and-fallback-routes) describes.
 
 An API route never holds its key. It either names an environment variable or reads the operating system's key store, which the Routes page fills. `augur key set <route>` fills the same store from a hidden prompt, from an environment variable you set in your own terminal (`--env <NAME>`) or from standard input (`--stdin`). `augur key status <route>` says whether a key is there without printing it. The command refuses a key typed after the route name, so a key never lands in shell history or in a chat.
 
@@ -78,7 +79,7 @@ An API route never holds its key. It either names an environment variable or rea
 
 #### `codex-exec`: Codex CLI
 
-Runs codex exec. A read-only job is stated in the prompt, and Codex is not held to it.
+Runs codex exec. A read-only job is stated in the prompt, and Codex is not held to it. A named conversation resumes the same Codex session and keeps the tool tier of its first turn.
 
 | Option | Value | What it does |
 | --- | --- | --- |
@@ -87,6 +88,7 @@ Runs codex exec. A read-only job is stated in the prompt, and Codex is not held 
 | `command` | text | Full path to the harness, for when it is not on the search path. |
 | `sandbox` | read-only, workspace-write, danger-full-access | The sandbox codex runs in. On Windows the stricter ones can fail to start, which is why the default is danger-full-access. |
 | `prefixArgsJson` | json | A JSON array of arguments placed before exec, for wrappers. |
+| `ambient` | keep, trim | Whether the harness loads its own extra instructions, tools and plugins on this route. trim turns them off, keep leaves them on, and Default follows the service's Harness context setting. |
 
 #### `copilot-exec`: GitHub Copilot CLI
 
@@ -98,10 +100,11 @@ Runs the Copilot CLI in prompt mode with all tools allowed, so a read-only job i
 | `command` | text | Full path to the harness, for when it is not on the search path. |
 | `effort` | text | Passed to the harness as its effort setting. Leave empty for its default. |
 | `envAllow` | text | Names of environment variables the harness may read, separated by commas. Nothing else from the service is passed on. |
+| `ambient` | keep, trim | Whether the harness loads its own extra instructions, tools and plugins on this route. trim turns them off, keep leaves them on, and Default follows the service's Harness context setting. |
 
 #### `grok-exec`: Grok CLI
 
-Runs the Grok CLI, which has a real read mode, so a read job is held to reading.
+Runs the Grok CLI, which has a real read mode, so a read job is held to reading. A named conversation resumes the same Grok session.
 
 | Option | Value | What it does |
 | --- | --- | --- |
@@ -186,6 +189,30 @@ Runs any command the route names, with no checks on what it does. It is off unle
 | `stdin` | prompt, none | Whether the command reads the prompt on standard input. |
 
 <!-- adapter-reference:end -->
+
+## Standing instructions for every job
+
+Augur can put the same instructions at the top of every job's prompt, such as house rules for writing or for code. They live in a charter folder: the folder `runner.charterDir` names in the service settings, or else `charter` in `~/.augur` when that folder exists. With no folder, prompts go out as the caller wrote them.
+
+```
+charter/
+  core.md            sent with every job
+  engines/codex.md   sent only to jobs on that harness
+  packs/code.md      sent when a job asks for the pack or a rule adds it
+  charter.json       optional rules that add packs on their own
+```
+
+The engine files are named `codex`, `copilot`, `grok`, `mcode` and `opencode`. The API adapters and `exec` get `core.md` and the packs with no engine file, and Hermes gets no charter at all, since it keeps its own persona. Any of the files can be left out.
+
+A caller adds packs with `augur run --pack code,review` or the `packs` argument of `augur_run`, and `--no-charter` or `no_charter` sends the prompt alone. `charter.json` adds packs by rule:
+
+```json
+{ "auto": [ { "tools": ["write", "full"], "pack": "code" }, { "cwdContains": "website", "pack": "web" } ] }
+```
+
+A rule adds its pack when every condition it sets holds. `tools` lists the tool tiers it applies to, and `cwdContains` is text the job's working folder must contain. Without `charter.json`, or with one that has no `auto` list, the only rule is the first one above, so write and full jobs get the `code` pack. An `auto` list replaces that rule, and an empty list turns the automatic packs off. A pack that is named but missing is skipped, and the job records a note saying so. The job record lists the parts that were sent and their length, and the prompt length it keeps counts only the caller's text. In a named conversation only the first turn carries the charter, because the harness still holds it on later turns.
+
+Codex and the Copilot CLI add context of their own to every job. Codex turns on features such as plugins, apps, browser use and image generation, and Copilot reads custom instruction files and loads the schemas of its built-in MCP servers. Setting `runner.ambient` to `trim` turns these off, so a one-shot job spends fewer input tokens before it starts. The default, `keep`, leaves them on. A route's `ambient` option, `keep` or `trim`, overrides the setting for that route, and the other harnesses ignore both. Each job records which one applied.
 
 ## Tuning the balance
 

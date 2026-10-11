@@ -17,6 +17,8 @@ A provider that has to refresh a sign-in, read a command-line login or parse som
 An adapter runs a model for `augur run`. It checks a route's options, builds the command or request, and reads the answer and the usage back. The adapters are in `packages/augurd/src/adapters`, and `codex-exec.ts` is the shortest one to copy.
 
 1. Implement `Adapter` from `@augur/dispatch-protocol`: `validate`, `plan` and `extract`, plus `version` and `isolation` where they apply.
+   - Set `charterEngine` to the name of the file under the charter's `engines` folder that this harness should get, or to `null` for a harness that keeps its own persona and gets no charter. Left out, the harness gets the core file and the packs only. The prompt in `PlanContext` already has the charter in front of it.
+   - If the harness can resume a session, set `capabilities.sessions` to `true`. `plan` then receives `ctx.resume` on a conversation job, with the conversation's name, the session id, and `fresh` set on the first turn. The id is null on a first turn when the harness picks its own, as Codex does. `extract` returns the id the harness reported as `sessionId`, and the service saves it once the turn completes.
 2. Add it to `ALL_ADAPTERS` in `packages/augurd/src/adapters/index.ts`.
 3. Add its entry to `ADAPTER_INFO` in `packages/dispatch-protocol/src/adapter-info.ts`. The Routes page builds the adapter's form from that entry, and a test checks that the adapter refuses to run without each option the entry marks as required.
 4. Run the conformance tests in `packages/augurd/test`, then run `pnpm docs:update` to refresh the generated table in [Configuring Augur](configuring.md).

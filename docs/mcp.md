@@ -39,8 +39,8 @@ The data tier is required on every run and is never assumed. An agent has to say
 | --- | --- | --- |
 | `augur_models` | none | Every model in the rules: status, cost, the most sensitive data it may see, ask-first, pause, and the routes that reach it. |
 | `augur_pick` | `activity` and `data_tier`, or `task`; optional `depth` (`deep` or `everyday`), `best_only`, `snippet` | The permitted models ranked by score, with each one's odds and routes, the pick, and a line on why it won. The pick is drawn at random by those odds, and the line gives the odds when the draw passes over the top score. `best_only` takes the top score every time. Set `snippet` when drafting one sentence or one bullet with no other prose, so the prose routes get no extra weight. `depth` overrides the activity's default, so a hard review can ask for a strong model. With `task`, the classifier the owner chose sets the activity and data tier. |
-| `augur_run` | `route`, `prompt`, `activity`, `data_tier`; optional `tools`, `output`, `cwd`, `timeout_s`, `wait_s` | The model's answer. `tools` is `read`, `write` or `full` and defaults to `read`. `output` is `text_only`, `patch_only` or `write_files` and defaults to `text_only`. `wait_s` is how long to wait, 300 by default and 900 at most. |
-| `augur_job` | `id` | A job's state and, once it has finished, its answer. |
+| `augur_run` | `route`, `prompt`, `activity`, `data_tier`; optional `tools`, `output`, `cwd`, `timeout_s`, `wait_s`, `packs`, `no_charter`, `conversation` | The model's answer. `tools` is `read`, `write` or `full` and defaults to `read`. `output` is `text_only`, `patch_only` or `write_files` and defaults to `text_only`. `wait_s` is how long to wait, 300 by default and 900 at most. `packs` adds [charter](configuring.md#standing-instructions-for-every-job) packs by name and `no_charter` sends the prompt without the charter. `conversation` opens or resumes a named conversation, described below. |
+| `augur_job` | `id` | A job's state and, once it has finished, its answer. When the job was retried on a fallback route, the result is the last job in the chain. |
 | `augur_jobs` | optional `limit` | Recent jobs, newest first. |
 | `augur_cancel` | `id` | Asks a running job to stop. |
 | `augur_pressure` | none | How much room each model has under its provider's plan. |
@@ -53,6 +53,10 @@ The data tier is required on every run and is never assumed. An agent has to say
 Each result has a text form for the model and, where there is structure, a `structuredContent` object with the same facts. A refusal, a failed job and a service that is not running all come back as an error result with the reason in the text. A refusal carries the service's code, such as `not_picked`, in `structuredContent.rejected`.
 
 A run that takes longer than `wait_s` returns its job id and leaves the job running. Read it later with `augur_job`.
+
+With the owner's `runner.failover` setting on, a run that fails on a provider limit, a harness that will not start or a read-only timeout can run again on a fallback route. `augur_run` and `augur_job` follow the retry to its last job, add a `retried on <route> as <id>` line for each step, and put the `chain` of job ids in `structuredContent`. [Budgets and fallback routes](accounting.md#budgets-and-fallback-routes) has the rules for when a job is retried.
+
+A `conversation` name keeps one model session going across runs, so a follow-up can build on what the model was already told. The first run with a new name opens the conversation on its route, and later runs with that name resume it there. Only Grok and Codex routes keep a conversation, and any other route refuses the name. A name is 1 to 64 letters, digits, dots, underscores or hyphens. It stays bound to the route that opened it, so a run on another route is refused, and a conversation job is never moved to a fallback. One job runs in a conversation at a time. A resumed Codex conversation keeps the tool tier of its first turn and refuses a run that asks for another. The charter goes with the first turn only, and if that turn fails, the next run with the name starts over. `augur conversations` lists them and `augur conversations --forget <name>` drops one.
 
 ## Changing the rules
 

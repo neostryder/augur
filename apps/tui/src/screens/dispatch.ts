@@ -51,7 +51,7 @@ export const DISPATCH_TUI_TEXT = {
   budgetPer: 'Budget period',
   budgetHelp: 'Refuses new jobs on this route once it has used this much in the period. Leave a limit empty for none. Dollars count only jobs whose cost is known, which needs a rate for the model.',
   fallback: 'Fallback routes',
-  fallbackHelp: 'Route names separated by commas. When this route cannot take a job because of its budget, a pause, plan usage or a missing key, the next one is tried, and each is checked against every rule.',
+  fallbackHelp: 'Route names separated by commas. When this route cannot take a job because of its budget, a pause, plan usage or a missing key, the next one is tried, and each is checked against every rule. With Retry on failure on, a job that fails here on a limit, a spawn error or a read-only timeout runs again on the next one.',
   delegation: 'May start more jobs',
   delegationHelp: 'Lets a job on this route run augur itself, within the depth and count limits.',
   keyHelp: 'The key goes to this computer\'s key store when saved and is never shown again.',
