@@ -95,9 +95,9 @@ describe('the stack step', () => {
   it('rejects a typed path through the profile check and writes nothing', async () => {
     const page = new SetupPage({ env, readFile: () => '{"hello":1}' });
     const list = pages({ env });
-    list[6] = page;
+    list[7] = page;
     const t = setup(state(), { pages: list });
-    t.app.active = 6;
+    t.app.active = 7;
     t.draw(80, 40);
     for (let i = 0; i < 10 && !t.draw(80, 40).includes('> Start from a profile file'); i++) await t.app.key(k('down'));
     await t.app.key(k('enter'));
@@ -212,9 +212,9 @@ describe('review and apply', () => {
       s.config.policy = full.policy as PolicyConfig;
       const page = new SetupPage({ env });
       const list = pages({ env });
-      list[6] = page;
+      list[7] = page;
       const t = setup(s, { pages: list });
-      t.app.active = 6;
+      t.app.active = 7;
       page.model = focus(answered(full, answers), (l) => l.startsWith('> Apply'));
       if (failAt !== null) {
         let n = 0;
@@ -260,7 +260,7 @@ describe('where the interview opens', () => {
     s.firstRun = true;
     const t = setup(s, { pages: pages({ env }) });
     const text = t.draw(100, 30);
-    expect(t.app.active).toBe(6);
+    expect(t.app.active).toBe(7);
     expect(t.app.page.name).toBe('Setup');
     expect(text).toContain('Claude only');
     expect(text).toContain('Several subscriptions');
@@ -295,15 +295,15 @@ describe('where the interview opens', () => {
     const settingsPage = new SettingsPage({ platform: 'linux', env });
     const setupPage = new SetupPage({ env });
     const list = pages({ env });
-    list[5] = settingsPage;
-    list[6] = setupPage;
+    list[6] = settingsPage;
+    list[7] = setupPage;
     const t = setup(s, { pages: list });
-    await t.app.key(ch('7'));
+    await t.app.key(ch('8'));
     expect(t.app.page.name).toBe('Setup');
-    t.app.active = 5;
+    t.app.active = 6;
     settingsPage.form.focus = 'setup-again';
     await t.app.key(k('enter'));
-    expect(t.app.active).toBe(6);
+    expect(t.app.active).toBe(7);
     expect(setupPage.model?.firstRun).toBe(false);
     const review = reduce(setupPage.model!, ch('4')).model;
     expect(review.answers.holdBack.claude).toBe('some');
