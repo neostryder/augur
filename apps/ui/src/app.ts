@@ -1,10 +1,11 @@
 import Sortable from 'sortablejs';
-import { ACTIVITY_LABELS, DATA_TIER_LABELS, WEIGHT_LABELS, addModels, emptyEditState, emptyPolicy, mergePolicy, policyDigest, setField, setFieldMany, setModelStatus, undoChange, type AppConfig, type DataTier, type EditState, type ModelCatalog, type ModelEntry, type ProviderPlugin, type Shell, type Snapshot, feedFor, feedFromUsage, type AlertKind, type Outlet, type PushStatus, type ClaudeStatus } from '@augur/core';
+import { ACTIVITY_LABELS, DATA_TIER_LABELS, WEIGHT_LABELS, addModels, applyEdit, emptyEditState, emptyPolicy, mergePolicy, policyDigest, setField, setFieldMany, setModelStatus, undoChange, type AppConfig, type DataTier, type EditState, type ModelCatalog, type ModelEntry, type ProviderPlugin, type Shell, type Snapshot, feedFor, feedFromUsage, type AlertKind, type Outlet, type PushStatus, type ClaudeStatus } from '@augur/core';
 import * as core from './core';
 import type { HistoryRow } from './core';
 import { renderDashboard, tightest, updateTip, type DashboardModel } from './views/dashboard';
 import { BULK_FIELDS, RULES_TEXT, dialEndChoices, heldRows, parseCustom, parsePercents, pauseResets, pauseValue, planDialBack, previewBulk, validModelId, type BulkPreview, type DialBackPlan } from '@augur/view-model';
 import { CUSTOM_EXAMPLE, PUSH_TEXT, renderSettings, type SettingsModel } from './views/settings';
+import { addUnfound, applyDetection, fillRank, goStep, initialView, loadProfile, moveRank, noteAdded, openSetup, providerHasWindow, refreshPlan, renderSetup, runApply, selectStack, setConfirmed, setHold, setListAnswer, setPayAmount, setPayNone, setStrength, shiftStep, toggleListModel, togglePayProvider, useStrongFor, modelsOf, type SetupModel, type SetupTrack } from './views/setup';
 import { renderRules, type RulesFilter, type RulesModel } from './views/rules';
 import { renderJobs, type JobsModel } from './views/jobs';
 import { renderRoutes, type RoutesModel } from './views/routes';
@@ -12,9 +13,9 @@ import { planHtml } from './views/add-provider';
 import { renderBalance, type BalanceModel } from './views/balance';
 import { renderService, type ConfigLine, type ServiceModel } from './views/service';
 import { renderStrip } from './views/strip';
-import { PROVIDER_FORM_TEXT, ROUTES_PATH, applyProvider, checkDraft, draftOf, emptyDraft, emptyProviderForm, parseRoutesText, planOfForm, writeRoute, type ProviderFormState } from '@augur/view-model';
+import { PROVIDER_FORM_TEXT, ROUTES_PATH, applyProvider, checkDraft, draftOf, emptyDraft, emptyProviderForm, parseRoutesText, planOfForm, writeRoute, type ProviderFormState, type SetupCurrent } from '@augur/view-model';
 import { routeSecretName } from '@augur/dispatch-protocol';
-import type { Accounted, JobRecord } from '@augur/dispatch-protocol';
+import type { Accounted, JobRecord, UsageSnapshot } from '@augur/dispatch-protocol';
 import { renderTrayIcon } from './trayicon';
 import qrcode from 'qrcode-generator';
 import { HOSTED } from './hosted';
@@ -30,6 +31,8 @@ type SyncConfig = NonNullable<AppConfig['sync']>;
 
 const ONE_COL = 400;
 const TWO_COL = 780;
+/** The step list, the form and the summary do not fit the usage view's two-column width. */
+const SETUP_W = 1000;
 
 // After the phone asks for new numbers, it checks for the desktop's upload this often, for this long.
 const DESKTOP_POLL_MS = 15_000;
@@ -53,8 +56,11 @@ export class App {
   private snapshot: Snapshot | null = null;
   private history: HistoryRow[] = [];
   private alertState: Record<string, unknown> = {};
-  private view: 'dashboard' | 'settings' | 'rules' | 'jobs' | 'routes' | 'balance' | 'service' = 'dashboard';
+  private view: 'dashboard' | 'settings' | 'rules' | 'jobs' | 'routes' | 'balance' | 'service' | 'setup' = 'dashboard';
   private firstRun = false;
+  private setup: SetupModel | null = null;
+  /** Enabled flags from the detection that ran before the interview opened. Skip restores these and writes no interview edits. */
+  private baselineEnabled: Map<string, boolean> | null = null;
   private busy = false;
   private expanded: string | null = null;
   private twoColumns = false;
@@ -173,14 +179,14 @@ export class App {
     // An automatic install waits for the panel to close, so it never restarts the app under the pointer.
     if (this.shell.installUpdate) document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') void this.autoInstall(); });
 
-    if (this.firstRun) this.view = 'settings';
+    if (initialView(this.firstRun) === 'setup') await this.openInterview(true);
     this.applyTheme();
     this.systemDark.addEventListener('change', () => { this.applyTheme(); void this.render(); void this.updateTray(); });
     this.wireEvents();
     if (this.shell.kind === 'pwa') attachPullToRefresh(() => this.pullRefresh());
     this.shell.on('refresh-requested', () => void this.refresh(true));
     this.shell.on('web-session-ready', () => void this.engine?.refreshSignIns());
-    this.shell.on('settings-requested', () => { this.view = 'settings'; void this.render(); });
+    this.shell.on('settings-requested', () => { if (this.firstRun) { if (this.view !== 'setup') void this.openInterview(true); else void this.render(); return; } this.view = 'settings'; void this.render(); });
     if (this.shell.kind === 'desktop') this.resizeWatch.observe(this.root);
     this.shell.on('popup-shown', () => {
       if (this.shell.kind === 'desktop' && !this.firstRun) this.goHome();
@@ -220,12 +226,14 @@ export class App {
   }
 
   private onEngine(keys: EngineKey[]): void {
+    const own = this.ownSaves > 0 && keys.every((k) => k === 'config' || k === 'policyError' || k === 'secrets');
     this.takeState(keys);
+    if (!own && this.setup && (keys.includes('config') || keys.includes('secrets') || keys.includes('snapshot'))) this.syncSetupFromConfig();
     if (keys.includes('feed')) this.drawStrip();
     if (keys.includes('snapshot') || keys.includes('config')) void this.updateTray();
     if (keys.includes('update') && this.update.status === 'available') void this.autoInstall();
     // A save of this panel's own comes back as a config change; the page already shows it.
-    if (this.ownSaves > 0 && keys.every((k) => k === 'config' || k === 'policyError' || k === 'secrets')) return;
+    if (own) return;
     this.renderSoon();
   }
 
@@ -482,6 +490,9 @@ export class App {
       // The desktop popup opens at its two-column width so the list and the open model's rules sit side by side.
       this.twoColumns = this.shell.kind === 'desktop';
       this.root.innerHTML = renderRules(this.rulesModel());
+    } else if (this.view === 'setup' && this.setup) {
+      this.twoColumns = true;
+      this.root.innerHTML = renderSetup(this.setup);
     } else {
       this.twoColumns = false;
       this.root.innerHTML = renderSettings(this.settingsModel());
@@ -510,7 +521,7 @@ export class App {
   private async sizePopup(): Promise<void> {
     if (this.shell.kind !== 'desktop') return;
     const h = Math.ceil(this.root.getBoundingClientRect().height + (this.strip?.getBoundingClientRect().height ?? 0) + (this.linkNote?.getBoundingClientRect().height ?? 0));
-    const w = this.twoColumns ? TWO_COL : ONE_COL;
+    const w = this.view === 'setup' ? SETUP_W : this.twoColumns ? TWO_COL : ONE_COL;
     if (this.shell.setPopupSize) await this.shell.setPopupSize(w, h).catch(() => undefined);
     else await this.shell.setPopupHeight?.(h).catch(() => undefined);
   }
@@ -570,6 +581,226 @@ export class App {
     if (flash) {
       this.savedFlash = this.policyError ? 'Saved, but policy.json was not written' : 'Saved';
       setTimeout(() => { this.savedFlash = null; if (this.view === 'settings') void this.render(); }, 1500);
+    }
+  }
+
+  /** Ends a first run the way Start tracking did: the config is saved and tracking begins. `home` opens usage. */
+  private async finishFirstRun(home: boolean): Promise<void> {
+    this.firstRun = false;
+    if (home) this.view = 'dashboard';
+    if (this.engine) { await this.engine.finishSetup(structuredClone(this.config)); return; }
+    await this.saveConfig(false);
+    this.schedule();
+    if (home) { await this.render(); await this.refresh(); }
+    else await this.refresh();
+  }
+
+  private captureBaseline(): void {
+    if (this.baselineEnabled) return;
+    this.baselineEnabled = new Map(this.config.providers.map((p) => [p.id, p.enabled]));
+  }
+
+  /** The part of the usage snapshot the interview reads. */
+  private usageSnapshot(): UsageSnapshot | null {
+    if (!this.snapshot) return null;
+    const providers: UsageSnapshot['providers'] = {};
+    for (const [id, p] of Object.entries(this.snapshot.providers)) {
+      providers[id] = {
+        meters: p.meters.map((m) => ({ id: m.id, label: m.label, usedPct: m.usedPct, windowKind: m.windowKind, resetsAt: m.resetsAt ?? null, windowSeconds: m.windowSeconds ?? null, ...(typeof m.active === 'boolean' ? { active: m.active } : {}) })),
+        money: p.money.filter((x) => x.amount != null).map((x) => ({ id: x.id, amount: x.amount as number, currency: x.currency })),
+        stale: p.stale,
+        fetchedAt: p.fetchedAt,
+      };
+    }
+    return { providers };
+  }
+
+  private async readSetupCurrent(): Promise<SetupCurrent> {
+    const read = this.shell.host.readHomeFile;
+    let routes: SetupCurrent['routes'] = [];
+    try {
+      const parsed = parseRoutesText(read ? await read(ROUTES_PATH) : null);
+      if (parsed.ok) {
+        const store = this.engine ?? this.shell;
+        routes = await Promise.all(parsed.file.routes.map(async (r) => ({
+          name: r.name, model: r.model, hasKey: await store.hasSecret(routeSecretName(r.name)).catch(() => false),
+        })));
+      }
+    } catch { /* the interview still runs when routes.json cannot be read */ }
+    return { policy: this.config.policy ?? emptyPolicy(), routes, usage: this.usageSnapshot() };
+  }
+
+  /**
+   * Signed-in subscriptions for the found card. A first run uses the detection that already set the enabled flags.
+   * A re-run, and Check again, ask the shell, because those flags are then the tracking choices.
+   */
+  private async detectTracks(again: boolean): Promise<SetupTrack[]> {
+    const map = this.pluginMap();
+    const usage = this.usageSnapshot();
+    const tracks: SetupTrack[] = [];
+    for (const pc of this.config.providers) {
+      const p = map.get(pc.id);
+      if (!p) continue;
+      const locked = this.shell.kind === 'pwa' && p.needsLocalLogin;
+      let signedIn = false;
+      if (p.needsLocalLogin && !locked) signedIn = again ? await core.detect(p, this.shell.host) : pc.enabled;
+      tracks.push({ id: pc.id, name: p.name, enabled: pc.enabled && !locked, signedIn, hasWindow: providerHasWindow(usage, pc.id), locked });
+    }
+    return tracks;
+  }
+
+  private async openInterview(firstRun: boolean): Promise<void> {
+    if (firstRun) this.captureBaseline();
+    const tracks = await this.detectTracks(!firstRun);
+    const current = await this.readSetupCurrent();
+    this.setup = openSetup({ firstRun, current, tracks, routes: new Set(current.routes.map((r) => r.name)) });
+    this.view = 'setup';
+    await this.render();
+  }
+
+  /** Keeps an open interview on the engine's rules without rebuilding the answers. */
+  private syncSetupFromConfig(): void {
+    const setup = this.setup;
+    if (!setup) return;
+    const prev = new Set(modelsOf(setup.current).map((m) => m.label));
+    const current: SetupCurrent = { policy: this.config.policy ?? emptyPolicy(), routes: setup.current.routes, usage: this.usageSnapshot() };
+    const strengths = { ...setup.answers.strengths };
+    for (const m of modelsOf(current)) if (!prev.has(m.label) && strengths[m.label] === undefined) strengths[m.label] = 'unsure';
+    const known = new Set(setup.tracks.map((t) => t.id));
+    const tracks = setup.tracks.map((t) => {
+      const pc = this.config.providers.find((p) => p.id === t.id);
+      return pc ? { ...t, enabled: pc.enabled } : t;
+    });
+    const map = this.pluginMap();
+    for (const pc of this.config.providers) {
+      if (known.has(pc.id)) continue;
+      const p = map.get(pc.id);
+      if (!p) continue;
+      const locked = this.shell.kind === 'pwa' && p.needsLocalLogin;
+      tracks.push({ id: pc.id, name: p.name, enabled: pc.enabled && !locked, signedIn: false, hasWindow: providerHasWindow(current.usage, pc.id), locked });
+    }
+    this.setup = refreshPlan({ ...setup, current, tracks, answers: { ...setup.answers, strengths } });
+  }
+
+  private async reloadSetupCurrent(): Promise<void> {
+    const setup = this.setup;
+    if (!setup) return;
+    const current = await this.readSetupCurrent();
+    const prev = new Set(modelsOf(setup.current).map((m) => m.label));
+    const strengths = { ...setup.answers.strengths };
+    for (const m of modelsOf(current)) if (!prev.has(m.label) && strengths[m.label] === undefined) strengths[m.label] = 'unsure';
+    this.setup = refreshPlan({ ...setup, current, answers: { ...setup.answers, strengths } });
+  }
+
+  private async skipSetup(): Promise<void> {
+    if (!this.firstRun) return;
+    if (this.baselineEnabled) {
+      for (const pc of this.config.providers) {
+        const base = this.baselineEnabled.get(pc.id);
+        if (base !== undefined) pc.enabled = base;
+      }
+    }
+    this.setup = null;
+    await this.finishFirstRun(true);
+  }
+
+  private async applySetup(): Promise<void> {
+    const setup = this.setup;
+    if (!setup || setup.busy) return;
+    this.setup = { ...setup, busy: true };
+    await this.render();
+    const progress = await runApply(setup.plan, async (op) => {
+      const policy = this.config.policy ??= emptyPolicy();
+      applyEdit(policy, op.payload, this.device);
+      const before = this.engine ? this.engine.state.policyError : null;
+      await this.saveConfig(false);
+      const after = this.engine ? this.engine.state.policyError : null;
+      if (this.engine) this.policyError = after;
+      // A policy write that fails after the config save stops the run. A late engine message can still hide that failure.
+      if (after && after !== before) throw new Error(after);
+    }, async (p) => {
+      if (!this.setup) return;
+      this.setup = { ...this.setup, apply: p, busy: true };
+      await this.render();
+    });
+    if (!this.setup) return;
+    const done = progress.complete;
+    this.setup = { ...this.setup, busy: false, apply: progress, step: done ? 'done' : this.setup.step };
+    if (done && this.firstRun) await this.finishFirstRun(false);
+    await this.render();
+  }
+
+  private async testSetupRoute(name: string): Promise<void> {
+    const setup = this.setup;
+    if (!setup || !name || setup.testing) return;
+    this.setup = { ...setup, testing: name, routeNotes: { ...setup.routeNotes, [name]: '' } };
+    await this.render();
+    const text = await this.runRouteTest(name);
+    if (!this.setup) return;
+    this.setup = { ...this.setup, testing: null, routeNotes: { ...this.setup.routeNotes, [name]: text } };
+    await this.render();
+  }
+
+  /** Clicks that belong to the interview. Returns false for a control the shared handler owns, such as Add provider. */
+  private async onSetupClick(t: HTMLElement): Promise<boolean> {
+    const setup = this.setup;
+    if (!setup) return false;
+    const d = t.dataset;
+    const step = d.step;
+    const stack = d.stack;
+    const hold = d.value;
+    const strength = d.value;
+    switch (d.action) {
+      case 'setup-step':
+        if (step === 'stack' || step === 'providers' || step === 'pace' || step === 'review' || step === 'done') this.setup = goStep(setup, step);
+        await this.render();
+        return true;
+      case 'setup-next': this.setup = shiftStep(setup, 1); await this.render(); return true;
+      case 'setup-back': this.setup = shiftStep(setup, -1); await this.render(); return true;
+      case 'setup-stack':
+        if (stack === 'claude-only' || stack === 'several' || stack === 'api-only' || stack === 'profile') this.setup = selectStack(setup, stack);
+        await this.render();
+        return true;
+      case 'setup-profile': {
+        const box = document.getElementById('setup-profile-text') as HTMLTextAreaElement | null;
+        this.setup = loadProfile(setup, box?.value ?? setup.profileText);
+        await this.render();
+        return true;
+      }
+      case 'setup-detect': this.setup = applyDetection(setup, await this.detectTracks(true)); await this.render(); return true;
+      case 'setup-add-missing': this.setup = addUnfound(setup, d.id ?? ''); await this.render(); return true;
+      case 'setup-hold':
+        if (hold === 'free' || hold === 'some' || hold === 'save') this.setup = setHold(setup, d.id ?? '', hold);
+        await this.render();
+        return true;
+      case 'setup-rank': this.setup = moveRank(setup, d.id ?? '', d.dir === 'up' ? -1 : 1); await this.render(); return true;
+      case 'setup-rank-fill': this.setup = fillRank(setup); await this.render(); return true;
+      case 'setup-pay-none': this.setup = setPayNone(setup); await this.render(); return true;
+      case 'setup-strength':
+        if (strength === 'strong' || strength === 'light' || strength === 'unsure') this.setup = setStrength(setup, d.model ?? '', strength);
+        await this.render();
+        return true;
+      case 'setup-prose-strong': this.setup = useStrongFor(setup, 'prose'); await this.render(); return true;
+      case 'setup-prose-skip': this.setup = setListAnswer(setup, 'prose', 'skipped'); await this.render(); return true;
+      case 'setup-prose-clear': this.setup = setListAnswer(setup, 'prose', []); await this.render(); return true;
+      case 'setup-second-strong': this.setup = useStrongFor(setup, 'seatsSecond'); await this.render(); return true;
+      case 'setup-second-skip': this.setup = setListAnswer(setup, 'seatsSecond', 'skipped'); await this.render(); return true;
+      case 'setup-second-clear': this.setup = setListAnswer(setup, 'seatsSecond', []); await this.render(); return true;
+      case 'setup-apply': await this.applySetup(); return true;
+      case 'setup-skip': await this.skipSetup(); return true;
+      case 'setup-close': this.setup = null; this.view = 'dashboard'; await this.render(); return true;
+      case 'setup-test': await this.testSetupRoute(d.id ?? ''); return true;
+      case 'setup-rules': {
+        const provider = d.provider ?? '';
+        this.view = 'rules';
+        this.rules.showHistory = false;
+        this.rules.sel = provider ? { provider, model: d.model || null } : null;
+        if (provider) this.rules.open.add(provider);
+        await this.render();
+        void this.loadStances();
+        return true;
+      }
+      default: return false;
     }
   }
 
@@ -672,6 +903,7 @@ export class App {
     this.root.addEventListener('input', (e) => {
       const t = e.target as HTMLElement;
       if (t.matches('[data-custom]')) this.customDraft = (t as HTMLTextAreaElement).value;
+      if (t.matches('[data-setup-profile]') && this.setup) this.setup.profileText = (t as HTMLTextAreaElement).value;
       if (t.matches('[data-ap]')) this.onAddProviderField(t as HTMLInputElement);
       if (t.matches('[data-rules-query]')) { this.rules.query = (t as HTMLInputElement).value; void this.render(); }
       if (t.matches('[data-color]')) {
@@ -694,6 +926,7 @@ export class App {
         else if (this.view === 'routes') { if (this.routesPage.add) this.closeAddProvider(); else if (this.routesPage.sel) this.closeRoute(); else this.view = 'dashboard'; void this.render(); }
         else if (this.view === 'jobs') { if (this.jobs.sel) this.closeJob(); else { this.leaveJobs(); this.view = 'dashboard'; } void this.render(); }
         else if (this.view === 'rules') { if (this.rules.showHistory) this.rules.showHistory = false; else if (this.rules.sel) this.rules.sel = null; else this.view = 'dashboard'; void this.render(); }
+        else if (this.view === 'setup' && !this.firstRun) { this.view = 'settings'; void this.render(); }
         else if (this.view === 'settings' && !this.firstRun) { this.view = 'dashboard'; void this.render(); } else void this.shell.hidePopup?.();
       }
       if (e.key === 'F5') { e.preventDefault(); void this.refresh(true); }
@@ -914,9 +1147,14 @@ export class App {
 
   private closeAddProvider(): void { this.routesPage.add = null; }
 
+  /** The Add provider form on screen: the interview's copy, or the Routes page's. */
+  private activeAdd() {
+    return this.view === 'setup' ? this.setup?.add ?? null : this.routesPage.add;
+  }
+
   /** A field of the Add provider form changed. Only the plan is redrawn, so the cursor stays where it was. */
   private onAddProviderField(t: HTMLInputElement): void {
-    const add = this.routesPage.add, field = t.dataset.ap as keyof Omit<ProviderFormState, 'kind' | 'more'> | undefined;
+    const add = this.activeAdd(), field = t.dataset.ap as keyof Omit<ProviderFormState, 'kind' | 'more'> | undefined;
     if (!add || !field) return;
     add.form[field] = field === 'key' ? t.value : t.value.trim();
     add.error = '';
@@ -925,27 +1163,44 @@ export class App {
   }
 
   private async applyAddProvider(): Promise<void> {
-    const page = this.routesPage, add = page.add, engine = this.engine, write = this.shell.host.writeHomeFileAtomic, read = this.shell.host.readHomeFile;
-    if (!add || !engine || !write || !read || add.busy) return;
+    const add = this.activeAdd(), engine = this.engine, write = this.shell.host.writeHomeFileAtomic, read = this.shell.host.readHomeFile;
+    if (!add || add.busy) return;
+    if (!engine || !write || !read) {
+      if (this.view === 'setup') { add.error = 'Adding a provider needs the desktop app.'; await this.render(); }
+      return;
+    }
     const got = planOfForm(add.form, add.existing);
     if (!('plan' in got)) return;
     add.busy = true; add.error = '';
     await this.render();
+    const live = this.activeAdd();
+    if (!live) return;
     try {
-      const done = await applyProvider(got.plan, add.form.key, {
+      const done = await applyProvider(got.plan, live.form.key, {
         addProvider: (input) => engine.addProvider(input),
         setSecret: (name, value) => engine.setSecret(name, value),
         setProviderKey: (provider, field, value) => engine.setProviderKey(provider, field, value),
         readRoutes: async () => read(ROUTES_PATH),
         writeRoutes: (text) => write(ROUTES_PATH, text),
       });
-      add.form.key = '';
+      if (this.view === 'setup' && this.setup) {
+        const existing = new Set(live.existing);
+        if (got.plan.route) existing.add(got.plan.route.name);
+        this.setup = noteAdded(this.setup, got.plan.provider);
+        this.setup.add = { form: emptyProviderForm(), existing, picked: false, busy: false, error: '', embedded: true };
+        await this.reloadSetupCurrent();
+        await this.render();
+        return;
+      }
+      live.form.key = '';
       this.closeAddProvider();
-      page.note = PROVIDER_FORM_TEXT.done(done.done, done.next);
+      this.routesPage.note = PROVIDER_FORM_TEXT.done(done.done, done.next);
       await this.loadRoutes();
     } catch (e) {
-      add.busy = false;
-      add.error = PROVIDER_FORM_TEXT.failed(e instanceof Error ? e.message : String(e));
+      const again = this.activeAdd();
+      if (!again) return;
+      again.busy = false;
+      again.error = PROVIDER_FORM_TEXT.failed(e instanceof Error ? e.message : String(e));
       await this.render();
     }
   }
@@ -1024,27 +1279,34 @@ export class App {
     }
   }
 
-  /** Sends the fixed test prompt through a saved route and waits for the job, reporting what came of it in a sentence. */
-  private async testRoute(name: string): Promise<void> {
-    const page = this.routesPage;
-    if (!name || page.testing) return;
-    page.testing = true; page.testNote = '';
-    await this.render();
-    const say = async (text: string) => { page.testNote = text; page.testing = false; await this.render(); };
+  /** Sends the fixed test prompt through a saved route and waits for the job. The sentence is what the page shows. */
+  private async runRouteTest(name: string): Promise<string> {
+    if (!this.shell.dispatch) return 'Testing a route needs the desktop app.';
     try {
       const sent = await this.augur<{ id?: string }>(['test', name, '--json']);
-      if (!sent.data?.id) return await say(sent.err || 'The service did not accept the test. Start it on the Jobs page first.');
+      if (!sent.data?.id) return sent.err || 'The service did not accept the test. Start it on the Jobs page first.';
       const id = sent.data.id;
       for (let i = 0; i < 75; i++) {
         await new Promise((r) => setTimeout(r, 2000));
         const r = await this.augur<{ job: JobRecord; answer: string | null }>(['result', id, '--json']);
         const job = r.data?.job;
         if (!job || !['completed', 'failed', 'artifact_validation_failed', 'cancelled', 'killed', 'lost'].includes(job.state)) continue;
-        if (job.state === 'completed') return await say(`${name} works. The model answered${r.data?.answer ? `: ${r.data.answer.trim().slice(0, 80)}` : '.'}`);
-        return await say(`${name} did not work. ${job.reason ?? `The job ended as ${job.state}.`}`);
+        if (job.state === 'completed') return `${name} works. The model answered${r.data?.answer ? `: ${r.data.answer.trim().slice(0, 80)}` : '.'}`;
+        return `${name} did not work. ${job.reason ?? `The job ended as ${job.state}.`}`;
       }
-      await say(`${name} had not finished after 2.5 minutes. Its job is still on the Jobs page.`);
-    } catch (e) { await say(e instanceof Error ? e.message : String(e)); }
+      return `${name} had not finished after 2.5 minutes. Its job is still on the Jobs page.`;
+    } catch (e) { return e instanceof Error ? e.message : String(e); }
+  }
+
+  /** Sends the fixed test prompt through a saved route and waits for the job, reporting what came of it in a sentence. */
+  private async testRoute(name: string): Promise<void> {
+    const page = this.routesPage;
+    if (!name || page.testing) return;
+    page.testing = true; page.testNote = '';
+    await this.render();
+    page.testNote = await this.runRouteTest(name);
+    page.testing = false;
+    await this.render();
   }
 
   private async saveRoute(): Promise<void> {
@@ -1084,10 +1346,11 @@ export class App {
   private async onClick(e: MouseEvent): Promise<void> {
     const t = (e.target as HTMLElement).closest<HTMLElement>('[data-action],[data-open],[data-collapse],[data-meter],[data-secret-save],[data-secret-del],[data-set],[data-open-provider],[data-color-reset],[data-signin],[data-rsel],[data-rprov],[data-rfilter],[data-status],[data-bulk],[data-undo],[data-add-model],[data-pause-clear],[data-list-now],[data-job],[data-route],[data-dial],[data-provider-kind]');
     if (!t) return;
+    if (this.view === 'setup' && await this.onSetupClick(t)) return;
     if (this.view === 'rules' && await this.onRulesClick(t)) return;
     if (t.dataset.job) { await this.openJob(t.dataset.job); return; }
     if (t.dataset.route) { this.openRoute(t.dataset.route); await this.render(); return; }
-    if (t.dataset.providerKind && this.routesPage.add) { const add = this.routesPage.add; add.form = { ...emptyProviderForm(t.dataset.providerKind), key: '' }; add.picked = true; add.error = ''; await this.render(); return; }
+    if (t.dataset.providerKind) { const add = this.activeAdd(); if (add) { add.form = { ...emptyProviderForm(t.dataset.providerKind), key: '' }; add.picked = true; add.error = ''; await this.render(); return; } }
     if (t.dataset.open) { e.preventDefault(); await this.shell.openUrl(t.dataset.open); return; }
     if (t.dataset.signin) { await this.shell.openSignIn?.(t.dataset.signin); return; }
     if (t.dataset.collapse) {
@@ -1130,7 +1393,8 @@ export class App {
       case 'refresh': await this.refresh(true); break;
       case 'update-check': await this.engine?.checkUpdate(); break;
       case 'update-install': await this.installUpdate(); break;
-      case 'settings': this.view = 'settings'; await this.render(); break;
+      case 'settings': if (this.firstRun) { if (this.view !== 'setup') await this.openInterview(true); break; } this.view = 'settings'; await this.render(); break;
+      case 'setup-again': await this.openInterview(false); break;
       case 'retry-policy': await this.engine?.retryPolicy(); break;
       case 'edit-accept': case 'edit-dismiss': await this.engine?.answerEdit(t.dataset.edit ?? '', t.dataset.action === 'edit-accept'); break;
       case 'rules': this.view = 'rules'; this.rules.showHistory = false; if (t.dataset.value) this.rules.filter = t.dataset.value as RulesFilter; await this.render(); void this.loadStances(); break;
@@ -1155,9 +1419,15 @@ export class App {
       }
       case 'service-restart': await this.restartService(); break;
       case 'provider-new': this.openAddProvider(); await this.render(); break;
-      case 'provider-close': this.closeAddProvider(); await this.render(); break;
-      case 'provider-list': if (this.routesPage.add) this.routesPage.add.picked = false; await this.render(); break;
-      case 'provider-more': if (this.routesPage.add) { this.routesPage.add.form.more = !this.routesPage.add.form.more; await this.render(); } break;
+      case 'provider-close':
+        if (this.view === 'setup' && this.setup?.add) {
+          this.setup.add = { form: emptyProviderForm(), existing: this.setup.add.existing, picked: false, busy: false, error: '', embedded: true };
+          await this.render();
+          break;
+        }
+        this.closeAddProvider(); await this.render(); break;
+      case 'provider-list': { const add = this.activeAdd(); if (add) add.picked = false; await this.render(); break; }
+      case 'provider-more': { const add = this.activeAdd(); if (add) { add.form.more = !add.form.more; await this.render(); } break; }
       case 'provider-apply': await this.applyAddProvider(); break;
       case 'route-new': this.routesPage.sel = '+'; this.routesPage.draft = emptyDraft(); this.routesPage.formError = ''; this.routesPage.note = ''; this.routesPage.confirmDelete = false; await this.render(); break;
       case 'route-key-save': await this.saveRouteKey(); break;
@@ -1176,10 +1446,7 @@ export class App {
         this.config.layout.theme = order[(order.indexOf(this.config.layout.theme) + 1) % 3]!;
         this.applyTheme(); await this.saveConfig(false); await this.render(); await this.updateTray(); break;
       }
-      case 'finish-setup':
-        this.firstRun = false; this.view = 'dashboard';
-        if (this.engine) { await this.engine.finishSetup(structuredClone(this.config)); break; }
-        await this.saveConfig(false); this.schedule(); await this.render(); await this.refresh(); break;
+      case 'finish-setup': await this.finishFirstRun(true); break;
       case 'custom-example': {
         const cur = safeParse(this.customDraft);
         this.customDraft = JSON.stringify([...(Array.isArray(cur) ? cur : []), ...CUSTOM_EXAMPLE], null, 2);
@@ -1438,12 +1705,50 @@ export class App {
     await this.saveRules(); return true;
   }
 
+  /** Interview fields. Tracking on a re-run saves at once. On a first run it waits for Apply or Skip. */
+  private async onSetupChange(t: HTMLInputElement): Promise<boolean> {
+    const setup = this.setup;
+    if (!setup) return false;
+    const d = t.dataset;
+    if (d.setupConfirm !== undefined) { this.setup = setConfirmed(setup, d.setupConfirm, t.checked); await this.render(); return true; }
+    if (d.setupTrack !== undefined) {
+      const id = d.setupTrack;
+      const plugin = this.pluginMap().get(id);
+      if (plugin && this.shell.kind === 'pwa' && plugin.needsLocalLogin) return true;
+      const pc = this.config.providers.find((p) => p.id === id);
+      if (pc) pc.enabled = t.checked;
+      this.setup = { ...setup, tracks: setup.tracks.map((tr) => tr.id === id ? { ...tr, enabled: t.checked } : tr) };
+      if (!this.firstRun) { await this.saveConfig(); if (!this.engine) void this.refresh(); }
+      await this.render();
+      return true;
+    }
+    if (d.setupPay !== undefined) { this.setup = togglePayProvider(setup, d.setupPay, t.checked); await this.render(); return true; }
+    if (d.setupProse !== undefined) { this.setup = toggleListModel(setup, 'prose', d.setupProse, t.checked); await this.render(); return true; }
+    if (d.setupSecond !== undefined) { this.setup = toggleListModel(setup, 'seatsSecond', d.setupSecond, t.checked); await this.render(); return true; }
+    if (d.setupAmount !== undefined) {
+      const raw = t.value.trim();
+      const n = raw === '' ? null : Number(raw);
+      this.setup = setPayAmount(setup, n !== null && Number.isFinite(n) ? n : null);
+      await this.render();
+      return true;
+    }
+    if (d.setupFile !== undefined) {
+      const file = t.files?.[0];
+      if (!file) return true;
+      this.setup = loadProfile(setup, await file.text());
+      await this.render();
+      return true;
+    }
+    return false;
+  }
+
   private async onChange(e: Event): Promise<void> {
     const t = e.target as HTMLInputElement;
     const d = t.dataset;
     if (this.view === 'rules' && await this.onRulesChange(t)) return;
     if (this.view === 'routes' && this.onRouteField(t)) return;
     if (this.view === 'service' && await this.onServiceField(t)) return;
+    if (this.view === 'setup' && this.setup && await this.onSetupChange(t)) return;
     if (d.toggle) {
       const [kind, pid, key] = d.toggle.split(':');
       if (kind === 'enabled') this.provider(pid!).enabled = t.checked;

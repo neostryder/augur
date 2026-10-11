@@ -12,6 +12,8 @@ export interface AddProviderModel {
   picked: boolean;
   busy: boolean;
   error: string;
+  /** Drawn inside the setup interview, without the Routes page header. */
+  embedded?: boolean;
 }
 
 type Field = keyof typeof T.fields;
@@ -66,8 +68,11 @@ export function renderAddProvider(m: AddProviderModel): string {
   const list = PROVIDER_CHOICES.map((c, i) => `${i && c.group !== PROVIDER_CHOICES[i - 1]!.group ? '<div class="ap-gap"></div>' : ''}
     <button class="jrow ${m.form.kind === c.id ? 'on' : ''}" data-provider-kind="${esc(c.id)}" aria-pressed="${m.form.kind === c.id}"><span class="ap-mark" aria-hidden="true">${esc(c.mark)}</span>
       <span class="jmain"><b>${esc(c.label)}</b><span class="jsub">${esc(c.sub)}</span></span></button>`).join('');
+  const cls = ['rules', m.embedded ? 'setup-embed' : '', m.picked && !m.embedded ? 'has-sel' : ''].filter(Boolean).join(' ');
+  const body = `<div class="${cls}"><div class="rlist jlist"><div class="rsec ap-list-label">${esc(T.service)}</div>${list}</div><div class="rdetail">${formHtml(m)}</div></div>`;
+  if (m.embedded) return body;
   return `<div class="rules-page jobs-page ${m.picked ? 'has-sel' : ''}"><header class="top">
     <button class="icon" data-action="${m.picked ? 'provider-list' : 'provider-close'}" title="${m.picked ? 'Back to the services' : 'Back to the routes'}" aria-label="${m.picked ? 'Back to the services' : 'Back to the routes'}">${ICON.back}</button>
     <div><h1>${esc(T.title)}</h1><div class="sub">${esc(T.sub)}</div></div></header>
-    <div class="rules ${m.picked ? 'has-sel' : ''}"><div class="rlist jlist"><div class="rsec ap-list-label">${esc(T.service)}</div>${list}</div><div class="rdetail">${formHtml(m)}</div></div></div>`;
+    ${body}</div>`;
 }
