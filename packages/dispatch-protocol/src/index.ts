@@ -4,6 +4,7 @@ export * from './adapter.js';
 export * from './pace.js';
 export * from './rules.js';
 export * from './pick.js';
+export * from './fleet-pick.js';
 export * from './balance.js';
 export * from './seats.js';
 export * from './balance-report.js';

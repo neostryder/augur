@@ -6,6 +6,7 @@ import type { Depth, ProseSwitch } from './balance.js';
 import { seatsFor } from './seats.js';
 import type { Seats } from './seats.js';
 import { modelOwners, pressure, usageFactors } from './pace.js';
+import { LOCAL_PROVIDER, localId, localReading } from './fleet-pick.js';
 import type { UsageSnapshot } from './pace.js';
 
 export interface PickRequest {
@@ -117,6 +118,14 @@ export function rank(policy: PolicyFile, usage: UsageSnapshot | null, req: PickR
   const governed = govern(policy, req.activity, req.depth, rows.map(r => r.model), req.named, usage, now, req.proseSwitched ?? false, req.snippet === true);
   for (const b of governed.blocks) { const at = rows.findIndex(r => r.model === b.model); if (at >= 0) { rows.splice(at, 1); blocked.push(b); } }
   notes.push(...governed.notes);
+  // A local route is gated and nudged by the live fleet: a machine that is down blocks it, and a model that is not loaded or a machine short of memory lowers its score.
+  const local = new Map<string, { factor: number; why: string }>();
+  for (const r of [...rows]) {
+    if (r.provider !== LOCAL_PROVIDER) continue;
+    const id = localId(policy, r.model), read = id ? localReading(usage, id, now) : null;
+    if (!read) continue;
+    if (read.blocked) { rows.splice(rows.indexOf(r), 1); blocked.push({ model: r.model, why: read.blocked }); } else local.set(r.model, read);
+  }
   const rules = resolveBalance((policy as { balance?: unknown }).balance);
   const paced = rules.enabled ? new Set(pacedProviders(usage, rules, now)) : new Set<string>();
   const providerBoost = new Map<string, { boost: number; why: string }>();
@@ -132,11 +141,13 @@ export function rank(policy: PolicyFile, usage: UsageSnapshot | null, req: PickR
     // Prose stays on the Opus routes: a drafting request does not boost a route that is not on the prose list, unless it is a snippet.
     const offList = req.activity === 'draft_prose' && req.snippet !== true && rules.prose.models.length > 0 && !listed(rules.prose.models, { label: r.model, provider: r.provider, id: policy.providers[r.provider]?.models[r.model]?.id ?? '' });
     const boost = !offList && (given === undefined || given >= rules.boostFitFloor) ? raw.boost : 1;
-    const base = press[r.provider]?.why ?? '';
+    const pressWhy = press[r.provider]?.why ?? '', nudgeWhy = local.get(r.model)?.why ?? '';
+    const base =!nudgeWhy ? pressWhy : /^(plenty left|no Augur data)$/.test(pressWhy) || !pressWhy ? nudgeWhy : `${pressWhy}. ${nudgeWhy}`;
     // Those two notes are dropped by the reason line, so the boost sentence is not glued onto them.
     const quiet = /^(plenty left|no Augur data)$/.test(base);
     const why = boost > 1 && raw.why ? (base && !quiet ? `${base}. ${raw.why}` : raw.why) : base;
-    return { model: r.model, score: Math.round(fit * weight * factor * tilt * boost * 1000) / 1000, fit, level: r.level, weight, usage: factor, tilt, boost, odds: 0, why };
+    const nudge = local.get(r.model)?.factor ?? 1;
+    return { model: r.model, score: Math.round(fit * weight * factor * nudge * tilt * boost * 1000) / 1000, fit, level: r.level, weight, usage: Math.round(factor * nudge * 1000) / 1000, tilt, boost, odds: 0, why };
   }).sort((a, b) => b.score - a.score);
   const pool = applyOdds(ranking, rules.draw.tail);
   const top = ranking[0];
