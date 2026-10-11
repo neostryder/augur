@@ -18,9 +18,9 @@ const WINDOW_IDS = new Set(['claude', 'codex', 'grok', 'minimax']);
 
 const STACKS: Array<{ id: StackId; mark: string; title: string; help: string }> = [
   { id: 'claude-only', mark: 'C', title: 'Claude only', help: 'One Claude plan. Augur keeps it on pace and has nothing else to balance.' },
-  { id: 'several', mark: 'S', title: 'Several subscriptions', help: 'Claude plus other plans such as Codex, Grok or Copilot. You choose which to pace and the order to use them.' },
-  { id: 'api-only', mark: 'K', title: 'API keys only', help: 'Pay per use. No pacing. You set the providers and a monthly amount to stay under.' },
-  { id: 'profile', mark: '+', title: 'Start from a profile file', help: 'Load a setup exported from another computer. It holds no keys and is checked before anything changes.' },
+  { id: 'several', mark: 'S', title: 'Several subscriptions', help: 'Claude plus other plans such as Codex, Grok, or Copilot. You choose which ones to pace and the order Augur uses them in.' },
+  { id: 'api-only', mark: 'K', title: 'API keys only', help: 'You pay per use, so nothing is paced. Name the providers and a monthly amount to stay under.' },
+  { id: 'profile', mark: '+', title: 'Start from a profile file', help: 'Load a setup exported from another computer. The file holds no keys, and Augur checks all of it before anything changes.' },
 ];
 
 const HOLD_CHOICES: Array<Exclude<HoldChoice, 'custom'>> = ['free', 'some', 'save'];
@@ -29,6 +29,12 @@ const HOLD_LABEL: Record<Exclude<HoldChoice, 'custom'>, string> = {
   some: 'Keep some back',
   save: 'Save it for the work only it does',
 };
+
+/** Shown for a subscription whose current reserve and band match none of the three choices. */
+const CUSTOM_HOLD = 'This subscription has custom values from your current setup. They stay unless you pick one of the choices above.';
+
+/** "1 change", "3 changes". */
+const changeCount = (n: number): string => `${n} change${n === 1 ? '' : 's'}`;
 
 const TICK = '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 6.5 5 9l4.5-5.5"/></svg>';
 
@@ -308,12 +314,17 @@ function stepNote(model: SetupModel, plan: SetupPlan, id: StepId): string {
   if (status === 'todo') return 'Not started';
   if (id === 'providers') return `${model.answers.detected.filter((d) => d.confirmed).length} confirmed`;
   if (id === 'pace') return status === 'partial' ? 'In progress' : plan.rankWords;
-  if (id === 'review') return `${applySteps(plan).length} changes`;
+  if (id === 'review') return changeCount(applySteps(plan).length);
   return model.apply?.complete ? 'Applied' : status === 'partial' ? 'In progress' : 'Not started';
 }
 
 function changeLabel(plan: SetupPlan, id: string): string {
   return plan.changes.find((c) => c.id === id)?.label ?? id;
+}
+
+/** A failure before any write has no change id, so it shows the error alone. */
+function failText(plan: SetupPlan, failed: { id: string; error: string }): string {
+  return failed.id ? `Could not save ${changeLabel(plan, failed.id)}: ${failed.error}` : failed.error;
 }
 
 const seg = (label: string, options: Array<{ value: string; label: string; on: boolean; attrs: string }>): string =>
@@ -352,7 +363,7 @@ function providersStep(model: SetupModel): string {
   const tracks = model.tracks.map((t) => `<div class="row"><label class="name">${esc(t.name)}${t.locked ? '<span class="desc">Desktop only</span>' : ''}</label>
     <label class="switch"><input type="checkbox" data-setup-track="${esc(t.id)}" ${t.enabled ? 'checked' : ''} ${t.locked ? 'disabled' : ''} aria-label="Track ${esc(t.name)}"><span></span></label></div>`).join('');
   const added = model.answers.added.length ? `<p class="help">Added: ${esc(model.answers.added.join(', '))}</p>` : '';
-  return `<h2 class="sec">Confirm what was found</h2><div class="card">${rows || '<p class="help">Nothing was found yet. Add one below, or check again on the first step.</p>'}</div>
+  return `<h2 class="sec">Confirm what Augur found</h2><div class="card">${rows || '<p class="help">No subscription was found. Add an API service below, or go back to the first step and choose Check again.</p>'}</div>
     ${missingHtml}
     <h2 class="sec">Tracking</h2><div class="card"><p class="help">Turn on what you want to track. You can change this any time.</p>${tracks}</div>
     <h2 class="sec">API services</h2>${added}${model.add ? renderAddProvider(model.add) : ''}`;
@@ -364,7 +375,7 @@ function paceStep(model: SetupModel, plan: SetupPlan): string {
     const choice = model.answers.holdBack[d.id];
     const custom = choice === 'custom';
     const buttons = seg(`${d.label} hold-back`, HOLD_CHOICES.map((v) => ({ value: v, label: HOLD_LABEL[v], on: choice === v, attrs: `data-action="setup-hold" data-id="${esc(d.id)}" data-value="${v}"` })));
-    const text = custom ? 'custom (kept)' : choice ? HOLD_BACK[choice].text : '';
+    const text = custom ? CUSTOM_HOLD : choice ? HOLD_BACK[choice].text : '';
     return `<div class="setup-hold" data-setup-hold="${esc(d.id)}"><div class="name">${esc(d.label)}</div>${buttons}${text ? `<p class="help">${esc(text)}</p>` : ''}</div>`;
   }).join('');
   const rank = model.answers.rank;
@@ -374,7 +385,7 @@ function paceStep(model: SetupModel, plan: SetupPlan): string {
     return `<li><span class="setup-rank-n">${i + 1}</span><span class="setup-rank-name">${esc(name)}</span>
       <button type="button" class="btn small" data-action="setup-rank" data-id="${esc(id)}" data-dir="up" aria-label="Move ${esc(name)} up" ${i === 0 ? 'disabled' : ''}>Up</button>
       <button type="button" class="btn small" data-action="setup-rank" data-id="${esc(id)}" data-dir="down" aria-label="Move ${esc(name)} down" ${i === rank.length - 1 ? 'disabled' : ''}>Down</button></li>`;
-  }).join('')}</ol>` : `<p class="help">${esc(plan.rankWords)}</p>${paced.length >= 2 ? '<button type="button" class="btn" data-action="setup-rank-fill">Set this order</button>' : ''}`;
+  }).join('')}</ol>` : `<p class="help">${esc(plan.rankWords)}</p>${paced.length >= 2 ? '<button type="button" class="btn" data-action="setup-rank-fill">Rank the subscriptions</button>' : ''}`;
   const pay = model.answers.payPerUse;
   const none = !!pay && pay.providers.length === 0;
   const options = new Map<string, string>();
@@ -391,7 +402,7 @@ function paceStep(model: SetupModel, plan: SetupPlan): string {
       <div class="setup-checks">${checks}</div>
       <div class="field"><label for="setup-amount">Monthly amount</label>
         <input type="number" min="0" step="1" id="setup-amount" data-setup-amount value="${esc(amount)}" aria-label="Monthly backup amount in dollars">
-        <span class="help">Dollars per month. Pick no backup spending, or name the providers and an amount.</span></div>
+        <span class="help">Dollars per month. Choose No backup spending, or select the providers to use and enter an amount.</span></div>
     </div>`;
 }
 
@@ -400,10 +411,10 @@ function listBlock(model: SetupModel, which: 'prose' | 'seatsSecond', title: str
   const labels = new Set(modelsOf(model.current).map((m) => m.label));
   if (Array.isArray(cur)) for (const x of cur) labels.add(x);
   const sorted = [...labels].sort();
-  if (cur === 'skipped') return `<div><div class="name">${esc(title)}</div><p class="help">Skipped. Nothing is written.</p>
+  if (cur === 'skipped') return `<div><div class="name">${esc(title)}</div><p class="help">Skipped, so nothing changes.</p>
     <button type="button" class="btn small" data-action="${action}-clear">Choose models</button></div>`;
   const checks = sorted.map((label) => `<label class="setup-check"><input type="checkbox" data-${action}="${esc(label)}" ${Array.isArray(cur) && cur.includes(label) ? 'checked' : ''}>${esc(label)}</label>`).join('');
-  return `<div><div class="name">${esc(title)}</div>${cur === null ? '<p class="help">Not set. Nothing is written until you choose.</p>' : ''}
+  return `<div><div class="name">${esc(title)}</div>${cur === null ? '<p class="help">Not chosen yet. Nothing changes until you pick models or choose Skip.</p>' : ''}
     <div class="setup-checks">${checks}</div>
     <div class="actions"><button type="button" class="btn small" data-action="${action}-strong">Use the strong models</button>
       <button type="button" class="btn small" data-action="${action}-skip">Skip</button></div></div>`;
@@ -424,19 +435,19 @@ function reviewStep(model: SetupModel, plan: SetupPlan): string {
   const ran = model.apply;
   const progress = ran && (ran.ran.length || ran.failed || ran.pending) ? `<div class="card" role="status">
       ${ran.pending ? `<p>Applying ${esc(changeLabel(plan, ran.pending))}.</p>` : ''}
-      ${ran.ran.length ? `<ul class="setup-ran">${ran.ran.map((id) => `<li data-ran="${esc(id)}">${esc(changeLabel(plan, id))} written.</li>`).join('')}</ul>` : ''}
-      ${ran.failed ? `<p class="bad-json" role="alert" data-failed="${esc(ran.failed.id)}">${esc(ran.failed.error)}</p>` : ''}
+      ${ran.ran.length ? `<ul class="setup-ran">${ran.ran.map((id) => `<li data-ran="${esc(id)}">${esc(changeLabel(plan, id))} saved.</li>`).join('')}</ul>` : ''}
+      ${ran.failed ? `<p class="bad-json" role="alert" data-failed="${esc(ran.failed.id)}">${esc(failText(plan, ran.failed))}</p>` : ''}
     </div>` : '';
   return `<h2 class="sec">What each model is good at</h2>
-    <div class="card setup-table-wrap">${rows ? `<table class="setup-models"><tbody>${rows}</tbody></table>` : '<p class="help">No models are in the rules yet. Add an API service on the providers step, or apply with none.</p>'}
-      <p class="help">Not sure writes nothing. The model stays as it is.</p></div>
+    <div class="card setup-table-wrap">${rows ? `<table class="setup-models"><tbody>${rows}</tbody></table>` : '<p class="help">No models are in the rules yet. Add an API service on the Providers and keys step, or apply without any.</p>'}
+      <p class="help">Not sure leaves a model as it is.</p></div>
     <h2 class="sec">Prose and a second opinion</h2>
     <div class="card setup-pair">${listBlock(model, 'prose', 'Writes the best prose', 'setup-prose')}${listBlock(model, 'seatsSecond', 'Gives a second opinion', 'setup-second')}</div>
     ${bad.length ? `<div class="rnote bad" role="alert" data-setup-problems>${bad.map((p) => `<div>${esc(p)}</div>`).join('')}</div>` : ''}
     ${progress}
     <div class="actions">${model.firstRun ? '<button type="button" class="btn" data-action="setup-skip">Skip setup</button>' : ''}
       <button type="button" class="btn" data-action="setup-back">Back</button>
-      <button type="button" class="btn primary" data-action="setup-apply" data-setup-apply ${!isValid(plan) || model.busy ? 'disabled' : ''}>Apply ${n} changes</button></div>`;
+      <button type="button" class="btn primary" data-action="setup-apply" data-setup-apply ${!isValid(plan) || model.busy ? 'disabled' : ''}>Apply ${changeCount(n)}</button></div>`;
 }
 
 function doneStep(model: SetupModel, plan: SetupPlan): string {
@@ -452,16 +463,16 @@ function doneStep(model: SetupModel, plan: SetupPlan): string {
     `<div class="row"><label class="name">${esc(label)}</label><button type="button" class="btn small" data-action="setup-rules" data-provider="${esc(providerOf.get(label) ?? '')}" data-model="${esc(label)}">Open rules</button></div>`).join('')
     : '<p class="help">Every model is confirmed.</p>';
   const next = done.next.map((line) => `<li>${esc(line)}</li>`).join('');
-  return `<h2 class="sec">Test a route</h2><div class="card">${tests}</div>
+  return `<h2 class="sec">Test your routes</h2><div class="card">${tests}</div>
     <h2 class="sec">Still to confirm</h2><div class="card">${open}</div>
     <h2 class="sec">What happens next</h2><div class="card"><ol class="setup-next">${next}</ol></div>
-    <div class="actions"><button type="button" class="btn primary" data-action="setup-close">Done</button></div>`;
+    <div class="actions"><button type="button" class="btn primary" data-action="setup-close">Finish setup</button></div>`;
 }
 
 function summary(plan: SetupPlan): string {
   const tail = / \((unchanged|will change|new)\)$/;
   const groups = summaryLines(plan).flatMap((g) => g.lines.map((line) => ({ step: g.step, line })));
-  if (!groups.length) return '<p class="help">The list grows as you answer. Pace, order and models appear here before you apply.</p>';
+  if (!groups.length) return '<p class="help">Each setting your answers touch shows up here, marked new, will change, or unchanged.</p>';
   const items = groups.map(({ line }) => {
     const m = line.match(tail);
     if (!m) return `<li><span class="setup-sum-t">${esc(line)}</span></li>`;
@@ -492,7 +503,7 @@ function steps(model: SetupModel, plan: SetupPlan): string {
       ${mark}<span><b>${esc(s.title)}</b><span class="help">${esc(stepNote(model, plan, s.id))}</span></span></button>`;
   }).join('');
   return `<p class="lab">Steps</p><div class="card setup-step-list">${rows}</div>
-    <p class="help">You can jump to any step. A step you leave alone writes nothing.</p>`;
+    <p class="help">You can jump to any step. A step you leave alone changes nothing.</p>`;
 }
 
 function nav(model: SetupModel): string {
@@ -513,7 +524,7 @@ export function renderSetup(model: SetupModel): string {
       : model.step === 'review' ? reviewStep(model, plan)
         : model.step === 'done' ? doneStep(model, plan)
           : stackStep(model);
-  return `<div class="setup"><header class="top"><div><h1>Set up Augur</h1><div class="sub">Nothing is written until you press Apply.</div></div></header>
+  return `<div class="setup"><header class="top"><div><h1>Set up Augur</h1><div class="sub">Nothing is saved until you press Apply.</div></div></header>
     <div class="setup-cols"><div class="setup-steps">${steps(model, plan)}</div>
       <div class="setup-main">${body}${model.step === 'review' ? '' : nav(model)}</div>
       <div class="setup-summary" aria-live="polite"><p class="lab">What Augur will set</p><div class="card">${summary(plan)}</div></div></div></div>`;

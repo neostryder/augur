@@ -188,7 +188,7 @@ export function renderSettings(m: SettingsModel): string {
 
   html += agentsSection(m, false);
   html += `<h2 class="sec">Model rules</h2><div class="card"><div class="row"><label class="name">What agents may use each model for<span class="desc">Saved to policy.json beside the usage file, for agents to read.</span></label><button class="btn small" data-action="rules">Open</button></div>
-    <div class="row"><label class="name">Run setup again<span class="desc">Opens setup filled in from the current setup. A step you leave alone writes nothing.</span></label><button class="btn small" data-action="setup-again">Run setup again</button></div></div>`;
+    <div class="row"><label class="name">Run setup again<span class="desc">Opens setup with your current settings filled in. A step you leave alone changes nothing.</span></label><button class="btn small" data-action="setup-again">Open</button></div></div>`;
   html += `<h2 class="sec">Appearance</h2><div class="card">
     <div class="row"><label class="name">Theme</label>${seg('theme', c.layout.theme, [['system', 'System'], ['light', 'Light'], ['dark', 'Dark']])}</div>
     <div class="row"><label class="name">Columns<span class="desc">Auto uses two columns only when one column would run past the bottom of the screen.</span></label>${seg('columns', String(c.layout.columns), [['auto', 'Auto'], ['1', 'One'], ['2', 'Two']])}</div></div>`;

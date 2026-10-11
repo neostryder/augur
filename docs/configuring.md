@@ -7,7 +7,7 @@ The app covers most of this. The Rules page says what each model may do, the Rou
 | What | File | Edited with |
 | --- | --- | --- |
 | Rules for every model, and the balance overrides | `policy` inside `config.json` in the app's settings folder. Augur writes it out to `policy.json` in `~/.augur` each time a rule changes. | The Rules page, the `augur_policy_edit` tool for models and balance settings, and by hand |
-| Providers, where their keys come from, custom providers, alerts, and `agentApproval` | `config.json` in the app's settings folder | Settings, or by hand. `agentApproval` is set on the Service page or the terminal app's Service screen |
+| Providers, where their keys come from, custom providers, alerts, and `agentApproval` | `config.json` in the app's settings folder | Settings, or by hand. `agentApproval` is set on the window app's Service page, or under Service on the terminal app's Dispatch page |
 | Routes | `dispatch/routes.json` in `~/.augur` | The Routes page, or by hand |
 | Service settings | Listed by `augur config` | The Service page |
 | Standing instructions for jobs, the charter | The `charter` folder in `~/.augur`, or the folder `runner.charterDir` names | By hand. [Standing instructions for every job](#standing-instructions-for-every-job) has the layout |
@@ -224,7 +224,7 @@ The `profile` setting chooses the base rules the other settings build on. `class
 
 `boostFitFloor` keeps the boost off routes the caller rated as a poor fit, and `draw.enabled` and `draw.tail` control the draw. With the draw on, `augur pick` and `augur_pick` choose a route at random by its odds, its score over the sum of the scores still in the draw, and a route under `draw.tail` of the top score is left out. With the draw off, every pick takes the top score.
 
-An agent can change a balance setting through `augur_policy_edit` with `field` set to `balance` and a `path`, as [mcp.md](mcp.md) describes. `agentApproval` in `config.json` decides how many of an agent's edits wait for the owner. `all` holds every edit, `risky` (the default) holds the edits that change what data a model may see or whether it runs, and `none` applies everything. The setting is changed on the Service page or in the terminal app, and no tool an agent can call reads or changes it.
+An agent can change a balance setting through `augur_policy_edit` with `field` set to `balance` and a `path`, as [mcp.md](mcp.md) describes. `agentApproval` in `config.json` decides how many of an agent's edits wait for the owner. `all` holds every edit, `risky` (the default) holds the edits that change what data a model may see or whether it runs, and `none` applies everything. The setting is changed on the window app's Service page or under Service on the terminal app's Dispatch page, and no tool an agent can call reads or changes it.
 
 To move a setup to another computer, run `augur profile export profile.json` on the first one. The file holds the balance settings and the routes, never a key. On the second computer, `augur profile import profile.json` reads the whole file before it changes anything, and if an entry is wrong it stops and names it. If the file is good, the balance settings go through the edit inbox, where the approval setting treats them like an agent's edits, and routes with new names are added. A route that already exists stays as it is. `--dry-run` shows the plan without writing anything. Each new route then needs its key from `augur key set <route>`.
 

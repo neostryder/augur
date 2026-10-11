@@ -50,6 +50,7 @@ function settingsModel(firstRun: boolean): SettingsModel {
   };
 }
 
+const changes = (n: number): string => `${n} change${n === 1 ? '' : 's'}`;
 const applyButton = (html: string): string => html.match(/<button[^>]*data-setup-apply[^>]*>[^<]*/)?.[0] ?? '';
 
 describe('the stack step', () => {
@@ -119,12 +120,12 @@ describe('review and apply', () => {
     const n = applySteps(bad.plan).length;
     const btn = applyButton(badHtml);
     expect(btn).toMatch(/disabled/);
-    expect(btn).toContain(`Apply ${n} changes`);
-    expect(badHtml).toContain('Name a monthly amount, or choose no backup spending.');
+    expect(btn).toContain(`Apply ${changes(n)}`);
+    expect(badHtml).toContain('Enter a monthly amount for pay per use, or choose No backup spending.');
     const ok = setPayAmount(bad, 20);
     const okBtn = applyButton(renderSetup(ok));
     expect(okBtn).not.toMatch(/disabled/);
-    expect(okBtn).toContain(`Apply ${applySteps(ok.plan).length} changes`);
+    expect(okBtn).toContain(`Apply ${changes(applySteps(ok.plan).length)}`);
   });
 
   it('pre-fills a re-run from the current setup and shows zero changes', () => {

@@ -7,11 +7,11 @@ import type { BalanceRules, UsageSnapshot } from '@augur/dispatch-protocol';
 import { parseRoutesText } from './routes-model.js';
 
 export const SETUP_STEPS = [
-  { id: 'stack', title: 'Your stack', sub: 'What you already pay for' },
-  { id: 'providers', title: 'Providers and keys', sub: 'Confirm what was found, and add an API' },
-  { id: 'pace', title: 'Pace and order', sub: 'How much to hold back, and which subscription goes first' },
-  { id: 'review', title: 'Review and apply', sub: 'Mark each model, then apply the plan' },
-  { id: 'done', title: 'Done', sub: 'Test a route and confirm what is still open' },
+  { id: 'stack', title: 'Your stack', sub: 'The plans you already pay for' },
+  { id: 'providers', title: 'Providers and keys', sub: 'Confirm what Augur found, and add an API service' },
+  { id: 'pace', title: 'Pace and order', sub: 'How much of each subscription to hold back, and which to use first' },
+  { id: 'review', title: 'Review and apply', sub: 'Mark what each model is good at, then apply the changes' },
+  { id: 'done', title: 'Done', sub: 'Test your routes and confirm the models still waiting' },
 ] as const;
 
 export type StepId = (typeof SETUP_STEPS)[number]['id'];
@@ -71,9 +71,9 @@ export interface HoldBackRow { reserve: number; band: number; text: string; clau
 
 /** The three hold-back choices. `some` uses band 10, and band 5 for Claude, matching pace.claude. */
 export const HOLD_BACK: Record<Exclude<HoldChoice, 'custom'>, HoldBackRow> = {
-  free: { reserve: 100, band: 20, text: 'Use it freely. It is not held back, and it leans only when usage is far off pace.' },
-  some: { reserve: 90, band: 10, claudeBand: 5, text: 'Keep some back. Optional work moves off near the end of the window. This is the default.' },
-  save: { reserve: 60, band: 5, text: 'Save it for the work only it does. Optional work moves off early, and it leans quickly.' },
+  free: { reserve: 100, band: 20, text: 'Use it freely. Augur holds none of it back and only moves work when you are more than 20 points ahead of or behind pace.' },
+  some: { reserve: 90, band: 10, claudeBand: 5, text: 'Keep some back. Once 90% of a window is used, Augur sends optional work to your other subscriptions. This is the default.' },
+  save: { reserve: 60, band: 5, text: 'Save it for the work only it does. Once 60% of a window is used, Augur sends optional work to your other subscriptions, and it moves work as soon as you are 5 points off pace.' },
 };
 
 /** Claude's built-in band. Every other provider uses the shared default band. */
@@ -455,7 +455,7 @@ function rankWords(answers: SetupAnswers): string {
   const label = new Map(answers.detected.map(d => [d.id, d.label]));
   const name = (id: string): string => label.get(id) ?? id.slice(0, 1).toUpperCase() + id.slice(1);
   const { rank } = answers;
-  if (rank.length === 0) return 'No order yet.';
+  if (rank.length === 0) return 'No order set yet.';
   if (rank.length === 1) return `${name(rank[0]!)} first.`;
   const names = rank.map(name);
   const last = names[names.length - 1]!;
@@ -489,11 +489,11 @@ export function planSetup(answers: SetupAnswers, current: SetupCurrent): SetupPl
   const changes: SetupChange[] = [];
   const steered = rules.claude.provider;
 
-  if (new Set(answers.rank).size !== answers.rank.length) problems.push('The rank lists a subscription twice.');
+  if (new Set(answers.rank).size !== answers.rank.length) problems.push('A subscription is listed twice in the order. Remove one of them.');
   const pay = answers.payPerUse;
-  if (pay && pay.providers.some(id => !id)) problems.push('A pay-per-use provider needs a name.');
-  if (pay && pay.providers.length > 0 && pay.amount === null) problems.push('Name a monthly amount, or choose no backup spending.');
-  if (pay && pay.amount !== null && !(typeof pay.amount === 'number' && Number.isFinite(pay.amount) && pay.amount >= 0)) problems.push('The monthly amount is a number of 0 or more, or none.');
+  if (pay && pay.providers.some(id => !id)) problems.push('A pay-per-use provider is missing its name. Pick one from the list.');
+  if (pay && pay.providers.length > 0 && pay.amount === null) problems.push('Enter a monthly amount for pay per use, or choose No backup spending.');
+  if (pay && pay.amount !== null && !(typeof pay.amount === 'number' && Number.isFinite(pay.amount) && pay.amount >= 0)) problems.push('The monthly amount has to be 0 or more. Change it, or leave the field empty.');
 
   const push = (row: SetupChange): void => {
     if (!row.edit) { changes.push(row); return; }
@@ -515,7 +515,7 @@ export function planSetup(answers: SetupAnswers, current: SetupCurrent): SetupPl
     const now = effectivePace(rules, id);
     if (choice === 'custom') {
       const from = `${now.reserve}% reserve, band ${now.band}`;
-      push({ id: `pace:${id}`, area: 'pace', label: `${providerLabel(current.policy, id)} hold-back`, from, to: 'custom (kept)', status: 'unchanged', edit: null });
+      push({ id: `pace:${id}`, area: 'pace', label: `${providerLabel(current.policy, id)} hold-back`, from, to: 'custom, kept as it is', status: 'unchanged', edit: null });
       continue;
     }
     const target = paceNumbers(choice, id);
@@ -523,7 +523,7 @@ export function planSetup(answers: SetupAnswers, current: SetupCurrent): SetupPl
       const same = now[key] === target[key];
       const status: ChangeStatus = same ? 'unchanged' : paceStored(raw, id, steered, key) ? 'change' : 'new';
       push({
-        id: `pace:${id}:${key}`, area: 'pace', label: `${providerLabel(current.policy, id)} ${key === 'reserve' ? 'reserve' : 'band'}`,
+        id: `pace:${id}:${key}`, area: 'pace', label: `${providerLabel(current.policy, id)} ${key === 'reserve' ? 'reserve' : 'pace band'}`,
         from: key === 'reserve' ? `${now.reserve}%` : String(now.band), to: key === 'reserve' ? `${target[key]}%` : String(target[key]),
         status, edit: same ? null : editFor(`pace:${id}:${key}`, balanceField(['pace', id, key]), target[key]),
       });
@@ -609,7 +609,7 @@ export function planSetup(answers: SetupAnswers, current: SetupCurrent): SetupPl
     });
   };
   listRow('prose:models', 'review', 'Prose models', ['prose', 'models'], rules.prose.models, answers.prose);
-  listRow('seats:second', 'review', 'Second opinion', ['seats', 'second', 'models'], rules.seats.second.models, answers.seatsSecond);
+  listRow('seats:second', 'review', 'Second-opinion models', ['seats', 'second', 'models'], rules.seats.second.models, answers.seatsSecond);
 
   const unreviewed = [...new Set([
     ...strings(rec(current.policy).unreviewed),
@@ -663,8 +663,8 @@ export interface SetupDone {
 
 const NEXT: SetupDone['next'] = [
   'Test each route that has a key.',
-  'Open Model rules for each model that still needs confirmation.',
-  'Augur uses your subscriptions in the order you ranked and holds each one back the way you chose.',
+  'Confirm any model listed under Still to confirm on the Rules page. No agent can run it until you do.',
+  'Augur now uses your subscriptions in the order you set, and holds each one back the way you chose.',
 ];
 
 /** The last screen: routes that have a key, models still unreviewed, and three lines on what happens next. */

@@ -10,6 +10,7 @@ import {
 import * as win from '../../ui/src/views/setup.js';
 import { ch, k, setup, state } from './fixtures.js';
 
+const changes = (n: number): string => `${n} change${n === 1 ? '' : 's'}`;
 const MISSING = 'C:/missing/augur-test-routes.json';
 const env = { AUGURD_ROUTES: MISSING } as NodeJS.ProcessEnv;
 
@@ -88,7 +89,7 @@ describe('the stack step', () => {
     const missing = loadProfileText(picked, null);
     expect(missing.answers).toBe(picked.answers);
     expect(missing.plan).toBe(picked.plan);
-    expect(missing.profileProblems).toEqual(['That file could not be read.']);
+    expect(missing.profileProblems).toEqual(['Could not read that file. Check the path and try again.']);
   });
 
   it('rejects a typed path through the profile check and writes nothing', async () => {
@@ -123,7 +124,7 @@ describe('the pace step', () => {
     expect(text).toContain('Use it freely');
     expect(text).toContain('Keep some back');
     expect(text).toContain('Save it for the work only it does');
-    expect(text).toContain(HOLD_BACK.some.text);
+    expect(text.replace(/\s+/g, ' ')).toContain(HOLD_BACK.some.text);
     expect(model.answers.rank).toEqual(['claude', 'codex']);
     model = focus(model, (l) => l.startsWith('> Claude'));
     model = reduce(model, k('enter')).model;
@@ -158,12 +159,12 @@ describe('review and apply', () => {
     const bad = togglePayProvider(model, 'openai', true);
     const n = applySteps(bad.plan).length;
     const blocked = renderSetup(bad, 90).find((l) => l.includes('Apply '));
-    expect(blocked).toContain(`Apply ${n} changes`);
+    expect(blocked).toContain(`Apply ${changes(n)}`);
     expect(blocked).toContain('disabled');
-    expect(renderSetup(bad, 90).join('\n')).toContain('Name a monthly amount, or choose no backup spending.');
+    expect(renderSetup(bad, 90).join('\n')).toContain('Enter a monthly amount for pay per use, or choose No backup spending.');
     const ok = setPayAmount(bad, 20);
     const open = renderSetup(ok, 90).find((l) => l.includes('Apply '));
-    expect(open).toContain(`Apply ${applySteps(ok.plan).length} changes`);
+    expect(open).toContain(`Apply ${changes(applySteps(ok.plan).length)}`);
     expect(open).not.toContain('disabled');
   });
 
@@ -248,8 +249,8 @@ describe('review and apply', () => {
     expect(stopped.page.model!.step).toBe('review');
     const shown = renderSetup(stopped.page.model!, 90).join('\n');
     expect(shown).toContain('disk full');
-    expect(shown).toContain('did not write');
-    expect((shown.match(/written\./g) ?? []).length).toBe(2);
+    expect(shown).toContain('Could not save');
+    expect((shown.match(/ saved\./g) ?? []).length).toBe(2);
   });
 });
 

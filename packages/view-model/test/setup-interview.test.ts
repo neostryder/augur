@@ -195,7 +195,7 @@ describe('the plan', () => {
     const customAnswers = answersFromCurrent(customCurrent);
     expect(customAnswers.holdBack.grok).toBe('custom');
     const custom = planSetup(customAnswers, customCurrent);
-    expect(custom.changes.find(c => c.id === 'pace:grok')).toMatchObject({ status: 'unchanged', to: 'custom (kept)', edit: null });
+    expect(custom.changes.find(c => c.id === 'pace:grok')).toMatchObject({ status: 'unchanged', to: 'custom, kept as it is', edit: null });
     expect(written(custom)).toEqual([]);
   });
 
@@ -230,12 +230,12 @@ describe('the plan', () => {
 
     const unnamed = planSetup({ ...start, payPerUse: { providers: ['openai'], amount: null } }, current);
     expect(isValid(unnamed)).toBe(false);
-    expect(problems(unnamed)).toContain('Name a monthly amount, or choose no backup spending.');
+    expect(problems(unnamed)).toContain('Enter a monthly amount for pay per use, or choose No backup spending.');
     expect(applySteps(unnamed).some(op => op.payload.field.startsWith('balance:fallback'))).toBe(false);
 
     const twice = planSetup({ ...start, rank: ['claude', 'claude'] }, current);
     expect(isValid(twice)).toBe(false);
-    expect(problems(twice)).toContain('The rank lists a subscription twice.');
+    expect(problems(twice)).toContain('A subscription is listed twice in the order. Remove one of them.');
   });
 
   it('names routes that have a key and models that still need confirmation', () => {
@@ -252,8 +252,8 @@ describe('the plan', () => {
     expect(done.unreviewed).toEqual(['claude/haiku', 'claude/sonnet']);
     expect(done.next).toEqual([
       'Test each route that has a key.',
-      'Open Model rules for each model that still needs confirmation.',
-      'Augur uses your subscriptions in the order you ranked and holds each one back the way you chose.',
+      'Confirm any model listed under Still to confirm on the Rules page. No agent can run it until you do.',
+      'Augur now uses your subscriptions in the order you set, and holds each one back the way you chose.',
     ]);
   });
 });

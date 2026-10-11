@@ -25,9 +25,9 @@ const SUMMARY_COL = 120;
 
 const STACKS: Array<{ id: StackId; title: string; help: string }> = [
   { id: 'claude-only', title: 'Claude only', help: 'One Claude plan. Augur keeps it on pace and has nothing else to balance.' },
-  { id: 'several', title: 'Several subscriptions', help: 'Claude plus other plans such as Codex, Grok or Copilot. You choose which to pace and the order to use them.' },
-  { id: 'api-only', title: 'API keys only', help: 'Pay per use. No pacing. You set the providers and a monthly amount to stay under.' },
-  { id: 'profile', title: 'Start from a profile file', help: 'Load a setup exported from another computer. It holds no keys and is checked before anything changes.' },
+  { id: 'several', title: 'Several subscriptions', help: 'Claude plus other plans such as Codex, Grok, or Copilot. You choose which ones to pace and the order Augur uses them in.' },
+  { id: 'api-only', title: 'API keys only', help: 'You pay per use, so nothing is paced. Name the providers and a monthly amount to stay under.' },
+  { id: 'profile', title: 'Start from a profile file', help: 'Load a setup exported from another computer. The file holds no keys, and Augur checks all of it before anything changes.' },
 ];
 
 const HOLD_LABEL: Record<Exclude<HoldChoice, 'custom'>, string> = {
@@ -43,7 +43,13 @@ const SHORT: Record<StepId, string> = { stack: 'Stack', providers: 'Providers', 
 const DEVICE = 'desktop';
 const SETTLED = ['completed', 'failed', 'artifact_validation_failed', 'cancelled', 'killed', 'lost'];
 
-export const SETUP_HELP = 'Up/Down move  Enter pick  Tab step  1-5 jump  u/d rank  Esc back';
+/** Shown for a subscription whose current reserve and band match none of the three choices. */
+const CUSTOM_HOLD = 'This subscription has custom values from your current setup. They stay unless you pick one of the choices above.';
+
+/** "1 change", "3 changes". */
+const changeCount = (n: number): string => `${n} change${n === 1 ? '' : 's'}`;
+
+export const SETUP_HELP = 'Up/Down move  Enter choose  Tab next step  1-5 step  u/d reorder  Esc back';
 
 export interface TuiTrack {
   id: string;
@@ -164,7 +170,7 @@ export function selectStack(model: TuiModel, stack: StackId): TuiModel {
 
 /** A bad file or a missing read sets the problems and leaves the answers and the plan as they were. */
 export function loadProfileText(model: TuiModel, text: string | null): TuiModel {
-  if (text === null) return { ...model, profileProblems: ['That file could not be read.'] };
+  if (text === null) return { ...model, profileProblems: ['Could not read that file. Check the path and try again.'] };
   const got = answersFromProfile(text, model.current);
   if ('problems' in got) return { ...model, profileProblems: [...got.problems] };
   return refresh({ ...model, answers: got.answers, profileProblems: [], profilePath: model.profilePath });
@@ -278,7 +284,7 @@ function stepNote(model: TuiModel, id: StepId): string {
   if (status === 'todo') return 'Not started';
   if (id === 'providers') return `${model.answers.detected.filter((d) => d.confirmed).length} confirmed`;
   if (id === 'pace') return status === 'partial' ? 'In progress' : model.plan.rankWords;
-  if (id === 'review') return `${applySteps(model.plan).length} changes`;
+  if (id === 'review') return changeCount(applySteps(model.plan).length);
   return model.apply?.complete ? 'Applied' : status === 'partial' ? 'In progress' : 'Not started';
 }
 
@@ -294,7 +300,7 @@ function bracket(label: string, on: boolean): string { return on ? `[${label}]` 
 function holdLine(model: TuiModel, d: DetectedProvider): string {
   const choice = model.answers.holdBack[d.id];
   const choices = HOLD_CHOICES.map((v) => bracket(HOLD_LABEL[v], choice === v)).join('  ');
-  const custom = choice === 'custom' ? 'custom (kept)  ' : '';
+  const custom = choice === 'custom' ? 'custom  ' : '';
   return `${d.label}  ${custom}${choices}`;
 }
 
@@ -310,11 +316,11 @@ function listBits(model: TuiModel, which: 'prose' | 'seatsSecond', title: string
   if (Array.isArray(cur)) for (const x of cur) labels.add(x);
   const out: Block[] = [{ kind: 'note', text: title }];
   if (cur === 'skipped') {
-    out.push({ kind: 'note', text: 'Skipped. Nothing is written.' });
+    out.push({ kind: 'note', text: 'Skipped, so nothing changes.' });
     out.push({ kind: 'item', item: { id: `${prefix}-clear`, text: 'Choose models' } });
     return out;
   }
-  if (cur === null) out.push({ kind: 'note', text: 'Not set. Nothing is written until you choose.' });
+  if (cur === null) out.push({ kind: 'note', text: 'Not chosen yet. Nothing changes until you pick models or choose Skip.' });
   for (const label of [...labels].sort()) {
     const on = Array.isArray(cur) && cur.includes(label);
     out.push({ kind: 'item', item: { id: `${prefix}:${label}`, text: `${on ? '[x]' : '[ ]'} ${label}` } });
@@ -335,7 +341,7 @@ function payOptions(model: TuiModel): Array<[string, string]> {
 
 function addBlocks(model: TuiModel): Block[] {
   const f = model.add;
-  if (!f) return [{ kind: 'item', item: { id: 'add-open', text: 'Add an API' } }];
+  if (!f) return [{ kind: 'item', item: { id: 'add-open', text: 'Add an API service' } }];
   const fields = providerFields(f.kind);
   const out: Block[] = [{ kind: 'note', text: 'Add provider' }];
   const kind = f.kind;
@@ -384,7 +390,7 @@ function blocks(model: TuiModel): Block[] {
     out.push({ kind: 'note', text: found.length ? `Augur found these signed in on this computer: ${found.join(', ')}.` : 'Augur found no subscription signed in on this computer.' });
     out.push({ kind: 'item', item: { id: 'detect', text: 'Check again' } });
   } else if (model.step === 'providers') {
-    if (!model.answers.detected.length) out.push({ kind: 'note', text: 'Nothing was found yet. Add one below, or check again on the first step.' });
+    if (!model.answers.detected.length) out.push({ kind: 'note', text: 'No subscription was found. Add an API service below, or go back to the first step and choose Check again.' });
     for (const d of model.answers.detected) {
       out.push({ kind: 'item', item: { id: `confirm:${d.id}`, text: `${d.confirmed ? '[x]' : '[ ]'} ${d.label}  ${d.hasWindow ? 'Has a usage window' : 'No usage window'}` } });
     }
@@ -403,14 +409,14 @@ function blocks(model: TuiModel): Block[] {
     for (const d of paced) {
       out.push({ kind: 'item', item: { id: `hold:${d.id}`, text: holdLine(model, d) } });
       const choice = model.answers.holdBack[d.id];
-      const text = choice && choice !== 'custom' ? HOLD_BACK[choice].text : choice === 'custom' ? 'custom (kept)' : '';
+      const text = choice && choice !== 'custom' ? HOLD_BACK[choice].text : choice === 'custom' ? CUSTOM_HOLD : '';
       if (text) out.push({ kind: 'note', text });
     }
     out.push({ kind: 'note', text: 'Order of use' });
     const labelOf = new Map(model.answers.detected.map((d) => [d.id, d.label]));
     if (!model.answers.rank.length) {
       out.push({ kind: 'note', text: model.plan.rankWords });
-      if (paced.length >= 2) out.push({ kind: 'item', item: { id: 'rank-fill', text: 'Set this order' } });
+      if (paced.length >= 2) out.push({ kind: 'item', item: { id: 'rank-fill', text: 'Rank the subscriptions' } });
     }
     model.answers.rank.forEach((id, i) => {
       out.push({ kind: 'item', item: { id: `rank:${id}`, text: `Rank ${i + 1}  ${labelOf.get(id) ?? id}` } });
@@ -425,27 +431,27 @@ function blocks(model: TuiModel): Block[] {
     }
     const amount = model.typing?.id === 'amount' ? model.typing.value : pay?.amount == null ? '' : String(pay.amount);
     out.push({ kind: 'item', item: { id: 'amount', text: `Monthly amount  ${amount || '(none)'}` } });
-    out.push({ kind: 'note', text: 'Dollars per month. Pick no backup spending, or name the providers and an amount.' });
+    out.push({ kind: 'note', text: 'Dollars per month. Choose No backup spending, or select the providers to use and enter an amount.' });
   } else if (model.step === 'review') {
     out.push({ kind: 'note', text: 'What each model is good at' });
     const models = modelsOf(model.current);
-    if (!models.length) out.push({ kind: 'note', text: 'No models are in the rules yet. Add an API service on the providers step, or apply with none.' });
+    if (!models.length) out.push({ kind: 'note', text: 'No models are in the rules yet. Add an API service on the Providers and keys step, or apply without any.' });
     for (const m of models) out.push({ kind: 'item', item: { id: `strength:${m.label}`, text: strengthLine(model, m.label) } });
-    out.push({ kind: 'note', text: 'Not sure writes nothing. The model stays as it is.' });
+    out.push({ kind: 'note', text: 'Not sure leaves a model as it is.' });
     out.push(...listBits(model, 'prose', 'Writes the best prose', 'prose'));
     out.push(...listBits(model, 'seatsSecond', 'Gives a second opinion', 'second'));
     for (const p of problems(model.plan)) out.push({ kind: 'note', text: p });
     if (model.apply?.ran.length || model.apply?.failed) {
-      for (const id of model.apply?.ran ?? []) out.push({ kind: 'note', text: `${changeLabel(model.plan, id)} written.` });
-      if (model.apply?.failed) out.push({ kind: 'note', text: `${changeLabel(model.plan, model.apply.failed.id)} did not write. ${model.apply.failed.error}` });
+      for (const id of model.apply?.ran ?? []) out.push({ kind: 'note', text: `${changeLabel(model.plan, id)} saved.` });
+      if (model.apply?.failed) out.push({ kind: 'note', text: model.apply.failed.id ? `Could not save ${changeLabel(model.plan, model.apply.failed.id)}: ${model.apply.failed.error}` : model.apply.failed.error });
     }
     out.push(...summaryBlocks(model));
     const n = applySteps(model.plan).length;
     const disabled = !isValid(model.plan) || model.busy;
-    out.push({ kind: 'item', item: { id: 'apply', text: disabled ? `Apply ${n} changes  disabled` : `Apply ${n} changes`, disabled } });
+    out.push({ kind: 'item', item: { id: 'apply', text: disabled ? `Apply ${changeCount(n)}  disabled` : `Apply ${changeCount(n)}`, disabled } });
   } else {
     const done = afterApply(model.plan);
-    out.push({ kind: 'note', text: 'Test a route' });
+    out.push({ kind: 'note', text: 'Test your routes' });
     if (!done.routesToTest.length) out.push({ kind: 'note', text: 'No route has a key yet.' });
     for (const name of done.routesToTest) {
       const note = model.routeNotes[name] ?? '';
@@ -458,7 +464,7 @@ function blocks(model: TuiModel): Block[] {
     for (const label of done.unreviewed) out.push({ kind: 'item', item: { id: `rules:${providerOf.get(label) ?? ''}:${label}`, text: `Open rules  ${label}` } });
     out.push({ kind: 'note', text: 'What happens next' });
     for (const line of done.next) out.push({ kind: 'note', text: line });
-    out.push({ kind: 'item', item: { id: 'close', text: 'Done' } });
+    out.push({ kind: 'item', item: { id: 'close', text: 'Finish setup' } });
   }
   out.push(...skipItem(model));
   return out;
@@ -503,7 +509,7 @@ function stepColumn(model: TuiModel): string[] {
     lines.push(`${prefix} ${mark} ${s.title}`);
     lines.push(`    ${stepNote(model, s.id)}`);
   });
-  lines.push('A step you leave alone writes nothing.');
+  lines.push('A step you leave alone changes nothing.');
   return lines;
 }
 
@@ -831,7 +837,7 @@ export class SetupPage implements Page {
   }
 
   hints(): Hint[] {
-    return [['Up/Down', 'Move'], ['Enter', 'Pick'], ['Tab', 'Step'], ['1-5', 'Jump'], ['u/d', 'Rank'], ['Esc', 'Back']];
+    return [['Up/Down', 'Move'], ['Enter', 'Choose'], ['Tab', 'Next step'], ['1-5', 'Step'], ['u/d', 'Reorder'], ['Esc', 'Back']];
   }
 
   private async runEffect(ctx: Ctx, effect: SetupEffect): Promise<void> {
@@ -878,7 +884,7 @@ export class SetupPage implements Page {
     // Skip writes nothing. A finished first run clears that flag, so the next launch does not ask again.
     if (next.apply?.complete && ctx.state.firstRun) {
       try { await ctx.link.run('finishSetup', structuredClone(ctx.state.config)); }
-      catch (e) { ctx.flash((e as Error).message || 'Setup did not finish.', true); }
+      catch (e) { ctx.flash((e as Error).message || 'Could not finish setup, so it opens again at the next launch.', true); }
     }
     ctx.redraw();
   }
@@ -888,7 +894,7 @@ export class SetupPage implements Page {
     const form = model?.add;
     if (!model || !form || model.adding) return;
     const got = planOfForm(form, new Set(model.current.routes.map((r) => r.name)));
-    if ('problems' in got) { this.model = { ...model, addError: got.problems[0] ?? 'That provider is not ready.' }; return; }
+    if ('problems' in got) { this.model = { ...model, addError: got.problems[0] ?? 'That provider is not ready to add. Fill in the fields it still needs.' }; return; }
     this.model = { ...model, adding: true, addError: '' };
     ctx.redraw();
     try {
@@ -913,7 +919,7 @@ export class SetupPage implements Page {
       for (const m of modelsOf(current)) if (!prev.has(m.label) && strengths[m.label] === undefined) strengths[m.label] = 'unsure';
       this.model = refresh({ ...added, current, answers: { ...added.answers, strengths }, add: null, adding: false, addError: '' });
     } catch (e) {
-      if (this.model) this.model = { ...this.model, adding: false, addError: (e as Error).message || 'That provider was not added.' };
+      if (this.model) this.model = { ...this.model, adding: false, addError: (e as Error).message || 'Could not add that provider.' };
     }
     ctx.redraw();
   }

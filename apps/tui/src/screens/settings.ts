@@ -103,7 +103,7 @@ export class SettingsPage implements Page {
     if (!ctx.state.firstRun) {
       out.push({
         kind: 'action', id: 'setup-again', label: 'Run setup again', button: 'Open',
-        desc: 'Opens setup filled in from the current setup. A step you leave alone writes nothing.',
+        desc: 'Opens setup with your current settings filled in. A step you leave alone changes nothing.',
         run: () => { ctx.openPage('Setup'); },
       });
     }
