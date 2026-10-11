@@ -98,7 +98,7 @@ export class Supervisor {
   }
 
   /** Rejections that may pass, or that another route can get around. Only these send a job to a fallback route. */
-  private static readonly FAILOVER = new Set(['budget_exhausted', 'model_paused', 'pace_denied', 'quota_denied', 'adapter_unavailable']);
+  private static readonly FAILOVER = new Set(['budget_exhausted', 'model_paused', 'pace_denied', 'quota_denied', 'adapter_unavailable', 'prompt_too_large']);
 
   /** What a route has used in its budget window and whether a new job would be refused; null when the route has no budget. */
   budget(name: string, route: RouteConfig): BudgetStatus | null {
@@ -174,6 +174,12 @@ export class Supervisor {
     }
     let prompt: string;
     try { prompt = req.prompt.text ?? readFileSync(req.prompt.file as string, 'utf8'); } catch { return reject('bad_request', 'The prompt file could not be read.'); }
+    // A route can name the largest prompt it takes. A bigger job is refused here and, when the route has a fallback, goes on to it: a prompt is never cut to fit.
+    const maxInput = route.options?.maxInput;
+    if (typeof maxInput === 'number' && prompt.length > maxInput) {
+      this.d.store.event(null, 'policy_evaluated', `rejected prompt_too_large: ${req.route}`, this.now());
+      return reject('prompt_too_large', `The prompt is ${prompt.length} characters and route ${req.route} takes at most ${maxInput}.`);
+    }
     const id = randomBytes(6).toString('hex'), dir = this.jobDir(id);
     const workspace = adapter.isolation ? join(adapter.isolation.root(route), 'jobs', id) : null;
     // The charter is prefixed before the adapter plans, so every transport receives it. The stored prompt length stays the caller's text.

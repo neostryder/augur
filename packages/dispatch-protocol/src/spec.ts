@@ -40,6 +40,8 @@ export interface JobRequest {
   packs?: string[];
   /** Send the prompt with no charter. */
   noCharter?: boolean;
+  /** The job is wanted now. A route to a local gateway sends its normal priority class instead of the low one background work gets. */
+  urgent?: boolean;
   /** A named conversation to open or resume. It stays on the route that opened it. This is not the caller's own session. */
   conversation?: string;
 }

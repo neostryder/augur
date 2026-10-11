@@ -9,6 +9,7 @@ export * from './alerts.js';
 export * from './config.js';
 export * from './providers/index.js';
 export * from './fleet.js';
+export * from './net.js';
 export * from './changelog.js';
 export * from './policy.js';
 export * from './policy-import.js';

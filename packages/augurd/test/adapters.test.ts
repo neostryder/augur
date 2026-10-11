@@ -254,6 +254,56 @@ describe('an API connector', () => {
     expect('rejected' in local ? local.rejected.reason : '').not.toContain('https://');
   });
 
+  it('allows plain http to a machine on the home network, and still refuses a public name', () => {
+    const e = setup({ adapters: ['openai-api'] }, { ...process.env, AUGUR_TEST_API_KEY: 'k' });
+    const refused = (baseUrl: string) => {
+      e.writeRoutes({ chat: { model: 'test/text', adapter: 'openai-api', options: { baseUrl, model: 'x', apiKeyEnv: 'AUGUR_TEST_API_KEY' } } });
+      const r = e.sup.submit({ ...textReq('chat'), cwd: e.root });
+      return 'rejected' in r ? r.rejected.reason : '';
+    };
+    expect(refused('http://eru:8470/v1')).not.toContain('https://');
+    expect(refused('http://192.168.1.20:8470/v1')).not.toContain('https://');
+    expect(refused('http://cogitator.example.com/v1')).toContain('https://');
+  });
+
+  it('sends the extra headers and the priority class, and refuses a credential header', async () => {
+    const m = await mock(() => ({ json: { choices: [{ message: { content: 'ok' } }] } }));
+    const e = setup({ adapters: ['openai-api'] }, { ...process.env, AUGUR_TEST_API_KEY: 'k' });
+    const route = (options: Record<string, unknown>) => e.writeRoutes({ chat: { model: 'test/text', adapter: 'openai-api', options: { baseUrl: m.url, model: 'x', apiKeyEnv: 'AUGUR_TEST_API_KEY', ...options } } });
+    route({ requestClass: 'cogitator', headersJson: JSON.stringify({ 'x-team': 'home' }) });
+    const background = submitOk(e.sup, { ...textReq('chat'), cwd: e.root });
+    await terminal(e.sup, e.store, background);
+    const typed = submitOk(e.sup, { ...textReq('chat'), cwd: e.root, caller: { kind: 'cli', interactive: true } });
+    await terminal(e.sup, e.store, typed);
+    const urgent = submitOk(e.sup, { ...textReq('chat'), cwd: e.root, urgent: true });
+    await terminal(e.sup, e.store, urgent);
+    expect(m.seen.map(r => r.headers['x-cogitator-class'])).toEqual(['low', 'normal', 'normal']);
+    expect(m.seen.every(r => r.headers['x-team'] === 'home')).toBe(true);
+    route({ headersJson: JSON.stringify({ Authorization: 'Bearer x' }) });
+    expect(e.sup.submit({ ...textReq('chat'), cwd: e.root })).toMatchObject({ rejected: { reason: expect.stringContaining('key store') } });
+    route({ requestClass: 'other' });
+    expect(e.sup.submit({ ...textReq('chat'), cwd: e.root })).toMatchObject({ rejected: { reason: expect.stringContaining('requestClass') } });
+  });
+
+  it('refuses a prompt over maxInput without cutting it, and sends the job on to the fallback route', async () => {
+    const m = await mock(() => ({ json: { choices: [{ message: { content: 'served by fallback' } }] } }));
+    const e = setup({ adapters: ['openai-api'] }, { ...process.env, AUGUR_TEST_API_KEY: 'k' });
+    const options = { baseUrl: m.url, model: 'x', apiKeyEnv: 'AUGUR_TEST_API_KEY' };
+    e.writeRoutes({ small: { model: 'test/text', adapter: 'openai-api', fallback: ['big'], options: { ...options, maxInput: 100 } }, big: { model: 'test/text', adapter: 'openai-api', options } });
+    const fits = submitOk(e.sup, { ...textReq('small', 'short'), cwd: e.root });
+    await terminal(e.sup, e.store, fits);
+    expect(m.seen).toHaveLength(1);
+    const long = 'x'.repeat(500);
+    const id = submitOk(e.sup, { ...textReq('small', long), cwd: e.root });
+    expect(e.store.get(id)?.route).toBe('big');
+    await terminal(e.sup, e.store, id);
+    expect(m.seen[1]!.body).toMatchObject({ messages: [{ role: 'user', content: expect.stringContaining(long) }] });
+    e.writeRoutes({ small: { model: 'test/text', adapter: 'openai-api', options: { ...options, maxInput: 100 } } });
+    expect(e.sup.submit({ ...textReq('small', long), cwd: e.root })).toMatchObject({ rejected: { code: 'prompt_too_large', reason: expect.stringContaining('at most 100') } });
+    e.writeRoutes({ small: { model: 'test/text', adapter: 'openai-api', options: { ...options, maxInput: 0 } } });
+    expect(e.sup.submit({ ...textReq('small', long), cwd: e.root })).toMatchObject({ rejected: { reason: expect.stringContaining('maxInput') } });
+  });
+
   it('fails the job with the HTTP status when the API refuses, and never for a job that asks for tools', async () => {
     const m = await mock(() => ({ status: 401, json: { error: 'bad key' } }));
     const e = setup({ adapters: ['openai-api'] }, { ...process.env, AUGUR_TEST_API_KEY: 'nope' });

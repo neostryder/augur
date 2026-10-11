@@ -1,19 +1,16 @@
 import type { ProviderPlugin } from '../types.js';
 import { HttpError, json } from '../util.js';
 import { readFleet } from '../fleet.js';
+import { keyMayGoTo } from '../net.js';
 
 export const DEFAULT_BASE = 'http://127.0.0.1:8470';
 
-/** The address the key is sent to. A key only goes over https, or over http to a machine on the home network (a name without dots, a private address or .local), never across the internet in the clear. */
+/** The address the key is sent to. A key only goes over https, or over http to a machine on the home network. */
 export function baseOf(settings: Record<string, unknown>): string {
   const raw = typeof settings.baseUrl === 'string' ? settings.baseUrl.trim().replace(/\/+$/, '') : '';
   if (!raw) return DEFAULT_BASE;
-  const m = raw.match(/^(https?):\/\/(\[[^\]]+\]|[^/:\s]+)(:\d+)?(\/.*)?$/);
-  if (!m) throw new Error('Invalid base URL: it must start with http:// or https://.');
-  const host = m[2]!.toLowerCase();
-  const home = host === 'localhost' || host === '[::1]' || !host.includes('.') || host.endsWith('.local') || host.endsWith('.lan') || host.endsWith('.home.arpa') ||
-    /^(127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host);
-  if (m[1] === 'http' && !home) throw new Error('Invalid base URL: a key only goes over https, or over http to a machine on the home network.');
+  if (!/^https?:\/\//.test(raw)) throw new Error('Invalid base URL: it must start with http:// or https://.');
+  if (!keyMayGoTo(raw)) throw new Error('Invalid base URL: a key only goes over https, or over http to a machine on the home network.');
   return raw;
 }
 

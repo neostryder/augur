@@ -19,7 +19,10 @@
     "read_images": "everyday",
     "generate_images": "everyday",
     "generate_video": "everyday",
-    "speech": "everyday"
+    "speech": "everyday",
+    "embed": "everyday",
+    "transcribe": "everyday",
+    "translate": "everyday"
   },
   "tiers": {
     "claude/live": "strong",

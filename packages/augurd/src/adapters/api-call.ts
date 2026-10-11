@@ -13,6 +13,7 @@ const opt = (name: string): string | undefined => { const i = args.indexOf(name)
 const shape = opt('--shape'), url = opt('--url'), model = opt('--model'), keyEnv = opt('--key-env');
 // --key-target is the Windows credential name that jobs queued before --key-name carried; it is read the same way.
 const keyName = opt('--key-name') ?? opt('--key-target')?.replace(/\.augur$/, ''), keyFile = opt('--key-file'), fileOnly = args.includes('--key-file-only');
+const extraHeaders = opt('--headers-json');
 const maxTokens = Number(opt('--max-tokens') ?? '4096'), timeoutS = Number(opt('--timeout-s') ?? '900');
 if (!shape || !url || !model || (!keyEnv && !keyName)) { console.error('missing --shape, --url, --model or --key-env'); process.exit(64); }
 
@@ -49,6 +50,7 @@ const endpoint = anthropic ? `${url.replace(/\/+$/, '')}/v1/messages` : `${url.r
 const headers: Record<string, string> = anthropic
   ? { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }
   : { authorization: `Bearer ${key}`, 'content-type': 'application/json' };
+if (extraHeaders) { try { for (const [k, v] of Object.entries(JSON.parse(extraHeaders) as Record<string, unknown>)) if (typeof v === 'string') headers[k] = v; } catch { console.error('the headers option is not JSON'); process.exit(64); } }
 const body = anthropic
   ? { model, max_tokens: maxTokens, messages: [{ role: 'user', content: promptText }] }
   : { model, messages: [{ role: 'user', content: promptText }], ...(maxTokens > 0 ? { max_tokens: maxTokens } : {}) };

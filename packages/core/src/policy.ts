@@ -4,7 +4,7 @@
 import { obj } from './util.js';
 
 export const ACTIVITIES = ['write_code', 'review_code', 'research', 'reason_critique', 'draft_prose', 'summarize_extract', 'long_context',
-  'bulk_tagging', 'typed_decisions', 'read_images', 'generate_images', 'generate_video', 'speech'] as const;
+  'bulk_tagging', 'typed_decisions', 'read_images', 'generate_images', 'generate_video', 'speech', 'embed', 'transcribe', 'translate'] as const;
 export type ActivityId = typeof ACTIVITIES[number];
 
 export const ACTIVITY_LABELS: Record<ActivityId, string> = {
@@ -12,6 +12,7 @@ export const ACTIVITY_LABELS: Record<ActivityId, string> = {
   draft_prose: 'Draft prose', summarize_extract: 'Summarize and extract', long_context: 'Long-context reading',
   bulk_tagging: 'Bulk tagging', typed_decisions: 'Typed decisions', read_images: 'Read images',
   generate_images: 'Generate images', generate_video: 'Generate video', speech: 'Speech',
+  embed: 'Embed text', transcribe: 'Transcribe audio', translate: 'Translate',
 };
 
 export const WEIGHT_LEVELS = ['last_resort', 'occasional', 'normal', 'often', 'preferred'] as const;

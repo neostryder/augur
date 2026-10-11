@@ -159,12 +159,15 @@ Sends one prompt to a chat completions endpoint and returns the text. No tools a
 
 | Option | Value | What it does |
 | --- | --- | --- |
-| `baseUrl` (required) | text | The API address up to and including /v1. It must start with https://, or http:// for localhost. |
+| `baseUrl` (required) | text | The API address up to and including /v1. It must start with https://, or http:// for this computer or a machine on the home network. |
 | `model` (required) | text | The model id the endpoint expects. |
 | `keySource` | env, store | Pick env to read the key from an environment variable you name, or store to keep it in this computer's key store. A stored key is saved on the Routes page or with `augur key set <route>`. |
 | `apiKeyEnv` (required) | text | The name of the environment variable that holds the API key, when Key kept in is set to env. The key itself is never stored in a route. |
 | `maxTokens` | number | Most tokens the answer may use. Defaults to 4096. |
 | `timeoutS` | number | Defaults to 900. |
+| `headersJson` | json | A JSON object of request headers sent with every call. Credentials do not belong here; keep keys in the key store. |
+| `requestClass` | none, cogitator | none sends nothing. cogitator sends x-cogitator-class with every call: low for background jobs, normal for a person typing at a terminal or a job marked urgent. |
+| `maxInput` | number | The most characters of prompt the route takes. A bigger job is refused and goes to the route fallback, and is never cut. Leave empty for no limit. |
 
 #### `anthropic-api`: Anthropic-style API
 
@@ -172,12 +175,15 @@ Sends one prompt to a messages endpoint and returns the text. No tools and no fi
 
 | Option | Value | What it does |
 | --- | --- | --- |
-| `baseUrl` (required) | text | The API address. It must start with https://, or http:// for localhost. |
+| `baseUrl` (required) | text | The API address. It must start with https://, or http:// for this computer or a machine on the home network. |
 | `model` (required) | text | The model id the endpoint expects. |
 | `keySource` | env, store | Pick env to read the key from an environment variable you name, or store to keep it in this computer's key store. A stored key is saved on the Routes page or with `augur key set <route>`. |
 | `apiKeyEnv` (required) | text | The name of the environment variable that holds the API key, when Key kept in is set to env. The key itself is never stored in a route. |
 | `maxTokens` | number | Most tokens the answer may use. Defaults to 4096. |
 | `timeoutS` | number | Defaults to 900. |
+| `headersJson` | json | A JSON object of request headers sent with every call. Credentials do not belong here; keep keys in the key store. |
+| `requestClass` | none, cogitator | none sends nothing. cogitator sends x-cogitator-class with every call: low for background jobs, normal for a person typing at a terminal or a job marked urgent. |
+| `maxInput` | number | The most characters of prompt the route takes. A bigger job is refused and goes to the route fallback, and is never cut. Leave empty for no limit. |
 
 #### `exec`: Any command
 

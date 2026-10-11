@@ -1,5 +1,6 @@
 import type { Adapter, AdapterCapabilities, ExtractInput, Extraction, JobRequest, LaunchPlan, PlanContext, RouteConfig, UsageReport } from '@augur/dispatch-protocol';
 import { routeSecretName } from '@augur/dispatch-protocol';
+import { keyMayGoTo } from '@augur/core';
 import { scriptPath } from '../paths.js';
 import { keyFileOnly, keyFilePath } from '../secrets.js';
 import { optNum, optStr } from './util.js';
@@ -9,28 +10,56 @@ const CAPS: AdapterCapabilities = { permissionRequests: false, sessions: false, 
 
 /**
  * A bare model over HTTP: one prompt in, one text answer out, no tools and no files. It runs as a job like any other, so it can be timed out and cancelled.
- * Route options: `baseUrl`, `model`, `keySource` (`env`, the default, or `store`), `apiKeyEnv` (the environment variable that holds the key, for `env`), `maxTokens`, `timeoutS`.
+ * Route options: `baseUrl`, `model`, `keySource` (`env`, the default, or `store`), `apiKeyEnv` (the environment variable that holds the key, for `env`), `maxTokens`, `timeoutS`,
+ * `headersJson` (extra request headers, never secrets), `requestClass` (`cogitator` sends the job's priority class, `none` or nothing sends none) and `maxInput` (the largest prompt, in characters, the supervisor accepts).
  */
+/** Names a route may not set as a plain header: they carry credentials, and a credential belongs in the key store. */
+const SECRET_HEADERS = /^(authorization|proxy-authorization|x-api-key|api-key|cookie|set-cookie)$/i;
+
+/** Null when `text` is a JSON object of header names to plain string values with no credential header. */
+export function headerProblem(text: string): string | null {
+  let v: unknown;
+  try { v = JSON.parse(text); } catch { return 'headersJson must be a JSON object'; }
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return 'headersJson must be a JSON object';
+  for (const [k, val] of Object.entries(v)) {
+    if (!/^[A-Za-z0-9-]+$/.test(k) || typeof val !== 'string' || /[\r\n]/.test(val)) return `headersJson header ${k} must have a plain text value`;
+    if (SECRET_HEADERS.test(k)) return `headersJson cannot set ${k}. Keep keys in the key store.`;
+  }
+  return null;
+}
+
+/** The priority class a job sends to Cogitator: normal for a person typing at a terminal or an urgent job, low for everything else, so background work never pushes a loaded model out. */
+export function requestClass(request: JobRequest): 'low' | 'normal' {
+  return request.urgent === true || (request.caller.kind === 'cli' && request.caller.interactive === true) ? 'normal' : 'low';
+}
+
 function make(id: string, shape: 'openai' | 'anthropic'): Adapter {
   return {
     id, transport: 'api', capabilities: CAPS, envAllow: [],
     validate(route: RouteConfig) {
       if (!optStr(route.options, 'baseUrl')) return 'route option baseUrl is required';
       const base = optStr(route.options, 'baseUrl') as string;
-      if (!/^https:\/\//.test(base) && !/^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/.test(base)) return 'baseUrl must start with https://, or with http:// for localhost only, since the key is sent with every request';
+      if (!keyMayGoTo(base)) return 'baseUrl must start with https://, or with http:// for this computer or a machine on the home network only, since the key is sent with every request';
       if (!optStr(route.options, 'model')) return 'route option model is required';
       const source = optStr(route.options, 'keySource') ?? 'env';
       if (source !== 'env' && source !== 'store') return 'keySource must be env or store';
       if (source === 'env' && !optStr(route.options, 'apiKeyEnv')) return 'route option apiKeyEnv (the environment variable that holds the key) is required';
+      const headers = optStr(route.options, 'headersJson');
+      if (headers !== undefined) { const bad = headerProblem(headers); if (bad) return bad; }
+      const cls = optStr(route.options, 'requestClass');
+      if (cls !== undefined && cls !== 'cogitator' && cls !== 'none') return 'requestClass must be cogitator or none, or left out';
+      const max = route.options?.maxInput;
+      if (max !== undefined && !(typeof max === 'number' && Number.isInteger(max) && max > 0)) return 'maxInput must be a whole number of characters above zero';
       return null;
     },
     plan(request: JobRequest, route: RouteConfig, ctx: PlanContext): LaunchPlan {
       if (request.tools !== 'read' || request.output !== 'text_only') throw new Error('an API route returns text only. Use tools read and output text_only.');
-      const o = route.options;
+      const o = route.options, headers = { ...(optStr(o, 'requestClass') === 'cogitator' ? { 'x-cogitator-class': requestClass(request) } : {}), ...JSON.parse(optStr(o, 'headersJson') ?? '{}') as Record<string, string> };
       const args = [SCRIPT, '--shape', shape, '--url', optStr(o, 'baseUrl') as string, '--model', optStr(o, 'model') as string,
         ...(optStr(o, 'keySource') === 'store'
           ? ['--key-name', routeSecretName(request.route), '--key-file', keyFilePath(), ...(keyFileOnly() ? ['--key-file-only'] : [])]
           : ['--key-env', optStr(o, 'apiKeyEnv') as string]),
+        ...(headers ? ['--headers-json', JSON.stringify(headers)] : []),
         '--max-tokens', String(optNum(o, 'maxTokens') ?? 4096), '--timeout-s', String(optNum(o, 'timeoutS') ?? request.timeoutS ?? 900)];
       return { command: process.execPath, args, cwd: request.cwd, env: {}, stdin: ctx.prompt };
     },

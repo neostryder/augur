@@ -25,6 +25,9 @@ export const ACTIVITY_TEXT: Record<ActivityId, string> = {
   generate_images: 'Creating or editing images.',
   generate_video: 'Creating video.',
   speech: 'Transcribing or generating speech audio.',
+  embed: 'Turning text into embedding vectors for search or comparison.',
+  transcribe: 'Turning a recording of speech into text.',
+  translate: 'Translating text from one language to another.',
 };
 
 export const DATA_TEXT: Record<DataTier, string> = {
