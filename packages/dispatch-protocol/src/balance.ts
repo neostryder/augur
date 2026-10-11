@@ -2,7 +2,7 @@
 // `rank()` multiplies the tilt into the score it already computes, so the weights, pauses, ask-first, data tiers and the usage factor all still apply.
 import { ACTIVITIES } from '@augur/core';
 import type { ActivityId, PolicyFile } from '@augur/core';
-import { BOOST, PACE, ageMinutes, pressure } from './pace.js';
+import { BOOST, PACE, ageMinutes, freshLimits, pressure } from './pace.js';
 import type { UsageSnapshot } from './pace.js';
 
 /** Deep work is hard reasoning, serious coding and long chains. Everyday work is review, research, summaries and bulk work. */
@@ -310,14 +310,14 @@ const paceMeter = (m: { id?: string; usedPct?: number | null; windowKind?: strin
 
 /**
  * One provider's session (5-hour) and weekly windows. The stricter track wins: hot if either is hot, behind only when every known track is behind.
- * Figures older than `PACE.ignoreMin` are ignored. With an entry but no usable track the stance is unknown. With no entry the provider is on pace.
+ * Figures older than `freshLimits(...).ignoreMin` (2 hours, or 1.5 times the provider's refresh interval when that is longer) are ignored. With an entry but no usable track the stance is unknown. With no entry the provider is on pace.
  */
 export function paceState(usage: UsageSnapshot | null, rules: BalanceRules, provider: string, now: Date): PaceState {
   const pace = paceOf(rules, provider);
   const p = usage?.providers[provider];
   const tracks: PaceTrack[] = [];
   let peak: number | null = null;
-  if (p && ageMinutes(p, now) <= PACE.ignoreMin) {
+  if (p && ageMinutes(p, now) <= freshLimits(p).ignoreMin) {
     for (const m of p.meters ?? []) {
       // A provider marks only the window that is limiting right now as active, but the week is the pace marker even while the 5-hour window is the active one, so inactive windows count here.
       if (!paceMeter(m)) continue;
@@ -349,7 +349,7 @@ export function pacedProviders(usage: UsageSnapshot | null, rules: BalanceRules,
   const ids: string[] = [];
   for (const [id, entry] of Object.entries(usage.providers)) {
     if (id === steered) { ids.push(id); continue; }
-    if (ageMinutes(entry, now) > PACE.ignoreMin) continue;
+    if (ageMinutes(entry, now) > freshLimits(entry).ignoreMin) continue;
     if ((entry.meters ?? []).some(paceMeter)) ids.push(id);
   }
   return ids;
@@ -374,7 +374,7 @@ export function boostFor(state: PaceState, usage: UsageSnapshot | null, rules: B
   if (state.stance === 'hot' || state.atReserve) return one;
   const entry = usage?.providers[state.provider];
   // Figures older than the pace window are ignored, the same cutoff paceState uses.
-  if (!entry || ageMinutes(entry, now) > PACE.ignoreMin) return one;
+  if (!entry || ageMinutes(entry, now) > freshLimits(entry).ignoreMin) return one;
   const meters = (entry.meters ?? []).filter(paceMeter);
   if (!meters.length) return one;
   let limit = meters[0] as (typeof meters)[number];

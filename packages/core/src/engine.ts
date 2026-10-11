@@ -48,14 +48,14 @@ export async function collect(host: Host, config: AppConfig, previous?: Snapshot
     try {
       const result = await plugin.fetch(host, row.settings, { force: options.force === true });
       const item: ProviderSnapshot = { ...result, id: plugin.id, name: plugin.name, ok: true, stale: false,
-        fetchedAt: (host.now?.() ?? new Date()).toISOString(), attemptedAt, error: null, links: plugin.links, status };
+        fetchedAt: (host.now?.() ?? new Date()).toISOString(), attemptedAt, error: null, links: plugin.links, status, refreshSeconds: refreshInterval(config, plugin) };
       return [row.id, item] as const;
     } catch (error) {
       const old = previous?.providers[row.id];
       const carried = old?.fetchedAt ? { ...old, id: plugin.id, name: plugin.name, ok: false, stale: true, attemptedAt,
-        error: userError(error), links: plugin.links, status: status ?? old.status } :
+        error: userError(error), links: plugin.links, status: status ?? old.status, refreshSeconds: refreshInterval(config, plugin) } :
         { id: plugin.id, name: plugin.name, ok: false, stale: false, fetchedAt: null, attemptedAt, error: userError(error), links: plugin.links,
-          status, plan: null, meters: [], money: [], notes: {} };
+          status, plan: null, meters: [], money: [], notes: {}, refreshSeconds: refreshInterval(config, plugin) };
       return [row.id, carried as ProviderSnapshot] as const;
     }
   }));

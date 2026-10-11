@@ -58,6 +58,8 @@ export interface ProviderSnapshot extends ProviderResult {
   fetchedAt: string | null;
   /** When the last read was tried, successful or not. */
   attemptedAt?: string | null;
+  /** How often the provider is read, in seconds. A router weighs a figure by this cadence, so a provider read weekly on purpose is not dropped as stale. */
+  refreshSeconds?: number;
   error: string | null;
   links?: ProviderLinks;
   status?: ProviderStatus | null;

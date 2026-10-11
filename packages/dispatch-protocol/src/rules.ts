@@ -2,7 +2,7 @@
 import { DATA_TIERS, pauseActive } from '@augur/core';
 import type { PolicyFile, ResolvedModel } from '@augur/core';
 import type { AdapterCapabilities, RouteConfig } from './adapter.js';
-import { PACE, factorModels, isWindowMeter, ageMinutes, leastUsed, pressure, usageFactors } from './pace.js';
+import { PACE, factorModels, isWindowMeter, ageMinutes, freshLimits, leastUsed, pressure, usageFactors } from './pace.js';
 import type { UsageSnapshot } from './pace.js';
 import type { JobRequest, Rejection } from './spec.js';
 
@@ -24,9 +24,9 @@ interface QuotaProblem { code: 'quota_denied' | 'pace_denied'; reason: string }
 function checkQuota(policy: PolicyFile, provider: string, label: string, snap: UsageSnapshot | null, now: Date, overridden: boolean, warnings: string[]): QuotaProblem | null {
   const p = policy.providers[provider], usage = snap?.providers[provider];
   if (!p || !usage) return null;
-  const { warnPct, denyPct, minBalance } = p.thresholds, age = ageMinutes(usage, now), fresh = age <= PACE.ignoreMin;
+  const { warnPct, denyPct, minBalance } = p.thresholds, age = ageMinutes(usage, now), limits = freshLimits(usage), fresh = age <= limits.ignoreMin;
   const others = leastUsed(policy, snap, provider), where = others.length ? ` Route it to another engine: ${others.join('; ')}.` : '';
-  if (age > PACE.staleMin || usage.stale) warnings.push(`${p.name} usage is ${usage.stale ? 'from a failed refresh' : `${Math.round(age)} min old`}.`);
+  if (age > limits.staleMin || usage.stale) warnings.push(`${p.name} usage is ${usage.stale ? 'from a failed refresh' : `${Math.round(age)} min old`}.`);
   const meters = (usage.meters ?? []).filter(isWindowMeter);
   let flagged = false;
   for (const m of meters) {

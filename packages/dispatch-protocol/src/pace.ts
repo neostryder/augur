@@ -16,6 +16,8 @@ export interface UsageProvider {
   money?: Array<{ id: string; amount: number; currency?: string }>;
   stale?: boolean;
   fetchedAt?: string | null;
+  /** How often the provider is read, in seconds. A provider read less often than `PACE.ignoreMin` keeps its figures longer. */
+  refreshSeconds?: number | null;
   /** Limit resets in hand are read from `resets_available`, the count a provider such as Codex reports. */
   notes?: { resets_available?: number | null };
   /** The provider's public status page. */
@@ -34,6 +36,10 @@ export const PACE = {
   ignoreMin: 120,
   /** Figures older than this are flagged. */
   staleMin: 20,
+  /** A provider read less often than the limits above is flagged at this many refresh intervals old... */
+  staleFactor: 1.25,
+  /** ...and ignored at this many. */
+  ignoreFactor: 1.5,
   /** A pay-as-you-go balance this far above its minimum counts as full headroom. */
   fullBalanceUsd: 5,
   /** A route whose usage factor falls below this is flagged, and below `deny` it is refused. */
@@ -62,6 +68,12 @@ export interface Headroom { headroom: number; why: string; metered: boolean; spe
 export const isWindowMeter = (m: UsageMeter): boolean =>
   typeof m.usedPct === 'number' && m.active !== false && (m.windowKind === undefined || m.windowKind === 'session' || m.windowKind === 'weekly');
 
+/** The age, in minutes, past which a provider's figures are flagged and past which they are ignored. A provider read weekly keeps its figures for 1.5 weeks. */
+export function freshLimits(p: UsageProvider | undefined): { staleMin: number; ignoreMin: number } {
+  const every = typeof p?.refreshSeconds === 'number' && p.refreshSeconds > 0 ? p.refreshSeconds / 60 : 0;
+  return { staleMin: Math.max(PACE.staleMin, every * PACE.staleFactor), ignoreMin: Math.max(PACE.ignoreMin, every * PACE.ignoreFactor) };
+}
+
 export function ageMinutes(p: UsageProvider | undefined, now: Date): number {
   const t = p?.fetchedAt ? Date.parse(p.fetchedAt) : NaN;
   return Number.isFinite(t) ? Math.max(0, (now.getTime() - t) / 60000) : 0;
@@ -84,7 +96,7 @@ export function providerHeadroom(usage: UsageProvider | undefined, th: { denyPct
   if (!usage) return { headroom: 1, why: 'no Augur data', metered: false };
   const resets = resetsInHand(usage), extra: Partial<Headroom> = { ...(resets ? { resets } : {}), ...(providerDown(usage) ? { down: true } : {}) };
   const age = ageMinutes(usage, now);
-  if (age > PACE.ignoreMin) return { headroom: 1, why: `figures ${Math.floor(age)} min old, not weighed`, metered: true, ...extra };
+  if (age > freshLimits(usage).ignoreMin) return { headroom: 1, why: `figures ${Math.floor(age)} min old, not weighed`, metered: true, ...extra };
   let best: Headroom = { headroom: 1, why: drain ? 'to be spent in full before the models that wait on it' : 'plenty left', metered: true, ...extra };
   const meters = (usage.meters ?? []).filter(isWindowMeter);
   for (const m of meters) {

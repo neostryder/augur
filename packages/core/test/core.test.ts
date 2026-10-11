@@ -184,6 +184,8 @@ describe('engine, pace, history and alerts', () => {
     const forced = await collect(fakeHost(() => ({})), config, snapshot, [plugin], { force: true });
     expect(calls).toBe(1);
     expect(forced.providers.sample?.meters[0]?.usedPct).toBe(70);
+    // The snapshot records how often the provider is read, so a router can tell a weekly read from a missed one.
+    expect(forced.providers.sample?.refreshSeconds).toBe(3600);
     const old = { ...snapshot, providers: { sample: { ...snapshot.providers.sample!, fetchedAt: new Date(at.getTime() - 7200_000).toISOString() } } };
     await collect(fakeHost(() => ({})), { ...config, providers: [{ ...config.providers[0]!, refreshSeconds: 1800 }] }, old, [plugin]);
     expect(calls).toBe(2);
