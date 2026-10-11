@@ -140,16 +140,14 @@ describe('settings page', () => {
     expect(none.draw(100, 200)).not.toContain('Start at login');
   });
 
-  it('shows first-run setup with the providers and a start button', async () => {
+  it('shows the full settings on a first run, and Run setup again after that', () => {
     const s = state();
     s.firstRun = true;
-    const { app, page, calls, draw } = settings({}, s);
-    const text = draw(100, 60);
-    expect(text).toContain('Set up Augur');
-    expect(text).not.toContain('Appearance');
-    page.form.focus = 'finish';
-    await app.key(k('enter'));
-    expect(calls.map(([m]) => m)).toContain('finishSetup');
+    const first = settings({}, s).draw(100, 200);
+    expect(first).not.toContain('Start tracking');
+    expect(first).not.toContain('Run setup again');
+    expect(first).toContain('Appearance');
+    expect(settings().draw(100, 200)).toContain('Run setup again');
   });
 
   it('switches the theme with the arrow keys', async () => {

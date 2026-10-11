@@ -5,7 +5,7 @@ import { ALERT_KINDS, HOSTED, allPlugins, type AppConfig, type Outlet, type Prov
 import { box, center, drawQr, inset, qrEncode, spans, wrap, type Key, type Rect, type Screen } from '@augur/terminal';
 import {
   ALERT_TEXT, CLAUDE_TEXT, COMPUTER_TEXT, CUSTOM_EXAMPLE, CUSTOM_TEXT, KIND_LABELS, PHONE_TEXT, PROVIDER_TEXT, REFRESH_CHOICES,
-  STARTER_RULES_TEXT, parseCustom, parsePercents, refreshDefault,
+  parseCustom, parsePercents, refreshDefault,
 } from '@augur/view-model';
 import { editText, editorCommand, type EditorDeps } from '../editor.js';
 import { Form, type Row } from '../form.js';
@@ -29,9 +29,6 @@ export interface SettingsDeps {
 
 export const SETTINGS_TEXT = {
   heading: 'Settings',
-  setup: 'Set up Augur',
-  setupDesc: 'Turn on what you want to track. You can change this any time.',
-  start: 'Start tracking',
   signIn: 'Signing in needs the window app on this computer. Until then, the readings that need it are left off.',
   appearance: 'Appearance',
   theme: 'Theme',
@@ -102,14 +99,14 @@ export class SettingsPage implements Page {
   rows(ctx: Ctx): Row[] {
     const config = ctx.state.config;
     const out: Row[] = [];
-    if (ctx.state.firstRun) {
-      out.push({ kind: 'heading', text: SETTINGS_TEXT.setup }, { kind: 'note', text: SETTINGS_TEXT.setupDesc });
-      out.push(...this.providers(ctx));
-      out.push({ kind: 'note', text: STARTER_RULES_TEXT });
-      out.push({ kind: 'action', id: 'finish', label: '', button: SETTINGS_TEXT.start, run: () => this.act(ctx, 'finishSetup', [structuredClone(config)]).then(() => {}) });
-      return out;
-    }
     out.push(...this.providers(ctx));
+    if (!ctx.state.firstRun) {
+      out.push({
+        kind: 'action', id: 'setup-again', label: 'Run setup again', button: 'Open',
+        desc: 'Opens setup filled in from the current setup. A step you leave alone writes nothing.',
+        run: () => { ctx.openPage('Setup'); },
+      });
+    }
     out.push({ kind: 'heading', text: SETTINGS_TEXT.appearance });
     out.push({ kind: 'choice', id: 'theme', label: SETTINGS_TEXT.theme, desc: SETTINGS_TEXT.themeDesc, value: config.layout.theme, options: THEMES,
       set: (v) => this.save(ctx, (c) => { c.layout.theme = v as AppConfig['layout']['theme']; }) });

@@ -8,8 +8,8 @@ import { columnChart, sparkline, UsagePage } from '../src/screens/usage.js';
 describe('frame', () => {
   it('shows the tabs, the alert count and the footer hints', () => {
     const { draw } = setup();
-    const text = draw();
-    expect(text.split('\n')[0]).toMatch(/Augur +1 Usage +2 Alerts \(2\) +3 Rules +4 Dispatch +5 Balance +6 Settings +Updated 3m ago/);
+    const text = draw(140);
+    expect(text.split('\n')[0]).toMatch(/Augur +1 Usage +2 Alerts \(2\) +3 Rules +4 Dispatch +5 Balance +6 Settings +7 Setup +Updated 3m ago/);
     expect(text.split('\n').at(-1)).toMatch(/Enter 7-day chart .* \? Help +q Quit/);
   });
 

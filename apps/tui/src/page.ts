@@ -20,6 +20,8 @@ export interface Ctx {
   pause<T>(fn: () => T | Promise<T>): Promise<T>;
   /** Puts text on the clipboard, where the terminal allows it. */
   copy(text: string): void;
+  /** Opens a page by its name. Setup fills itself from the current setup when opened this way. */
+  openPage(name: string): void;
 }
 
 /** A key and what it does, for the footer and the help page. */
@@ -37,6 +39,8 @@ export interface Page {
   typing?(): boolean;
   /** Reads what the page shows from the service, for a page whose data is not part of the engine state. Called every couple of seconds while the page is open. */
   refresh?(ctx: Ctx): Promise<void>;
+  /** Rebuilds the page from the current setup. Used when Settings opens the interview again. */
+  reopen?(ctx: Ctx): void;
 }
 
 /** A panel drawn over the page, such as help or a chart. Escape closes it unless its key handler takes Escape itself. */

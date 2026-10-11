@@ -18,10 +18,14 @@ export interface TuiOptions {
   now?: () => number;
 }
 
-const GLOBAL: Hint[] = [['1-5', 'Switch page'], ['Tab', 'Next page'], ['r', 'Refresh'], ['?', 'Help'], ['q', 'Quit']];
+function everywhere(pageCount: number): Hint[] {
+  return [[`1-${Math.min(9, pageCount)}`, 'Switch page'], ['Tab', 'Next page'], ['r', 'Refresh'], ['?', 'Help'], ['q', 'Quit']];
+}
 
 export class TuiApp implements App {
   active = 0;
+  /** A new install opens the interview on the first frame. A page already chosen before that frame stays put. */
+  private adopted = false;
   private overlays: Overlay[] = [];
   private flashText = '';
   private flashBad = false;
@@ -44,6 +48,7 @@ export class TuiApp implements App {
       open: (url) => { void this.o.open(url).then((ok) => this.flash(ok ? `Opened ${url}` : `No browser to open it in. The address is ${url}`, !ok)); },
       pause: (fn) => (this.o.pause ? this.o.pause(fn) : Promise.resolve().then(fn)),
       copy: (text) => this.o.copy?.(text),
+      openPage: (name) => this.openPage(name),
       run: async (method, ...args) => {
         try { return await this.o.link.run(method, ...args); }
         catch (e) { this.flash((e as Error).message || 'That did not work.', true); return undefined; }
@@ -61,6 +66,18 @@ export class TuiApp implements App {
 
   get page(): Page { return this.o.pages[this.active]!; }
 
+  /** Opens a page by name. Setup rebuilds from the current setup, so a re-run starts filled in. */
+  openPage(name: string): void {
+    const at = this.o.pages.findIndex((p) => p.name === name);
+    if (at < 0) return;
+    this.active = at;
+    const ctx = this.ctx();
+    const page = this.o.pages[at];
+    if (ctx && name === 'Setup') page?.reopen?.(ctx);
+    void this.poll();
+    this.o.redraw();
+  }
+
   /** Lets the open page read its own data from the service. Pages guard against overlapping reads themselves. */
   async poll(): Promise<void> {
     const ctx = this.ctx();
@@ -69,6 +86,13 @@ export class TuiApp implements App {
 
   draw(screen: Screen): void {
     const ctx = this.ctx();
+    if (ctx && !this.adopted) {
+      this.adopted = true;
+      if (ctx.state.firstRun && this.active === 0) {
+        const at = this.o.pages.findIndex((p) => p.name === 'Setup');
+        if (at >= 0) this.active = at;
+      }
+    }
     const full: Rect = { x: 0, y: 0, w: screen.width, h: screen.height };
     if (screen.width < 30 || screen.height < 8) { spans(screen, 0, 0, screen.width, 'Make the terminal larger to use Augur.'); return; }
     const body: Rect = { x: 0, y: 2, w: full.w, h: full.h - 3 };
@@ -133,7 +157,7 @@ export class TuiApp implements App {
       case 'tab': this.active = (this.active + 1) % this.o.pages.length; void this.poll(); return true;
       case 'shift+tab': this.active = (this.active + this.o.pages.length - 1) % this.o.pages.length; void this.poll(); return true;
       case 'r': void ctx.run('refresh', true); return true;
-      case '?': this.overlays.push(helpOverlay(this.page.hints(ctx))); return true;
+      case '?': this.overlays.push(helpOverlay(this.page.hints(ctx), this.o.pages.length)); return true;
       case 'q': return 'quit';
     }
     return false;
@@ -141,10 +165,10 @@ export class TuiApp implements App {
 }
 
 /** The help panel: the current page's keys, then the ones that work everywhere. */
-export function helpOverlay(pageHints: Hint[]): Overlay {
+export function helpOverlay(pageHints: Hint[], pageCount: number): Overlay {
   return {
     draw(screen) {
-      const groups: Array<[string, Hint[]]> = [['On this page', pageHints], ['Everywhere', GLOBAL]];
+      const groups: Array<[string, Hint[]]> = [['On this page', pageHints], ['Everywhere', everywhere(pageCount)]];
       const keyW = Math.max(...groups.flatMap(([, h]) => h.map(([k]) => k.length)));
       const lines = groups.flatMap(([title, h], i) => [...(i ? [null] : []), title, ...h.map((x) => x)]);
       const w = Math.min(screen.width - 4, Math.max(40, ...groups.flatMap(([, h]) => h.map(([k, l]) => keyW + l.length + 6))));

@@ -64,6 +64,8 @@ export interface SetupModel {
   profileProblems: string[];
   /** Skip setup is offered only on a new install. */
   firstRun: boolean;
+  /** Steps the person has left. A ready step stays a number until then. */
+  seen: StepId[];
   routeNotes: Record<string, string>;
   testing: string | null;
   busy: boolean;
@@ -124,6 +126,7 @@ export function openSetup(input: SetupOpen): SetupModel {
     profileText: '',
     profileProblems: [],
     firstRun: input.firstRun,
+    seen: [],
     routeNotes: {},
     testing: null,
     busy: false,
@@ -131,7 +134,9 @@ export function openSetup(input: SetupOpen): SetupModel {
 }
 
 export function goStep(model: SetupModel, step: StepId): SetupModel {
-  return SETUP_STEPS.some((s) => s.id === step) ? { ...model, step } : model;
+  if (!SETUP_STEPS.some((s) => s.id === step) || model.step === step) return model;
+  const seen = model.seen.includes(model.step) ? model.seen : [...model.seen, model.step];
+  return { ...model, step, seen };
 }
 
 /** Moves between the four answer steps. Done is reached by Apply, or by the step list. */
@@ -141,7 +146,7 @@ export function shiftStep(model: SetupModel, dir: -1 | 1): SetupModel {
   const at = ids.indexOf(model.step);
   if (at < 0) return model;
   const next = ids[at + dir];
-  return next ? { ...model, step: next } : model;
+  return next ? goStep(model, next) : model;
 }
 
 export function selectStack(model: SetupModel, stack: StackId): SetupModel {
@@ -471,11 +476,18 @@ function summary(plan: SetupPlan): string {
   return `<ul class="setup-sum">${items}</ul>`;
 }
 
+/** A starting stack fills later steps before anyone opens them, and Done stays "Not started" until Apply. Neither gets a tick. */
+function stepTicked(model: SetupModel, plan: SetupPlan, id: StepId): boolean {
+  if (model.step === id || !model.seen.includes(id)) return false;
+  const note = stepNote(model, plan, id);
+  if (note === 'Not started' || note === '0 confirmed') return false;
+  return stepStatus(model.answers, id) === 'ready';
+}
+
 function steps(model: SetupModel, plan: SetupPlan): string {
   const rows = SETUP_STEPS.map((s, i) => {
     const on = model.step === s.id;
-    const ready = stepStatus(model.answers, s.id) === 'ready' && !on;
-    const mark = ready ? `<span class="setup-num done">${TICK}</span>` : `<span class="setup-num${on ? ' now' : ''}">${i + 1}</span>`;
+    const mark = stepTicked(model, plan, s.id) ? `<span class="setup-num done">${TICK}</span>` : `<span class="setup-num${on ? ' now' : ''}">${i + 1}</span>`;
     return `<button type="button" class="setup-step${on ? ' on' : ''}" data-action="setup-step" data-step="${s.id}"${on ? ' aria-current="step"' : ''}>
       ${mark}<span><b>${esc(s.title)}</b><span class="help">${esc(stepNote(model, plan, s.id))}</span></span></button>`;
   }).join('');

@@ -3,10 +3,10 @@ import { defaultConfig, migratePolicy } from '@augur/core';
 import type { PolicyConfig } from '@augur/core';
 import type { UsageSnapshot } from '@augur/dispatch-protocol';
 import { HOLD_BACK, afterApply, answersFromCurrent, applySteps, planSetup } from '@augur/view-model';
-import type { SetupAnswers, SetupCurrent } from '@augur/view-model';
+import type { SetupAnswers, SetupCurrent, StepId } from '@augur/view-model';
 import { renderSettings, type SettingsModel } from '../src/views/settings';
 import {
-  goStep, initialView, loadProfile, moveRank, openSetup, renderSetup, runApply, selectStack, setHold, setPayAmount, togglePayProvider,
+  goStep, initialView, loadProfile, moveRank, openSetup, renderSetup, runApply, selectStack, setHold, setListAnswer, setPayAmount, togglePayProvider,
 } from '../src/views/setup';
 import type { SetupTrack } from '../src/views/setup';
 
@@ -186,6 +186,45 @@ describe('the done screen', () => {
     expect(html).toContain('data-action="setup-rules"');
     expect(html).toContain('data-provider="claude"');
     for (const line of afterApply(model.plan).next) expect(html).toContain(line);
+  });
+});
+
+const stepButton = (html: string, id: string): string => html.match(new RegExp(`data-step="${id}"[\\s\\S]*?<\\/button>`))?.[0] ?? '';
+
+describe('step marks', () => {
+  const fresh = () => openSetup({ firstRun: true, current: blank, tracks: [track('claude', 'Claude')], routes: new Set() });
+
+  it('shows a number until the step has been left with something set', () => {
+    const html = renderSetup(fresh());
+    expect(html).not.toContain('setup-num done');
+    expect(stepButton(html, 'providers')).toContain('class="setup-num">2</span>');
+    expect(stepButton(html, 'providers')).toContain('1 confirmed');
+    expect(stepButton(html, 'done')).toContain('In progress');
+    expect(stepButton(html, 'done')).toContain('class="setup-num">5</span>');
+    const back = goStep(goStep(fresh(), 'providers'), 'stack');
+    const visited = renderSetup(back);
+    expect(stepButton(visited, 'providers')).toContain('setup-num done');
+    expect(stepButton(visited, 'providers')).toContain('1 confirmed');
+    expect(stepButton(visited, 'stack')).toContain('setup-num now');
+    expect(stepButton(visited, 'stack')).not.toContain('setup-num done');
+  });
+
+  it('keeps the number when the note is 0 confirmed or Not started', () => {
+    const opened = fresh();
+    const empty: typeof opened = {
+      ...opened,
+      step: 'stack',
+      seen: ['providers'],
+      answers: { ...opened.answers, detected: [], added: ['openai'] },
+    };
+    const none = renderSetup(empty);
+    expect(stepButton(none, 'providers')).toContain('0 confirmed');
+    expect(stepButton(none, 'providers')).not.toContain('setup-num done');
+    let done = setListAnswer(setListAnswer(fresh(), 'prose', 'skipped'), 'seatsSecond', 'skipped');
+    done = { ...done, step: 'stack', seen: ['done'] as StepId[] };
+    const html = renderSetup(done);
+    expect(stepButton(html, 'done')).toContain('Not started');
+    expect(stepButton(html, 'done')).not.toContain('setup-num done');
   });
 });
 

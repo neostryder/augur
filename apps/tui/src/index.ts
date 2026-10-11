@@ -10,6 +10,7 @@ import { BalancePage } from './screens/balance.js';
 import { DispatchPage, type DispatchDeps } from './screens/dispatch.js';
 import { RulesPage } from './screens/rules.js';
 import { SettingsPage, type LoginControl } from './screens/settings.js';
+import { SetupPage } from './screens/setup.js';
 import { UsagePage } from './screens/usage.js';
 
 export { TuiApp } from './app.js';
@@ -34,8 +35,11 @@ export interface RunOptions {
 }
 
 export function pages(o: Pick<RunOptions, 'login' | 'env' | 'platform' | 'dispatch' | 'updateAdvice'> = {}): Page[] {
-  const settings = new SettingsPage({ platform: o.platform ?? process.platform, env: o.env ?? process.env, ...(o.login ? { login: o.login } : {}), ...(o.updateAdvice ? { updateAdvice: o.updateAdvice } : {}) });
-  return [new UsagePage(), new AlertsPage(), new RulesPage(), new DispatchPage({ env: o.env ?? process.env, ...o.dispatch }), new BalancePage(), settings];
+  const env = o.env ?? process.env;
+  const rules = new RulesPage();
+  const settings = new SettingsPage({ platform: o.platform ?? process.platform, env, ...(o.login ? { login: o.login } : {}), ...(o.updateAdvice ? { updateAdvice: o.updateAdvice } : {}) });
+  const setup = new SetupPage({ env, rules });
+  return [new UsagePage(), new AlertsPage(), rules, new DispatchPage({ env, ...o.dispatch }), new BalancePage(), settings, setup];
 }
 
 /** Runs the app until the person quits. Resolves once the terminal is back as it was. */
