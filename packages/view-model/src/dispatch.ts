@@ -1,6 +1,6 @@
 // The wording and small rules the Dispatch pages share: how a job's state, tools and output are named, how long a job took, and what the
 // service's modes and task classifiers mean. The window app and the terminal app show these as they are.
-import type { JobRecord, JobState } from '@augur/dispatch-protocol';
+import type { JobRecord, JobState, Served } from '@augur/dispatch-protocol';
 
 export const STATE_LABELS: Record<JobState, string> = {
   queued: 'Queued', needs_approval: 'Needs approval', running: 'Running', cancel_requested: 'Cancelling', completed: 'Done', failed: 'Failed',
@@ -20,6 +20,14 @@ export function duration(job: JobRecord, now = Date.now()): string {
   if (!job.startedAt) return '';
   const s = Math.max(0, Math.round(((job.endedAt ?? now) - job.startedAt) / 1000));
   return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+}
+
+/** Where a gateway served a job, as one phrase: the machine, and the link of the chain when it was not the first. Empty when the job carries nothing. */
+export function servedText(served: Served | undefined): string {
+  if (!served || (!served.host && !served.model && served.chainPosition === undefined)) return '';
+  const where = served.host ?? served.model ?? 'the gateway';
+  const link = served.chainPosition !== undefined && served.chainPosition > 0 ? `, link ${served.chainPosition + 1}` : '';
+  return `${where}${link}${served.degraded ? ', a fallback' : ''}`;
 }
 
 export const MODE_TEXT = {

@@ -537,6 +537,7 @@ export class Supervisor {
       const x = adapter.extract({ stdout: this.tail(stdoutPath, 4 * 1024 * 1024), stdoutPath, stderr, exitCode: res.exitCode, jobDir: dir, workspace: rec.workspace });
       answer = x.answer?.trim() ? x.answer : null; failure = x.failure; sessionId = x.sessionId?.trim() ? x.sessionId.trim() : null;
       if (answer) { writeFileSync(join(dir, 'answer.txt'), answer); store.setChars(rec.id, { answer: answer.length }); }
+      if (x.served && Object.keys(x.served).length) store.setServed(rec.id, x.served);
       if (x.usage) { store.setUsage(rec.id, x.usage); store.event(rec.id, 'usage_recorded', `${x.usage.inputTokens} in, ${x.usage.outputTokens} out`, at); }
     }
     const patch = { endedAt: res.endedAt, exitCode: res.exitCode };

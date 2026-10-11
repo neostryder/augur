@@ -61,6 +61,9 @@ export interface UsageReport {
   source: 'reported';
 }
 
+/** What a gateway reports about a request it served. Every field is optional; a gateway sends what it knows. `chainPosition` counts from 0, the first link. */
+export interface Served { host?: string; model?: string; chainPosition?: number; degraded?: boolean }
+
 export interface JobRecord {
   id: string;
   state: JobState;
@@ -98,6 +101,8 @@ export interface JobRecord {
   conversation?: string;
   /** This job's turn in that conversation, starting at 1. */
   turn?: number;
+  /** Where a gateway says it served the job: the machine, the model, and which link of the chain. Absent for a route with no gateway, and on rows from before this field. */
+  served?: Served;
   /** The failed job this one replaced. Absent when the job is not a retry, and on rows from before retries. */
   retryOf?: string;
   /** The job submitted to replace this one. Absent when this job was not retried. */

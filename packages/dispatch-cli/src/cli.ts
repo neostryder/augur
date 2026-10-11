@@ -8,7 +8,7 @@ import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES, feedFor } from '@augur/core';
 import type { ActivityId, DataTier, EngineState, OutputMode, ProviderAdded } from '@augur/core';
 import { EXIT_CODES, TOOL_TIERS, describeFigure, exitCodeForState, isTerminal, renderReport, seatLines } from '@augur/dispatch-protocol';
 import type { Conversation, JobRecord, JobRequest, ToolTier } from '@augur/dispatch-protocol';
-import { STATUS_TEXT, statusLine } from '@augur/view-model';
+import { STATUS_TEXT, duration, servedText, statusLine } from '@augur/view-model';
 import { bridge, stdioBridge } from './bridge.js';
 import { SERVICE_VERSION, ServiceError, call, configLines, dataDir, disableLogin, enableLogin, loginState, setConfigValue, startViaLogin } from '@augur/augurd';
 import { subagentHook } from './claude-hook.js';
@@ -89,7 +89,7 @@ export function parse(argv: string[]): Parsed {
 }
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
-const describe = (j: JobRecord) => `${j.id}  ${j.state.padEnd(26)} ${j.route.padEnd(12)} ${new Date(j.createdAt).toISOString().slice(0, 19)}Z${j.reason ? '  ' + j.reason : ''}`;
+const describe = (j: JobRecord) => `${j.id}  ${j.state.padEnd(26)} ${j.route.padEnd(12)} ${new Date(j.createdAt).toISOString().slice(0, 19)}Z${servedText(j.served) ? `  on ${servedText(j.served)}` : ''}${j.startedAt && j.endedAt ? `  ${duration(j)}` : ''}${j.reason ? '  ' + j.reason : ''}`;
 
 export async function main(argv: string[], io: Io): Promise<number> {
   let p: Parsed;

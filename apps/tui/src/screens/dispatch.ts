@@ -10,7 +10,7 @@ import { ADAPTER_INFO, adapterInfo, describeFigure, routeSecretName } from '@aug
 import type { Accounted, JobRecord } from '@augur/dispatch-protocol';
 import { inset, tabs, type Key, type Rect, type Screen } from '@augur/terminal';
 import {
-  APPROVAL_LEVELS, APPROVAL_TEXT, CLASSIFIER_TEXT, DISPATCH_TEXT, JOB_OUTPUT_LABELS, MODE_TEXT, STATE_LABELS, TOOL_LABELS, ago, checkDraft, draftOf, duration, emptyDraft, isBad, isLive,
+  APPROVAL_LEVELS, APPROVAL_TEXT, CLASSIFIER_TEXT, DISPATCH_TEXT, JOB_OUTPUT_LABELS, MODE_TEXT, STATE_LABELS, TOOL_LABELS, ago, checkDraft, draftOf, duration, emptyDraft, isBad, isLive, servedText,
   parseRoutesText, writeRoute, type RouteDraft, type RoutesFile,
   PROVIDER_CHOICES, PROVIDER_FORM_TEXT, applyProvider, emptyProviderForm, planOfForm, planRows, providerFields, routeEntryText, type ProviderFormState,
 } from '@augur/view-model';
@@ -266,6 +266,7 @@ export class DispatchPage implements Page {
     ] });
     rows.push(fact('Activity', ACTIVITY_LABELS[j.activity] ?? j.activity), fact('Data', DATA_TIER_LABELS[j.dataTier] ?? j.dataTier), fact('Tools', TOOL_LABELS[j.tools] ?? j.tools),
       fact('Output', JOB_OUTPUT_LABELS[j.output] ?? j.output), fact('Adapter', j.adapter), fact('Started by', j.caller.label ?? j.caller.kind), fact('Folder', j.cwd));
+    if (servedText(j.served)) rows.push(fact('Served by', servedText(j.served)));
     if (j.startedAt) rows.push(fact('Took', duration(j, ctx.now)));
     if (j.exitCode !== null) rows.push(fact('Exit code', String(j.exitCode)));
     if (usage) rows.push(fact('Tokens', usage));

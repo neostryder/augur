@@ -1,7 +1,7 @@
 import { ACTIVITY_LABELS, DATA_TIER_LABELS } from '@augur/core';
 import { describeFigure } from '@augur/dispatch-protocol';
 import type { Accounted, JobRecord, JobState } from '@augur/dispatch-protocol';
-import { JOB_OUTPUT_LABELS, STATE_LABELS, TOOL_LABELS, duration, isBad, isLive } from '@augur/view-model';
+import { JOB_OUTPUT_LABELS, STATE_LABELS, TOOL_LABELS, duration, isBad, isLive, servedText } from '@augur/view-model';
 import { ICON, ago, esc } from '../util';
 
 export interface JobsModel {
@@ -62,7 +62,7 @@ function detail(m: JobsModel): string {
     <div class="jfields">${field('Activity', ACTIVITY_LABELS[j.activity] ?? j.activity)}${field('Data', DATA_TIER_LABELS[j.dataTier] ?? j.dataTier)}
       ${field('Tools', TOOL_LABELS[j.tools] ?? j.tools)}${field('Output', JOB_OUTPUT_LABELS[j.output] ?? j.output)}${field('Adapter', j.adapter)}
       ${field('Started by', j.caller.label ?? j.caller.kind)}${field('Folder', j.cwd, true)}
-      ${j.startedAt ? field('Took', duration(j)) : ''}${j.exitCode !== null ? field('Exit code', String(j.exitCode)) : ''}${usage ? field('Tokens', usage, true) : ''}${cost ? field('Cost', cost) : ''}
+      ${j.served ? field('Served by', servedText(j.served)) : ''}${j.startedAt ? field('Took', duration(j)) : ''}${j.exitCode !== null ? field('Exit code', String(j.exitCode)) : ''}${usage ? field('Tokens', usage, true) : ''}${cost ? field('Cost', cost) : ''}
       ${j.patch ? field('Patch', `${j.patch.files} ${j.patch.files === 1 ? 'file' : 'files'}, apply with augur apply ${j.id}`) : ''}</div>
     ${block('Result', d.result)}${block('Output', d.stdout)}${block('Errors', d.stderr)}</div>`;
 }

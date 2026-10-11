@@ -3,7 +3,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { canTransition, isTerminal, statesBefore } from '@augur/dispatch-protocol';
-import type { Conversation, JobEvent, JobRecord, JobState, PickRecord, PromptRecord, UsageReport } from '@augur/dispatch-protocol';
+import type { Conversation, JobEvent, JobRecord, JobState, PickRecord, PromptRecord, Served, UsageReport } from '@augur/dispatch-protocol';
 
 interface Row {
   id: string; state: string; route: string; adapter: string; activity: string; data_tier: string; tools: string; output: string; cwd: string;
@@ -12,12 +12,17 @@ interface Row {
   usage: string | null; runner_pid: number | null; child_pid: number | null; expect_file: string | null; timeout_s: number | null;
   purged: number; workspace: string | null; patch_path: string | null; changed_files: number | null; prompt_chars: number | null; answer_chars: number | null;
   charter: string | null; charter_chars: number | null; charter_notes: string | null; ambient: string | null;
-  retry_of: string | null; retried_as: string | null; conversation: string | null; conversation_turn: number | null;
+  retry_of: string | null; retried_as: string | null; conversation: string | null; conversation_turn: number | null; served: string | null;
 }
 
 const stringList = (text: string | null): string[] | undefined => {
   if (!text) return undefined;
   try { const v = JSON.parse(text) as unknown; return Array.isArray(v) && v.every(x => typeof x === 'string') ? v : undefined; } catch { return undefined; }
+};
+
+const servedOf = (text: string | null): Served | undefined => {
+  if (!text) return undefined;
+  try { const v = JSON.parse(text) as unknown; return typeof v === 'object' && v !== null && !Array.isArray(v) ? v as Served : undefined; } catch { return undefined; }
 };
 
 const toRecord = (r: Row): JobRecord => {
@@ -29,7 +34,7 @@ const toRecord = (r: Row): JobRecord => {
     named: r.named === 1, harnessVersion: r.harness_version, usage: r.usage ? JSON.parse(r.usage) as UsageReport : null,
     promptChars: r.prompt_chars, answerChars: r.answer_chars,
     ...(charter ? { charter } : {}), ...(r.charter_chars != null ? { charterChars: r.charter_chars } : {}), ...(charterNotes?.length ? { charterNotes } : {}),
-    ...(r.ambient === 'keep' || r.ambient === 'trim' ? { ambient: r.ambient } : {}),
+    ...(r.ambient === 'keep' || r.ambient === 'trim' ? { ambient: r.ambient } : {}), ...(servedOf(r.served) ? { served: servedOf(r.served) as Served } : {}),
     ...(r.retry_of ? { retryOf: r.retry_of } : {}), ...(r.retried_as ? { retriedAs: r.retried_as } : {}),
     ...(r.conversation ? { conversation: r.conversation, ...(typeof r.conversation_turn === 'number' ? { turn: r.conversation_turn } : {}) } : {}),
     workspace: r.workspace, patch: r.patch_path ? { path: r.patch_path, files: r.changed_files ?? 0 } : null,
@@ -75,7 +80,7 @@ export class Store {
         name text not null, route text not null, adapter text not null, native_id text, cwd text not null, tools text not null,
         turns integer not null, created_at integer not null, last_used_at integer not null, primary key (name, route));`);
     const have = new Set((this.db.prepare('pragma table_info(jobs)').all() as Array<{ name: string }>).map(c => c.name));
-    for (const [name, type] of [['workspace', 'text'], ['patch_path', 'text'], ['changed_files', 'integer'], ['prompt_chars', 'integer'], ['answer_chars', 'integer'], ['charter', 'text'], ['charter_chars', 'integer'], ['charter_notes', 'text'], ['ambient', 'text'], ['retry_of', 'text'], ['retried_as', 'text'], ['conversation', 'text'], ['conversation_turn', 'integer']] as const) {
+    for (const [name, type] of [['workspace', 'text'], ['patch_path', 'text'], ['changed_files', 'integer'], ['prompt_chars', 'integer'], ['answer_chars', 'integer'], ['charter', 'text'], ['charter_chars', 'integer'], ['charter_notes', 'text'], ['ambient', 'text'], ['retry_of', 'text'], ['retried_as', 'text'], ['conversation', 'text'], ['conversation_turn', 'integer'], ['served', 'text']] as const) {
       if (!have.has(name)) this.db.exec(`alter table jobs add column ${name} ${type}`);
     }
     const pickCols = new Set((this.db.prepare('pragma table_info(picks)').all() as Array<{ name: string }>).map(c => c.name));
@@ -133,6 +138,7 @@ export class Store {
   setPids(id: string, pids: { runnerPid?: number; childPid?: number }): void {
     this.db.prepare('update jobs set runner_pid=coalesce(?,runner_pid), child_pid=coalesce(?,child_pid) where id=?').run(pids.runnerPid ?? null, pids.childPid ?? null, id);
   }
+  setServed(id: string, served: Served): void { this.db.prepare('update jobs set served=? where id=?').run(JSON.stringify(served), id); }
   setUsage(id: string, usage: UsageReport): void { this.db.prepare('update jobs set usage=? where id=?').run(JSON.stringify(usage), id); }
   setChars(id: string, chars: { prompt?: number; answer?: number }): void {
     this.db.prepare('update jobs set prompt_chars=coalesce(?,prompt_chars), answer_chars=coalesce(?,answer_chars) where id=?').run(chars.prompt ?? null, chars.answer ?? null, id);

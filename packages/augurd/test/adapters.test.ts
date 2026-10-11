@@ -305,6 +305,18 @@ describe('an API connector', () => {
     expect(e.sup.submit({ ...textReq('small', long), cwd: e.root })).toMatchObject({ rejected: { reason: expect.stringContaining('maxInput') } });
   });
 
+  it('records which machine and chain link the gateway says served the job', async () => {
+    const m = await mock(() => ({ json: { choices: [{ message: { content: 'ok' } }] }, headers: { 'x-cogitator-host': 'bilbo', 'x-cogitator-model': 'apple', 'x-cogitator-chain-position': '1', 'x-cogitator-degraded': 'true' } }));
+    const e = setup({ adapters: ['openai-api'] }, { ...process.env, AUGUR_TEST_API_KEY: 'k' });
+    e.writeRoutes({ chat: { model: 'test/text', adapter: 'openai-api', options: { baseUrl: m.url, model: 'x', apiKeyEnv: 'AUGUR_TEST_API_KEY' } } });
+    const id = submitOk(e.sup, { ...textReq('chat'), cwd: e.root });
+    expect(await terminal(e.sup, e.store, id)).toMatchObject({ state: 'completed', served: { host: 'bilbo', model: 'apple', chainPosition: 1, degraded: true } });
+    const plain = await mock(() => ({ json: { choices: [{ message: { content: 'ok' } }] } }));
+    e.writeRoutes({ chat: { model: 'test/text', adapter: 'openai-api', options: { baseUrl: plain.url, model: 'x', apiKeyEnv: 'AUGUR_TEST_API_KEY' } } });
+    const other = submitOk(e.sup, { ...textReq('chat'), cwd: e.root });
+    expect(await terminal(e.sup, e.store, other)).not.toHaveProperty('served');
+  });
+
   describe('with files attached', () => {
     const png = Buffer.from('89504e470d0a1a0a', 'hex');
     const route = (e: Env, url: string, options: Record<string, unknown> = {}) => e.writeRoutes({ chat: { model: 'test/text', adapter: 'openai-api', options: { baseUrl: url, model: 'x', apiKeyEnv: 'AUGUR_TEST_API_KEY', ...options } } });
