@@ -30,6 +30,7 @@ pnpm docs:update   # rewrites the generated tables in docs/configuring.md
 - Task text stays out of the decision log and `labels.jsonl` unless the owner has turned on recording for training. Text about students never leaves the computer for a hosted classifier.
 - The balance only tilts scores. Pauses, ask-first, data tiers and weights apply before it, and a model is never offered for data above the tier its rules allow.
 - An edit that widens what data a model may see waits for the owner to accept it in the app, unless the owner has set the approval level to apply everything. That level is `agentApproval` in `config.json`, and no tool an agent can call reads or changes it.
+- A model added by an agent or by a profile import starts unreviewed and cannot run until the owner confirms it. An agent's route add never carries a key and never changes or removes an existing route.
 - A run needs a pick for the same caller in the last hour, or a model named by its label.
 - Installs that name no profile resolve to the shipped balance defaults, so a change to a default needs a matching change to `packages/dispatch-protocol/test/fixtures/classic-balance.json` and a changelog note.
 

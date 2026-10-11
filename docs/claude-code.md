@@ -31,11 +31,11 @@ Plugin skills take the plugin's name as a prefix, so you run them as `/augur:set
 
 | Skill | What it does |
 | --- | --- |
-| `/augur:setup` | Reads what is configured, asks a few questions and makes the changes through `augur_policy_edit`. It sends you to `augur key set` for any key and runs `augur test` on each route. It never accepts a key in the chat. |
+| `/augur:setup` | Reads what is configured, asks a few questions and makes the changes through `augur_policy_edit`, `augur provider add` and `augur_route_add`. It sends you to `augur key set` for any key and runs `augur test` on each route. It never accepts a key in the chat. |
 | `/augur:pick [task]` | Asks Augur which model should do the task, says why, and offers to run it with `augur_run`. It asks how sensitive the task's data is before it picks. |
 | `/augur:balance` | Summarizes what the balance is doing: each paced provider's stance and boost, where each kind of work goes, Copilot's spend and the latest picks. |
 
-Changes made by the setup skill go through the same edit inbox as any agent's edits. Your approval setting on the Service page decides whether they apply at once or wait in Augur for you, and the skill cannot change that setting.
+Changes made by the setup skill go through the same edit inbox as any agent's edits. Your approval setting on the Service page decides whether they apply at once or wait in Augur for you, and the skill cannot change that setting. At Ask me for everything, a route the skill adds with `augur_route_add` is not written, and you add it in the app instead.
 
 ## The note before a subagent
 

@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 This gets a new Augur install into a working state, and it can be run again later to change one. Augur picks which model should do a piece of work and keeps usage in balance across providers, so the questions below are about that balance and about which routes have a key. No API key is ever typed in the chat. Keys go in with `augur key set` in the person's own terminal.
 
-The window app and the terminal app have the same setup built in as a short interview. It opens on a new install, and Run setup again in Settings brings it back later. This skill reaches the same setup from Claude Code: the questions are asked in the chat, the answers go in through `augur_policy_edit`, a new API goes in with `augur provider add`, and every key is left to `augur key set`. The interview in the apps writes the same edits, so a setup made in one place reads the same in the other. If the person would rather click through it, point them to Setup in either app and stop here.
+The window app and the terminal app have the same setup built in as a short interview. It opens on a new install, and Run setup again in Settings brings it back later. This skill reaches the same setup from Claude Code: the questions are asked in the chat, the answers go in through `augur_policy_edit`, a new API goes in with `augur provider add` and any other new route with `augur_route_add`, and every key is left to `augur key set`. The interview in the apps writes the same edits, so a setup made in one place reads the same in the other. If the person would rather click through it, point them to Setup in either app and stop here.
 
 ## Start with what is already there
 
@@ -33,14 +33,16 @@ A balance change is an `augur_policy_edit` call with `field` set to `balance` an
 
 Whether an edit applies at once or waits in Augur depends on the owner's approval setting. Say which happened. The setting itself cannot be reached from here, so do not try to change it.
 
-A setup from another computer comes in with `augur profile import <file>`. Run it with `--dry-run` first and show the summary it prints.
+A setup from another computer comes in with `augur profile import <file>`. Run it with `--dry-run` first and show the summary it prints. Models the file brings arrive unreviewed with their rules filled in, so tell the person which ones to confirm in Model rules.
 
 ## Routes and keys
 
 A new API that speaks the OpenAI or Anthropic format is one command: `augur provider add openai gpt --model gpt-5`, or `openai-style` or `anthropic-style` with a `--base-url` for one that has no preset. The person can also do it themselves with Add provider on the Routes page, which runs the same checks, shows the plan as they type and takes the key in the form. Run it with `--dry-run` first and show the plan. Then run it with `--no-key`, which adds the route and the model without asking for a key. The model goes into the rules unreviewed, so it can't run until the person has looked at its rules and confirmed it in Augur. Offer to queue the activities and the data tier it should get, and leave the confirming to them.
 
-When a route needs a key, give the person `augur key set <route>` to run in their own terminal, then wait. A key is not accepted in the chat, put on a command line or written to a file. Once the keys are in, run `augur test <route> --wait` for each route and report which ones worked and what the failures said.
+Any other route, such as one for a command-line harness, goes in with `augur_route_add`: a route name, an adapter, a provider id, the adapter's options and, when the model is new, its label and id. Never put a key in the options, since the tool refuses one. The model arrives unreviewed like any other. If the approval setting holds every agent edit, nothing is written, so tell the person to add the route in the app.
+
+When a route needs a key, give the person `augur key set <route>` to run in their own terminal, then wait. The command names the host the key will be sent to, so ask the person to check that address before typing the key. A key is not accepted in the chat, put on a command line or written to a file. Once the keys are in, run `augur test <route> --wait` for each route and report which ones worked and what the failures said.
 
 ## Finish
 
-Close with what changed, what is waiting for approval and what still needs a key. Offer `augur profile export setup.json` so the same setup can move to another computer. The file holds no keys.
+Close with what changed, what is waiting for approval and what still needs a key. Offer `augur profile export setup.json` so the same setup, model rules included, can move to another computer. The file holds no keys.

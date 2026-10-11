@@ -1,6 +1,6 @@
 # The Augur MCP server
 
-`augur-mcp` lets an MCP client, such as Claude Code or Claude Desktop, ask Augur which model should take a piece of work and then run it there. It is a thin layer over the dispatch service. Every tool goes through the same service and the same rules as the `augur` command, so the server cannot run a model the rules do not allow. It can ask for changes to the rules, and the owner's approval setting decides which of those changes wait for the owner to accept them in Augur. At the default level, a change that widens what data a model may see, or that lets a model run, always waits.
+`augur-mcp` lets an MCP client, such as Claude Code or Claude Desktop, ask Augur which model should take a piece of work and then run it there. It is a thin layer over the dispatch service. Every tool goes through the same service and the same rules as the `augur` command, so the server cannot run a model the rules do not allow. It can ask for changes to the rules, and the owner's approval setting decides which of those changes wait for the owner to accept them in Augur. At the default level, a change that widens what data a model may see, or that lets a model run, always waits. It can also add a new route, and any model it adds starts unreviewed, so the route cannot run that model until the owner confirms it.
 
 It needs the dispatch service, which runs whenever the Augur app is open; without the app, `augur service start` starts it, and `augur service enable` starts it at each login. Tools that run a job also need "Also run jobs" turned on in Augur's settings, and the service refuses jobs with `jobs_off` until it is. The server and the service run on Windows, macOS and Linux.
 
@@ -45,6 +45,7 @@ The data tier is required on every run and is never assumed. An agent has to say
 | `augur_cancel` | `id` | Asks a running job to stop. |
 | `augur_pressure` | none | How much room each model has under its provider's plan. |
 | `augur_routes` | none | Each route, its model and adapter, and any reason it cannot run. |
+| `augur_route_add` | `name`, `adapter`, `provider`; optional `options` (strings, numbers and booleans), `model` (`label`, `id` and an optional `name`), `balance_url` and `balance_path` | Whether the route was added, with its name and model label. The text names the host the route's `baseUrl` points to and says that the owner confirms the model in Model rules and sets the key with `augur key set <route>`. A refusal lists every problem and writes nothing. [Adding a route](#adding-a-route) has the rules. |
 | `augur_policy` | none | The full rules from `policy.json`: every model with its status, data tier, weights, pause, data handling, hold rules and notes, each provider's limits, the edits still queued, the ones waiting for the owner, and what became of recent ones. |
 | `augur_policy_edit` | `edits`: a list of `model`, `field`, `value` and an optional `reason` (a limit edit names its `provider` instead of a model; a balance edit has `field` set to `balance` and a `path`) | Each edit with its value before the request, and whether it was queued, is waiting for the owner, or was rejected and why. |
 | `augur_balance` | optional `days` | What the automatic balance is doing. Each provider paced against a usage window has a row with its stance, its windows, its boost and its rough odds. Then come Copilot's spend, how each provider is treated, where each kind of work goes now, and a summary of recent picks. Read only. |
@@ -69,6 +70,18 @@ To edit a balance setting, set `field` to `balance` and give a `path` with one n
 The owner's approval setting, on the window app's Service page and under Service on the terminal app's Dispatch page, decides what waits. `Ask me for risky edits` is the default and holds the edits listed above as waiting for the owner. `Ask me for everything` holds every edit. `Apply everything` holds none, which lets an agent change what data a model may see, though each change is still checked, stamped and recorded in the history. No tool here reads or changes the setting, and an edit that names it is rejected.
 
 `augur_pick_preview` ranks with the edits applied to a copy of `policy.json`, using the current usage, and shows each route's odds, so an agent can see what a change would do before it asks for it. With `include_pending` it also applies the edits that are queued or waiting for the owner. It cannot preview `"inherit"`, since `policy.json` no longer carries the provider's defaults.
+
+## Adding a route
+
+`augur_route_add` writes one new route to `dispatch/routes.json` through the service. The whole request is checked first, and nothing is written if any part fails: the name has to be new and in the usual route-name form, the adapter has to be one the service has, and the provider id has to be valid. An existing route is never changed or removed.
+
+A key is never accepted. An argument or option named like a key (`key`, `apiKey`, `api_key`, `token`, `secret` or `password`) is refused, and so is a value that looks like one, such as a string starting with `sk-`. The owner sets the key afterwards with `augur key set <route>`.
+
+With a `model`, the model goes into the rules unreviewed, so nothing runs it until the owner confirms it in Model rules. A label with no slash is filed as `<provider>/<label>`, and a model already in the rules is left as it is. A `model` takes only a label, an id and a name, and rule fields in it are refused, since the owner sets those in Model rules. Without a `model`, the route points at `<provider>/<name>`, which has to be added to the rules and confirmed before the route can run.
+
+`balance_url` and `balance_path` add a balance reading for a provider Augur does not know yet, read with the route's key sent as a bearer token. The two go together, the URL starts with `https://`, or with `http://` for a service on this computer, and both are refused for a provider that already exists. The reading stays off until the owner sets the key.
+
+The owner's approval setting applies here too. At `Ask me for everything` the add is held: nothing is written, and the owner can add the route in the app. At the other two levels the route is written at once. A route's `baseUrl` decides where its key will be sent, so the result names that host, and `augur key set <route>` shows it again before it asks for the key.
 
 ## Changing the tools
 
