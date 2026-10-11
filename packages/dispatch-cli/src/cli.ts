@@ -34,6 +34,8 @@ augur run <route> --prompt-file <file|-> | --prompt <text> [options]
   --pack <names>     charter packs, comma separated
   --no-charter       send the prompt with no charter
   --conversation <n> open or resume a named conversation (Grok and Codex routes)
+  --attach <file>    send a file with the prompt: text, an image, or audio to transcribe. Repeat for more than one
+  --urgent           the job is wanted now, so a local gateway gives it its normal priority instead of the low one background work gets
   --wait             wait for the job, following any retry, and print its result
 augur jobs [--state <s>] [--root <id>] [--limit <n>]
 augur conversations [--forget <name>]   list named conversations, or forget one
@@ -67,9 +69,10 @@ augur service status | start | stop [--if-idle]     --if-idle stops the service 
 augur service enable | disable    start the service at each login (systemd on Linux, launchd on macOS), or stop that
 Every command takes --json. Exit codes: 0 completed, 1 usage, 2 rejected, 3 needs approval, 4 failed, 5 artifact check failed, 6 cancelled, 7 lost, 124 wait timed out.`;
 
-interface Parsed { cmd: string[]; flags: Map<string, string | true> }
-function parse(argv: string[]): Parsed {
-  const cmd: string[] = [], flags = new Map<string, string | true>(), boolean = new Set(['json', 'wait', 'named', 'follow', 'stderr', 'help', 'if-idle', 'no-failover', 'no-charter', 'waybar', 'all', 'force', 'stdin', 'dry-run', 'no-key', 'best', 'snippet']);
+interface Parsed { cmd: string[]; flags: Map<string, string | true>; /** Values of the flags that may be given more than once, in order. */ repeated: Map<string, string[]> }
+const REPEATABLE = new Set(['attach']);
+export function parse(argv: string[]): Parsed {
+  const cmd: string[] = [], flags = new Map<string, string | true>(), repeated = new Map<string, string[]>(), boolean = new Set(['json', 'wait', 'named', 'follow', 'stderr', 'help', 'if-idle', 'no-failover', 'no-charter', 'urgent', 'waybar', 'all', 'force', 'stdin', 'dry-run', 'no-key', 'best', 'snippet']);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] as string;
     if (a === '-') { cmd.push(a); continue; }
@@ -78,9 +81,11 @@ function parse(argv: string[]): Parsed {
       if (eq >= 0) flags.set(name, a.slice(eq + 1));
       else if (boolean.has(name)) flags.set(name, true);
       else { const v = argv[++i]; if (v === undefined) throw new Error(`--${name} needs a value`); flags.set(name, v); }
+      const last = flags.get(name);
+      if (REPEATABLE.has(name) && typeof last === 'string') repeated.set(name, [...(repeated.get(name) ?? []), last]);
     } else cmd.push(a);
   }
-  return { cmd, flags };
+  return { cmd, flags, repeated };
 }
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
@@ -326,11 +331,13 @@ async function run(rest: string[], p: Parsed, io: Io, opts: Opts, say: (h: strin
   const allow = (opt('allow') ?? '').split(',').map(x => x.trim()).filter(Boolean) as Array<'unpicked' | 'exhausted'>;
   if (allow.some(x => x !== 'unpicked' && x !== 'exhausted')) { io.err('--allow takes unpicked, exhausted, or both.\n'); return EXIT_CODES.usage; }
   const packs = opt('pack')?.split(',').map(s => s.trim()).filter(Boolean);
+  // An attachment path is relative to where the person is standing, so it is made absolute here.
+  const attach = (p.repeated.get('attach') ?? []).map(f => resolve(io.cwd, f));
   const req: JobRequest = {
     route, activity: activity as ActivityId, dataTier: dataTier as DataTier, tools: tools as ToolTier, output: output as OutputMode, cwd: resolve(io.cwd, opt('cwd') ?? '.'),
     prompt: { text: promptText as string },
     ...(opt('expect-file') ? { expectFile: opt('expect-file') as string } : {}), ...(opt('timeout') ? { timeoutS: Number(opt('timeout')) } : {}),
-    ...(p.flags.has('named') ? { named: true } : {}),
+    ...(p.flags.has('named') ? { named: true } : {}), ...(attach.length ? { attach } : {}), ...(p.flags.has('urgent') ? { urgent: true } : {}),
     caller: { kind: parentId ? 'job' : 'cli', ...(parentId ? { label: parentId } : {}), ...(io.env.CLAUDE_CODE_SESSION_ID ? { session: io.env.CLAUDE_CODE_SESSION_ID } : {}), ...(io.interactive ? { interactive: true } : {}) },
     ...(allow.length ? { allow } : {}), ...(p.flags.has('no-failover') ? { failover: false } : {}),
     ...(packs?.length ? { packs } : {}), ...(p.flags.has('no-charter') ? { noCharter: true } : {}), ...(opt('conversation') ? { conversation: opt('conversation') } : {}),

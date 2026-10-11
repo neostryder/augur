@@ -7,9 +7,9 @@ import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES } from '@augur/core';
 import type { PolicyFile } from '@augur/core';
 import { BRIEF_RESULTS, classifyTask, fitScores } from '@augur/decision';
 import type { BriefResult, DecisionBackend } from '@augur/decision';
-import { BUDGET_WINDOW_MS, NAMED_PROMPT_WINDOW, PICK_WINDOW_MIN, TOOL_TIERS, account, balanceReport, budgetStatus, calibrateRoutes, copilotSpend, checkLineage, routeSecretName, checkNamed, checkPick, evaluate, isTerminal, matchNamedModels, pressure, rank, usageFactors } from '@augur/dispatch-protocol';
-import type { Adapter, BalanceReport, BudgetStatus, Conversation, JobRecord, JobRequest, LaunchPlan, PickAnswer, PickParams, RateCard, Rejection, RouteConfig, UsageSnapshot } from '@augur/dispatch-protocol';
-import { MAX_COMMAND_LINE } from './adapters/util.js';
+import { BUDGET_WINDOW_MS, NAMED_PROMPT_WINDOW, PICK_WINDOW_MIN, TOOL_TIERS, account, attachmentKind, balanceReport, budgetStatus, calibrateRoutes, copilotSpend, checkLineage, routeSecretName, checkNamed, checkPick, evaluate, isTerminal, matchNamedModels, pressure, rank, usageFactors } from '@augur/dispatch-protocol';
+import type { Adapter, BalanceReport, BudgetStatus, Conversation, JobRecord, JobRequest, LaunchPlan, PickAnswer, PickParams, RateCard, Rejection, ResolvedAttachment, RouteConfig, UsageSnapshot } from '@augur/dispatch-protocol';
+import { MAX_COMMAND_LINE, optNum } from './adapters/util.js';
 import type { ServiceConfig } from './config.js';
 import { buildEnv } from './env.js';
 import type { Store } from './store.js';
@@ -64,6 +64,10 @@ interface JobFile { command: string; args: string[]; cwd: string; stdin: 'prompt
 /** What systemd-run and systemctl need to reach the user's systemd. A job's own environment leaves these out, so the runner is handed them. */
 export const SCOPE_ENV = ['XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS'] as const;
 
+const MAX_ATTACHMENTS = 16;
+/** A route's size cap for one kind of attachment, in megabytes. */
+const optMb = (route: RouteConfig, key: string, fallback: number): number => optNum(route.options, key) ?? fallback;
+
 export class Supervisor {
   private adopted = new Set<string>();
   private outputSeen = new Set<string>();
@@ -98,7 +102,7 @@ export class Supervisor {
   }
 
   /** Rejections that may pass, or that another route can get around. Only these send a job to a fallback route. */
-  private static readonly FAILOVER = new Set(['budget_exhausted', 'model_paused', 'pace_denied', 'quota_denied', 'adapter_unavailable', 'prompt_too_large']);
+  private static readonly FAILOVER = new Set(['budget_exhausted', 'model_paused', 'pace_denied', 'quota_denied', 'adapter_unavailable', 'prompt_too_large', 'attachment_rejected']);
 
   /** What a route has used in its budget window and whether a new job would be refused; null when the route has no budget. */
   budget(name: string, route: RouteConfig): BudgetStatus | null {
@@ -175,10 +179,12 @@ export class Supervisor {
     let prompt: string;
     try { prompt = req.prompt.text ?? readFileSync(req.prompt.file as string, 'utf8'); } catch { return reject('bad_request', 'The prompt file could not be read.'); }
     // A route can name the largest prompt it takes. A bigger job is refused here and, when the route has a fallback, goes on to it: a prompt is never cut to fit.
-    const maxInput = route.options?.maxInput;
-    if (typeof maxInput === 'number' && prompt.length > maxInput) {
+    const attached = this.attachments(req, route, adapter);
+    if ('rejected' in attached) { this.d.store.event(null, 'policy_evaluated', `rejected ${attached.rejected.code}: ${req.route}`, this.now()); return attached; }
+    const maxInput = route.options?.maxInput, size = prompt.length + attached.items.filter(a => a.kind === 'text').reduce((n, a) => n + a.bytes, 0);
+    if (typeof maxInput === 'number' && size > maxInput) {
       this.d.store.event(null, 'policy_evaluated', `rejected prompt_too_large: ${req.route}`, this.now());
-      return reject('prompt_too_large', `The prompt is ${prompt.length} characters and route ${req.route} takes at most ${maxInput}.`);
+      return reject('prompt_too_large', `The prompt${attached.items.length ? ' and its text files are' : ' is'} ${size} characters and route ${req.route} takes at most ${maxInput}.`);
     }
     const id = randomBytes(6).toString('hex'), dir = this.jobDir(id);
     const workspace = adapter.isolation ? join(adapter.isolation.root(route), 'jobs', id) : null;
@@ -192,7 +198,7 @@ export class Supervisor {
     });
     const sent = charter?.text ? charter.text + prompt : prompt;
     let plan: LaunchPlan;
-    try { plan = adapter.plan(req, route, { jobDir: dir, prompt: sent, workspace, ambient: this.d.config.runner.ambient, ...(conv.resume ? { resume: conv.resume } : {}) }); } catch (e) { return reject('bad_request', `Route ${req.route}: ${(e as Error).message}`); }
+    try { plan = adapter.plan(req, route, { jobDir: dir, prompt: sent, workspace, ambient: this.d.config.runner.ambient, ...(conv.resume ? { resume: conv.resume } : {}), ...(attached.items.length ? { attachments: attached.items } : {}) }); } catch (e) { return reject('bad_request', `Route ${req.route}: ${(e as Error).message}`); }
     if (process.platform === 'win32') {
       const len = plan.command.length + 1 + plan.args.reduce((n, a) => n + a.length + 3, 0);
       if (len > MAX_COMMAND_LINE) return reject('prompt_too_large', `The command for ${adapter.id} would be ${len} characters, over the Windows limit of about 32767. This harness takes its prompt as an argument.`);
@@ -355,8 +361,32 @@ export class Supervisor {
     if (req.timeoutS !== undefined && !(req.timeoutS > 0 && req.timeoutS <= 86400)) return 'timeoutS must be between 1 and 86400.';
     if (req.packs !== undefined && (!Array.isArray(req.packs) || req.packs.some(p => typeof p !== 'string'))) return 'packs must be a list of strings.';
     if (req.noCharter !== undefined && typeof req.noCharter !== 'boolean') return 'noCharter must be true or false.';
+    if (req.attach !== undefined && (!Array.isArray(req.attach) || req.attach.length > MAX_ATTACHMENTS || req.attach.some(a => typeof a !== 'string' || !a))) return `attach must be a list of at most ${MAX_ATTACHMENTS} file paths.`;
     if (req.conversation !== undefined && (typeof req.conversation !== 'string' || !CONVERSATION_NAME.test(req.conversation))) return 'A conversation name is 1 to 64 characters: letters, digits, dot, underscore or hyphen.';
     return null;
+  }
+
+  /** Checks each attachment: inside the working folder or a prompt root, a file of a type the route takes, and under the size caps. Text counts toward the route's input limit where it is checked. */
+  private attachments(req: JobRequest, route: RouteConfig, adapter: Adapter): { rejected: Rejection } | { items: ResolvedAttachment[] } {
+    if (!req.attach?.length) return { items: [] };
+    const refuse = (reason: string) => ({ rejected: { code: 'attachment_rejected' as const, reason } });
+    const kinds = adapter.attachmentKinds?.(route) ?? [];
+    if (!kinds.length) return refuse(`Route ${req.route} takes no attachments.`);
+    const roots = [req.cwd, ...this.d.config.promptRoots].map(r => resolve(r)), cap = { image: optMb(route, 'maxImageMb', 10), audio: optMb(route, 'maxAudioMb', 25) };
+    const items: ResolvedAttachment[] = [];
+    for (const given of req.attach) {
+      const path = resolve(req.cwd, given), name = basename(path);
+      if (!roots.some(r => path === r || path.startsWith(r + sep))) return refuse(`Attachment ${name} must be inside the job working folder or a folder listed in promptRoots.`);
+      let bytes: number;
+      try { const st = statSync(path); if (!st.isFile()) return refuse(`Attachment ${name} is not a file.`); bytes = st.size; } catch { return refuse(`Attachment ${name} could not be read.`); }
+      const kind = attachmentKind(path);
+      if (!kind) return refuse(`Attachment ${name} is a type Augur does not send. It takes text, image and audio files.`);
+      if (!kinds.includes(kind)) return refuse(`Route ${req.route} takes ${kinds.join(' and ')} attachments, not ${kind}.`);
+      if (kind !== 'text' && bytes > cap[kind] * 1048576) return refuse(`Attachment ${name} is ${Math.ceil(bytes / 1048576)} MB and route ${req.route} takes ${kind} files up to ${cap[kind]} MB.`);
+      if (kind === 'audio' && req.activity !== 'transcribe') return refuse('Audio attachments are for the transcribe activity.');
+      items.push({ path, kind, bytes });
+    }
+    return { items };
   }
 
   /** Resolves a named conversation, or a refusal. A missing row is a new conversation. */

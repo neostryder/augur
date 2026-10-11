@@ -42,6 +42,8 @@ export interface JobRequest {
   noCharter?: boolean;
   /** The job is wanted now. A route to a local gateway sends its normal priority class instead of the low one background work gets. */
   urgent?: boolean;
+  /** Files sent with the prompt: text read into it, images shown to a model that sees them, or audio to transcribe. Each stays inside the working folder. */
+  attach?: string[];
   /** A named conversation to open or resume. It stays on the route that opened it. This is not the caller's own session. */
   conversation?: string;
 }
@@ -126,5 +128,17 @@ export interface JobEvent { seq: number; jobId: string | null; at: number; kind:
 export interface Rejection { code: RejectionCode; reason: string }
 export const REJECTION_CODES = ['unknown_route', 'unknown_model', 'model_unreviewed', 'model_paused', 'ask_first', 'activity_not_permitted',
   'data_tier_too_high', 'sandbox_required', 'isolation_required', 'text_only', 'quota_denied', 'no_policy', 'depth_exceeded',
-  'descendants_exceeded', 'adapter_unavailable', 'bad_request', 'delegation_not_granted', 'prompt_too_large', 'pace_denied', 'not_picked', 'read_not_enforceable', 'budget_exhausted', 'jobs_off'] as const;
+  'descendants_exceeded', 'adapter_unavailable', 'bad_request', 'delegation_not_granted', 'prompt_too_large', 'pace_denied', 'not_picked', 'read_not_enforceable', 'budget_exhausted', 'jobs_off', 'attachment_rejected'] as const;
 export type RejectionCode = typeof REJECTION_CODES[number];
+
+export type AttachmentKind = 'text' | 'image' | 'audio';
+const IMAGE_EXT = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'], AUDIO_EXT = ['.wav', '.mp3', '.m4a', '.ogg', '.oga', '.opus', '.flac', '.webm', '.aac'];
+const TEXT_EXT = ['.txt', '.md', '.markdown', '.json', '.jsonl', '.csv', '.tsv', '.xml', '.html', '.htm', '.yaml', '.yml', '.toml', '.ini', '.log', '.srt', '.vtt', '.rst',
+  '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.py', '.rs', '.go', '.java', '.c', '.h', '.cpp', '.cs', '.sh', '.ps1', '.sql', '.css'];
+/** What kind of attachment a path is, from its extension, or null when Augur does not take that type. */
+export function attachmentKind(path: string): AttachmentKind | null {
+  const dot = path.lastIndexOf('.'), ext = dot < 0 ? '' : path.slice(dot).toLowerCase();
+  return IMAGE_EXT.includes(ext) ? 'image' : AUDIO_EXT.includes(ext) ? 'audio' : TEXT_EXT.includes(ext) ? 'text' : null;
+}
+/** An attachment the supervisor has checked and resolved to an absolute path. */
+export interface ResolvedAttachment { path: string; kind: AttachmentKind; bytes: number }

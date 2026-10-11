@@ -54,6 +54,8 @@ export function buildServer(tools: Tools, version: string): McpServer {
       packs: z.array(z.string()).optional().describe('Charter packs to include, by name.'),
       no_charter: z.boolean().optional().describe('Send the prompt with no charter.'),
       conversation: z.string().optional().describe('Name of a conversation to open or resume. It stays on the route that opened it, and only Grok and Codex routes keep one.'),
+      attachments: z.array(z.string()).max(16).optional().describe('Absolute paths of files to send with the prompt, inside cwd. Text files are added to the prompt, images are shown to a model that sees them, and one audio file is transcribed on a transcribe route. An embed job returns the path of the saved vectors.'),
+      urgent: z.boolean().optional().describe('The job is wanted now. A local gateway then gives it its normal priority instead of the low one background work gets.'),
     },
   }, async (a) => out(await tools.run(a)));
 

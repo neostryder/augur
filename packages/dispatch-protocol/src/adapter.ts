@@ -1,4 +1,4 @@
-import type { JobRequest, ToolTier, UsageReport } from './spec.js';
+import type { AttachmentKind, JobRequest, ResolvedAttachment, ToolTier, UsageReport } from './spec.js';
 
 /** How a harness or model is reached. Every transport implements the same contract, so rules and job history do not depend on it. */
 export type Transport = 'exec' | 'acp' | 'api' | 'web';
@@ -49,6 +49,8 @@ export interface PlanContext {
   workspace: string | null;
   /** Set when this job opens or resumes a named conversation. `fresh` is the first turn. `id` is null when the harness assigns one after the turn. */
   resume?: { id: string | null; fresh: boolean; name: string };
+  /** The request's attachments, checked and resolved. Empty when there are none. */
+  attachments?: ResolvedAttachment[];
 }
 
 export interface LaunchPlan {
@@ -73,7 +75,12 @@ export interface Extraction {
   failure?: string;
   /** Native session id the harness reported. The service stores it when the job completes. */
   sessionId?: string;
+  /** Where the answer came from when the service in front of the model says so: the machine and link that served it, and whether it was a fallback link. */
+  served?: Served;
 }
+
+/** What a gateway reports about a request it served. Every field is optional; a gateway sends what it knows. */
+export interface Served { host?: string; model?: string; chainPosition?: number; degraded?: boolean }
 
 export interface ExtractInput {
   /** The last few megabytes of standard output. A long transcript is read from `stdoutPath` instead. */
@@ -98,6 +105,8 @@ export interface Adapter {
   envAllow: string[];
   /** Fail fast when the harness is missing or a route option is invalid. */
   validate(route: RouteConfig): string | null;
+  /** The kinds of file this route takes with a prompt. Absent means none. */
+  attachmentKinds?(route: RouteConfig): AttachmentKind[];
   plan(request: JobRequest, route: RouteConfig, ctx: PlanContext): LaunchPlan;
   /** Reads the answer and usage out of what the harness left behind. */
   extract(input: ExtractInput): Extraction;

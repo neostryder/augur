@@ -32,7 +32,9 @@ const ambient: OptionSpec = { key: 'ambient', label: 'Harness context', kind: 'c
 const apiExtras: OptionSpec[] = [
   { key: 'headersJson', label: 'Extra headers', kind: 'json', help: 'A JSON object of request headers sent with every call. Credentials do not belong here; keep keys in the key store.', placeholder: '{"x-team": "home"}' },
   { key: 'requestClass', label: 'Priority class', kind: 'choice', choices: ['none', 'cogitator'], help: 'none sends nothing. cogitator sends x-cogitator-class with every call: low for background jobs, normal for a person typing at a terminal or a job marked urgent.' },
-  { key: 'maxInput', label: 'Largest prompt', kind: 'number', help: 'The most characters of prompt the route takes. A bigger job is refused and goes to the route fallback, and is never cut. Leave empty for no limit.' }];
+  { key: 'maxInput', label: 'Largest prompt', kind: 'number', help: 'The most characters of prompt, with any text attachments, the route takes. A bigger job is refused and goes to the route fallback, and is never cut. Leave empty for no limit.' },
+  { key: 'maxImageMb', label: 'Largest image', kind: 'number', help: 'The largest image attachment in megabytes. Defaults to 10.' },
+  { key: 'maxAudioMb', label: 'Largest audio file', kind: 'number', help: 'The largest audio attachment in megabytes. Defaults to 25.' }];
 
 export const ADAPTER_INFO: readonly AdapterInfo[] = [
   { id: 'codex-exec', label: 'Codex CLI', summary: 'Runs codex exec. A read-only job is stated in the prompt, and Codex is not held to it. A named conversation resumes the same Codex session and keeps the tool tier of its first turn.',
@@ -50,14 +52,15 @@ export const ADAPTER_INFO: readonly AdapterInfo[] = [
       { key: 'maxSteps', label: 'Step limit', kind: 'number', help: 'Most steps a job may take. Defaults to 60 for a read job and 400 otherwise.' }, sbx, sbxPrefixJson, envAllow] },
   { id: 'opencode-sbx', label: 'OpenCode in a Docker sandbox', summary: 'Runs OpenCode inside a Docker sandbox on a copy of the job folder, and returns changes as a patch.',
     options: [sandbox, workRoot, model('The provider/model id OpenCode uses.', 'openrouter/deepseek-v4.1-flash'), effort, sbx, sbxPrefixJson, envAllow] },
-  { id: 'openai-api', label: 'OpenAI-style API', summary: 'Sends one prompt to a chat completions endpoint and returns the text. No tools and no files.',
+  { id: 'openai-api', label: 'OpenAI-style API', summary: 'Sends one prompt to a chat completions, embeddings, or transcription endpoint and returns the text. No tools. Text files and images can go with the prompt.',
     options: [{ key: 'baseUrl', label: 'Base URL', kind: 'text', required: true, help: 'The API address up to and including /v1. It must start with https://, or http:// for this computer or a machine on the home network.', placeholder: 'https://api.openai.com/v1' },
       model('The model id the endpoint expects.'),
       { key: 'keySource', label: 'Key kept in', kind: 'choice', choices: ['env', 'store'], help: "Pick env to read the key from an environment variable you name, or store to keep it in this computer's key store. A stored key is saved on the Routes page or with `augur key set <route>`." },
       { key: 'apiKeyEnv', label: 'Key variable', kind: 'text', required: true, help: 'The name of the environment variable that holds the API key, when Key kept in is set to env. The key itself is never stored in a route.' },
+      { key: 'mode', label: 'Request type', kind: 'choice', choices: ['chat', 'embeddings', 'transcribe'], help: 'chat, the default, sends the prompt as a chat. embeddings sends the prompt and any text files to the embeddings endpoint and saves the vectors in the job folder. transcribe sends an audio file to the transcription endpoint.' },
       { key: 'maxTokens', label: 'Token limit', kind: 'number', help: 'Most tokens the answer may use. Defaults to 4096.' },
       { key: 'timeoutS', label: 'Timeout in seconds', kind: 'number', help: 'Defaults to 900.' }, ...apiExtras] },
-  { id: 'anthropic-api', label: 'Anthropic-style API', summary: 'Sends one prompt to a messages endpoint and returns the text. No tools and no files.',
+  { id: 'anthropic-api', label: 'Anthropic-style API', summary: 'Sends one prompt to a messages endpoint and returns the text. No tools. Text files and images can go with the prompt.',
     options: [{ key: 'baseUrl', label: 'Base URL', kind: 'text', required: true, help: 'The API address. It must start with https://, or http:// for this computer or a machine on the home network.', placeholder: 'https://api.anthropic.com' },
       model('The model id the endpoint expects.'),
       { key: 'keySource', label: 'Key kept in', kind: 'choice', choices: ['env', 'store'], help: "Pick env to read the key from an environment variable you name, or store to keep it in this computer's key store. A stored key is saved on the Routes page or with `augur key set <route>`." },

@@ -155,7 +155,7 @@ Runs OpenCode inside a Docker sandbox on a copy of the job folder, and returns c
 
 #### `openai-api`: OpenAI-style API
 
-Sends one prompt to a chat completions endpoint and returns the text. No tools and no files.
+Sends one prompt to a chat completions, embeddings, or transcription endpoint and returns the text. No tools. Text files and images can go with the prompt.
 
 | Option | Value | What it does |
 | --- | --- | --- |
@@ -163,15 +163,18 @@ Sends one prompt to a chat completions endpoint and returns the text. No tools a
 | `model` (required) | text | The model id the endpoint expects. |
 | `keySource` | env, store | Pick env to read the key from an environment variable you name, or store to keep it in this computer's key store. A stored key is saved on the Routes page or with `augur key set <route>`. |
 | `apiKeyEnv` (required) | text | The name of the environment variable that holds the API key, when Key kept in is set to env. The key itself is never stored in a route. |
+| `mode` | chat, embeddings, transcribe | chat, the default, sends the prompt as a chat. embeddings sends the prompt and any text files to the embeddings endpoint and saves the vectors in the job folder. transcribe sends an audio file to the transcription endpoint. |
 | `maxTokens` | number | Most tokens the answer may use. Defaults to 4096. |
 | `timeoutS` | number | Defaults to 900. |
 | `headersJson` | json | A JSON object of request headers sent with every call. Credentials do not belong here; keep keys in the key store. |
 | `requestClass` | none, cogitator | none sends nothing. cogitator sends x-cogitator-class with every call: low for background jobs, normal for a person typing at a terminal or a job marked urgent. |
-| `maxInput` | number | The most characters of prompt the route takes. A bigger job is refused and goes to the route fallback, and is never cut. Leave empty for no limit. |
+| `maxInput` | number | The most characters of prompt, with any text attachments, the route takes. A bigger job is refused and goes to the route fallback, and is never cut. Leave empty for no limit. |
+| `maxImageMb` | number | The largest image attachment in megabytes. Defaults to 10. |
+| `maxAudioMb` | number | The largest audio attachment in megabytes. Defaults to 25. |
 
 #### `anthropic-api`: Anthropic-style API
 
-Sends one prompt to a messages endpoint and returns the text. No tools and no files.
+Sends one prompt to a messages endpoint and returns the text. No tools. Text files and images can go with the prompt.
 
 | Option | Value | What it does |
 | --- | --- | --- |
@@ -183,7 +186,9 @@ Sends one prompt to a messages endpoint and returns the text. No tools and no fi
 | `timeoutS` | number | Defaults to 900. |
 | `headersJson` | json | A JSON object of request headers sent with every call. Credentials do not belong here; keep keys in the key store. |
 | `requestClass` | none, cogitator | none sends nothing. cogitator sends x-cogitator-class with every call: low for background jobs, normal for a person typing at a terminal or a job marked urgent. |
-| `maxInput` | number | The most characters of prompt the route takes. A bigger job is refused and goes to the route fallback, and is never cut. Leave empty for no limit. |
+| `maxInput` | number | The most characters of prompt, with any text attachments, the route takes. A bigger job is refused and goes to the route fallback, and is never cut. Leave empty for no limit. |
+| `maxImageMb` | number | The largest image attachment in megabytes. Defaults to 10. |
+| `maxAudioMb` | number | The largest audio attachment in megabytes. Defaults to 25. |
 
 #### `exec`: Any command
 

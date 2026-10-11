@@ -100,6 +100,11 @@ describe('run', () => {
     await createTools(deps({ submit: { id: 'abc', warnings: [] }, result: { job: { id: 'abc', state: 'completed', route: 'luna' }, answer: 'done' } }, calls)).run({ ...args, packs: ['prose', 'review'], no_charter: true, conversation: 'feat' });
     expect(calls[0]!.params).toMatchObject({ packs: ['prose', 'review'], noCharter: true, conversation: 'feat', prompt: { text: 'hi' } });
   });
+  it('passes attachments and urgent through on the job request', async () => {
+    const calls: Calls[] = [];
+    await createTools(deps({ submit: { id: 'abc', warnings: [] }, result: { job: { id: 'abc', state: 'completed', route: 'luna' }, answer: 'done' } }, calls)).run({ ...args, attachments: ['C:/w/a.png', 'C:/w/b.txt'], urgent: true });
+    expect(calls[0]!.params).toMatchObject({ attach: ['C:/w/a.png', 'C:/w/b.txt'], urgent: true });
+  });
   it('submits as an mcp caller with read tools and text output by default', async () => {
     const calls: Calls[] = [];
     await createTools(deps({ submit: { id: 'abc', warnings: [] }, result: { job: { id: 'abc', state: 'completed', route: 'luna' }, answer: 'done' } }, calls)).run(args);
@@ -172,7 +177,7 @@ describe('the server', () => {
     expect(add.inputSchema.properties).toHaveProperty('balance_path');
     const run = tools.find(t => t.name === 'augur_run')!;
     expect(run.inputSchema.required).toEqual(expect.arrayContaining(['route', 'prompt', 'activity', 'data_tier']));
-    expect(run.inputSchema.properties).toMatchObject({ packs: { type: 'array' }, no_charter: { type: 'boolean' }, conversation: { type: 'string' } });
+    expect(run.inputSchema.properties).toMatchObject({ packs: { type: 'array' }, no_charter: { type: 'boolean' }, conversation: { type: 'string' }, attachments: { type: 'array' }, urgent: { type: 'boolean' } });
     const res = await client.callTool({ name: 'augur_routes', arguments: {} });
     expect(JSON.stringify(res.content)).toContain('cannot run: no program');
     expect((res.structuredContent as { routes: unknown[] }).routes).toHaveLength(2);

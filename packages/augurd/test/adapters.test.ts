@@ -203,11 +203,12 @@ describe('a prompt too large for an argument', () => {
 });
 
 describe('an API connector', () => {
-  async function mock(handler: (body: Record<string, unknown>, headers: IncomingHttpHeaders, url: string) => { status?: number; json: unknown }) {
-    const seen: Array<{ url: string; headers: IncomingHttpHeaders; body: Record<string, unknown> }> = [];
+  async function mock(handler: (body: Record<string, unknown>, headers: IncomingHttpHeaders, url: string) => { status?: number; json: unknown; headers?: Record<string, string> }) {
+    const seen: Array<{ url: string; headers: IncomingHttpHeaders; body: Record<string, unknown>; raw: string }> = [];
     const server = createServer((rq, rs) => {
       let raw = ''; rq.on('data', d => { raw += d; });
-      rq.on('end', () => { const body = JSON.parse(raw || '{}') as Record<string, unknown>; seen.push({ url: rq.url ?? '', headers: rq.headers, body }); const out = handler(body, rq.headers, rq.url ?? ''); rs.writeHead(out.status ?? 200, { 'content-type': 'application/json' }); rs.end(JSON.stringify(out.json)); });
+      // A multipart upload is not JSON, so its body reads as empty and the raw text is kept.
+      rq.on('end', () => { let body: Record<string, unknown> = {}; try { body = JSON.parse(raw || '{}') as Record<string, unknown>; } catch { /* multipart */ } seen.push({ url: rq.url ?? '', headers: rq.headers, body, raw }); const out = handler(body, rq.headers, rq.url ?? ''); rs.writeHead(out.status ?? 200, { 'content-type': 'application/json', ...out.headers }); rs.end(JSON.stringify(out.json)); });
     });
     await new Promise<void>(r => server.listen(0, '127.0.0.1', () => r()));
     servers.push(server);
@@ -302,6 +303,76 @@ describe('an API connector', () => {
     expect(e.sup.submit({ ...textReq('small', long), cwd: e.root })).toMatchObject({ rejected: { code: 'prompt_too_large', reason: expect.stringContaining('at most 100') } });
     e.writeRoutes({ small: { model: 'test/text', adapter: 'openai-api', options: { ...options, maxInput: 0 } } });
     expect(e.sup.submit({ ...textReq('small', long), cwd: e.root })).toMatchObject({ rejected: { reason: expect.stringContaining('maxInput') } });
+  });
+
+  describe('with files attached', () => {
+    const png = Buffer.from('89504e470d0a1a0a', 'hex');
+    const route = (e: Env, url: string, options: Record<string, unknown> = {}) => e.writeRoutes({ chat: { model: 'test/text', adapter: 'openai-api', options: { baseUrl: url, model: 'x', apiKeyEnv: 'AUGUR_TEST_API_KEY', ...options } } });
+    const env = () => setup({ adapters: ['openai-api'] }, { ...process.env, AUGUR_TEST_API_KEY: 'k' });
+
+    it('adds a text file to the prompt and shows an image to the model', async () => {
+      const m = await mock(() => ({ json: { choices: [{ message: { content: 'seen' } }] } }));
+      const e = env(); route(e, m.url);
+      writeFileSync(join(e.root, 'notes.md'), 'the notes'); writeFileSync(join(e.root, 'shot.png'), png);
+      const id = submitOk(e.sup, { ...textReq('chat', 'look'), cwd: e.root, attach: [join(e.root, 'notes.md'), 'shot.png'] });
+      expect((await terminal(e.sup, e.store, id)).state).toBe('completed');
+      const content = (m.seen[0]!.body.messages as Array<{ content: Array<{ type: string; text?: string; image_url?: { url: string } }> }>)[0]!.content;
+      expect(content[0]).toMatchObject({ type: 'text', text: expect.stringContaining('--- notes.md ---\nthe notes') });
+      expect(content[1]!.image_url!.url).toBe(`data:image/png;base64,${png.toString('base64')}`);
+    });
+
+    it('embeds the prompt and the text files and keeps the vectors in the job folder', async () => {
+      const m = await mock(() => ({ json: { model: 'embed-small', data: [{ embedding: [0.1, 0.2, 0.3] }, { embedding: [0.4, 0.5, 0.6] }], usage: { prompt_tokens: 7 } } }));
+      const e = env(); route(e, m.url, { mode: 'embeddings' });
+      writeFileSync(join(e.root, 'doc.txt'), 'a document');
+      const id = submitOk(e.sup, { ...textReq('chat', 'a query'), activity: 'embed', cwd: e.root, attach: ['doc.txt'] });
+      const job = await terminal(e.sup, e.store, id);
+      expect(job).toMatchObject({ state: 'completed', usage: { inputTokens: 7, outputTokens: 0 } });
+      expect(m.seen[0]).toMatchObject({ url: '/embeddings', body: { model: 'x', input: ['a query', 'a document'] } });
+      const file = join(e.dir, 'jobs', id, 'vectors.json');
+      expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ model: 'embed-small', dimensions: 3, vectors: [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]] });
+      expect(e.sup.result(id)?.answer).toBe(`Embedded 2 inputs, 3 numbers each. The vectors are in ${file}.`);
+    });
+
+    it('sends one audio file to the transcription endpoint', async () => {
+      const m = await mock(() => ({ json: { text: 'hello there' } }));
+      const e = env(); route(e, m.url, { mode: 'transcribe' });
+      writeFileSync(join(e.root, 'clip.wav'), 'RIFF....WAVE');
+      const id = submitOk(e.sup, { ...textReq('chat', 'names: Eru'), activity: 'transcribe', cwd: e.root, attach: ['clip.wav'] });
+      expect((await terminal(e.sup, e.store, id)).state).toBe('completed');
+      expect(e.sup.result(id)?.answer).toBe('hello there');
+      expect(m.seen[0]!.url).toBe('/audio/transcriptions');
+      expect(m.seen[0]!.headers['content-type']).toMatch(/^multipart\/form-data/);
+      expect(m.seen[0]!.raw).toContain('filename="clip.wav"');
+      expect(m.seen[0]!.raw).toContain('names: Eru');
+    });
+
+    it('refuses an attachment the route cannot take, with the reason', async () => {
+      const m = await mock(() => ({ json: { choices: [{ message: { content: 'x' } }] } }));
+      const e = env(); route(e, m.url);
+      writeFileSync(join(e.root, 'clip.wav'), 'RIFF'); writeFileSync(join(e.root, 'blob.bin'), 'x'); writeFileSync(join(e.root, 'big.png'), Buffer.alloc(2 * 1048576));
+      const refuse = (attach: string[], reason: RegExp) =>
+        expect(e.sup.submit({ ...textReq('chat'), cwd: e.root, attach })).toMatchObject({ rejected: { code: 'attachment_rejected', reason: expect.stringMatching(reason) } });
+      refuse(['clip.wav'], /takes text and image attachments, not audio/);
+      refuse(['blob.bin'], /type Augur does not send/);
+      refuse(['missing.txt'], /could not be read/);
+      refuse([join(tmpdir(), 'elsewhere.txt')], /must be inside/);
+      route(e, m.url, { maxImageMb: 1 });
+      refuse(['big.png'], /2 MB and route chat takes image files up to 1 MB/);
+      expect(m.seen).toHaveLength(0);
+    });
+
+    it('counts text files toward maxInput, and keeps each activity on its own kind of route', () => {
+      const e = env();
+      writeFileSync(join(e.root, 'long.txt'), 'y'.repeat(400));
+      route(e, 'http://127.0.0.1:9', { maxInput: 100 });
+      expect(e.sup.submit({ ...textReq('chat', 'short'), cwd: e.root, attach: ['long.txt'] })).toMatchObject({ rejected: { code: 'prompt_too_large', reason: expect.stringContaining('its text files') } });
+      route(e, 'http://127.0.0.1:9');
+      expect(e.sup.submit({ ...textReq('chat'), activity: 'embed', cwd: e.root })).toMatchObject({ rejected: { reason: expect.stringContaining('mode is embeddings') } });
+      route(e, 'http://127.0.0.1:9', { mode: 'transcribe' });
+      expect(e.sup.submit({ ...textReq('chat'), activity: 'transcribe', cwd: e.root })).toMatchObject({ rejected: { reason: expect.stringContaining('exactly one audio file') } });
+      expect(openaiApi.validate({ model: 'a/b', adapter: 'openai-api', options: { baseUrl: 'https://x/v1', model: 'm', apiKeyEnv: 'K', mode: 'speak' } })).toMatch(/mode must be/);
+    });
   });
 
   it('fails the job with the HTTP status when the API refuses, and never for a job that asks for tools', async () => {

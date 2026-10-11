@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { startService } from '@augur/augurd';
 import { JOBHOST, ROUTES, makeEnv } from '../../augurd/test/harness.js';
 import type { Env } from '../../augurd/test/harness.js';
-import { main } from '../src/cli.js';
+import { main, parse } from '../src/cli.js';
 
 vi.setConfig({ testTimeout: 90000 });
 const cleanup: Array<() => Promise<void> | void> = [];
@@ -315,6 +315,21 @@ describe('augur run charter flags', () => {
     expect(e.store.get(id2)).not.toHaveProperty('charter');
     expect(e.store.get(id2)?.promptChars).toBe('SLEEP 0'.length);
     expect((await run(['run', 'fake', '--prompt', 'x', '--pack'])).code).toBe(1);
+  });
+});
+
+describe('augur run attachments', () => {
+  it('keeps every --attach, in order, and reads --urgent as a switch', () => {
+    const p = parse(['run', 'r', '--attach', 'a.txt', '--attach=b.png', '--urgent', '--prompt', 'x']);
+    expect(p.repeated.get('attach')).toEqual(['a.txt', 'b.png']);
+    expect(p.flags.get('urgent')).toBe(true);
+  });
+  it('sends the files to the service, which refuses them on a route that takes none', async () => {
+    const { e, run } = await boot();
+    writeFileSync(join(e.root, 'a.txt'), 'hello');
+    const r = await run(['run', 'fake', '--prompt', 'SLEEP 0', '--attach', join(e.root, 'a.txt'), '--urgent']);
+    expect(r.code).not.toBe(0);
+    expect(r.err).toContain('Rejected (attachment_rejected): Route fake takes no attachments.');
   });
 });
 
