@@ -243,6 +243,7 @@ def main():
     def predict(state, questions, model=None, **kw):
         with serving.lock:
             serving.ensure()
+            watch.mark_loaded()
             english, adapters = serving.english, serving.adapters
             if not (isinstance(model, str) and model.startswith("laya:")):
                 k = cache.key("stock", model, state, questions, kw)
@@ -291,6 +292,7 @@ def main():
     def list_adapters():
         with serving.lock:
             serving.ensure()
+            watch.mark_loaded()
             adapters = serving.adapters
             adapters._refresh()
             # train_ids let calibrate.py fit only on rows an adapter never trained on.
