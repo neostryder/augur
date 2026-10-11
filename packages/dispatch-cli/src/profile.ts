@@ -3,11 +3,10 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { appendPolicyEdits, augurHome } from '@augur/augurd';
-import { balanceField } from '@augur/core';
-import { EXIT_CODES, adapterInfo, balanceLeaves, checkBalanceSetting } from '@augur/dispatch-protocol';
-import { parseRoutesText } from '@augur/view-model';
+import { EXIT_CODES, balanceLeaves } from '@augur/dispatch-protocol';
+import { PROFILE_KIND, PROFILE_SECRET_OPTION, parseRoutesText, planProfileFile } from '@augur/view-model';
 
-export const PROFILE_KIND = 'augur-profile';
+export { PROFILE_KIND };
 export const PROFILE_HELP = `augur profile export [file]            write the balance settings and routes to a file, or print them; never a key
 augur profile import <file> [--dry-run]   apply a profile file: balance settings go through the edit inbox, and routes with a new name are added`;
 
@@ -16,7 +15,7 @@ export interface ProfileIo { err(text: string): void; env: NodeJS.ProcessEnv; cw
 type Raw = Record<string, unknown>;
 const isObj = (v: unknown): v is Raw => typeof v === 'object' && v !== null && !Array.isArray(v);
 // A route holds the name of an environment variable or a store, never a key, but a hand-edited file could. These option names are never exported.
-const SECRET_OPTION = /^(api_?key|key|token|secret|password)$/i;
+const SECRET_OPTION = PROFILE_SECRET_OPTION;
 
 export const routesPath = (env: NodeJS.ProcessEnv): string => env.AUGURD_ROUTES ?? join(augurHome(env), 'dispatch', 'routes.json');
 export const readText = (path: string): string | null => { try { return readFileSync(path, 'utf8'); } catch { return null; } };
@@ -42,28 +41,7 @@ export interface ProfilePlan { edits: Array<{ field: string; value: unknown }>; 
 
 /** What importing a profile would do. Every balance setting and every route is checked, so one bad entry stops the whole import before anything is written. */
 export function planProfile(text: string, existingRoutes: ReadonlySet<string>): ProfilePlan | { error: string } {
-  let data: unknown;
-  try { data = JSON.parse(text); } catch (e) { return { error: `That file is not valid JSON: ${(e as Error).message}` }; }
-  if (!isObj(data) || data.kind !== PROFILE_KIND) return { error: `That file is not an Augur profile. A profile has "kind": "${PROFILE_KIND}".` };
-  if (data.schema !== 1) return { error: `This profile is schema ${String(data.schema)}, and this Augur reads schema 1. Update Augur, or export the profile again.` };
-  const plan: ProfilePlan = { edits: [], routes: [], existing: [], problems: [] };
-  for (const { path, value } of balanceLeaves(data.balance)) {
-    const bad = checkBalanceSetting(path, value);
-    if (bad) plan.problems.push(`balance ${path.join('.')}: ${bad}`); else plan.edits.push({ field: balanceField(path), value });
-  }
-  const routes = isObj(data.routes) ? data.routes : {};
-  const parsed = parseRoutesText(JSON.stringify({ routes }));
-  if (parsed.ok) {
-    for (const name of parsed.file.skipped) plan.problems.push(`route ${name}: needs a name of lowercase letters, digits, - and _, a model and an adapter.`);
-    for (const r of parsed.file.routes) {
-      const raw = (parsed.file.raw.routes as Raw)[r.name] as Raw;
-      if (!adapterInfo(r.adapter)) { plan.problems.push(`route ${r.name}: ${r.adapter} is not an adapter this Augur has.`); continue; }
-      const secret = isObj(raw.options) ? Object.keys(raw.options).find(k => SECRET_OPTION.test(k)) : undefined;
-      if (secret) { plan.problems.push(`route ${r.name}: the option ${secret} looks like a key. A profile never carries one; use augur key set ${r.name}.`); continue; }
-      if (existingRoutes.has(r.name)) plan.existing.push(r.name); else plan.routes.push({ name: r.name, entry: raw });
-    }
-  }
-  return plan;
+  return planProfileFile(text, existingRoutes);
 }
 
 const plural = (n: number, one: string): string => `${n} ${one}${n === 1 ? '' : 's'}`;
