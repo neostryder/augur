@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { credentialTarget, routeSecretName } from '@augur/dispatch-protocol';
+import { credentialTarget, routeSecretName, tierNote } from '@augur/dispatch-protocol';
 import type { ExtractInput, JobRequest } from '@augur/dispatch-protocol';
 import { anthropicApi, codexExec, copilotExec, grokExec, hermesExec, mcodeSbx, opencodeSbx, openaiApi } from '../src/adapters/index.js';
 import { parseCount } from '../src/adapters/copilot-exec.js';
@@ -31,6 +31,8 @@ describe('what each harness prints, read from real captured output', () => {
     const out = '{"type":"turn.completed","usage":{"input_tokens":253105,"cached_input_tokens":209152,"output_tokens":4034,"reasoning_output_tokens":227}}\n';
     expect(codexExec.extract(input({ stdout: out, jobDir: dir }))).toEqual({ answer: 'the answer', usage: { inputTokens: 253105, outputTokens: 4034, cachedReadTokens: 209152, reasoningTokens: 227, source: 'reported' } });
     expect(codexExec.extract(input({ stdout: 'tool said: failed to spawn code-mode host', jobDir: dir })).failure).toMatch(/tool host/);
+    const started = '{"type":"thread.started","thread_id":"0199abcd-1234-5678-9abc-def012345678"}\n{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":2}}\n';
+    expect(codexExec.extract(input({ stdout: started, jobDir: dir }))).toEqual({ answer: 'the answer', usage: { inputTokens: 10, outputTokens: 2, source: 'reported' }, sessionId: '0199abcd-1234-5678-9abc-def012345678' });
   });
 
   it('hermes: answer from standard output, tokens and cost from the usage file, cached counts added to input', () => {
@@ -58,6 +60,9 @@ describe('what each harness prints, read from real captured output', () => {
     const out = JSON.stringify({ text: 'hello', usage: { input_tokens: 1000, output_tokens: 20, cache_read_input_tokens: 500 }, total_cost_usd: 0.0123 });
     expect(grokExec.extract(input({ stdout: out }))).toEqual({ answer: 'hello', usage: { inputTokens: 1500, outputTokens: 20, cachedReadTokens: 500, costUsd: 0.0123, currency: 'USD', source: 'reported' } });
     expect(grokExec.extract(input({ stdout: 'plain text' })).answer).toBe('plain text');
+    const named = JSON.stringify({ text: 'hello', usage: { input_tokens: 1, output_tokens: 2 }, sessionId: 'sess-1' });
+    expect(grokExec.extract(input({ stdout: named })).sessionId).toBe('sess-1');
+    expect(grokExec.extract(input({ stdout: JSON.stringify({ text: 'hello', sessionId: '' }) }))).not.toHaveProperty('sessionId');
   });
 
   it('mcode: skips the sbx status line, adds cache reads to input, and fails on a non-succeeded status', () => {
@@ -99,6 +104,15 @@ describe('command lines', () => {
     const rd = grokExec.plan(req({ tools: 'read' }), r, ctx('go'));
     expect(rd.args).toEqual(expect.arrayContaining(['--allow', 'Read', '--deny', 'Edit']));
     expect(rd.args).not.toContain('--always-approve');
+    expect(w.args).not.toContain('--session-id');
+    expect(w.args).not.toContain('--resume');
+    const resumeCtx = ctx('go', 'C:/jobs/j1');
+    const fresh = grokExec.plan(req({ tools: 'write' }), r, { ...resumeCtx, resume: { id: '11111111-1111-1111-1111-111111111111', fresh: true, name: 'feat' } });
+    expect(fresh.args.slice(0, 2)).toEqual(['--session-id', '11111111-1111-1111-1111-111111111111']);
+    expect(fresh.args.slice(2)).toEqual(w.args);
+    const again = grokExec.plan(req({ tools: 'write' }), r, { ...resumeCtx, resume: { id: '11111111-1111-1111-1111-111111111111', fresh: false, name: 'feat' } });
+    expect(again.args.slice(0, 2)).toEqual(['--resume', '11111111-1111-1111-1111-111111111111']);
+    expect(again.args.slice(2)).toEqual(w.args);
   });
   it('codex and copilot trim ambient context only when asked, and a route option overrides the setting', () => {
     const off = ['plugins', 'apps', 'multi_agent', 'skill_search', 'browser_use', 'computer_use', 'in_app_browser', 'image_generation', 'goals', 'tool_suggest'];
@@ -113,6 +127,19 @@ describe('command lines', () => {
     expect(trimmed.args.slice(at + 2 + off.length * 2)).toEqual(['-m', 'm', '-']);
     expect(codexExec.plan(req(), route('codex-exec', { command: 'C:/c/codex.exe', model: 'm', ambient: 'trim' }), { ...cctx, ambient: 'keep' }).args).toEqual(trimmed.args);
     expect(codexExec.plan(req(), route('codex-exec', { command: 'C:/c/codex.exe', model: 'm', ambient: 'keep' }), { ...cctx, ambient: 'trim' })).toEqual(base);
+    expect(codexExec.plan(req(), codexRoute, { ...cctx, resume: { id: null, fresh: true, name: 'feat' } })).toEqual(base);
+    const resumed = codexExec.plan(req({ tools: 'write' }), codexRoute, { ...cctx, resume: { id: 'thread-1', fresh: false, name: 'feat' } });
+    expect(resumed.args).toEqual(['exec', 'resume', '--skip-git-repo-check', 'thread-1', '-']);
+    expect(resumed.stdin).toBe(tierNote('write', 'hi'));
+    for (const flag of ['--json', '-o', '--sandbox', '-m', '--disable']) expect(resumed.args).not.toContain(flag);
+    const withEffort = codexExec.plan(req({ tools: 'write' }), route('codex-exec', { command: 'C:/c/codex.exe', model: 'm', effort: 'low' }), { ...cctx, resume: { id: 'thread-1', fresh: false, name: 'feat' } });
+    expect(withEffort.args).toEqual(['exec', 'resume', '--skip-git-repo-check', 'thread-1', '-c', 'model_reasoning_effort=low', '-']);
+    const bare = codexExec.plan(req({ tools: 'read' }), route('codex-exec', { command: 'C:/c/codex.exe' }), { ...cctx, resume: { id: 'thread-1', fresh: false, name: 'feat' } });
+    expect(bare.args).toEqual(['exec', 'resume', '--skip-git-repo-check', 'thread-1', '-']);
+    expect(bare.stdin).toBe(tierNote('read', 'hi'));
+    const wrapped = codexExec.plan(req({ tools: 'full' }), route('codex-exec', { command: 'C:/c/codex.exe', prefixArgsJson: '["wrap"]' }), { ...cctx, resume: { id: 'thread-1', fresh: false, name: 'feat' } });
+    expect(wrapped.args).toEqual(['wrap', 'exec', 'resume', '--skip-git-repo-check', 'thread-1', '-']);
+    expect(wrapped.stdin).toBe('hi');
 
     const copilotRoute = route('copilot-exec', { model: 'gpt-5-mini', command: 'C:/c/copilot.exe' });
     const plain = copilotExec.plan(req({ tools: 'read' }), copilotRoute, ctx('hi'));
@@ -363,6 +390,24 @@ describe('a sandboxed connector on a copy of the workspace', () => {
     expect(await terminal(e.sup, e.store, empty)).toMatchObject({ state: 'artifact_validation_failed', reason: 'expected file empty.txt is empty' });
     const silent = submitOk(e.sup, request({ route: 'raw', text: 'SLEEP 0', cwd: e.root }));
     expect(await terminal(e.sup, e.store, silent)).toMatchObject({ state: 'failed', reason: 'exited cleanly but produced no answer' });
+  });
+});
+
+describe('a named conversation on a real harness', () => {
+  it('refuses one on an adapter that cannot keep it, and refuses a Codex tier change', async () => {
+    const e = setup();
+    expect(e.sup.submit(request({ route: 'raw', conversation: 'feat', text: 'SLEEP 0', cwd: e.root }))).toMatchObject({
+      rejected: { code: 'bad_request', reason: 'Adapter exec does not keep a conversation, so route raw cannot use one.' },
+    });
+    const id = submitOk(e.sup, request({ conversation: 'feat', text: 'SLEEP 0', tools: 'write', cwd: e.root }));
+    expect(await terminal(e.sup, e.store, id)).toMatchObject({ state: 'completed', conversation: 'feat', turn: 1 });
+    expect(e.store.conversation('feat')).toMatchObject({ turns: 1, nativeId: null, adapter: 'codex-exec', route: 'fake', tools: 'write' });
+    expect(e.sup.submit(request({ conversation: 'feat', text: 'SLEEP 0', tools: 'read', cwd: e.root }))).toMatchObject({
+      rejected: { code: 'bad_request', reason: 'Conversation feat was opened with the write tool tier. A resumed Codex session keeps that tier, because resume cannot set the sandbox again.' },
+    });
+    expect(e.sup.submit(request({ conversation: 'feat', text: 'SLEEP 0', tools: 'write', cwd: e.root }))).toMatchObject({
+      rejected: { code: 'bad_request', reason: 'Conversation feat has no session id to resume.' },
+    });
   });
 });
 

@@ -40,6 +40,8 @@ export interface JobRequest {
   packs?: string[];
   /** Send the prompt with no charter. */
   noCharter?: boolean;
+  /** A named conversation to open or resume. It stays on the route that opened it. This is not the caller's own session. */
+  conversation?: string;
 }
 
 /** Token counts as one figure set. `inputTokens` is the total input, including cached tokens, whatever the source counts. */
@@ -88,6 +90,10 @@ export interface JobRecord {
   charterNotes?: string[];
   /** Whether the harness ambient context was left on or trimmed. Absent on rows from before this field. */
   ambient?: 'keep' | 'trim';
+  /** Named conversation this job opens or resumes. Absent when the job stands alone, and on rows from before conversations. */
+  conversation?: string;
+  /** This job's turn in that conversation, starting at 1. */
+  turn?: number;
   /** The failed job this one replaced. Absent when the job is not a retry, and on rows from before retries. */
   retryOf?: string;
   /** The job submitted to replace this one. Absent when this job was not retried. */
@@ -96,6 +102,20 @@ export interface JobRecord {
   workspace: string | null;
   /** Patch of what the job changed in that copy, and how many files it touches. */
   patch: { path: string; files: number } | null;
+}
+
+/** A named conversation. Later jobs with the same name resume it on the route that opened it. */
+export interface Conversation {
+  name: string;
+  route: string;
+  adapter: string;
+  nativeId: string | null;
+  cwd: string;
+  /** Tool tier of the opening turn. A resumed Codex session keeps it. */
+  tools: ToolTier;
+  turns: number;
+  createdAt: number;
+  lastUsedAt: number;
 }
 
 export interface JobEvent { seq: number; jobId: string | null; at: number; kind: string; detail: string }

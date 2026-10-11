@@ -339,3 +339,35 @@ describe('augur run defaults', () => {
     expect(missing.code).toBe(1);
   });
 });
+
+describe('named conversations', () => {
+  it('opens one with --conversation, lists it and forgets it', async () => {
+    const { e, run } = await boot();
+    expect((await run(['conversations'])).out.trim()).toBe('No conversations.');
+    const started = await run(['run', 'fake', '--prompt', 'SLEEP 0', '--conversation', 'feat', '--wait', '--json']);
+    expect(started.code).toBe(0);
+    const body = JSON.parse(started.out) as { job: { conversation?: string; turn?: number; state: string }; answer: string | null };
+    expect(body.job).toMatchObject({ conversation: 'feat', turn: 1, state: 'completed' });
+    const listed = await run(['conversations', '--json']);
+    expect(listed.code).toBe(0);
+    const rows = JSON.parse(listed.out) as Array<{ name: string; route: string; adapter: string; turns: number; lastUsedAt: number }>;
+    expect(rows).toEqual([expect.objectContaining({ name: 'feat', route: 'fake', adapter: 'codex-exec', turns: 1 })]);
+    const iso = new Date(rows[0]!.lastUsedAt).toISOString().slice(0, 19) + 'Z';
+    expect((await run(['conversations'])).out.trim()).toBe(`feat  fake  codex-exec  1  ${iso}`);
+    const gone = await run(['conversations', '--forget', 'feat']);
+    expect(gone.code).toBe(0);
+    expect(gone.out.trim()).toBe('Forgot conversation feat.');
+    expect((await run(['conversations'])).out.trim()).toBe('No conversations.');
+    expect(e.store.conversations()).toEqual([]);
+    const missing = await run(['conversations', '--forget', 'feat', '--json']);
+    expect(missing.code).toBe(1);
+    expect(missing.err).toContain('No conversation named feat.');
+    expect(JSON.parse(missing.out)).toEqual({ forgotten: false, reason: 'No conversation named feat.' });
+    const bad = await run(['run', 'fake', '--prompt', 'SLEEP 0', '--conversation', 'bad name', '--json']);
+    expect(bad.code).toBe(2);
+    expect(bad.err).toContain('bad_request');
+    const raw = await run(['run', 'raw', '--prompt', 'SLEEP 0', '--conversation', 'feat', '--json']);
+    expect(raw.code).toBe(2);
+    expect(raw.err).toContain('does not keep a conversation');
+  });
+});

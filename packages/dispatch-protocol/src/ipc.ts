@@ -4,7 +4,7 @@ import type { Headroom } from './pace.js';
 import type { BalanceReport } from './balance-report.js';
 import type { ActivityId, DataTier, EngineKey, EngineState } from '@augur/core';
 import type { PickRequest, PickResult } from './pick.js';
-import type { JobEvent, JobRecord, JobRequest, Rejection } from './spec.js';
+import type { Conversation, JobEvent, JobRecord, JobRequest, Rejection } from './spec.js';
 import type { JobState } from './states.js';
 
 export const PROTOCOL_VERSION = 1;
@@ -40,6 +40,10 @@ export interface Methods {
   submit: { params: JobRequest; result: { id: string; warnings: string[] } | { rejected: Rejection } };
   status: { params: { id: string }; result: JobRecord | null };
   list: { params: { state?: JobState; root?: string; limit?: number }; result: JobRecord[] };
+  /** Named conversations, newest first. */
+  conversations: { params: undefined; result: Conversation[] };
+  /** Drops a named conversation. A running job that holds it is left in place and the name stays. */
+  forget_conversation: { params: { name: string }; result: { forgotten: boolean; reason?: string } };
   events: { params: { id: string; since?: number }; result: JobEvent[] };
   logs: { params: { id: string; stream?: 'stdout' | 'stderr'; offset?: number; limit?: number }; result: { text: string; next: number; done: boolean } };
   result: { params: { id: string }; result: { job: JobRecord; answer: string | null } | null };

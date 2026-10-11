@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import type { Adapter, ExtractInput, Extraction, JobRequest, LaunchPlan, PlanContext, RouteConfig, UsageReport } from '@augur/dispatch-protocol';
 import { optNum, optStr, resolveExecutable } from './util.js';
 
-interface GrokEnvelope { text?: string; usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; reasoning_tokens?: number }; total_cost_usd?: number; is_error?: boolean }
+interface GrokEnvelope { text?: string; usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; reasoning_tokens?: number }; total_cost_usd?: number; is_error?: boolean; sessionId?: string }
 
 function command(route: RouteConfig): { command: string; prefix: string[] } | null {
   const c = optStr(route.options, 'command');
@@ -13,11 +13,12 @@ function command(route: RouteConfig): { command: string; prefix: string[] } | nu
 /**
  * Grok Build in single-turn mode. The prompt is read from a file, because a long one as an argument would overrun the Windows command line.
  * A write job runs with every tool auto-approved. A read job allows Read and Grep and denies Edit and Bash, so a blocked call comes back to the model as a plain denial.
+ * A named conversation passes --session-id on the first turn and --resume on later turns.
  * Route options: `model`, `effort`, `maxTurns`, `command`, `envAllow`.
  */
 export const grokExec: Adapter = {
   id: 'grok-exec', charterEngine: 'grok', transport: 'exec',
-  capabilities: { permissionRequests: false, sessions: false, reportsUsage: true, sandboxed: false, isolatesWorkspace: false, enforcesReadOnly: true },
+  capabilities: { permissionRequests: false, sessions: true, reportsUsage: true, sandboxed: false, isolatesWorkspace: false, enforcesReadOnly: true },
   envAllow: ['GROK_HOME', 'XAI_API_KEY', 'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY', 'SSL_CERT_FILE'],
   validate(route: RouteConfig) {
     if (!optStr(route.options, 'model')) return 'route option model is required';
@@ -27,7 +28,15 @@ export const grokExec: Adapter = {
     const exe = command(route) as { command: string; prefix: string[] };
     const promptPath = join(ctx.jobDir, 'prompt.md');
     const turns = optNum(route.options, 'maxTurns') ?? (request.tools === 'read' ? 60 : 400);
-    const args = [...exe.prefix, '--prompt-file', promptPath, '-m', optStr(route.options, 'model') as string, '--output-format', 'json', '--cwd', request.cwd];
+    const args = [...exe.prefix];
+    if (ctx.resume?.fresh) {
+      if (!ctx.resume.id) throw new Error(`conversation ${ctx.resume.name} needs a session id`);
+      args.push('--session-id', ctx.resume.id);
+    } else if (ctx.resume) {
+      if (!ctx.resume.id) throw new Error(`conversation ${ctx.resume.name} has no session id to resume`);
+      args.push('--resume', ctx.resume.id);
+    }
+    args.push('--prompt-file', promptPath, '-m', optStr(route.options, 'model') as string, '--output-format', 'json', '--cwd', request.cwd);
     if (request.tools === 'read') args.push('--max-turns', String(turns), '--allow', 'Read', '--allow', 'Grep', '--deny', 'Edit', '--deny', 'Bash(*)');
     else args.push('--always-approve', '--max-turns', String(turns));
     const effort = optStr(route.options, 'effort');
@@ -43,7 +52,8 @@ export const grokExec: Adapter = {
     if (cachedRead) usage.cachedReadTokens = cachedRead;
     if (env.usage?.reasoning_tokens) usage.reasoningTokens = env.usage.reasoning_tokens;
     if (typeof env.total_cost_usd === 'number') { usage.costUsd = env.total_cost_usd; usage.currency = 'USD'; }
-    return { answer: env.text?.trim() || null, usage, ...(env.is_error ? { failure: 'grok reported an error result' } : {}) };
+    const sessionId = typeof env.sessionId === 'string' && env.sessionId ? env.sessionId : undefined;
+    return { answer: env.text?.trim() || null, usage, ...(env.is_error ? { failure: 'grok reported an error result' } : {}), ...(sessionId ? { sessionId } : {}) };
   },
   version(route: RouteConfig) {
     const exe = command(route);

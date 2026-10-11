@@ -52,6 +52,7 @@ export function buildServer(tools: Tools, version: string): McpServer {
       wait_s: z.number().int().min(0).max(900).optional().describe('Seconds to wait for the answer. 300 by default.'),
       packs: z.array(z.string()).optional().describe('Charter packs to include, by name.'),
       no_charter: z.boolean().optional().describe('Send the prompt with no charter.'),
+      conversation: z.string().optional().describe('Name of a conversation to open or resume on this route.'),
     },
   }, async (a) => out(await tools.run(a)));
 

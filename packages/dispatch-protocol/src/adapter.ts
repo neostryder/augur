@@ -6,6 +6,7 @@ export type Transport = 'exec' | 'acp' | 'api' | 'web';
 export interface AdapterCapabilities {
   /** The transport can ask before a tool runs, so a denial is honored. */
   permissionRequests: boolean;
+  /** The harness can resume a named conversation across jobs. */
   sessions: boolean;
   /** The harness reports token counts of its own. */
   reportsUsage: boolean;
@@ -46,6 +47,8 @@ export interface PlanContext {
   ambient?: 'keep' | 'trim';
   /** For an adapter that works on a copy of the workspace: the folder the service copies the working directory into, as the host sees it. */
   workspace: string | null;
+  /** Set when this job opens or resumes a named conversation. `fresh` is the first turn. `id` is null when the harness assigns one after the turn. */
+  resume?: { id: string | null; fresh: boolean; name: string };
 }
 
 export interface LaunchPlan {
@@ -68,6 +71,8 @@ export interface Extraction {
   usage: UsageReport | null;
   /** A reason the job failed although the process exited cleanly. */
   failure?: string;
+  /** Native session id the harness reported. The service stores it when the job completes. */
+  sessionId?: string;
 }
 
 export interface ExtractInput {

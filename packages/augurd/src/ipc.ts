@@ -67,6 +67,8 @@ export class IpcServer {
       case 'submit': return this.sup.submit(params as JobRequest);
       case 'status': return this.store.get(String(p.id));
       case 'list': return this.store.list({ state: p.state as never, root: p.root as string | undefined, limit: p.limit as number | undefined });
+      case 'conversations': return this.sup.conversations();
+      case 'forget_conversation': return this.sup.forgetConversation(String(p.name ?? ''));
       case 'events': return this.store.events(String(p.id), Number(p.since ?? 0));
       case 'logs': return this.sup.logs(String(p.id), p.stream === 'stderr' ? 'stderr' : 'stdout', Number(p.offset ?? 0), Number(p.limit ?? 65536));
       case 'result': return this.sup.result(String(p.id));

@@ -1,6 +1,6 @@
 // Accepts jobs, applies the rules, launches one runner per job and keeps the store true to what the runners leave on disk.
 import { spawn, spawnSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { closeSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, readSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES } from '@augur/core';
@@ -8,7 +8,7 @@ import type { PolicyFile } from '@augur/core';
 import { BRIEF_RESULTS, classifyTask, fitScores } from '@augur/decision';
 import type { BriefResult, DecisionBackend } from '@augur/decision';
 import { BUDGET_WINDOW_MS, NAMED_PROMPT_WINDOW, PICK_WINDOW_MIN, TOOL_TIERS, account, balanceReport, budgetStatus, calibrateRoutes, copilotSpend, checkLineage, routeSecretName, checkNamed, checkPick, evaluate, isTerminal, matchNamedModels, pressure, rank, usageFactors } from '@augur/dispatch-protocol';
-import type { Adapter, BalanceReport, BudgetStatus, JobRecord, JobRequest, LaunchPlan, PickAnswer, PickParams, RateCard, Rejection, RouteConfig, UsageSnapshot } from '@augur/dispatch-protocol';
+import type { Adapter, BalanceReport, BudgetStatus, Conversation, JobRecord, JobRequest, LaunchPlan, PickAnswer, PickParams, RateCard, Rejection, RouteConfig, UsageSnapshot } from '@augur/dispatch-protocol';
 import { MAX_COMMAND_LINE } from './adapters/util.js';
 import type { ServiceConfig } from './config.js';
 import { buildEnv } from './env.js';
@@ -55,6 +55,7 @@ const COPY_EXCLUDE = new Set(['.git', 'node_modules', '.venv']);
 const SECRET_FILE = /^(\.env(\..*)?|id_(rsa|dsa|ecdsa|ed25519)|\.npmrc|\.pypirc|\.netrc|.*\.(pem|key|p12|pfx))$/i;
 const copyFilter = (src: string): boolean => { const name = basename(src); return !COPY_EXCLUDE.has(name) && !SECRET_FILE.test(name); };
 const GIT = ['-c', 'core.autocrlf=false', '-c', 'core.safecrlf=false'];
+const CONVERSATION_NAME = /^[A-Za-z0-9._-]{1,64}$/;
 
 interface RunnerResult { exitCode: number | null; signal?: string | null; killedBy: 'cancel' | 'timeout' | null; endedAt: number; spawnError?: string }
 interface JobFile { command: string; args: string[]; cwd: string; stdin: 'prompt' | 'none'; timeoutS: number | null; jobhost: string | null; env: Record<string, string>;
@@ -111,7 +112,8 @@ export class Supervisor {
     const off = this.d.jobsOff?.() ?? null;
     if (off) return reject('jobs_off', off);
     const first = this.submitTo(input);
-    if (!('rejected' in first) || input.failover === false || !Supervisor.FAILOVER.has(first.rejected.code)) return first;
+    // A named conversation stays on the route it was opened on, including when that route refuses the job.
+    if (!('rejected' in first) || input.failover === false || input.conversation || !Supervisor.FAILOVER.has(first.rejected.code)) return first;
     for (const next of this.d.routes()?.[input.route]?.fallback ?? []) {
       if (next === input.route) continue;
       const r = this.submitTo({ ...input, route: next });
@@ -134,6 +136,8 @@ export class Supervisor {
     if (!adapter) return reject('adapter_unavailable', `Adapter ${route.adapter} is not enabled.`);
     const invalid = this.routeProblem(route, req.route);
     if (invalid) return reject('adapter_unavailable', `Route ${req.route}: ${invalid}`);
+    const conv = this.conversationPlan(req, adapter);
+    if ('rejected' in conv) return conv;
 
     let root: string | null = null, parentId: string | null = null, depth = 0;
     if (req.parent) {
@@ -171,13 +175,15 @@ export class Supervisor {
     const workspace = adapter.isolation ? join(adapter.isolation.root(route), 'jobs', id) : null;
     // The charter is prefixed before the adapter plans, so every transport receives it. The stored prompt length stays the caller's text.
     const ambient = resolveAmbient(route.options?.ambient, this.d.config.runner.ambient);
-    const charter = req.noCharter === true || adapter.charterEngine === null ? null : buildCharter({
+    // A resumed conversation already carries the charter from its first turn.
+    const skipCharter = req.noCharter === true || adapter.charterEngine === null || conv.resume?.fresh === false;
+    const charter = skipCharter ? null : buildCharter({
       dir: resolveCharterDir(this.d.config.runner.charterDir, this.d.home ?? augurHome(this.d.env)),
       engine: adapter.charterEngine, tools: req.tools, cwd: req.cwd, packs: req.packs,
     });
     const sent = charter?.text ? charter.text + prompt : prompt;
     let plan: LaunchPlan;
-    try { plan = adapter.plan(req, route, { jobDir: dir, prompt: sent, workspace, ambient: this.d.config.runner.ambient }); } catch (e) { return reject('bad_request', `Route ${req.route}: ${(e as Error).message}`); }
+    try { plan = adapter.plan(req, route, { jobDir: dir, prompt: sent, workspace, ambient: this.d.config.runner.ambient, ...(conv.resume ? { resume: conv.resume } : {}) }); } catch (e) { return reject('bad_request', `Route ${req.route}: ${(e as Error).message}`); }
     if (process.platform === 'win32') {
       const len = plan.command.length + 1 + plan.args.reduce((n, a) => n + a.length + 3, 0);
       if (len > MAX_COMMAND_LINE) return reject('prompt_too_large', `The command for ${adapter.id} would be ${len} characters, over the Windows limit of about 32767. This harness takes its prompt as an argument.`);
@@ -191,9 +197,17 @@ export class Supervisor {
     writeFileSync(join(dir, 'job.json'), JSON.stringify(file));
     if (plan.stdin !== null) writeFileSync(join(dir, 'prompt.in'), plan.stdin);
     if (this.d.config.persistPrompts) writeFileSync(join(dir, 'prompt.txt'), prompt);
+    const createdAt = this.now();
     this.d.store.insert({ id, route: req.route, adapter: adapter.id, activity: req.activity, dataTier: req.dataTier, tools: req.tools, output: req.output, cwd: req.cwd,
-      createdAt: this.now(), rootJobId: root ?? id, parentJobId: parentId, depth, caller: req.caller, named: !!req.named, expectFile: req.expectFile ?? null,
-      timeoutS: req.timeoutS ?? null, harnessVersion: null, workspace });
+      createdAt, rootJobId: root ?? id, parentJobId: parentId, depth, caller: req.caller, named: !!req.named, expectFile: req.expectFile ?? null,
+      timeoutS: req.timeoutS ?? null, harnessVersion: null, workspace, conversation: req.conversation ?? null, turn: conv.turn ?? null });
+    if (req.conversation && conv.resume) {
+      if (!conv.existing) this.d.store.insertConversation({
+        name: req.conversation, route: req.route, adapter: adapter.id, nativeId: conv.nativeId, cwd: req.cwd, tools: req.tools,
+        turns: 0, createdAt, lastUsedAt: createdAt,
+      });
+      else if (conv.fresh) this.d.store.reopenConversation(req.conversation, { nativeId: conv.nativeId, tools: req.tools, cwd: req.cwd });
+    }
     this.d.store.setLaunchMeta(id, { promptChars: prompt.length, ambient, ...(charter?.text ? { charter: charter.parts, charterChars: charter.text.length } : {}), ...(charter?.notes.length ? { charterNotes: charter.notes } : {}) });
     const s = this.d.store;
     s.event(id, 'requested', `${req.caller.kind}${req.caller.label ? ' ' + req.caller.label : ''}`, this.now());
@@ -332,7 +346,43 @@ export class Supervisor {
     if (req.timeoutS !== undefined && !(req.timeoutS > 0 && req.timeoutS <= 86400)) return 'timeoutS must be between 1 and 86400.';
     if (req.packs !== undefined && (!Array.isArray(req.packs) || req.packs.some(p => typeof p !== 'string'))) return 'packs must be a list of strings.';
     if (req.noCharter !== undefined && typeof req.noCharter !== 'boolean') return 'noCharter must be true or false.';
+    if (req.conversation !== undefined && (typeof req.conversation !== 'string' || !CONVERSATION_NAME.test(req.conversation))) return 'A conversation name is 1 to 64 characters: letters, digits, dot, underscore or hyphen.';
     return null;
+  }
+
+  /** Resolves a named conversation, or a refusal. A missing row is a new conversation. */
+  private conversationPlan(req: JobRequest, adapter: Adapter): { rejected: Rejection } | {
+    resume?: { id: string | null; fresh: boolean; name: string }; turn?: number; nativeId: string | null; fresh: boolean; existing: boolean;
+  } {
+    if (!req.conversation) return { nativeId: null, fresh: false, existing: false };
+    const name = req.conversation;
+    if (!adapter.capabilities.sessions) return { rejected: { code: 'bad_request', reason: `Adapter ${adapter.id} does not keep a conversation, so route ${req.route} cannot use one.` } };
+    const existing = this.d.store.conversation(name);
+    if (existing && existing.route !== req.route) return { rejected: { code: 'bad_request', reason: `Conversation ${name} is bound to route ${existing.route}.` } };
+    const held = this.d.store.holdingConversation(name);
+    if (held) return { rejected: { code: 'bad_request', reason: `Conversation ${name} is already running as job ${held}.` } };
+    const turns = existing?.turns ?? 0;
+    const fresh = turns === 0;
+    if (!fresh && adapter.id === 'codex-exec' && existing && existing.tools !== req.tools) {
+      return { rejected: { code: 'bad_request', reason: `Conversation ${name} was opened with the ${existing.tools} tool tier. A resumed Codex session keeps that tier, because resume cannot set the sandbox again.` } };
+    }
+    let nativeId: string | null = fresh ? null : existing?.nativeId ?? null;
+    if (fresh && adapter.id === 'grok-exec') nativeId = randomUUID();
+    if (!fresh && !nativeId) return { rejected: { code: 'bad_request', reason: `Conversation ${name} has no session id to resume.` } };
+    return { resume: { id: nativeId, fresh, name }, turn: turns + 1, nativeId, fresh, existing: !!existing };
+  }
+
+  /** Records a finished turn. A failed first turn drops its native id so the next call starts again. */
+  private settleConversation(rec: JobRecord, completed: boolean, sessionId: string | null): void {
+    const name = rec.conversation;
+    if (!name) return;
+    const row = this.d.store.conversation(name);
+    if (!row) return;
+    if (completed) {
+      this.d.store.finishConversation(name, { nativeId: sessionId, cwd: rec.cwd, lastUsedAt: this.now() });
+      return;
+    }
+    if (row.turns === 0) this.d.store.clearConversationId(name);
   }
 
   // ------------------------------------------------------------------ launch and watch
@@ -373,14 +423,14 @@ export class Supervisor {
     if (!rec || rec.state !== 'queued') return;
     const dir = this.jobDir(id), adapter = this.d.adapters.get(rec.adapter);
     const file = readJson<JobFile>(join(dir, 'job.json'));
-    if (!adapter || !file) { this.d.store.transition(id, 'failed', { reason: 'job files missing at launch' }, this.now()); return; }
+    if (!adapter || !file) { if (this.d.store.transition(id, 'failed', { reason: 'job files missing at launch' }, this.now())) this.settleConversation(rec, false, null); return; }
     if (rec.workspace) {
       const problem = this.prepareWorkspace(rec, rec.workspace);
-      if (problem) { this.d.store.transition(id, 'failed', { reason: problem }, this.now()); this.cleanup(id); return; }
+      if (problem) { if (this.d.store.transition(id, 'failed', { reason: problem }, this.now())) this.settleConversation(rec, false, null); this.cleanup(id); return; }
     }
     for (const f of file.files) {
       const target = f.inWorkspace && rec.workspace ? join(rec.workspace, f.name) : join(dir, f.name);
-      try { mkdirSync(dirname(target), { recursive: true }); writeFileSync(target, f.content); } catch (e) { this.d.store.transition(id, 'failed', { reason: `could not write ${f.name}: ${(e as Error).message}` }, this.now()); return; }
+      try { mkdirSync(dirname(target), { recursive: true }); writeFileSync(target, f.content); } catch (e) { if (this.d.store.transition(id, 'failed', { reason: `could not write ${f.name}: ${(e as Error).message}` }, this.now())) this.settleConversation(rec, false, null); return; }
     }
     const route = this.d.routes()?.[rec.route];
     const extra: Record<string, string> = { ...file.env, AUGUR_JOB_ID: id, AUGUR_ROOT_JOB_ID: rec.rootJobId };
@@ -393,7 +443,7 @@ export class Supervisor {
       const r = spawn(process.execPath, [this.runner, dir], { detached: true, windowsHide: true, stdio: 'ignore', env });
       r.on('error', () => { /* reported by the missing-runner check */ });
       r.unref(); pid = r.pid;
-    } catch (e) { this.d.store.transition(id, 'failed', { reason: `runner could not start: ${(e as Error).message}` }, this.now()); return; }
+    } catch (e) { if (this.d.store.transition(id, 'failed', { reason: `runner could not start: ${(e as Error).message}` }, this.now())) this.settleConversation(rec, false, null); return; }
     if (this.d.store.transition(id, 'running', { runnerPid: pid, startedAt: this.now() }, this.now())) {
       this.d.store.event(id, 'process_created', `runner ${pid}`, this.now());
       if (route && adapter.version) { try { this.d.store.setVersion(id, adapter.version(route)); } catch { /* version is informational */ } }
@@ -427,7 +477,7 @@ export class Supervisor {
     // A scope can hold processes that outlived the child, so it is stopped whether or not the child is still there.
     const scope = readJson<JobFile>(join(dir, 'job.json'))?.scope;
     if (scope) spawnSync('systemctl', ['--user', 'kill', '--signal=SIGKILL', `${scope}.scope`], { stdio: 'ignore', timeout: 10000 });
-    store.transition(rec.id, rec.state === 'cancel_requested' ? 'cancelled' : 'lost', { reason: `runner gone, child ${orphan ? 'orphaned and killed' : 'not running'}` }, this.now());
+    if (store.transition(rec.id, rec.state === 'cancel_requested' ? 'cancelled' : 'lost', { reason: `runner gone, child ${orphan ? 'orphaned and killed' : 'not running'}` }, this.now())) this.settleConversation(rec, false, null);
     this.collectPatch(rec);
     this.cleanup(rec.id);
   }
@@ -441,12 +491,12 @@ export class Supervisor {
     if (res.killedBy === 'cancel') store.event(rec.id, 'cancellation_acknowledged', '', at);
     this.collectPatch(rec);
 
-    let answer: string | null = null, failure: string | undefined;
+    let answer: string | null = null, failure: string | undefined, sessionId: string | null = null;
     const stderr = this.tail(join(dir, 'stderr.log'), 1024 * 1024);
     if (adapter) {
       const stdoutPath = join(dir, 'stdout.log');
       const x = adapter.extract({ stdout: this.tail(stdoutPath, 4 * 1024 * 1024), stdoutPath, stderr, exitCode: res.exitCode, jobDir: dir, workspace: rec.workspace });
-      answer = x.answer?.trim() ? x.answer : null; failure = x.failure;
+      answer = x.answer?.trim() ? x.answer : null; failure = x.failure; sessionId = x.sessionId?.trim() ? x.sessionId.trim() : null;
       if (answer) { writeFileSync(join(dir, 'answer.txt'), answer); store.setChars(rec.id, { answer: answer.length }); }
       if (x.usage) { store.setUsage(rec.id, x.usage); store.event(rec.id, 'usage_recorded', `${x.usage.inputTokens} in, ${x.usage.outputTokens} out`, at); }
     }
@@ -467,6 +517,7 @@ export class Supervisor {
     else { if (expected) store.event(rec.id, 'artifact_validated', inner!.expectFile ?? '', at); store.transition(rec.id, 'completed', patch, at); }
     store.event(rec.id, 'finalized', '', this.now());
     const done = store.get(rec.id), model = this.d.routes()?.[rec.route]?.model ?? rec.route;
+    if (done && isTerminal(done.state)) this.settleConversation(done, done.state === 'completed', sessionId);
     if (done) this.d.decisions?.outcome(rec.id, model, done.state, done.reason, done.endedAt && done.startedAt ? done.endedAt - done.startedAt : null);
     this.retryFailed(rec, res, failure, answer, stderr);
     this.cleanup(rec.id);
@@ -477,6 +528,8 @@ export class Supervisor {
     if (this.d.config.runner.failover !== 'on') return;
     const held = this.submitted.get(rec.id);
     if (!held) return;
+    // A conversation is bound to its route, so a failed turn is not retried on a fallback.
+    if (held.req.conversation) return;
     const done = this.d.store.get(rec.id);
     if (!done || (done.state !== 'failed' && done.state !== 'killed')) return;
     if (held.req.failover === false || held.hops.length >= MAX_HOPS) return;
@@ -538,7 +591,7 @@ export class Supervisor {
     if (!rec) return null;
     if (isTerminal(rec.state)) return { ok: false, state: rec.state };
     const at = this.now();
-    if (rec.state === 'queued' || rec.state === 'needs_approval') { store.transition(id, 'cancelled', { reason: 'cancelled before launch' }, at); this.cleanup(id); return { ok: true, state: 'cancelled' }; }
+    if (rec.state === 'queued' || rec.state === 'needs_approval') { if (store.transition(id, 'cancelled', { reason: 'cancelled before launch' }, at)) this.settleConversation(rec, false, null); this.cleanup(id); return { ok: true, state: 'cancelled' }; }
     store.event(id, 'cancellation_requested', '', at);
     writeFileSync(join(this.jobDir(id), 'cancel.request'), '1');
     store.transition(id, 'cancel_requested', {}, at);
@@ -584,6 +637,15 @@ export class Supervisor {
     const run = this.git(job.cwd, ['apply', job.patch.path]);
     if (run.ok) this.d.store.event(id, 'patch_applied', job.cwd, this.now());
     return { ok: run.ok, output: run.out || 'Applied.' };
+  }
+
+  conversations(): Conversation[] { return this.d.store.conversations(); }
+
+  forgetConversation(name: string): { forgotten: boolean; reason?: string } {
+    if (typeof name !== 'string' || !CONVERSATION_NAME.test(name)) return { forgotten: false, reason: 'A conversation name is 1 to 64 characters: letters, digits, dot, underscore or hyphen.' };
+    const held = this.d.store.holdingConversation(name);
+    if (held) return { forgotten: false, reason: `Conversation ${name} is already running as job ${held}.` };
+    return this.d.store.forgetConversation(name) ? { forgotten: true } : { forgotten: false, reason: `No conversation named ${name}.` };
   }
 
   /** Removes the folders of jobs that ended before the retention window. Job records stay. */

@@ -3,7 +3,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { canTransition, isTerminal, statesBefore } from '@augur/dispatch-protocol';
-import type { JobEvent, JobRecord, JobState, PickRecord, PromptRecord, UsageReport } from '@augur/dispatch-protocol';
+import type { Conversation, JobEvent, JobRecord, JobState, PickRecord, PromptRecord, UsageReport } from '@augur/dispatch-protocol';
 
 interface Row {
   id: string; state: string; route: string; adapter: string; activity: string; data_tier: string; tools: string; output: string; cwd: string;
@@ -12,7 +12,7 @@ interface Row {
   usage: string | null; runner_pid: number | null; child_pid: number | null; expect_file: string | null; timeout_s: number | null;
   purged: number; workspace: string | null; patch_path: string | null; changed_files: number | null; prompt_chars: number | null; answer_chars: number | null;
   charter: string | null; charter_chars: number | null; charter_notes: string | null; ambient: string | null;
-  retry_of: string | null; retried_as: string | null;
+  retry_of: string | null; retried_as: string | null; conversation: string | null; conversation_turn: number | null;
 }
 
 const stringList = (text: string | null): string[] | undefined => {
@@ -31,14 +31,25 @@ const toRecord = (r: Row): JobRecord => {
     ...(charter ? { charter } : {}), ...(r.charter_chars != null ? { charterChars: r.charter_chars } : {}), ...(charterNotes?.length ? { charterNotes } : {}),
     ...(r.ambient === 'keep' || r.ambient === 'trim' ? { ambient: r.ambient } : {}),
     ...(r.retry_of ? { retryOf: r.retry_of } : {}), ...(r.retried_as ? { retriedAs: r.retried_as } : {}),
+    ...(r.conversation ? { conversation: r.conversation, ...(typeof r.conversation_turn === 'number' ? { turn: r.conversation_turn } : {}) } : {}),
     workspace: r.workspace, patch: r.patch_path ? { path: r.patch_path, files: r.changed_files ?? 0 } : null,
   };
 };
 
+interface ConversationSql {
+  name: string; route: string; adapter: string; native_id: string | null; cwd: string; tools: string;
+  turns: number; created_at: number; last_used_at: number;
+}
+
+const conversationFrom = (r: ConversationSql): Conversation => ({
+  name: r.name, route: r.route, adapter: r.adapter, nativeId: r.native_id, cwd: r.cwd, tools: r.tools as Conversation['tools'],
+  turns: r.turns, createdAt: r.created_at, lastUsedAt: r.last_used_at,
+});
+
 export interface NewJob {
   id: string; route: string; adapter: string; activity: string; dataTier: string; tools: string; output: string; cwd: string; createdAt: number;
   rootJobId: string; parentJobId: string | null; depth: number; caller: JobRecord['caller']; named: boolean; expectFile: string | null; timeoutS: number | null;
-  harnessVersion: string | null; workspace: string | null;
+  harnessVersion: string | null; workspace: string | null; conversation?: string | null; turn?: number | null;
 }
 
 export interface Patch { startedAt?: number; endedAt?: number; exitCode?: number | null; reason?: string; runnerPid?: number; childPid?: number }
@@ -59,9 +70,12 @@ export class Store {
       create table if not exists events(seq integer primary key autoincrement, job_id text, at integer not null, kind text not null, detail text not null default '');
       create index if not exists events_job on events(job_id, seq);
       create table if not exists picks(id integer primary key autoincrement, at integer not null, session text, model text not null, activity text not null, data_tier text not null, named text, cleared text not null);
-      create table if not exists prompts(id integer primary key autoincrement, at integer not null, session text not null, models text not null);`);
+      create table if not exists prompts(id integer primary key autoincrement, at integer not null, session text not null, models text not null);
+      create table if not exists conversations(
+        name text not null, route text not null, adapter text not null, native_id text, cwd text not null, tools text not null,
+        turns integer not null, created_at integer not null, last_used_at integer not null, primary key (name, route));`);
     const have = new Set((this.db.prepare('pragma table_info(jobs)').all() as Array<{ name: string }>).map(c => c.name));
-    for (const [name, type] of [['workspace', 'text'], ['patch_path', 'text'], ['changed_files', 'integer'], ['prompt_chars', 'integer'], ['answer_chars', 'integer'], ['charter', 'text'], ['charter_chars', 'integer'], ['charter_notes', 'text'], ['ambient', 'text'], ['retry_of', 'text'], ['retried_as', 'text']] as const) {
+    for (const [name, type] of [['workspace', 'text'], ['patch_path', 'text'], ['changed_files', 'integer'], ['prompt_chars', 'integer'], ['answer_chars', 'integer'], ['charter', 'text'], ['charter_chars', 'integer'], ['charter_notes', 'text'], ['ambient', 'text'], ['retry_of', 'text'], ['retried_as', 'text'], ['conversation', 'text'], ['conversation_turn', 'integer']] as const) {
       if (!have.has(name)) this.db.exec(`alter table jobs add column ${name} ${type}`);
     }
     const pickCols = new Set((this.db.prepare('pragma table_info(picks)').all() as Array<{ name: string }>).map(c => c.name));
@@ -73,9 +87,9 @@ export class Store {
   close(): void { this.db.close(); }
 
   insert(j: NewJob): void {
-    this.db.prepare(`insert into jobs(id,state,route,adapter,activity,data_tier,tools,output,cwd,created_at,root_job_id,parent_job_id,depth,caller,named,harness_version,expect_file,timeout_s,workspace)
-      values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(j.id, 'queued', j.route, j.adapter, j.activity, j.dataTier, j.tools, j.output, j.cwd, j.createdAt, j.rootJobId,
-      j.parentJobId, j.depth, JSON.stringify(j.caller), j.named ? 1 : 0, j.harnessVersion, j.expectFile, j.timeoutS, j.workspace);
+    this.db.prepare(`insert into jobs(id,state,route,adapter,activity,data_tier,tools,output,cwd,created_at,root_job_id,parent_job_id,depth,caller,named,harness_version,expect_file,timeout_s,workspace,conversation,conversation_turn)
+      values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(j.id, 'queued', j.route, j.adapter, j.activity, j.dataTier, j.tools, j.output, j.cwd, j.createdAt, j.rootJobId,
+      j.parentJobId, j.depth, JSON.stringify(j.caller), j.named ? 1 : 0, j.harnessVersion, j.expectFile, j.timeoutS, j.workspace, j.conversation ?? null, j.turn ?? null);
   }
 
   private row(id: string): Row | undefined { return this.db.prepare('select * from jobs where id=?').get(id) as Row | undefined; }
@@ -167,6 +181,46 @@ export class Store {
   events(jobId: string, since = 0): JobEvent[] {
     return (this.db.prepare('select seq, job_id, at, kind, detail from events where job_id=? and seq>? order by seq').all(jobId, since) as Array<{ seq: number; job_id: string; at: number; kind: string; detail: string }>)
       .map(e => ({ seq: e.seq, jobId: e.job_id, at: e.at, kind: e.kind, detail: e.detail }));
+  }
+
+  conversation(name: string): Conversation | null {
+    const r = this.db.prepare('select name, route, adapter, native_id, cwd, tools, turns, created_at, last_used_at from conversations where name=?').get(name) as ConversationSql | undefined;
+    return r ? conversationFrom(r) : null;
+  }
+
+  /** Newest first. */
+  conversations(): Conversation[] {
+    return (this.db.prepare('select name, route, adapter, native_id, cwd, tools, turns, created_at, last_used_at from conversations order by last_used_at desc, name').all() as unknown as ConversationSql[]).map(conversationFrom);
+  }
+
+  insertConversation(c: Conversation): void {
+    this.db.prepare('insert into conversations(name, route, adapter, native_id, cwd, tools, turns, created_at, last_used_at) values(?,?,?,?,?,?,?,?,?)')
+      .run(c.name, c.route, c.adapter, c.nativeId, c.cwd, c.tools, c.turns, c.createdAt, c.lastUsedAt);
+  }
+
+  /** A first turn that did not finish is opened again, so the native id from that attempt is replaced. */
+  reopenConversation(name: string, patch: { nativeId: string | null; tools: string; cwd: string }): void {
+    this.db.prepare('update conversations set native_id=?, tools=?, cwd=? where name=? and turns=0').run(patch.nativeId, patch.tools, patch.cwd, name);
+  }
+
+  /** Counts a completed turn and keeps the previous native id when this turn did not report one. */
+  finishConversation(name: string, patch: { nativeId: string | null; cwd: string; lastUsedAt: number }): void {
+    this.db.prepare('update conversations set turns=turns+1, last_used_at=?, cwd=?, native_id=coalesce(?, native_id) where name=?')
+      .run(patch.lastUsedAt, patch.cwd, patch.nativeId, name);
+  }
+
+  clearConversationId(name: string): void {
+    this.db.prepare('update conversations set native_id=null where name=? and turns=0').run(name);
+  }
+
+  forgetConversation(name: string): boolean {
+    return Number(this.db.prepare('delete from conversations where name=?').run(name).changes) > 0;
+  }
+
+  /** A job that is still running under this conversation, if one is. */
+  holdingConversation(name: string): string | null {
+    const row = this.db.prepare("select id from jobs where conversation=? and state in ('queued','needs_approval','running','cancel_requested') limit 1").get(name) as { id: string } | undefined;
+    return row?.id ?? null;
   }
 
   /** Terminal jobs that ended before `cutoff` and whose folder is still on disk. */

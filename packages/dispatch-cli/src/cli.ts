@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES, feedFor } from '@augur/core';
 import type { ActivityId, DataTier, EngineState, OutputMode, ProviderAdded } from '@augur/core';
 import { EXIT_CODES, TOOL_TIERS, describeFigure, exitCodeForState, isTerminal, renderReport, seatLines } from '@augur/dispatch-protocol';
-import type { JobRecord, JobRequest, ToolTier } from '@augur/dispatch-protocol';
+import type { Conversation, JobRecord, JobRequest, ToolTier } from '@augur/dispatch-protocol';
 import { STATUS_TEXT, statusLine } from '@augur/view-model';
 import { bridge, stdioBridge } from './bridge.js';
 import { SERVICE_VERSION, ServiceError, call, configLines, dataDir, disableLogin, enableLogin, loginState, setConfigValue, startViaLogin } from '@augur/augurd';
@@ -33,8 +33,10 @@ augur run <route> --prompt-file <file|-> | --prompt <text> [options]
   --no-failover      keep the job on this route even if a fallback route could take it
   --pack <names>     charter packs, comma separated
   --no-charter       send the prompt with no charter
+  --conversation <n> named conversation to open or resume on this route
   --wait             wait for the job and print its result
 augur jobs [--state <s>] [--root <id>] [--limit <n>]
+augur conversations [--forget <name>]   list named conversations, or forget one
 augur status                          one line: Claude's use, anything running hot, and the alert count (--waybar for a status bar's JSON)
 augur status <job>
 augur wait <job> [--timeout <s>]      reports the last job when the one named was retried
@@ -106,6 +108,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
         const list = await call('list', { state: opt('state') as never, root: opt('root'), limit: opt('limit') ? Number(opt('limit')) : 25 }, opts);
         say(list.map(describe).join('\n') || 'No jobs.', list); return 0;
       }
+      case 'conversations': return await conversationsCmd(p, io, opts, say, opt, json);
       case 'status': {
         if (!rest[0]) return await statusCmd(p.flags.has('waybar'), io, opts, say);
         const j = await call('status', { id: need(rest[0], 'job id') }, opts);
@@ -292,6 +295,19 @@ async function claudeCmd(rest: string[], io: Io, opts: Opts, say: Say): Promise<
 }
 
 function need(v: string | undefined, what: string): string { if (!v) throw new Error(`Missing ${what}.`); return v; }
+
+async function conversationsCmd(p: Parsed, io: Io, opts: Opts, say: (h: string, d: unknown) => void, opt: (n: string) => string | undefined, json: boolean): Promise<number> {
+  const name = opt('forget');
+  if (name) {
+    const r = await call('forget_conversation', { name }, opts);
+    if (!r.forgotten) { io.err(`${r.reason ?? `No conversation named ${name}.`}\n`); if (json) io.out(JSON.stringify(r) + '\n'); return EXIT_CODES.usage; }
+    say(`Forgot conversation ${name}.`, r); return 0;
+  }
+  const list = await call('conversations', undefined, opts);
+  say(list.map(conversationLine).join('\n') || 'No conversations.', list); return 0;
+}
+
+const conversationLine = (c: Conversation) => `${c.name}  ${c.route}  ${c.adapter}  ${c.turns}  ${new Date(c.lastUsedAt).toISOString().slice(0, 19)}Z`;
 type Opts = { dir: string; pipe?: string };
 
 async function run(rest: string[], p: Parsed, io: Io, opts: Opts, say: (h: string, d: unknown) => void, opt: (n: string) => string | undefined, json: boolean): Promise<number> {
@@ -317,7 +333,7 @@ async function run(rest: string[], p: Parsed, io: Io, opts: Opts, say: (h: strin
     ...(p.flags.has('named') ? { named: true } : {}),
     caller: { kind: parentId ? 'job' : 'cli', ...(parentId ? { label: parentId } : {}), ...(io.env.CLAUDE_CODE_SESSION_ID ? { session: io.env.CLAUDE_CODE_SESSION_ID } : {}), ...(io.interactive ? { interactive: true } : {}) },
     ...(allow.length ? { allow } : {}), ...(p.flags.has('no-failover') ? { failover: false } : {}),
-    ...(packs?.length ? { packs } : {}), ...(p.flags.has('no-charter') ? { noCharter: true } : {}),
+    ...(packs?.length ? { packs } : {}), ...(p.flags.has('no-charter') ? { noCharter: true } : {}), ...(opt('conversation') ? { conversation: opt('conversation') } : {}),
     ...(parentId ? { parent: { jobId: parentId, rootJobId: io.env.AUGUR_ROOT_JOB_ID ?? parentId, depth: 0 } } : {}),
   };
   const res = await call('submit', req, opts);
