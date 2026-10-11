@@ -129,16 +129,18 @@ describe('command lines', () => {
     expect(codexExec.plan(req(), route('codex-exec', { command: 'C:/c/codex.exe', model: 'm', ambient: 'keep' }), { ...cctx, ambient: 'trim' })).toEqual(base);
     expect(codexExec.plan(req(), codexRoute, { ...cctx, resume: { id: null, fresh: true, name: 'feat' } })).toEqual(base);
     const resumed = codexExec.plan(req({ tools: 'write' }), codexRoute, { ...cctx, resume: { id: 'thread-1', fresh: false, name: 'feat' } });
-    expect(resumed.args).toEqual(['exec', 'resume', '--skip-git-repo-check', 'thread-1', '-']);
+    const out = [join('C:/jobs/j1', 'last-message.txt')];
+    const head = ['exec', 'resume', '--skip-git-repo-check', '--json', '-o', ...out];
+    expect(resumed.args).toEqual([...head, 'thread-1', '-']);
     expect(resumed.stdin).toBe(tierNote('write', 'hi'));
-    for (const flag of ['--json', '-o', '--sandbox', '-m', '--disable']) expect(resumed.args).not.toContain(flag);
+    for (const flag of ['--sandbox', '-m', '--disable']) expect(resumed.args).not.toContain(flag);
     const withEffort = codexExec.plan(req({ tools: 'write' }), route('codex-exec', { command: 'C:/c/codex.exe', model: 'm', effort: 'low' }), { ...cctx, resume: { id: 'thread-1', fresh: false, name: 'feat' } });
-    expect(withEffort.args).toEqual(['exec', 'resume', '--skip-git-repo-check', 'thread-1', '-c', 'model_reasoning_effort=low', '-']);
+    expect(withEffort.args).toEqual([...head, 'thread-1', '-c', 'model_reasoning_effort=low', '-']);
     const bare = codexExec.plan(req({ tools: 'read' }), route('codex-exec', { command: 'C:/c/codex.exe' }), { ...cctx, resume: { id: 'thread-1', fresh: false, name: 'feat' } });
-    expect(bare.args).toEqual(['exec', 'resume', '--skip-git-repo-check', 'thread-1', '-']);
+    expect(bare.args).toEqual([...head, 'thread-1', '-']);
     expect(bare.stdin).toBe(tierNote('read', 'hi'));
     const wrapped = codexExec.plan(req({ tools: 'full' }), route('codex-exec', { command: 'C:/c/codex.exe', prefixArgsJson: '["wrap"]' }), { ...cctx, resume: { id: 'thread-1', fresh: false, name: 'feat' } });
-    expect(wrapped.args).toEqual(['wrap', 'exec', 'resume', '--skip-git-repo-check', 'thread-1', '-']);
+    expect(wrapped.args).toEqual(['wrap', ...head, 'thread-1', '-']);
     expect(wrapped.stdin).toBe('hi');
 
     const copilotRoute = route('copilot-exec', { model: 'gpt-5-mini', command: 'C:/c/copilot.exe' });

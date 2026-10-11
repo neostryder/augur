@@ -42,9 +42,9 @@ export const codexExec: Adapter = {
     const command = typeof o.command === 'string' ? o.command : findMaintainedCodex() ?? resolveExecutable('codex')?.command ?? 'codex';
     const prefix: string[] = typeof o.prefixArgsJson === 'string' ? JSON.parse(o.prefixArgsJson) as string[] : [];
     if (ctx.resume && !ctx.resume.fresh) {
-      // Resume keeps the sandbox from the first turn, so only skip-git-repo-check, -c, the id and the prompt go back.
+      // Resume keeps the sandbox from the first turn, so it sets no sandbox or model. It still takes --json and -o, so the answer and usage come back as on a first turn.
       if (!ctx.resume.id) throw new Error(`conversation ${ctx.resume.name} has no session id to resume`);
-      const resumeArgs = [...prefix, 'exec', 'resume', '--skip-git-repo-check', ctx.resume.id];
+      const resumeArgs = [...prefix, 'exec', 'resume', '--skip-git-repo-check', '--json', '-o', join(ctx.jobDir, 'last-message.txt'), ctx.resume.id];
       if (typeof o.effort === 'string') resumeArgs.push('-c', `model_reasoning_effort=${o.effort}`);
       // `-` reads the prompt from standard input, so a long one stays under the command-line limit.
       resumeArgs.push('-');
