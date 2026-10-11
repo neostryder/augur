@@ -3,9 +3,9 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import { join } from 'node:path';
-import { PROTOCOL_VERSION } from '@augur/dispatch-protocol';
-import type { EngineEvent, JobRequest, MethodName, RateCard, RouteConfig, RpcRequest, RpcResponse, ViewHello, ViewReply } from '@augur/dispatch-protocol';
-import { callEngine, type EngineApi, type EngineKey, type EngineState } from '@augur/core';
+import { PROTOCOL_VERSION, planRouteAdd } from '@augur/dispatch-protocol';
+import type { EngineEvent, JobRequest, MethodName, RateCard, RouteAddAnswer, RouteConfig, RpcRequest, RpcResponse, ViewHello, ViewReply } from '@augur/dispatch-protocol';
+import { DEFAULT_APPROVAL, RULES_ONLY_PROVIDERS, allPlugins, callEngine, type EngineApi, type EngineKey, type EngineState, type ProviderAddition } from '@augur/core';
 import { buildAccounting } from './accounting.js';
 import type { Store } from './store.js';
 import type { Supervisor } from './supervisor.js';
@@ -15,6 +15,7 @@ import type { ViewHub, ViewLink } from './views.js';
 export interface EngineLink { api: EngineApi; views: ViewHub }
 
 const MAX_LINE = 16 * 1024 * 1024;
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 /** The token sits in the service's data folder, which is inside the user's profile. Callers read it from there. */
 export function ensureToken(dir: string): string {
@@ -32,7 +33,7 @@ export class IpcServer {
   private sockets = new Set<net.Socket>();
   private readonly startedAt = Date.now();
   private engine: EngineLink | null = null;
-  constructor(private sup: Supervisor, private store: Store, private token: string, private routes: () => Record<string, RouteConfig> | null, private rates: () => RateCard = () => ({})) {}
+  constructor(private sup: Supervisor, private store: Store, private token: string, private routes: () => Record<string, RouteConfig> | null, private rates: () => RateCard = () => ({}), private routeFile: { read(): string | null; write(text: string): void } | null = null) {}
 
   /** Serves the usage engine's methods from now on. Before this they are refused. */
   attachEngine(engine: EngineLink | null): void { this.engine = engine; }
@@ -80,11 +81,91 @@ export class IpcServer {
       case 'label': return this.sup.label(String(p.id ?? ''), String(p.result ?? ''), typeof p.note === 'string' ? p.note : undefined);
       case 'balance': return this.sup.balance(typeof p.days === 'number' ? p.days : 7);
       case 'routes': return Object.entries(this.routes() ?? {}).map(([name, r]) => ({ name, model: r.model, adapter: r.adapter, problem: this.sup.routeProblem(r as RouteConfig, name) }));
+      case 'route_add': return this.routeAdd(params);
       case 'engine_state': { const e = this.needEngine(); return { state: this.stateOf(p.keys as EngineKey[] | undefined), views: e.views.info() }; }
       case 'engine_call': return callEngine(this.needEngine().api, String(p.method ?? ''), Array.isArray(p.args) ? p.args : []);
       case 'accounting': { const limit = Math.min(Math.max(Number(p.limit ?? 100), 1), 500); return buildAccounting(this.store.list({ limit: 500 }), this.routes(), this.rates(), limit); }
       default: throw new Error(`unknown method ${String(method)}`);
     }
+  }
+
+  private refused(problems: string[]): RouteAddAnswer {
+    return { ok: false, problems, text: `Nothing was written. ${problems.join(' ')}` };
+  }
+
+  /** Names already in the routes file, including entries the service skips, so an add never overwrites one. */
+  private routeNames(): { names: Set<string> } | { error: string } {
+    if (!this.routeFile) return { error: 'This service cannot write routes.' };
+    const text = this.routeFile.read();
+    if (text === null || !text.trim()) return { names: new Set() };
+    let data: unknown;
+    try { data = JSON.parse(text); } catch { return { error: 'routes.json is not valid JSON, so nothing was written.' }; }
+    if (!isObj(data) || (data.routes !== undefined && !isObj(data.routes))) return { error: 'routes.json must be an object with a routes object, so nothing was written.' };
+    return { names: new Set(Object.keys(isObj(data.routes) ? data.routes : {})) };
+  }
+
+  private writeRoute(name: string, entry: Record<string, unknown>): string | null {
+    if (!this.routeFile) return 'This service cannot write routes.';
+    const text = this.routeFile.read();
+    let data: Record<string, unknown> = { routes: {} };
+    if (text !== null && text.trim()) {
+      try { data = JSON.parse(text) as Record<string, unknown>; } catch { return 'routes.json is not valid JSON, so nothing was written.'; }
+      if (!isObj(data) || (data.routes !== undefined && !isObj(data.routes))) return 'routes.json must be an object with a routes object, so nothing was written.';
+    }
+    const routes = { ...(isObj(data.routes) ? data.routes : {}) };
+    if (Object.hasOwn(routes, name)) return `A route named ${name} already exists. Nothing was written.`;
+    routes[name] = entry;
+    this.routeFile.write(`${JSON.stringify({ ...data, routes }, null, 2)}\n`);
+    return null;
+  }
+
+  private providerKind(id: string): 'builtin' | 'custom' | 'rules-only' | 'none' {
+    const config = this.needEngine().api.state.config;
+    if (allPlugins({ ...config, custom: [] }).some(p => p.id === id)) return 'builtin';
+    if ((config.custom ?? []).some(d => d.id === id)) return 'custom';
+    if (RULES_ONLY_PROVIDERS.some(r => r.id === id) || (config.rulesOnly ?? []).some(r => r.id === id)) return 'rules-only';
+    return 'none';
+  }
+
+  private routeAddedText(name: string, model: string | null, added: boolean, custom: boolean, baseUrl: string | null): string {
+    const parts = [`Added route ${name}.`];
+    if (model && added) parts.push(`The model ${model} is unreviewed, so nothing can run it until the owner confirms it in Model rules.`);
+    else if (model) parts.push(`The model ${model} is already in the rules and was left as it is.`);
+    if (custom) parts.push('The balance reading is stored and stays off until the owner sets its key.');
+    if (baseUrl) parts.push(`Its requests go to ${baseUrl}. The owner should check that address before setting a key, since the key is sent there.`);
+    parts.push(`Set the key with augur key set ${name}.`);
+    return parts.join(' ');
+  }
+
+  /** Checks the whole request, then writes the route. A problem or an approval hold writes nothing. */
+  private async routeAdd(params: unknown): Promise<RouteAddAnswer> {
+    const input = isObj(params) ? params : {};
+    const names = this.routeNames();
+    if ('error' in names) return this.refused([names.error]);
+    const engine = this.needEngine();
+    const planned = planRouteAdd(input, { existingRoutes: names.names, knownAdapters: new Set(this.sup.knownAdapters()), providerKind: id => this.providerKind(id) });
+    if ('problems' in planned) return this.refused(planned.problems);
+    const approval = engine.api.state.config.agentApproval ?? DEFAULT_APPROVAL;
+    if (approval === 'all') return { ok: false, held: true, text: 'Nothing was written. The approval setting holds every agent edit, so this route was not added. The owner can add it in the app.' };
+    const plan = planned.plan;
+    let added: string[] = [];
+    if (plan.model || plan.custom) {
+      const addition: ProviderAddition = { provider: plan.provider, name: plan.provider, ...(plan.model ? { models: [plan.model] } : {}), ...(plan.custom ? { custom: plan.custom, usageOff: true as const } : {}) };
+      added = (await engine.api.addProvider(addition)).added;
+    }
+    const again = this.routeNames();
+    if ('error' in again) return this.refused([again.error]);
+    if (again.names.has(plan.name)) {
+      const extra = plan.model && added.includes(plan.model.label) ? ' The model was added and stays unreviewed.' : '';
+      return this.refused([`A route named ${plan.name} already exists. The route was not written.${extra}`]);
+    }
+    const written = this.writeRoute(plan.name, plan.entry);
+    if (written) return this.refused([written]);
+    const model = plan.model?.label ?? null;
+    const base = plan.entry.options.baseUrl;
+    let host: string | null = null;
+    if (typeof base === 'string') { try { host = new URL(base).host; } catch { host = null; } }
+    return { ok: true, text: this.routeAddedText(plan.name, model, model !== null && added.includes(model), plan.custom !== null, host), route: plan.name, model };
   }
 
   private authorized(given: unknown): boolean {

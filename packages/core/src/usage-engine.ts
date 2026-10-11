@@ -640,8 +640,9 @@ export class UsageEngine implements EngineApi {
     if (input.enable || input.custom) {
       const pc = next.providers.find((p) => p.id === id);
       if (!pc) throw new Error(`${id} has no usage reading to turn on.`);
-      pc.settings = { ...pc.settings, ...(input.enable?.settings ?? {}) };
-      pc.enabled = true;
+      if (input.enable?.settings) pc.settings = { ...pc.settings, ...input.enable.settings };
+      // A reading supplied with the route stays off until the owner stores its key.
+      if (input.enable || !input.usageOff) pc.enabled = true;
     }
     const policy = next.policy ??= emptyPolicy();
     const added = addModels(policy, id, input.models ?? [], 'manual');

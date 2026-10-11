@@ -155,14 +155,21 @@ describe('job, jobs, cancel, pressure, routes', () => {
 });
 
 describe('the server', () => {
-  it('offers eleven tools with the rules in its instructions, and runs one through a client', async () => {
+  it('offers thirteen tools with the rules in its instructions, and runs one through a client', async () => {
     const [a, b] = InMemoryTransport.createLinkedPair();
     const server = buildServer(createTools(deps({ routes: ROUTES })), 'test');
     const client = new Client({ name: 'test', version: '1' });
     await Promise.all([server.connect(a), client.connect(b)]);
     const { tools } = await client.listTools();
-    expect(tools.map(t => t.name).sort()).toEqual(['augur_balance', 'augur_cancel', 'augur_job', 'augur_jobs', 'augur_models', 'augur_pick', 'augur_pick_preview', 'augur_policy', 'augur_policy_edit', 'augur_pressure', 'augur_routes', 'augur_run']);
+    expect(tools.map(t => t.name).sort()).toEqual(['augur_balance', 'augur_cancel', 'augur_job', 'augur_jobs', 'augur_models', 'augur_pick', 'augur_pick_preview', 'augur_policy', 'augur_policy_edit', 'augur_pressure', 'augur_route_add', 'augur_routes', 'augur_run']);
     expect(client.getInstructions()).toContain('data tier is never assumed');
+    expect(client.getInstructions()).toContain('augur_route_add');
+    const add = tools.find(t => t.name === 'augur_route_add')!;
+    expect(add.inputSchema.required).toEqual(expect.arrayContaining(['name', 'adapter', 'provider']));
+    expect(add.inputSchema.properties).toHaveProperty('options');
+    expect(add.inputSchema.properties).toHaveProperty('model');
+    expect(add.inputSchema.properties).toHaveProperty('balance_url');
+    expect(add.inputSchema.properties).toHaveProperty('balance_path');
     const run = tools.find(t => t.name === 'augur_run')!;
     expect(run.inputSchema.required).toEqual(expect.arrayContaining(['route', 'prompt', 'activity', 'data_tier']));
     expect(run.inputSchema.properties).toMatchObject({ packs: { type: 'array' }, no_charter: { type: 'boolean' }, conversation: { type: 'string' } });
@@ -181,5 +188,51 @@ describe('the server', () => {
     expect(res.isError).toBe(true);
     expect(calls).toHaveLength(0);
     await client.close();
+  });
+});
+
+describe('augur_route_add', () => {
+  const added = { ok: true, text: 'Added route acme. The model acme/fast is unreviewed, so nothing can run it until the owner confirms it in Model rules. Set the key with augur key set acme.' };
+
+  it('sends the route to the service and repeats that the model stays unreviewed', async () => {
+    const calls: Calls[] = [];
+    const t = createTools(deps({ route_add: () => added }, calls));
+    const r = await t.routeAdd({ name: 'acme', adapter: 'codex-exec', provider: 'acme', model: { label: 'fast', id: 'fast-1' }, balance_url: 'https://api.acme.example/balance', balance_path: '$.balance', options: { baseUrl: 'https://api.acme.example/v1' } });
+    expect(r.isError).toBeUndefined();
+    expect(r.text).toContain('unreviewed');
+    expect(r.text).toContain('Model rules');
+    expect(r.text).toContain('augur key set acme');
+    expect(calls).toEqual([{ method: 'route_add', params: { name: 'acme', adapter: 'codex-exec', provider: 'acme', options: { baseUrl: 'https://api.acme.example/v1' }, model: { label: 'fast', id: 'fast-1' }, balanceUrl: 'https://api.acme.example/balance', balancePath: '$.balance' } }]);
+  });
+
+  it('refuses a key-like option, a secret value, a bad model id and a top-level key before calling the service', async () => {
+    const calls: Calls[] = [];
+    const t = createTools(deps({ route_add: () => added }, calls));
+    const base = { name: 'acme', adapter: 'codex-exec', provider: 'acme', model: { label: 'fast', id: 'fast-1' } };
+    const keyName = await t.routeAdd({ ...base, options: { apiKey: 'not-a-secret' } });
+    const secret = await t.routeAdd({ ...base, options: { baseUrl: 'sk-live-secret' } });
+    const model = await t.routeAdd({ ...base, model: { label: 'fast', id: 'bad id' } });
+    const top = await t.routeAdd({ ...base, key: 'sk-live-secret' });
+    for (const r of [keyName, secret, model, top]) {
+      expect(r.isError).toBe(true);
+      expect(r.text).toContain('Nothing was written');
+    }
+    expect(keyName.text).toContain('looks like a key');
+    expect(secret.text).toContain('looks like a key');
+    expect(secret.text).not.toContain('sk-live-secret');
+    expect(model.text).toContain('model id');
+    expect(top.text).not.toContain('sk-live-secret');
+    expect(calls).toEqual([]);
+  });
+
+  it('reports a held add as an error and passes a service refusal through', async () => {
+    const held = createTools(deps({ route_add: () => ({ ok: false, held: true, text: 'Nothing was written. The approval setting holds every agent edit, so this route was not added. The owner can add it in the app.' }) }));
+    const h = await held.routeAdd({ name: 'acme', adapter: 'codex-exec', provider: 'acme' });
+    expect(h.isError).toBe(true);
+    expect(h.text).toContain('approval setting holds every agent edit');
+    const refused = createTools(deps({ route_add: () => ({ ok: false, text: 'Nothing was written. A route named acme already exists. Nothing was written.' }) }));
+    const r = await refused.routeAdd({ name: 'acme', adapter: 'codex-exec', provider: 'acme' });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain('already exists');
   });
 });

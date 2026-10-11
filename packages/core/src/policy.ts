@@ -222,12 +222,22 @@ export function undoChange(policy: PolicyConfig, change: PolicyChange, device: s
   setField(policy, change.path, change.from ?? undefined, device, now);
 }
 
-/** Adds models by hand or from a list, skipping any label or model id already there. New ones start unreviewed and block until they have rules. Returns the labels added. */
-export function addModels(policy: PolicyConfig, provider: string, models: Array<{ label: string; id: string; name?: string }>, source: 'live' | 'manual', now = new Date()): string[] {
+/** Copies the proposal fields and drops a pause, notes, a hold rule and anything else. The model is still unreviewed. */
+function proposedRule(raw: unknown): Rule {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const src = raw as Record<string, unknown>;
+  const cleaned: Record<string, unknown> = {};
+  if (src.activities && typeof src.activities === 'object') cleaned.activities = src.activities;
+  for (const key of ['dataTier', 'askFirst', 'output', 'sandbox', 'effort', 'cost', 'dataHandling']) if (key in src) cleaned[key] = src[key];
+  return migrateRule(cleaned);
+}
+
+/** Adds models by hand or from a list, skipping any label or model id already there. New ones start unreviewed, with any proposed rule filled in, and block until they are confirmed. Returns the labels added. */
+export function addModels(policy: PolicyConfig, provider: string, models: Array<{ label: string; id: string; name?: string; rule?: unknown }>, source: 'live' | 'manual', now = new Date()): string[] {
   const p = providerPolicy(policy, provider), added: string[] = [];
   for (const m of models) {
     if (p.models[m.label] || Object.values(p.models).some(e => e.id === m.id)) continue;
-    p.models[m.label] = { id: m.id, name: m.name, source, status: 'unreviewed', rule: {}, firstSeen: now.toISOString() };
+    p.models[m.label] = { id: m.id, name: m.name, source, status: 'unreviewed', rule: proposedRule(m.rule), firstSeen: now.toISOString() };
     added.push(m.label);
   }
   return added;

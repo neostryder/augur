@@ -3,6 +3,7 @@
 import { appDirs, createKeyStore, checkSecretName } from '@augur/augurd';
 import type { KeyStore } from '@augur/augurd';
 import { EXIT_CODES, routeSecretName } from '@augur/dispatch-protocol';
+import { readText, routesPath } from './profile.js';
 
 export interface KeyIo {
   err(text: string): void;
@@ -20,6 +21,17 @@ export function secretNameFor(name: string): string {
   if (name.includes('.')) { checkSecretName(name); return name; }
   if (!ROUTE.test(name)) throw new Error(`"${name}" is not a route name: it starts with a lowercase letter and holds lowercase letters, digits, - and _`);
   return routeSecretName(name);
+}
+
+/** The host a route's requests go to, when the route names one. A key is sent there, so it is shown before the key is typed. */
+export function routeDestination(name: string, env: NodeJS.ProcessEnv): string | null {
+  const text = readText(routesPath(env));
+  if (!text) return null;
+  try {
+    const route = (JSON.parse(text) as { routes?: Record<string, { options?: Record<string, unknown> }> }).routes?.[name];
+    const base = route?.options?.baseUrl;
+    return typeof base === 'string' ? new URL(base).host : null;
+  } catch { return null; }
 }
 
 export const KINDS: Record<string, string> = { windows: 'the Windows credential store', keychain: 'the macOS keychain', 'secret-service': 'the Secret Service', file: 'a file only this user can read' };
@@ -40,22 +52,23 @@ export async function keyCmd(rest: string[], flags: { env?: string; stdin: boole
   try {
     if (action === 'status') { const has = await keys.has(secret); say(`${name}: ${has ? 'a key is stored' : 'no key is stored'}.`, { name, secret, stored: has }); return has ? EXIT_CODES.completed : EXIT_CODES.rejected; }
     if (action === 'remove') { await keys.delete(secret); say(`${name}: the stored key was removed.`, { name, secret, stored: false }); return EXIT_CODES.completed; }
-    const value = await readValue(flags, io, name);
+    const where = name.includes('.') ? null : routeDestination(name, io.env);
+    const value = await readValue(flags, io, name, where);
     if (typeof value !== 'string') { io.err(`${value.error}\n`); return EXIT_CODES.usage; }
     await keys.set(secret, value);
-    say(`${name}: a key of ${value.length} characters is stored in ${KINDS[keys.kind] ?? keys.kind}. Run augur test ${name.includes('.') ? '<route>' : name} to check it works.`, { name, secret, stored: true, length: value.length, store: keys.kind });
+    say(`${name}: a key of ${value.length} characters is stored in ${KINDS[keys.kind] ?? keys.kind}.${where ? ` Requests with it go to ${where}.` : ''} Run augur test ${name.includes('.') ? '<route>' : name} to check it works.`, { name, secret, stored: true, length: value.length, store: keys.kind });
     return EXIT_CODES.completed;
   } catch (e) { io.err(`${(e as Error).message}\n`); return EXIT_CODES.failed; }
 }
 
 /** The key from the hidden prompt, the named environment variable or standard input, or the reason none could be read. */
-export async function readValue(flags: { env?: string; stdin: boolean }, io: KeyIo, name: string): Promise<string | { error: string }> {
+export async function readValue(flags: { env?: string; stdin: boolean }, io: KeyIo, name: string, where: string | null = null): Promise<string | { error: string }> {
   let raw: string | undefined;
   if (flags.env) {
     raw = io.env[flags.env];
     if (!raw) return { error: `The environment variable ${flags.env} is not set here. Set it in your own terminal first, then run this again.` };
   } else if (flags.stdin) raw = io.stdin();
-  else if (io.interactive && io.readSecret) raw = await io.readSecret(`Key for ${name} (typing is hidden): `);
+  else if (io.interactive && io.readSecret) raw = await io.readSecret(`Key for ${name}${where ? `, sent to ${where}` : ''} (typing is hidden): `);
   else return { error: 'No terminal is attached to type a key into. Run this in your own terminal, or put the key in an environment variable and pass --env <NAME>, or pipe it with --stdin.' };
   const value = (raw ?? '').replace(/^﻿/, '').trim();
   if (!value) return { error: 'The key was empty, so nothing was stored.' };

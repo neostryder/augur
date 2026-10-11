@@ -235,16 +235,30 @@ export interface AppConfig {
   rulesOnly?: Array<{ id: string; name: string }>;
 }
 
+/** Rule fields a profile or an add may propose. Status, a pause, notes and thresholds are never part of it. */
+export interface ProposedRule {
+  activities?: Record<string, string | null>;
+  dataTier?: string;
+  askFirst?: boolean;
+  output?: string;
+  sandbox?: boolean;
+  effort?: string | null;
+  cost?: string;
+  dataHandling?: Record<string, string | boolean | null>;
+}
+
 /** What `addProvider` takes: a provider for a route to point at, with the models it serves and, when its usage can be read, a definition for that reading. */
 export interface ProviderAddition {
   provider: string;
   name: string;
-  /** Models added by hand, unreviewed, so none can run until the owner confirms their rules. */
-  models?: Array<{ label: string; id: string; name?: string }>;
+  /** Models added by hand, unreviewed, so none can run until the owner confirms their rules. `rule` is filled in and still does not let the model run. */
+  models?: Array<{ label: string; id: string; name?: string; rule?: ProposedRule }>;
   /** A usage reading for a provider that has none built in. */
   custom?: GenericProviderDef;
   /** Turns a built-in provider on, with settings such as the Jev base URL. */
   enable?: { settings?: Record<string, string> };
+  /** Stores `custom` and leaves the provider off until a key is saved. */
+  usageOff?: boolean;
 }
 export interface ProviderAdded {
   /** Each model id with the label the rules hold it under, including a model that was already there. */

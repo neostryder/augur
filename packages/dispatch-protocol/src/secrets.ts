@@ -11,3 +11,12 @@ export function routeSecretName(route: string): string {
 
 /** The credential's name in the Windows Credential Manager, where the app's secrets are stored as `<name>.augur`. */
 export const credentialTarget = (secretName: string): string => `${secretName}.augur`;
+
+/** Option names a profile or an agent route refuses. A profile and a route file never carry a key. */
+export const SECRET_OPTION = /^(api_?key|key|token|secret|password)$/i;
+
+/** A string that is itself a key, rather than an option whose name looks like one. */
+export function looksLikeSecretValue(value: string): boolean {
+  const v = value.trim();
+  return /^(sk|rk|pk|ghp|github_pat|xox[baprs])[-_]/i.test(v) || /-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(v);
+}

@@ -79,6 +79,9 @@ export class Supervisor {
 
   jobDir(id: string): string { return join(this.d.dir, 'jobs', id); }
 
+  /** Adapter ids this service can run. */
+  knownAdapters(): readonly string[] { return [...this.d.adapters.keys()]; }
+
   // ------------------------------------------------------------------ submit
 
   /** Why a route cannot start a job right now, in the words a job would be refused with, or null when it can. */

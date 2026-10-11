@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { callEngine, defaultConfig, fieldPath, migrateConfig, setField, UsageEngine } from '../src/index.js';
-import type { AppConfig, EngineKey, EngineShell, Snapshot } from '../src/index.js';
+import type { AppConfig, EngineKey, EngineShell, ProposedRule, Snapshot } from '../src/index.js';
 
 function fakeShell(saved: AppConfig | null) {
   const files = new Map<string, string>(), secrets = new Map<string, string>(), exported = new Map<string, string>();
@@ -116,6 +116,21 @@ describe('the usage engine', () => {
     await callEngine(engine, 'dismiss', [['x']]);
     expect(engine.state.feed.alerts.map((a) => a.id)).not.toContain('x');
     expect(seen).toContain('feed');
+  });
+
+  it('stores a proposed rule on an unreviewed model and leaves a route reading off', async () => {
+    const f = fakeShell(base());
+    engine = new UsageEngine(f.shell, { hosted: 'https://augur.example.com' });
+    await engine.start();
+    const def = { id: 'acme2', name: 'Acme Two', auth: { type: 'bearer' as const }, requests: { balance: { url: 'https://api.acme2.example/balance' } }, money: [{ id: 'balance', label: 'Balance', amount: 'balance:$.balance' }] };
+    const rule = { dataTier: 'internal', pause: { until: '2099-01-01T00:00:00Z' }, notes: 'no' } as ProposedRule;
+    await engine.addProvider({ provider: 'acme2', name: 'Acme Two', custom: def, usageOff: true, models: [{ label: 'acme2/m', id: 'm', rule }] });
+    expect(engine.state.config.providers.find(p => p.id === 'acme2')?.enabled).toBe(false);
+    const model = engine.state.config.policy?.providers.acme2?.models['acme2/m'];
+    expect(model?.status).toBe('unreviewed');
+    expect(model?.rule.dataTier).toBe('internal');
+    expect(model?.rule.pause).toBeUndefined();
+    expect(model?.rule.notes).toBeUndefined();
   });
 
   it('refuses a command that is not on the list', async () => {

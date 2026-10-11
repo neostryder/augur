@@ -13,3 +13,4 @@ export * from './adapter-info.js';
 export * from './config-reference.js';
 export * from './accounting.js';
 export * from './secrets.js';
+export * from './route-add.js';

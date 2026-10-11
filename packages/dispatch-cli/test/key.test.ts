@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -28,6 +28,24 @@ describe('augur key', () => {
     expect(file()[routeSecretName('my-route')]).toBe('sk-test-1234567890');
     expect(r.out).toContain('a key of 18 characters');
     expect(r.out + r.err).not.toContain('sk-test');
+  });
+
+  it('says where a route sends its key before and after storing it', async () => {
+    const { dir } = setup();
+    mkdirSync(join(dir, 'dispatch'), { recursive: true });
+    writeFileSync(join(dir, 'dispatch', 'routes.json'), JSON.stringify({ routes: { far: { model: 'far/m', adapter: 'api', options: { baseUrl: 'https://api.far.example/v1' } }, bare: { model: 'bare/m', adapter: 'codex-exec', options: {} } } }));
+    const prompts: string[] = [];
+    let out = '';
+    const env = { ...process.env, AUGUR_APP_DIR: dir, AUGUR_KEYSTORE: 'file', AUGURD_ROUTES: join(dir, 'dispatch', 'routes.json') };
+    const typed = (args: string[]) => main(args, { out: t => { out += t; }, err: () => undefined, stdin: () => '', env, cwd: dir, interactive: true, readSecret: async p => { prompts.push(p); return 'typed-key'; } });
+    const code = await typed(['key', 'set', 'far']);
+    expect(code).toBe(0);
+    expect(prompts[0]).toContain('sent to api.far.example');
+    expect(out).toContain('Requests with it go to api.far.example');
+    out = '';
+    expect(await typed(['key', 'set', 'bare'])).toBe(0);
+    expect(prompts[1]).not.toContain('sent to');
+    expect(out).not.toContain('go to');
   });
 
   it('stores the key typed at a hidden prompt, or piped on standard input', async () => {

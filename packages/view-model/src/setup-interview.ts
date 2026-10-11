@@ -1,8 +1,8 @@
 // The setup interview, shared by the window app, the terminal app and the Claude Code setup skill's checklist.
 // Pure data: the steps, the answers, the read-back from a current setup, and the edit plan. The apps do the I/O.
-import { balanceField, builtinProviders, checkEdit } from '@augur/core';
-import type { PolicyEdit } from '@augur/core';
-import { DEFAULT_BALANCE, DEFAULT_PACE_RULES, adapterInfo, balanceLeaves, checkBalanceSetting, lookup, resolveBalance } from '@augur/dispatch-protocol';
+import { ACTIVITIES, balanceField, builtinProviders, checkEdit, checkValue } from '@augur/core';
+import type { ActivityId, PolicyEdit, ProposedRule } from '@augur/core';
+import { DEFAULT_BALANCE, DEFAULT_PACE_RULES, SECRET_OPTION, adapterInfo, balanceLeaves, checkBalanceSetting, lookup, resolveBalance } from '@augur/dispatch-protocol';
 import type { BalanceRules, UsageSnapshot } from '@augur/dispatch-protocol';
 import { parseRoutesText } from './routes-model.js';
 
@@ -333,23 +333,161 @@ export function answersFromCurrent(current: SetupCurrent): SetupAnswers {
 
 export const PROFILE_KIND = 'augur-profile';
 /** Option names a profile refuses, because a profile never carries a key. */
-export const PROFILE_SECRET_OPTION = /^(api_?key|key|token|secret|password)$/i;
+export const PROFILE_SECRET_OPTION = SECRET_OPTION;
+
+const DH_KEYS = ['hostCountry', 'retainsPrompts', 'trainsOnPrompts', 'pinnedHost'] as const;
+const PROPOSAL_FIELDS = ['dataTier', 'askFirst', 'output', 'sandbox', 'effort', 'cost'] as const;
+const MODEL_KEYS = new Set(['id', 'name', 'rule']);
+const RULE_KEYS = new Set<string>(['activities', 'dataHandling', ...PROPOSAL_FIELDS]);
+const PROVIDER_ID = /^[a-z][a-z0-9_-]*$/;
+const MODEL_LABEL = /^[a-z0-9][a-z0-9_-]*\/\S+$/i;
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/** A model already stored on this computer, matched by provider and by label or model id. */
+export interface ProfileModelRef { provider: string; label: string; id: string }
+
+/** A model the profile would add. The rule is a proposal; the model stays unreviewed until the owner confirms it. */
+export interface ProfileModelAdd { provider: string; label: string; id: string; name?: string; rule: ProposedRule }
 
 export interface ProfileFilePlan {
   edits: Array<{ field: string; value: unknown }>;
   routes: Array<{ name: string; entry: Record<string, unknown> }>;
   existing: string[];
+  models: ProfileModelAdd[];
+  existingModels: string[];
   problems: string[];
 }
 
-/** What importing a profile would do. Every balance setting and every route is checked, so one bad entry stops the whole import. */
-export function planProfileFile(text: string, existingRoutes: ReadonlySet<string>): ProfileFilePlan | { error: string } {
+/** The model rules a profile carries. A field the model inherits, and status, a pause, notes and thresholds, stay out. */
+export function modelsSection(policy: unknown): Record<string, Record<string, { id: string; name?: string; rule: Record<string, unknown> }>> | null {
+  if (!isObj(policy) || !isObj(policy.providers)) return null;
+  const out: Record<string, Record<string, { id: string; name?: string; rule: Record<string, unknown> }>> = {};
+  for (const [pid, raw] of Object.entries(policy.providers)) {
+    if (!isObj(raw) || !isObj(raw.models)) continue;
+    const models: Record<string, { id: string; name?: string; rule: Record<string, unknown> }> = {};
+    for (const [label, mraw] of Object.entries(raw.models)) {
+      if (!isObj(mraw) || typeof mraw.id !== 'string' || !mraw.id) continue;
+      const inherited = new Set(Array.isArray(mraw.inherited) ? mraw.inherited.filter((x): x is string => typeof x === 'string') : []);
+      const rule: Record<string, unknown> = {};
+      if (isObj(mraw.activities)) {
+        const activities: Record<string, unknown> = {};
+        for (const [act, weight] of Object.entries(mraw.activities)) {
+          if (inherited.has(`activities.${act}`)) continue;
+          if (weight === null || typeof weight === 'string') activities[act] = weight;
+        }
+        if (Object.keys(activities).length) rule.activities = activities;
+      }
+      for (const field of PROPOSAL_FIELDS) {
+        if (inherited.has(field) || !(field in mraw)) continue;
+        if (field === 'effort' && mraw[field] === null) continue;
+        rule[field] = mraw[field];
+      }
+      if (isObj(mraw.dataHandling) && !inherited.has('dataHandling')) {
+        const handling: Record<string, unknown> = {};
+        for (const key of DH_KEYS) {
+          if (inherited.has(`dataHandling.${key}`) || !(key in mraw.dataHandling)) continue;
+          handling[key] = mraw.dataHandling[key];
+        }
+        if (Object.keys(handling).length) rule.dataHandling = handling;
+      }
+      const entry: { id: string; name?: string; rule: Record<string, unknown> } = { id: mraw.id, rule };
+      if (typeof mraw.name === 'string' && mraw.name) entry.name = mraw.name;
+      models[label] = entry;
+    }
+    if (Object.keys(models).length) out[pid] = models;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+function checkProfileModels(data: Record<string, unknown>, existing: readonly ProfileModelRef[], plan: ProfileFilePlan): void {
+  if (!Object.hasOwn(data, 'models') || data.models === undefined) return;
+  if (!isObj(data.models)) { plan.problems.push('models is a map of providers to models.'); return; }
+  const seen = new Set<string>();
+  for (const [provider, raw] of Object.entries(data.models)) {
+    if (!PROVIDER_ID.test(provider)) { plan.problems.push(`models ${provider}: a provider id starts with a lowercase letter and holds lowercase letters, digits, - and _.`); continue; }
+    if (!isObj(raw)) { plan.problems.push(`models ${provider}: the models under a provider are a map of labels.`); continue; }
+    for (const [label, entry] of Object.entries(raw)) {
+      const where = `model ${label}`;
+      if (!MODEL_LABEL.test(label) || label.includes('|') || !label.startsWith(`${provider}/`)) {
+        plan.problems.push(`${where}: the label is ${provider}/ and the model id, with no spaces or | characters.`);
+        continue;
+      }
+      if (!isObj(entry)) { plan.problems.push(`${where}: a model is an object with an id and a rule.`); continue; }
+      const extra = Object.keys(entry).filter(k => !MODEL_KEYS.has(k));
+      if (extra.length) { plan.problems.push(`${where}: ${extra[0]} is not part of a profile. A profile carries the proposal, not a status, a pause, notes or a threshold.`); continue; }
+      if (typeof entry.id !== 'string' || !entry.id.trim() || /\s/.test(entry.id) || entry.id.includes('|')) { plan.problems.push(`${where}: a model id has no spaces or | characters.`); continue; }
+      let name: string | undefined;
+      if (entry.name !== undefined) {
+        if (typeof entry.name !== 'string' || !entry.name.trim()) { plan.problems.push(`${where}: name is a text.`); continue; }
+        name = entry.name;
+      }
+      const ruleRaw = entry.rule === undefined ? {} : entry.rule;
+      if (!isObj(ruleRaw)) { plan.problems.push(`${where}: rule is an object.`); continue; }
+      const ruleExtra = Object.keys(ruleRaw).filter(k => !RULE_KEYS.has(k));
+      if (ruleExtra.length) { plan.problems.push(`${where}: rule.${ruleExtra[0]} is not part of a profile. A profile carries the proposal, not a status, a pause, notes or a threshold.`); continue; }
+      const built = buildProposal(where, ruleRaw, plan);
+      if (!built) continue;
+      if (seen.has(`${provider}\n${entry.id}`) || seen.has(`${provider}\n${label}`)) { plan.problems.push(`${where}: that model is listed twice.`); continue; }
+      seen.add(`${provider}\n${entry.id}`); seen.add(`${provider}\n${label}`);
+      const prior = existing.find(m => m.provider === provider && (m.label === label || m.id === entry.id));
+      if (prior) plan.existingModels.push(label);
+      else plan.models.push({ provider, label, id: entry.id, ...(name ? { name } : {}), rule: built });
+    }
+  }
+}
+
+/** The proposal, or null when a field is not one an edit would accept. Problems are added to `plan`. */
+function buildProposal(where: string, ruleRaw: Record<string, unknown>, plan: ProfileFilePlan): ProposedRule | null {
+  const rule: ProposedRule = {};
+  let bad = false;
+  const reject = (text: string): void => { plan.problems.push(`${where}: ${text}`); bad = true; };
+  if (ruleRaw.activities !== undefined) {
+    if (!isObj(ruleRaw.activities)) reject('activities maps an activity to a weight.');
+    else {
+      const activities: NonNullable<ProposedRule['activities']> = {};
+      for (const [act, weight] of Object.entries(ruleRaw.activities)) {
+        if (!ACTIVITIES.includes(act as ActivityId)) { reject(`${act} is not an activity.`); continue; }
+        if (weight === 'inherit') { reject(`activities.${act} is a proposal, so it cannot be "inherit".`); continue; }
+        const problem = checkValue(`activities.${act}`, weight);
+        if (problem) { reject(problem); continue; }
+        activities[act] = weight as string | null;
+      }
+      if (Object.keys(activities).length) rule.activities = activities;
+    }
+  }
+  for (const field of PROPOSAL_FIELDS) {
+    if (!(field in ruleRaw)) continue;
+    const value = ruleRaw[field];
+    if (value === 'inherit') { reject(`${field} is a proposal, so it cannot be "inherit".`); continue; }
+    const problem = checkValue(field, value);
+    if (problem) { reject(problem); continue; }
+    (rule as Record<string, unknown>)[field] = value;
+  }
+  if (ruleRaw.dataHandling !== undefined) {
+    if (!isObj(ruleRaw.dataHandling)) reject('dataHandling is an object.');
+    else {
+      const handling: NonNullable<ProposedRule['dataHandling']> = {};
+      for (const [key, value] of Object.entries(ruleRaw.dataHandling)) {
+        if (!(DH_KEYS as readonly string[]).includes(key)) { reject(`dataHandling.${key} is not a data-handling field.`); continue; }
+        if (value === 'inherit') { reject(`dataHandling.${key} is a proposal, so it cannot be "inherit".`); continue; }
+        const problem = checkValue(`dataHandling.${key}`, value);
+        if (problem) { reject(problem); continue; }
+        handling[key] = value as string | boolean | null;
+      }
+      if (Object.keys(handling).length) rule.dataHandling = handling;
+    }
+  }
+  return bad ? null : rule;
+}
+
+/** What importing a profile would do. Every balance setting, route and model is checked, so one bad entry stops the whole import. */
+export function planProfileFile(text: string, existingRoutes: ReadonlySet<string>, existingModels: readonly ProfileModelRef[] = []): ProfileFilePlan | { error: string } {
   let data: unknown;
   try { data = JSON.parse(text); } catch (e) { return { error: `That file is not valid JSON: ${(e as Error).message}` }; }
-  const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+  // A key this build does not read is ignored, so a profile from a newer Augur still imports.
   if (!isObj(data) || data.kind !== PROFILE_KIND) return { error: `That file is not an Augur profile. A profile has "kind": "${PROFILE_KIND}".` };
   if (data.schema !== 1) return { error: `This profile is schema ${String(data.schema)}, and this Augur reads schema 1. Update Augur, or export the profile again.` };
-  const plan: ProfileFilePlan = { edits: [], routes: [], existing: [], problems: [] };
+  const plan: ProfileFilePlan = { edits: [], routes: [], existing: [], models: [], existingModels: [], problems: [] };
   for (const { path, value } of balanceLeaves(data.balance)) {
     const bad = checkBalanceSetting(path, value);
     if (bad) plan.problems.push(`balance ${path.join('.')}: ${bad}`); else plan.edits.push({ field: balanceField(path), value });
@@ -366,6 +504,7 @@ export function planProfileFile(text: string, existingRoutes: ReadonlySet<string
       if (existingRoutes.has(r.name)) plan.existing.push(r.name); else plan.routes.push({ name: r.name, entry: raw });
     }
   }
+  checkProfileModels(data, existingModels, plan);
   return plan;
 }
 
@@ -376,7 +515,7 @@ const providerOfLabel = (label: string): string => {
 
 /**
  * Fills answers from a profile file after the whole file is checked. A bad file returns the problems and leaves `current` unchanged.
- * A profile holds balance and routes, not each model's useAfter, so the rank stays empty until the person sets it.
+ * Model proposals in the file are not interview answers, so the rank stays empty until the person sets it.
  */
 export function answersFromProfile(file: string, current: SetupCurrent): { answers: SetupAnswers } | { problems: string[] } {
   const plan = planProfileFile(file, new Set(current.routes.map(r => r.name)));

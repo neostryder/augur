@@ -175,7 +175,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
       case 'update': return await updateCmd(p.flags.has('force'), io, opts, say);
       case 'refresh': { await engineCall('refresh', [true], io, opts); say(STATUS_TEXT.refreshed, { ok: true }); return 0; }
       case 'alerts': return await alertsCmd(rest, p.flags.has('all'), io, opts, say);
-      case 'profile': return await profileCmd(rest, { dryRun: p.flags.has('dry-run') }, { err: io.err, env: io.env, cwd: io.cwd }, say);
+      case 'profile': return await profileCmd(rest, { dryRun: p.flags.has('dry-run') }, { err: io.err, env: io.env, cwd: io.cwd }, say, new Date(), { addProvider: i => engineCall('addProvider', [i], io, opts) as Promise<ProviderAdded> });
       case 'provider': return await providerCmd(rest, { text: new Map([...p.flags].filter((e): e is [string, string] => typeof e[1] === 'string')), stdin: p.flags.has('stdin'), noKey: p.flags.has('no-key'), dryRun: p.flags.has('dry-run') },
         { ...io, out: io.out }, say, { addProvider: i => engineCall('addProvider', [i], io, opts) as Promise<ProviderAdded>, setProviderKey: (pv, field, value) => engineCall('setProviderKey', [pv, field, value], io, opts).then(() => undefined) });
       case 'key': return await keyCmd(rest, { ...(opt('env') ? { env: opt('env') as string } : {}), stdin: p.flags.has('stdin') }, io, say);

@@ -5,7 +5,7 @@ import { call as serviceCall } from '@augur/augurd/client';
 import type { ClientOptions } from '@augur/augurd/client';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES, balanceField, balanceSegments, checkEdit, editKind, isBalanceField, parseEditState, parseInbox, previewEdits } from '@augur/core';
 import type { ActivityId, DataTier, OutputMode, PolicyEdit, PolicyFile } from '@augur/core';
-import { TOOL_TIERS, checkBalanceSetting, isTerminal, rank, renderReport, seatLines } from '@augur/dispatch-protocol';
+import { TOOL_TIERS, checkBalanceSetting, isTerminal, rank, renderReport, routeAddShapeProblems, seatLines } from '@augur/dispatch-protocol';
 import type { JobRecord, JobRequest, ToolTier, UsageSnapshot } from '@augur/dispatch-protocol';
 
 export interface ToolResult { text: string; isError?: boolean; data?: Record<string, unknown> }
@@ -31,6 +31,18 @@ export interface McpDeps {
 export interface EditArg { model?: string; provider?: string; field: string; path?: string[]; value: unknown; reason?: string }
 export interface PolicyEditArgs { edits: EditArg[]; by?: string }
 export interface PreviewArgs { activity: string; data_tier: string; edits?: EditArg[]; include_pending?: boolean; best_only?: boolean; snippet?: boolean }
+
+export interface RouteAddArgs {
+  name?: string;
+  adapter?: string;
+  provider?: string;
+  options?: Record<string, unknown>;
+  model?: { label?: string; id?: string; name?: string };
+  balance_url?: string;
+  balance_path?: string;
+  /** A key pasted at the top level. The tool refuses it and does not send it on. */
+  key?: unknown;
+}
 
 export interface RunArgs {
   route: string; prompt: string; activity: string; data_tier: string; tools?: string; output?: string; cwd?: string; timeout_s?: number; wait_s?: number;
@@ -171,6 +183,31 @@ export function createTools(d: McpDeps) {
     return guarded(() => d.call('routes', undefined, d.opts), r => ({ text: r.map(x => `${x.name.padEnd(14)} ${x.model.padEnd(20)} ${x.adapter}${x.problem ? `   cannot run: ${x.problem}` : ''}`).join('\n') || 'No routes.', data: { routes: r } }));
   }
 
+  /** Adds one route. A key or a bad shape is refused here, so it never reaches the service. The service checks the rest and writes. */
+  async function routeAdd(a: RouteAddArgs): Promise<ToolResult> {
+    const raw: Record<string, unknown> = { ...a };
+    if (a.balance_url !== undefined) raw.balanceUrl = a.balance_url;
+    if (a.balance_path !== undefined) raw.balancePath = a.balance_path;
+    delete raw.balance_url; delete raw.balance_path;
+    const problems = routeAddShapeProblems(raw);
+    if (problems.length) return fail(`Nothing was written. ${problems.join(' ')}`);
+    const options: Record<string, string | number | boolean> = {};
+    if (a.options) for (const [key, value] of Object.entries(a.options)) if (typeof value === 'string' || (typeof value === 'number' && Number.isFinite(value)) || typeof value === 'boolean') options[key] = value;
+    const model = a.model && typeof a.model.label === 'string' && typeof a.model.id === 'string'
+      ? { label: a.model.label, id: a.model.id, ...(typeof a.model.name === 'string' ? { name: a.model.name } : {}) } : undefined;
+    const params = {
+      name: a.name ?? '', adapter: a.adapter ?? '', provider: a.provider ?? '',
+      ...(a.options ? { options } : {}),
+      ...(model ? { model } : {}),
+      ...(a.balance_url !== undefined ? { balanceUrl: a.balance_url } : {}),
+      ...(a.balance_path !== undefined ? { balancePath: a.balance_path } : {}),
+    };
+    return guarded(() => d.call('route_add', params, d.opts), r => {
+      const text = typeof r.text === 'string' ? r.text : 'The service did not say what happened.';
+      return r.ok ? { text, data: r as unknown as Record<string, unknown> } : fail(text, r as unknown as Record<string, unknown>);
+    });
+  }
+
   // ------------------------------------------------------------------ rules: read, ask for edits, and try them
 
   const readJson = (text: string | null): unknown => { try { return text ? JSON.parse(text) : null; } catch { return null; } };
@@ -272,7 +309,7 @@ export function createTools(d: McpDeps) {
     return { text, data: { activity, dataTier, now: before, withEdits: after, applied: preview.applied, problems } };
   }
 
-  return { models, pick, run, job, jobs, cancel, pressure, balance, routes, policy, editPolicy, pickPreview };
+  return { models, pick, run, job, jobs, cancel, pressure, balance, routes, routeAdd, policy, editPolicy, pickPreview };
 }
 
 export type Tools = ReturnType<typeof createTools>;

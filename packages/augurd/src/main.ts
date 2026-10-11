@@ -1,6 +1,6 @@
 // augurd: the local dispatch service. Jobs run in their own runner processes, so stopping or restarting this process never stops a job.
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { LayaBackend, ServerPool, ShadowBackend, createBackend, DEFAULT_SERVERS } from '@augur/decision';
 import type { DecisionBackend } from '@augur/decision';
 import { HOSTED, UsageEngine, registerBalanceSave } from '@augur/core';
@@ -53,7 +53,8 @@ export async function startService(opts: ServiceOptions = {}) {
   const log = (msg: string) => { try { appendFileSync(join(dir, 'service.log'), `${new Date().toISOString()} ${msg}\n`); } catch { /* logging is best effort */ } };
   const config = loadConfig(dir), store = new Store(dir), token = ensureToken(dir);
   const policy = policySource(join(home, 'policy.json')), usage = usageSource(join(home, 'usage.json'));
-  const routes = routeSource(opts.routesPath ?? process.env.AUGURD_ROUTES ?? join(home, 'dispatch', 'routes.json'));
+  const routesPath = opts.routesPath ?? process.env.AUGURD_ROUTES ?? join(home, 'dispatch', 'routes.json');
+  const routes = routeSource(routesPath);
   const local = await loadLocalAdapters();
   if (local.error) log(`local adapters were not loaded: ${local.error}`);
   const decision = buildDecision(config, dir), decisions = new DecisionLog(dir, config.learn);
@@ -62,7 +63,10 @@ export async function startService(opts: ServiceOptions = {}) {
   let engine: UsageEngine | null = null;
   const jobsOff = () => engine && engine.state.config.dispatch?.runJobs !== true ? 'Augur is set to usage only, so it does not run jobs. Choose Also run jobs in its settings to turn them on.' : null;
   const supervisor = new Supervisor({ rates, store, config, dir, home, adapters: enabledAdapters(config.adapters, local.adapters), ...(decision ? { decision } : {}), decisions, routes: () => routes.read(), policy: () => policy.read(), usage: () => usage.read(), jobsOff });
-  const server = new IpcServer(supervisor, store, token, () => routes.read(), rates);
+  const server = new IpcServer(supervisor, store, token, () => routes.read(), rates, {
+    read: () => { try { return readFileSync(routesPath, 'utf8'); } catch { return null; } },
+    write: (text: string) => { mkdirSync(dirname(routesPath), { recursive: true }); const tmp = `${routesPath}.tmp`; writeFileSync(tmp, text, 'utf8'); renameSync(tmp, routesPath); },
+  });
   // The engine is ready before the endpoint opens, so no caller ever finds the service half started.
   const override = process.env.AUGURD_ENGINE === '0' ? false : process.env.AUGURD_ENGINE === '1' ? true : undefined;
   engine = (opts.engine ?? override ?? config.engine) ? await startEngine(server, log) : null;

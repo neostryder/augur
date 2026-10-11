@@ -3,7 +3,7 @@ import { applyEdit, migratePolicy, resolveModel } from '@augur/core';
 import type { PolicyConfig } from '@augur/core';
 import type { UsageSnapshot } from '@augur/dispatch-protocol';
 import classic from '../../dispatch-protocol/test/fixtures/classic-balance.json' with { type: 'json' };
-import { HOLD_BACK, SETUP_STEPS, afterApply, answersFromCurrent, answersFromProfile, applySteps, emptyAnswers, holdBackOf, isValid, paceNumbers, planSetup, problems, someBand, stepStatus, summaryLines, useAfterFromRank } from '../src/index.js';
+import { HOLD_BACK, SETUP_STEPS, afterApply, answersFromCurrent, answersFromProfile, applySteps, emptyAnswers, holdBackOf, isValid, modelsSection, paceNumbers, planProfileFile, planSetup, problems, someBand, stepStatus, summaryLines, useAfterFromRank } from '../src/index.js';
 import type { DetectedProvider, SetupAnswers, SetupCurrent, SetupPlan, Strength } from '../src/index.js';
 
 const NOW = new Date('2026-10-10T12:00:00.000Z');
@@ -453,5 +453,62 @@ describe('profile start', () => {
     }), current);
     expect('problems' in adapter && adapter.problems.some(p => p.includes('not an adapter'))).toBe(true);
     expect(JSON.stringify(current)).toBe(snap);
+  });
+});
+
+describe('profile models', () => {
+  const base = {
+    kind: 'augur-profile', schema: 1,
+    balance: { profile: 'neutral' },
+    routes: { opus: { model: 'claude/opus', adapter: 'codex-exec', options: {} } },
+  };
+
+  it('keeps a file with no models, and ignores a key it does not read', () => {
+    const none = planProfileFile(JSON.stringify(base), new Set());
+    expect('error' in none).toBe(false);
+    if ('error' in none) return;
+    expect(none.models).toEqual([]);
+    expect(none.problems).toEqual([]);
+    const extra = planProfileFile(JSON.stringify({ ...base, future: true, models: { acme: { 'acme/fast': { id: 'fast-1', rule: { dataTier: 'internal', activities: { write_code: 'preferred' } } } } } }), new Set());
+    expect('error' in extra).toBe(false);
+    if ('error' in extra) return;
+    expect(extra.problems).toEqual([]);
+    expect(extra.models.map(m => m.label)).toEqual(['acme/fast']);
+    expect(extra.models[0]?.rule).toEqual({ dataTier: 'internal', activities: { write_code: 'preferred' } });
+  });
+
+  it('reports a model that is already here and rejects a bad tier, a bad weight and a forbidden field', () => {
+    const known = planProfileFile(JSON.stringify({ ...base, models: { acme: { 'acme/fast': { id: 'fast-1', rule: { cost: 'cheap' } }, 'acme/slow': { id: 'slow-1', rule: {} } } } }), new Set(), [{ provider: 'acme', label: 'acme/fast', id: 'fast-1' }]);
+    expect('error' in known).toBe(false);
+    if ('error' in known) return;
+    expect(known.existingModels).toEqual(['acme/fast']);
+    expect(known.models.map(m => m.label)).toEqual(['acme/slow']);
+    for (const rule of [{ dataTier: 'secret' }, { activities: { write_code: 'huge' } }, { pause: { until: '2099-01-01T00:00:00Z' } }, { status: 'confirmed' }]) {
+      const bad = planProfileFile(JSON.stringify({ ...base, models: { acme: { 'acme/fast': { id: 'fast-1', rule } } } }), new Set());
+      expect('error' in bad).toBe(false);
+      if ('error' in bad) return;
+      expect(bad.problems.length).toBeGreaterThan(0);
+      expect(bad.models).toEqual([]);
+    }
+  });
+
+  it('builds the models section from the fields a model sets itself', () => {
+    const section = modelsSection({ providers: { acme: { thresholds: { warnPct: 1 }, models: {
+      'acme/fast': { id: 'fast-1', name: 'Fast', status: 'confirmed', activities: { write_code: 'preferred' }, dataTier: 'internal', askFirst: false, effort: null, cost: 'cheap', pause: { until: '2099-01-01T00:00:00Z' }, notes: 'no', inherited: ['askFirst'] },
+    } } } });
+    expect(section).toEqual({ acme: { 'acme/fast': { id: 'fast-1', name: 'Fast', rule: { activities: { write_code: 'preferred' }, dataTier: 'internal', cost: 'cheap' } } } });
+    expect(JSON.stringify(section)).not.toContain('pause');
+    expect(modelsSection({ providers: {} })).toBeNull();
+  });
+
+  it('fills the same interview answers when the profile also carries valid models, and rejects a bad one', () => {
+    const file = JSON.stringify(base);
+    const withModels = JSON.stringify({ ...base, models: { acme: { 'acme/fast': { id: 'fast-1', rule: { dataTier: 'public' } } } } });
+    const current = { policy: { providers: {} }, balance: null, routes: [], usage: null };
+    const plain = answersFromProfile(file, current);
+    const extra = answersFromProfile(withModels, current);
+    expect(extra).toEqual(plain);
+    const bad = answersFromProfile(JSON.stringify({ ...base, models: { acme: { 'acme/fast': { id: 'fast-1', rule: { dataTier: 'nope' } } } } }), current);
+    expect('problems' in bad && bad.problems.some(p => p.includes('dataTier'))).toBe(true);
   });
 });

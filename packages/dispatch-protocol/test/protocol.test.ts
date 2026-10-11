@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { buildPolicyFile, emptyPolicy, fieldPath, importPolicy, setField } from '@augur/core';
+import { addModels, buildPolicyFile, emptyPolicy, fieldPath, importPolicy, setField } from '@augur/core';
 import type { PolicyFile } from '@augur/core';
 import { JOB_STATES, canTransition, exitCodeForState, isTerminal, statesBefore } from '../src/states.js';
+import { rank } from '../src/pick.js';
 import { checkLineage, evaluate } from '../src/rules.js';
 import type { AdapterCapabilities, JobRequest, RouteConfig } from '../src/index.js';
 
@@ -62,6 +63,25 @@ describe('rules', () => {
     expect(evaluate(r, { policy: policy(), usage: null, route: route('minimax/m3'), capabilities: host, now })).toMatchObject({ rejection: { code: 'sandbox_required' } });
     expect(evaluate(r, { policy: policy(), usage: null, route: route('minimax/m3'), capabilities: sandbox, now }).allow).toBe(true);
     expect(evaluate({ ...r, output: 'write_files' }, { policy: policy(), usage: null, route: route('minimax/m3'), capabilities: sandbox, now })).toMatchObject({ rejection: { code: 'isolation_required' } });
+  });
+  it('never picks a model added with a proposed rule until its status is confirmed', () => {
+    const stored = emptyPolicy();
+    addModels(stored, 'acme', [{ label: 'acme/fast', id: 'fast-1', rule: { activities: { write_code: 'preferred' }, dataTier: 'internal', askFirst: false, output: 'write_files', sandbox: false, pause: { until: '2099-01-01T00:00:00Z' }, notes: 'smuggled' } }], 'manual', now);
+    const entry = stored.providers.acme?.models['acme/fast'];
+    expect(entry?.status).toBe('unreviewed');
+    expect(entry?.rule.pause).toBeUndefined();
+    expect(entry?.rule.notes).toBeUndefined();
+    expect(entry?.rule.activities).toEqual({ write_code: 'preferred' });
+    const meta = [{ id: 'acme', name: 'acme', metered: false }];
+    const file = buildPolicyFile(stored, meta, now);
+    const blocked = rank(file, null, { activity: 'write_code', dataTier: 'internal' });
+    expect(blocked.pick).toBeNull();
+    expect(blocked.blocked.find(b => b.model === 'acme/fast')?.why).toBe('status unreviewed');
+    expect(evaluate(req(), { policy: file, usage: null, route: route('acme/fast'), capabilities: host, now })).toMatchObject({ rejection: { code: 'model_unreviewed' } });
+    setField(stored, fieldPath('acme', 'acme/fast', 'status'), 'confirmed', 'test', now);
+    const confirmed = buildPolicyFile(stored, meta, now);
+    expect(rank(confirmed, null, { activity: 'write_code', dataTier: 'internal' }).pick).toBe('acme/fast');
+    expect(evaluate(req(), { policy: confirmed, usage: null, route: route('acme/fast'), capabilities: host, now }).allow).toBe(true);
   });
   it('denies at the deny threshold and warns at the warn threshold', () => {
     const usage = (pct: number) => ({ providers: { codex: { meters: [{ id: 'plan_weekly', usedPct: pct }] } } });

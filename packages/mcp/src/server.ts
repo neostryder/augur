@@ -11,6 +11,7 @@ export const INSTRUCTIONS = [
   'Call augur_pick first, and run the route it points to. A run is refused if its model was not picked for this session in the last hour, or if the rules do not allow it. A refusal names the reason, and the rules cannot be argued with from here.',
   'A read job cannot change files. Ask for write tools or file output only when the task needs them.',
   'To change the rules, use augur_policy_edit: weights and pauses apply within a minute, and anything that widens what data a model may see waits for the owner to accept it in Augur. Test a change first with augur_pick_preview.',
+  'To add a route, use augur_route_add. It never takes a key, it never changes a route that already exists, and its model stays unreviewed until the owner confirms it in Model rules and sets the key with augur key set.',
 ].join(' ');
 
 const out = (r: ToolResult) => ({ content: [{ type: 'text' as const, text: r.text }], ...(r.data ? { structuredContent: r.data } : {}), ...(r.isError ? { isError: true } : {}) });
@@ -89,6 +90,25 @@ export function buildServer(tools: Tools, version: string): McpServer {
     title: 'List routes', annotations: readOnly,
     description: 'Lists the routes, the model and adapter behind each, and any reason a route cannot run.',
   }, async () => out(await tools.routes()));
+
+  server.registerTool('augur_route_add', {
+    title: 'Add a route',
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    description: 'Adds one route and, optionally, its model. The model stays unreviewed, so nothing can run it until the owner confirms it in Model rules. A key is never accepted, and an existing route name is refused with nothing written. Set the key afterwards with augur key set.',
+    inputSchema: {
+      name: z.string().describe('The route name. A name that already exists is refused.'),
+      adapter: z.string().describe('An adapter this service has, such as codex-exec.'),
+      provider: z.string().describe('The provider id the model is filed under.'),
+      options: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional().describe('Adapter options. A name that looks like a key is refused.'),
+      model: z.object({
+        label: z.string().describe('The model label. A label with no slash is filed as provider/label.'),
+        id: z.string().describe('The model id the API expects.'),
+        name: z.string().optional().describe('A display name.'),
+      }).optional().describe('The model to add. It stays unreviewed until the owner confirms it in Model rules.'),
+      balance_url: z.string().optional().describe('Balance URL for a provider that has no usage reading. The reading stays off until the owner sets its key.'),
+      balance_path: z.string().optional().describe('Path into the balance reply, such as $.balance.'),
+    },
+  }, async (a) => out(await tools.routeAdd(a)));
 
   const editShape = z.object({
     model: z.string().optional().describe('The route label as augur_policy lists it, such as codex/sol. Leave out for a provider thresholds edit.'),

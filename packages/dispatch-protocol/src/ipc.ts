@@ -1,5 +1,6 @@
 // Wire contract between the service and its callers. One JSON object per line over a named pipe, each request carrying the auth token.
 import type { Accounted, BudgetStatus, RouteCalibration, Totals } from './accounting.js';
+import type { RouteAddAnswer, RouteAddParams } from './route-add.js';
 import type { Headroom } from './pace.js';
 import type { BalanceReport } from './balance-report.js';
 import type { ActivityId, DataTier, EngineKey, EngineState } from '@augur/core';
@@ -61,6 +62,8 @@ export interface Methods {
   /** Records how a job's report met its brief, beside the pick in the decision log. `id` is a pick id or a job id; the check itself runs in the caller's tooling. */
   label: { params: { id: string; result: 'met' | 'partly' | 'missed'; note?: string }; result: { ok: true; pick: string; job: string | null } | { error: string } };
   routes: { params: undefined; result: Array<{ name: string; model: string; adapter: string; problem: string | null }> };
+  /** Adds one route and, optionally, its model. The model stays unreviewed. An existing route name is refused and nothing is written. */
+  route_add: { params: RouteAddParams; result: RouteAddAnswer };
   /** Tokens and cost of recent jobs and totals per route, each figure labelled reported, derived or imputed. */
   accounting: { params: { limit?: number }; result: AccountingAnswer };
   /** The usage engine's state, whole or only the keys named. Refused when the engine is not running in this service. */
