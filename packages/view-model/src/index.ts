@@ -12,3 +12,4 @@ export * from './provider-template.js';
 export * from './provider-form.js';
 export * from './setup-interview.js';
 export * from './status.js';
+export * from './local.js';

@@ -3,7 +3,7 @@ import { ACTIVITY_LABELS, DATA_TIER_LABELS, WEIGHT_LABELS, addModels, applyEdit,
 import * as core from './core';
 import type { HistoryRow } from './core';
 import { renderDashboard, tightest, updateTip, type DashboardModel } from './views/dashboard';
-import { BULK_FIELDS, RULES_TEXT, dialEndChoices, heldRows, parseCustom, parsePercents, pauseResets, pauseValue, planDialBack, previewBulk, validModelId, type BulkPreview, type DialBackPlan } from '@augur/view-model';
+import { BULK_FIELDS, RULES_TEXT, dialEndChoices, heldRows, localPage, parseCustom, parsePercents, pauseResets, pauseValue, planDialBack, previewBulk, validModelId, type BulkPreview, type DialBackPlan } from '@augur/view-model';
 import { CUSTOM_EXAMPLE, PUSH_TEXT, renderSettings, type SettingsModel } from './views/settings';
 import { addUnfound, applyDetection, fillRank, goStep, initialView, loadProfile, moveRank, noteAdded, openSetup, providerHasWindow, refreshPlan, renderSetup, runApply, selectStack, setConfirmed, setHold, setListAnswer, setPayAmount, setPayNone, setStrength, shiftStep, toggleListModel, togglePayProvider, useStrongFor, modelsOf, type SetupModel, type SetupTrack } from './views/setup';
 import { renderRules, type RulesFilter, type RulesModel } from './views/rules';
@@ -11,6 +11,7 @@ import { renderJobs, type JobsModel } from './views/jobs';
 import { renderRoutes, type RoutesModel } from './views/routes';
 import { planHtml } from './views/add-provider';
 import { renderBalance, type BalanceModel } from './views/balance';
+import { renderLocal } from './views/local';
 import { renderService, type ConfigLine, type ServiceModel } from './views/service';
 import { renderStrip } from './views/strip';
 import { PROVIDER_FORM_TEXT, ROUTES_PATH, applyProvider, checkDraft, draftOf, emptyDraft, emptyProviderForm, parseRoutesText, planOfForm, writeRoute, type ProviderFormState, type SetupCurrent } from '@augur/view-model';
@@ -56,7 +57,7 @@ export class App {
   private snapshot: Snapshot | null = null;
   private history: HistoryRow[] = [];
   private alertState: Record<string, unknown> = {};
-  private view: 'dashboard' | 'settings' | 'rules' | 'jobs' | 'routes' | 'balance' | 'service' | 'setup' = 'dashboard';
+  private view: 'dashboard' | 'settings' | 'rules' | 'jobs' | 'routes' | 'balance' | 'local' | 'service' | 'setup' = 'dashboard';
   private firstRun = false;
   private setup: SetupModel | null = null;
   /** Enabled flags from the detection that ran before the interview opened. Skip restores these and writes no interview edits. */
@@ -81,6 +82,9 @@ export class App {
   private jobsTimer: ReturnType<typeof setInterval> | undefined;
   private stances: Record<string, string> = {};
   private balancePage: BalanceModel = { report: null, error: '' };
+  /** The machine open on the Local page, and the recent jobs a gateway served. */
+  private localSel: string | null = null;
+  private localJobs: JobRecord[] | null = null;
   private servicePage: ServiceModel = { lines: null, service: null, runJobs: false, agentApproval: 'risky', note: '', error: '', busy: false, unavailable: '' };
   private routesPage: RoutesModel = { file: null, error: '', health: null, sel: null, draft: null, formError: '', note: '', models: [], confirmDelete: false, busy: false, canTest: false, testing: false, testNote: '', keyStored: null, keyNote: '', add: null, canAdd: false };
   private timer: ReturnType<typeof setInterval> | undefined;
@@ -482,6 +486,9 @@ export class App {
     } else if (this.view === 'balance') {
       this.twoColumns = false;
       this.root.innerHTML = renderBalance(this.balancePage);
+    } else if (this.view === 'local') {
+      this.twoColumns = this.shell.kind === 'desktop';
+      this.root.innerHTML = renderLocal({ page: localPage(this.snapshot), waiting: this.config.providers.some((p) => p.id === 'cogitator' && p.enabled), sel: this.localSel, canJobs: !!this.shell.dispatch, jobs: this.localJobs });
     } else if (this.view === 'service') {
       this.twoColumns = false;
       this.servicePage.runJobs = this.config.dispatch?.runJobs === true;
@@ -922,7 +929,7 @@ export class App {
     });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
-        if (this.view === 'service' || this.view === 'balance') { this.view = 'dashboard'; void this.render(); }
+        if (this.view === 'service' || this.view === 'balance' || this.view === 'local') { this.view = 'dashboard'; void this.render(); }
         else if (this.view === 'routes') { if (this.routesPage.add) this.closeAddProvider(); else if (this.routesPage.sel) this.closeRoute(); else this.view = 'dashboard'; void this.render(); }
         else if (this.view === 'jobs') { if (this.jobs.sel) this.closeJob(); else { this.leaveJobs(); this.view = 'dashboard'; } void this.render(); }
         else if (this.view === 'rules') { if (this.rules.showHistory) this.rules.showHistory = false; else if (this.rules.sel) this.rules.sel = null; else this.view = 'dashboard'; void this.render(); }
@@ -981,6 +988,16 @@ export class App {
     // The page is drawn again only when something on it changed, so a scrolled log is not sent back to the top every few seconds.
     const sig = JSON.stringify([this.jobs.service, this.jobs.unavailable, this.jobs.serviceNote, this.jobs.jobs, this.jobs.accounted, this.jobs.detail, this.jobs.busy]);
     if (this.view === 'jobs' && sig !== this.jobsSig) { this.jobsSig = sig; await this.render(); }
+  }
+
+  /** The jobs a gateway served, for the strip at the foot of the Local page. The page reads without them. */
+  private async loadLocalJobs(): Promise<void> {
+    if (!this.shell.dispatch) return;
+    try {
+      const r = await this.augur<JobRecord[]>(['jobs', '--json', '--limit', '50']);
+      this.localJobs = Array.isArray(r.data) ? r.data.filter((j) => j.served).slice(0, 8) : [];
+    } catch { this.localJobs = []; }
+    if (this.view === 'local') await this.render();
   }
 
   private async loadDetail(id: string): Promise<void> {
@@ -1401,6 +1418,8 @@ export class App {
       case 'rules-dial': this.rules.dialOpen = !this.rules.dialOpen; this.rules.dialPlan = null; this.rules.dialError = ''; await this.render(); break;
       case 'rules-history': this.rules.showHistory = !this.rules.showHistory; await this.render(); break;
       case 'back': this.leaveJobs(); this.view = 'dashboard'; await this.render(); break;
+      case 'local': this.view = 'local'; await this.render(); void this.loadLocalJobs(); break;
+      case 'local-machine': this.localSel = t.dataset.value ?? null; await this.render(); break;
       case 'jobs': this.view = 'jobs'; this.jobs.sel = null; this.jobs.detail = null; this.jobsTimer ??= setInterval(() => { void this.loadJobs(); }, 3000); await this.render(); void this.loadJobs(); break;
       case 'dispatch-tab':
         if (t.dataset.value === 'balance') { this.leaveJobs(); this.view = 'balance'; await this.render(); await this.loadBalance(); }

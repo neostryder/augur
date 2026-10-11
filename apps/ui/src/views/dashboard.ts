@@ -1,9 +1,10 @@
 import type { AppConfig, Meter, ProviderPlugin, ProviderSnapshot, Snapshot } from '@augur/core';
 import type { UpdateState } from '../app';
 import { series, type HistoryRow } from '../core';
-import { USAGE_TEXT, errorText, notesParts, paceInfo, statusLabel, tightest as tightestMeter, windowed } from '@augur/view-model';
+import { USAGE_TEXT, errorText, localCard, notesParts, paceInfo, statusLabel, tightest as tightestMeter, windowed } from '@augur/view-model';
 import { ICON, ago, esc, money, sevOf, until, when } from '../util';
 import { chart } from './chart';
+import { localCardBody } from './local';
 import { pendingCount } from './rules';
 
 export interface DashboardModel {
@@ -88,6 +89,8 @@ function cardHtml(model: DashboardModel, pid: string): string {
   const hidden = model.config.layout.hiddenMeters[pid] ?? [];
   const usage = p?.links?.usage ?? plugin?.links.usage;
   let body = '';
+  const local = pid === 'cogitator' ? localCard(model.snapshot) : null;
+  if (local) body += localCardBody(local);
   if (p) {
     for (const m of p.meters) if (!hidden.includes(m.id)) body += meterHtml(model, pid, m);
     const tiles = p.money.filter((x) => x.amount != null && !hidden.includes('$' + x.id));
