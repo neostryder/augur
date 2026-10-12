@@ -17,14 +17,14 @@ describe('planProvider with an OpenAI preset', () => {
   it('takes the published base URL and makes a route that keeps its key in the store', () => {
     const p = plan({ kind: 'openai', route: 'gpt', model: 'gpt-5' });
     expect(p.route).toEqual({ name: 'gpt', entry: { model: 'openai/gpt-5', adapter: 'openai-api', options: { baseUrl: 'https://api.openai.com/v1', model: 'gpt-5', keySource: 'store' }, notes: 'Added with augur provider add openai.' } });
-    expect(p.model).toEqual({ label: 'gpt-5', id: 'gpt-5' });
+    expect(p.model).toEqual({ label: 'openai/gpt-5', id: 'gpt-5' });
     expect(p.custom).toBeNull();
     expect(p.keys.map(k => k.secret)).toEqual(['dispatch.gpt']);
   });
   it('lets a flag override the preset address and name the model in the rules', () => {
     const p = plan({ kind: 'openai', route: 'gpt', model: 'gpt-5', baseUrl: 'https://proxy.example.com/v1/', label: 'gpt5-main', maxTokens: '2000' });
     expect(p.route!.entry).toMatchObject({ model: 'openai/gpt5-main', options: { baseUrl: 'https://proxy.example.com/v1', maxTokens: 2000 } });
-    expect(p.model).toEqual({ label: 'gpt5-main', id: 'gpt-5' });
+    expect(p.model).toEqual({ label: 'openai/gpt5-main', id: 'gpt-5' });
   });
 });
 

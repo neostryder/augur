@@ -115,5 +115,5 @@ export function planProvider(input: TemplateInput, existingRoutes: ReadonlySet<s
   };
   const keys: ProviderPlan['keys'] = [{ secret: routeSecretName(route), for: `the ${route} route`, viaEngine: false }];
   if (custom || preset?.builtIn) keys.push({ secret: `${provider}.apiKey`, for: `reading the ${name} balance`, viaEngine: true });
-  return { shape, preset, provider, name, route: { name: route, entry }, model: { label, id: modelId }, custom, enable: preset?.builtIn ? { settings: {} } : null, keys };
+  return { shape, preset, provider, name, route: { name: route, entry }, model: { label: `${provider}/${label}`, id: modelId }, custom, enable: preset?.builtIn ? { settings: {} } : null, keys };
 }

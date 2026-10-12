@@ -24,6 +24,10 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 - [Visible] [UI] **Augur has a new icon.** It shows a lituus, the curved staff an augur carried, inside a glowing mint ring with gold accents, with a small hawk and mist against a night sky. The new icon replaces the old one in the app and its installer, the Windows tiles, the Mac icon, the phone home-screen icon, and the browser tab, and the phone app has its own padded version for Android's round and squircle crops. The live percentage ring in the tray stays as it was.
 - [Visible] [UI] **The terminal app's Settings and Setup tabs moved to 7 and 8.** The new Local tab sits after Balance, so the number keys now run from 1 to 8.
 
+### Fixed
+
+- [Visible] [Providers] **`augur provider add` and the Add provider form in the window app now save the new model under the same `<provider>/<label>` name its route uses, such as `cogitator/judge`.** Earlier versions saved the bare label instead, so the route failed every job with unknown_model ("cogitator/judge is not in policy.json") until the model was renamed by hand. The confirm message and the form's plan list show the full name, and a model that was already in the rules keeps its label.
+
 ## [1.9.0] - 2026-10-11
 
 ### Added

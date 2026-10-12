@@ -74,7 +74,7 @@ export async function providerCmd(rest: string[], flags: ProviderFlags, io: Prov
   if (plan.route && plan.model) {
     // A model that was already in the rules keeps its label, so the route points at the label the rules page shows.
     const label = added.labels[plan.model.id] ?? plan.model.label;
-    const entry = { ...plan.route.entry, model: `${plan.provider}/${label}` };
+    const entry = { ...plan.route.entry, model: label };
     const raw = current.file.raw;
     writeAtomic(routesPath(io.env), `${JSON.stringify({ ...raw, routes: { ...(raw.routes as Raw), [plan.route.name]: entry } }, null, 2)}\n`);
   }
@@ -89,7 +89,7 @@ export async function providerCmd(rest: string[], flags: ProviderFlags, io: Prov
   }
 
   const next: string[] = [];
-  if (plan.model) next.push(`Open Model rules and set ${plan.provider}/${added.labels[plan.model.id] ?? plan.model.label}. It cannot run until its rules are confirmed.`);
+  if (plan.model) next.push(`Open Model rules and set ${added.labels[plan.model.id] ?? plan.model.label}. It cannot run until its rules are confirmed.`);
   for (const secret of missing) next.push(`Store the key for ${plan.keys.find(k => k.secret === secret)!.for}: augur key set ${secret.startsWith('dispatch.') ? plan.route!.name : secret}`);
   if (plan.route && !missing.length) next.push(`Check the route: augur test ${plan.route.name}`);
   const text = [`Added ${lines.join('; ')}.`, stored.length ? `A key of ${key!.length} characters is stored in ${KINDS[keys.kind] ?? keys.kind}.` : '', ...(next.length ? ['Next:', ...next.map(n => `  ${n}`)] : [])].filter(Boolean).join('\n');

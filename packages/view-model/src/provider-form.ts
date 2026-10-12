@@ -74,7 +74,7 @@ export interface PlanRow { label: string; text: string; note?: string; tone?: 'w
 export function planRows(plan: ProviderPlan): PlanRow[] {
   const rows: PlanRow[] = [];
   if (plan.route) rows.push({ label: 'Route', text: `${plan.route.name}, a ${plan.shape === 'anthropic-style' ? 'messages' : 'chat'} route to ${String((plan.route.entry.options as Raw).baseUrl)}` });
-  if (plan.model) rows.push({ label: 'Model', text: `${plan.model.label} under ${plan.name}`, note: 'It waits for you to confirm its rules in Model rules, so nothing runs it yet.', tone: 'warn' });
+  if (plan.model) rows.push({ label: 'Model', text: `${plan.model.label.slice(plan.provider.length + 1)} under ${plan.name}`, note: 'It waits for you to confirm its rules in Model rules, so nothing runs it yet.', tone: 'warn' });
   if (!plan.route && plan.enable) rows.push({ label: 'Service', text: `Turns on the Jev provider${plan.enable.settings.baseUrl ? `, using ${plan.enable.settings.baseUrl}` : ''}` });
   rows.push({ label: 'Key', text: plan.keys.length === 1 ? `One key, for ${plan.keys[0]!.for}` : `${plan.keys.length} keys: ${plan.keys.map((k) => k.for).join(' and ')}` });
   if (plan.route) {
@@ -124,11 +124,11 @@ export async function applyProvider(plan: ProviderPlan, key: string, io: ApplyIo
   const added = await io.addProvider({ provider: plan.provider, name: plan.name, ...(plan.model ? { models: [plan.model] } : {}), ...(plan.custom ? { custom: plan.custom } : {}), ...(plan.enable ? { enable: plan.enable } : {}) });
   const label = plan.model ? added.labels[plan.model.id] ?? plan.model.label : null;
   const done: string[] = [];
-  if (plan.model) done.push(`${plan.provider}/${label} in the rules`);
+  if (plan.model) done.push(`${label} in the rules`);
   if (plan.custom) done.push(`a balance reading for ${plan.name}`);
   else if (plan.enable) done.push(plan.provider === 'jev' ? 'the Jev provider turned on' : `the ${plan.name} balance reading turned on`);
   if (plan.route && file && label) {
-    const entry = { ...plan.route.entry, model: `${plan.provider}/${label}` };
+    const entry = { ...plan.route.entry, model: label };
     const raw = file.raw;
     await io.writeRoutes(`${JSON.stringify({ ...raw, routes: { ...(raw.routes as Raw), [plan.route.name]: entry } }, null, 2)}\n`);
     done.unshift(`the route ${plan.route.name}`);
@@ -142,7 +142,7 @@ export async function applyProvider(plan: ProviderPlan, key: string, io: ApplyIo
     done.push(`a key for ${k.for}`);
   }
   const next: string[] = [];
-  if (plan.model) next.push(`Open Model rules and confirm ${plan.provider}/${label}. It cannot run until its rules are confirmed.`);
+  if (plan.model) next.push(`Open Model rules and confirm ${label}. It cannot run until its rules are confirmed.`);
   for (const secret of missing) next.push(`Save the key for ${plan.keys.find((k) => k.secret === secret)!.for}.`);
   if (plan.route && !missing.length) next.push(`Test the route ${plan.route.name} on the Routes page.`);
   return { done, label, missing, next };
