@@ -1,4 +1,5 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -6,7 +7,7 @@ import type { EngineApi, EngineKey } from '@augur/core';
 import { addPluginDir, claudeInstall, claudeRemove, claudeStatus, hasPluginDir, readJson, removeMcp, removePluginDir, setMcp, type ClaudePaths } from '../src/claude-install.js';
 import { call } from '../src/client.js';
 import { watchEngine } from '../src/client.js';
-import { desktopNotice, isPushService } from '../src/engine-shell.js';
+import { desktopNotice, httpsRequest, isPushService } from '../src/engine-shell.js';
 import { allowedPaths, homeRelative, resolveHomePath } from '../src/home-files.js';
 import { IpcServer } from '../src/ipc.js';
 import { checkSecretName, createKeyStore, fileStore, runHelper } from '../src/keystore.js';
@@ -294,4 +295,20 @@ describe('the service with the engine switched on', () => {
     const { request } = await import('./harness.js');
     expect(await call('submit', request({ text: 'SLEEP 0' }), o)).toMatchObject({ rejected: { code: 'jobs_off' } });
   }, 30_000);
+});
+
+describe('the provider request helper', () => {
+  it('sends plain http to this computer, and refuses it anywhere else or after a redirect off the home network', async () => {
+    const server = createServer((req, res) => {
+      if (req.url === '/away') { res.writeHead(302, { location: 'http://example.com/x' }); res.end(); return; }
+      res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ auth: req.headers.authorization ?? null }));
+    });
+    await new Promise<void>(r => server.listen(0, '127.0.0.1', () => r()));
+    cleanup.push(() => new Promise<void>(r => server.close(() => r())));
+    const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+    expect(JSON.parse((await httpsRequest({ url: `${base}/hosts`, headers: { Authorization: 'Bearer k' } })).body)).toEqual({ auth: 'Bearer k' });
+    await expect(httpsRequest({ url: 'http://example.com/hosts' })).rejects.toThrow('HTTPS is required');
+    await expect(httpsRequest({ url: 'http://8.8.8.8/hosts' })).rejects.toThrow('HTTPS is required');
+    await expect(httpsRequest({ url: `${base}/away` })).rejects.toThrow('HTTPS is required');
+  });
 });

@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { compareVersions } from '@augur/core';
+import { compareVersions, keyMayGoTo } from '@augur/core';
 import type { AlertFeed, AppConfig, EngineShell, Host, HttpRequest, HttpResponse, ModelCatalog, Platform, Snapshot, UpdateInfo } from '@augur/core';
 import { claudeInstall, claudeRemove, claudeStatus, defaultClaudePaths, type ClaudePaths } from './claude-install.js';
 import { atomicWrite, readText, resolveHomePath } from './home-files.js';
@@ -27,14 +27,14 @@ export function isPushService(host: string): boolean {
     || host === 'updates.push.services.mozilla.com' || host.endsWith('.push.services.mozilla.com') || host.endsWith('.notify.windows.com');
 }
 
-/** HTTPS only, and a redirect is followed only to another HTTPS address. */
+/** HTTPS, or plain HTTP to this computer or a machine on the home network (a local model gateway). A redirect is followed only to an address that passes the same rule. */
 export async function httpsRequest(req: HttpRequest, defaultTimeoutMs = 30000): Promise<HttpResponse> {
   let url = new URL(req.url);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.min(Math.max(req.timeoutMs ?? defaultTimeoutMs, 1), 300000));
   try {
     for (let hop = 0; ; hop++) {
-      if (url.protocol !== 'https:') throw new Error('HTTPS is required');
+      if (url.protocol !== 'https:' && !(url.protocol === 'http:' && keyMayGoTo(url.href))) throw new Error('HTTPS is required');
       const res = await fetch(url, { method: req.method ?? 'GET', headers: req.headers, body: req.body, redirect: 'manual', signal: controller.signal });
       const location = res.headers.get('location');
       if (res.status >= 300 && res.status < 400 && location && hop < 10) { url = new URL(location, url); continue; }
