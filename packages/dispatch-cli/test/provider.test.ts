@@ -37,7 +37,7 @@ describe('augur provider add', () => {
     const t = setup();
     const r = await t.run(['add', 'openai', 'gpt'], { text: { model: 'gpt-5' } }, { interactive: true, secret: 'sk-prompted' });
     expect(r.code).toBe(0);
-    expect(t.additions).toEqual([{ provider: 'openai', name: 'OpenAI', models: [{ label: 'gpt-5', id: 'gpt-5' }] }]);
+    expect(t.additions).toEqual([{ provider: 'openai', name: 'OpenAI', models: [{ label: 'openai/gpt-5', id: 'gpt-5' }] }]);
     expect(t.routes().routes.gpt).toMatchObject({ model: 'openai/gpt-5', adapter: 'openai-api', options: { baseUrl: 'https://api.openai.com/v1', model: 'gpt-5', keySource: 'store' } });
     expect(t.secrets.get('dispatch.gpt')).toBe('sk-prompted');
     expect(r.out).toContain('A key of 11 characters is stored');
@@ -67,7 +67,7 @@ describe('augur provider add', () => {
   });
 
   it('points the route at the label a model already has in the rules', async () => {
-    const t = setup({ added: () => ({ labels: { 'deepseek/deepseek-v4': 'DeepSeek-V4' }, added: [] }) });
+    const t = setup({ added: () => ({ labels: { 'deepseek/deepseek-v4': 'openrouter/DeepSeek-V4' }, added: [] }) });
     await t.run(['add', 'openrouter', 'dsk'], { text: { model: 'deepseek/deepseek-v4' } });
     expect(t.routes().routes.dsk!.model).toBe('openrouter/DeepSeek-V4');
   });
