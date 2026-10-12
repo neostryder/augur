@@ -4,6 +4,7 @@ import * as core from './core';
 import type { HistoryRow } from './core';
 import { renderDashboard, tightest, updateTip, type DashboardModel } from './views/dashboard';
 import { BULK_FIELDS, RULES_TEXT, dialEndChoices, heldRows, localPage, parseCustom, parsePercents, pauseResets, pauseValue, planDialBack, previewBulk, validModelId, type BulkPreview, type DialBackPlan } from '@augur/view-model';
+import { renderPair } from './views/pair';
 import { CUSTOM_EXAMPLE, PUSH_TEXT, renderSettings, type SettingsModel } from './views/settings';
 import { addUnfound, applyDetection, fillRank, goStep, initialView, loadProfile, moveRank, noteAdded, openSetup, providerHasWindow, refreshPlan, renderSetup, runApply, selectStack, setConfirmed, setHold, setListAnswer, setPayAmount, setPayNone, setStrength, shiftStep, toggleListModel, togglePayProvider, useStrongFor, modelsOf, type SetupModel, type SetupTrack } from './views/setup';
 import { renderRules, type RulesFilter, type RulesModel } from './views/rules';
@@ -57,7 +58,7 @@ export class App {
   private snapshot: Snapshot | null = null;
   private history: HistoryRow[] = [];
   private alertState: Record<string, unknown> = {};
-  private view: 'dashboard' | 'settings' | 'rules' | 'jobs' | 'routes' | 'balance' | 'local' | 'service' | 'setup' = 'dashboard';
+  private view: 'dashboard' | 'settings' | 'rules' | 'jobs' | 'routes' | 'balance' | 'local' | 'service' | 'setup' | 'pair' = 'dashboard';
   private firstRun = false;
   private setup: SetupModel | null = null;
   /** Enabled flags from the detection that ran before the interview opened. Skip restores these and writes no interview edits. */
@@ -156,6 +157,8 @@ export class App {
       this.takeState(Object.keys(this.engine.state) as EngineKey[]);
       this.engine.onChange((keys) => this.onEngine(keys));
     } else {
+      // Asks the browser to keep this app's data, so a pairing is not cleared when the phone is short on space.
+      void navigator.storage?.persist?.().catch(() => undefined);
       const saved = await this.shell.loadConfig();
       this.config = core.migrateConfig(saved ?? core.defaultConfig());
       this.syncProviderList();
@@ -183,7 +186,9 @@ export class App {
     // An automatic install waits for the panel to close, so it never restarts the app under the pointer.
     if (this.shell.installUpdate) document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') void this.autoInstall(); });
 
-    if (initialView(this.firstRun) === 'setup') await this.openInterview(true);
+    const first = initialView(this.firstRun, this.shell.kind);
+    if (first === 'setup') await this.openInterview(true);
+    else if (first === 'pair') this.view = 'pair';
     this.applyTheme();
     this.systemDark.addEventListener('change', () => { this.applyTheme(); void this.render(); void this.updateTray(); });
     this.wireEvents();
@@ -497,6 +502,9 @@ export class App {
       // The desktop popup opens at its two-column width so the list and the open model's rules sit side by side.
       this.twoColumns = this.shell.kind === 'desktop';
       this.root.innerHTML = renderRules(this.rulesModel());
+    } else if (this.view === 'pair' && this.firstRun) {
+      this.twoColumns = false;
+      this.root.innerHTML = renderPair({ scanError: this.scanError, ...iosState() });
     } else if (this.view === 'setup' && this.setup) {
       this.twoColumns = true;
       this.root.innerHTML = renderSetup(this.setup);
@@ -1412,6 +1420,7 @@ export class App {
       case 'update-install': await this.installUpdate(); break;
       case 'settings': if (this.firstRun) { if (this.view !== 'setup') await this.openInterview(true); break; } this.view = 'settings'; await this.render(); break;
       case 'setup-again': await this.openInterview(false); break;
+      case 'pair-alone': await this.openInterview(true); break;
       case 'retry-policy': await this.engine?.retryPolicy(); break;
       case 'edit-accept': case 'edit-dismiss': await this.engine?.answerEdit(t.dataset.edit ?? '', t.dataset.action === 'edit-accept'); break;
       case 'rules': this.view = 'rules'; this.rules.showHistory = false; if (t.dataset.value) this.rules.filter = t.dataset.value as RulesFilter; await this.render(); void this.loadStances(); break;
@@ -1878,7 +1887,12 @@ function safeParse(s: string): unknown {
 
 /** iPhone and iPad Safari have no install prompt, so the phone section explains Add to Home Screen. */
 function iosInstallHint(): boolean {
+  return iosState().iosBrowser;
+}
+
+/** Whether this is an iPhone or iPad, and whether it runs as the home-screen app (which keeps storage separate from Safari). */
+function iosState(): { iosBrowser: boolean; iosApp: boolean } {
   const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   const standalone = (navigator as Navigator & { standalone?: boolean }).standalone === true || matchMedia('(display-mode: standalone)').matches;
-  return ios && !standalone;
+  return { iosBrowser: ios && !standalone, iosApp: ios && standalone };
 }

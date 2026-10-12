@@ -392,6 +392,8 @@ input[type=color] { width: 26px; height: 22px; border: 0; padding: 0; background
 .setup-stack-h { display: flex; align-items: center; gap: 10px; }
 .setup-stack-h b { font-weight: 600; }
 .setup-stack-h .chip { margin-left: auto; }
+.pair-card .help { margin: 0 0 8px; }
+.pair-actions { justify-content: flex-start; margin-top: 4px; }
 .setup-found { display: flex; align-items: center; gap: 10px; }
 .setup-found .help { flex: 1; }
 .setup-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--good); flex: none; }

@@ -8,8 +8,8 @@ import type { DetectedProvider, HoldChoice, SetupAnswers, SetupCurrent, SetupOp,
 import { esc } from '../util';
 import { renderAddProvider, type AddProviderModel } from './add-provider';
 
-/** A new install opens here. A later launch opens usage. */
-export const initialView = (firstRun: boolean): 'setup' | 'dashboard' => firstRun ? 'setup' : 'dashboard';
+/** A new install opens here, and a later launch opens usage. A phone with nothing saved asks to pair first, since its data comes from the desktop. */
+export const initialView = (firstRun: boolean, kind: 'desktop' | 'pwa' = 'desktop'): 'setup' | 'pair' | 'dashboard' => !firstRun ? 'dashboard' : kind === 'pwa' ? 'pair' : 'setup';
 
 /** Subscriptions the interview can ask about when detection did not see them. API services use the Add provider form. */
 const SUBSCRIPTIONS = new Set(['claude', 'codex', 'grok', 'minimax', 'copilot']);

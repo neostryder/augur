@@ -233,6 +233,8 @@ describe('where the interview opens', () => {
   it('replaces the first-run screen and adds Run setup again on Settings', () => {
     expect(initialView(true)).toBe('setup');
     expect(initialView(false)).toBe('dashboard');
+    expect(initialView(true, 'pwa')).toBe('pair');
+    expect(initialView(false, 'pwa')).toBe('dashboard');
     const first = renderSetup(openSetup({ firstRun: true, current: blank, tracks: [], routes: new Set() }));
     expect(first).toContain('Skip setup');
     expect(first).not.toContain('Start tracking');

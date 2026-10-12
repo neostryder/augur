@@ -6,6 +6,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Fixed
 
+- [Visible] [UI] **The phone app now opens on a Pair with your desktop screen when nothing is saved yet.** It used to open the eight-step setup, and on an iPhone the home-screen app showed that setup every time, because it keeps its storage apart from Safari and never saw a pairing made in Safari or with the Camera app. The new screen has a Scan pairing code button, which used to be only in Settings, and a Set up without a desktop button for a phone you use on its own. On an iPhone, Safari tells you to add Augur to the home screen and scan in there, and the web app now asks the browser to keep its saved data each time it opens, so a phone low on space is less likely to drop the pairing.
 - [Visible] [Platform] **Adding the Augur web app to a home screen or installing it now gives it the Augur icon.** Some browsers and phones used to show a letter tile, because the page linked only the Apple touch icon and `/favicon.ico` and `/apple-touch-icon-precomposed.png` came back 404. The page now links PNG icons too and has the favicon and touch icon built in, which helps on phones that fetch home-screen icons apart from the page. Both files are at the site root as well, the manifest has an `id` and marks its icons for any purpose, and the icons stay cached for an hour.
 
 ## [1.10.0] - 2026-10-11
