@@ -4,6 +4,10 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+### Fixed
+
+- [Visible] [Platform] **Adding the Augur web app to a home screen or installing it now gives it the Augur icon.** Some browsers and phones used to show a letter tile, because the page linked only the Apple touch icon and `/favicon.ico` and `/apple-touch-icon-precomposed.png` came back 404. The page now links PNG icons too and has the favicon and touch icon built in, which helps on phones that fetch home-screen icons apart from the page. Both files are at the site root as well, the manifest has an `id` and marks its icons for any purpose, and the icons stay cached for an hour.
+
 ## [1.10.0] - 2026-10-11
 
 ### Added

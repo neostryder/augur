@@ -2,9 +2,10 @@
 
 Run from the repository root: python apps/desktop/src-tauri/icons-src/make_icons.py
 Desktop and 'any' web icons get rounded corners with transparency; the Apple and maskable icons stay full-bleed (the maskable one is padded into the safe area) so the platform can crop them.
+The web app also gets a favicon and the root touch-icon paths a phone requests by name. The page carries the favicon and the Apple touch icon inline, since a phone fetches linked home-screen icons in a separate process.
 """
 from PIL import Image, ImageDraw, ImageFilter
-import os
+import base64, io, os, re
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TAURI = os.path.join(HERE, '..', 'icons')
@@ -46,3 +47,25 @@ rounded(192).save(os.path.join(WEB, 'icon-192.png'), optimize=True)
 rounded(512).save(os.path.join(WEB, 'icon-512.png'), optimize=True)
 maskable(512).save(os.path.join(WEB, 'icon-maskable-512.png'), optimize=True)
 sized(180).save(os.path.join(WEB, 'apple-touch-icon.png'), optimize=True)
+sized(180).save(os.path.join(WEB, 'apple-touch-icon-precomposed.png'), optimize=True)
+rounded(32).save(os.path.join(WEB, 'favicon-32.png'), optimize=True)
+rounded(48).save(os.path.join(WEB, 'favicon.ico'), sizes=[(16, 16), (32, 32), (48, 48)])
+
+
+def data_uri(img, fmt, mime, **opts):
+    buf = io.BytesIO()
+    img.save(buf, fmt, **opts)
+    return f'data:{mime};base64,' + base64.b64encode(buf.getvalue()).decode()
+
+
+index_path = os.path.join(WEB, '..', 'index.html')
+index = open(index_path, encoding='utf-8', newline='').read()
+marker = re.compile(r'<!-- inline-icons -->[\s\S]*?<!-- /inline-icons -->')
+if not marker.search(index):
+    raise SystemExit('index.html has no inline-icons markers')
+eol = '\r\n' if '\r\n' in index else '\n'
+links = ['<!-- inline-icons -->',
+         f'  <link rel="icon" type="image/png" sizes="32x32" href="{data_uri(rounded(32), "PNG", "image/png", optimize=True)}">',
+         f'  <link rel="apple-touch-icon" href="{data_uri(sized(180), "JPEG", "image/jpeg", quality=90)}">',
+         '  <!-- /inline-icons -->']
+open(index_path, 'w', encoding='utf-8', newline='').write(marker.sub(lambda m: eol.join(links), index, count=1))

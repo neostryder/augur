@@ -3,3 +3,12 @@
   X-Content-Type-Options: nosniff
   Referrer-Policy: no-referrer
   Permissions-Policy: camera=(self), microphone=(), geolocation=()
+
+/icon-*.png
+  Cache-Control: public, max-age=3600
+/apple-touch-icon*.png
+  Cache-Control: public, max-age=3600
+/favicon*
+  Cache-Control: public, max-age=3600
+/manifest.webmanifest
+  Cache-Control: public, max-age=3600
