@@ -4,6 +4,8 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-10-11
+
 ### Added
 
 - [Visible] [Providers] **The opencode-sbx adapter takes an `effort` route option.** Set it in routes.json, for example `options: { effort: "high" }`, and OpenCode receives it as its reasoning variant. OpenCode's variants stop at `high`, so `xhigh` is sent as `high`. The option is for routes that run OpenCode inside a Docker Sandbox, such as DeepSeek, and a route without it runs as before.

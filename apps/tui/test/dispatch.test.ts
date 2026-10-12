@@ -152,7 +152,7 @@ describe('dispatch page: add provider', () => {
     t.page.form.cell = 0;
     await t.app.key(k('enter'));
   };
-  const added = { addProvider: { labels: { 'gpt-5': 'gpt-5' }, added: ['gpt-5'] } };
+  const added = { addProvider: { labels: { 'gpt-5': 'openai/gpt-5' }, added: ['openai/gpt-5'] } };
   const TAKEN = '{"routes":{"luna":{"model":"codex/luna","adapter":"codex-exec"}}}';
 
   it('opens from the Routes screen, shows the plan as the fields are filled, and leaves with Esc', async () => {
