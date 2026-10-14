@@ -252,9 +252,12 @@ fn landed_after_sign_in(url: &Url, seen_off_site: bool) -> bool {
     }
     let path = url.path().trim_end_matches('/').to_ascii_lowercase();
     !(path.is_empty()
-        || ["login", "log-in", "log_in", "signin", "sign-in", "sign_in", "signup", "sign-up", "auth"]
-            .iter()
-            .any(|word| path.contains(word)))
+        || [
+            "login", "log-in", "log_in", "signin", "sign-in", "sign_in", "signup", "sign-up",
+            "auth",
+        ]
+        .iter()
+        .any(|word| path.contains(word)))
 }
 
 #[cfg(test)]
