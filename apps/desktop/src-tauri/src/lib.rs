@@ -371,7 +371,12 @@ fn toggle_popup(app: &tauri::AppHandle) {
 /// Registers the shortcut that opens and closes the panel from anywhere, replacing any earlier one.
 /// None or an empty string turns it off.
 #[tauri::command]
-fn set_hotkey(app: tauri::AppHandle, accelerator: Option<String>) -> Result<(), String> {
+fn set_hotkey(
+    webview: tauri::Webview,
+    app: tauri::AppHandle,
+    accelerator: Option<String>,
+) -> Result<(), String> {
+    commands::require_popup(&webview)?;
     use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
     let shortcuts = app.global_shortcut();
     shortcuts.unregister_all().map_err(|e| e.to_string())?;

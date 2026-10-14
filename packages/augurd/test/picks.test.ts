@@ -177,6 +177,22 @@ describe('picking by task description', () => {
     expect(r.ranking.find(x => x.model === 'test/fake')?.fit).toBe(1);
   });
 
+  it('scores student-related text only on a backend that runs on this network', async () => {
+    const task = 'grade the MIS-600 rubric for this section roster';
+    const e = setup(), hosted: string[] = [], local: string[] = [];
+    (e.sup as unknown as { d: { decision: unknown } }).d.decision = { primary: { ...backend(hosted), id: 'jev', local: false }, local: backend(local) };
+    const r = await e.sup.pick({ task, activity: 'write_code', dataTier: 'internal' });
+    if ('error' in r) throw new Error(r.error);
+    expect(hosted).toEqual([]);
+    expect(local.length).toBeGreaterThan(0);
+    const alone = setup(), only: string[] = [];
+    (alone.sup as unknown as { d: { decision: unknown } }).d.decision = { primary: { ...backend(only), id: 'jev', local: false } };
+    const n = await alone.sup.pick({ task, activity: 'write_code', dataTier: 'internal' });
+    if ('error' in n) throw new Error(n.error);
+    expect(only).toEqual([]);
+    expect(n.ranking.every(x => x.fit === 0.5)).toBe(true);
+  });
+
   it('falls back to 0.5 and says why when the backend fails, and refuses a task it cannot classify', async () => {
     const e = setup();
     withBackend(e, { id: 'laya', local: true, ask: async () => ({ error: 'down' }) });

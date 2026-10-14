@@ -10,7 +10,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::Mutex;
 
-use crate::commands::{SERVICE_NODE, service_dir};
+use crate::commands::{SERVICE_NODE, require_popup, service_dir};
 
 #[derive(Default)]
 pub struct EngineBridge {
@@ -22,9 +22,11 @@ pub struct EngineBridge {
 /// Starts the bridge, replacing one already running, as a page that reloads needs the whole state again.
 #[tauri::command]
 pub async fn engine_start(
+    webview: tauri::Webview,
     app: tauri::AppHandle,
     bridge: tauri::State<'_, EngineBridge>,
 ) -> Result<(), String> {
+    require_popup(&webview)?;
     let dir = service_dir(&app)?;
     let mut slot = bridge.running.lock().await;
     if let Some((mut old, _)) = slot.take() {
@@ -71,9 +73,11 @@ pub async fn engine_start(
 /// Writes one JSON line from the page to the bridge.
 #[tauri::command]
 pub async fn engine_send(
+    webview: tauri::Webview,
     line: String,
     bridge: tauri::State<'_, EngineBridge>,
 ) -> Result<(), String> {
+    require_popup(&webview)?;
     if line.contains('\n') {
         return Err("One line at a time".into());
     }

@@ -95,6 +95,14 @@ describe('policy', () => {
     expect(mergePolicy(merged, merged).history).toHaveLength(4);
   });
 
+  it('skips a stamp that names an inherited property and still merges the rest', () => {
+    const desk = sample(), phone = structuredClone(desk);
+    setField(phone, fieldPath('codex', 'codex/sol', 'cost'), 'moderate', 'phone', t2);
+    phone.stamps['codex||constructor'] = t2.toISOString();
+    const merged = mergePolicy(desk, phone);
+    expect(merged.providers.codex!.models['codex/sol']!.rule.cost).toBe('moderate');
+  });
+
   describe('data handling inherits part by part', () => {
     const prov = (dh: Record<string, unknown> | undefined, own: Record<string, unknown> | undefined) => migratePolicy({ providers: { codex: { defaults: dh ? { dataHandling: dh } : {}, models: { 'codex/sol': { id: 'sol', status: 'confirmed', rule: own ? { dataHandling: own } : {} } } } } });
     const resolved = (p: PolicyConfig) => resolveModel('codex', p.providers.codex!.defaults, p.providers.codex!.models['codex/sol']!);

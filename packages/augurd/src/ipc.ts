@@ -189,6 +189,8 @@ export class IpcServer {
             const line = buf.slice(0, i); buf = buf.slice(i + 1);
             let req: RpcRequest;
             try { req = JSON.parse(line) as RpcRequest; } catch { sock.write(JSON.stringify({ id: 0, error: { code: 'bad_json', message: 'Request is not JSON.' } }) + '\n'); continue; }
+            // `null` and other non-objects parse as JSON and would throw below, before the token is checked.
+            if (typeof req !== 'object' || req === null) { sock.write(JSON.stringify({ id: 0, error: { code: 'bad_json', message: 'Request is not a JSON object.' } }) + '\n'); continue; }
             // A view's answer to one of the engine's requests rides the connection that was authorized when it started watching.
             if (watching && typeof (req as unknown as ViewReply).reply === 'string') {
               const r = req as unknown as ViewReply;

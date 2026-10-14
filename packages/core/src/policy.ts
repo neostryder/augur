@@ -257,7 +257,10 @@ export function mergePolicy(local: PolicyConfig, remote: PolicyConfig): PolicyCo
   for (const [path, at] of Object.entries(remote.stamps)) {
     const mine = out.stamps[path];
     if (mine && mine >= at) continue;
-    setAt(out, path, structuredClone(getAt(remote, path)));
+    // A stamp naming a field the rule does not have (an inherited property such as `constructor`) cannot be cloned; skipping it keeps the rest of the merge.
+    let value: unknown;
+    try { value = structuredClone(getAt(remote, path)); } catch { continue; }
+    setAt(out, path, value);
     out.stamps[path] = at;
   }
   out.clock = [remote.clock, ...Object.values(remote.stamps)].reduce(later, out.clock);

@@ -63,7 +63,8 @@ jobs:
         run: |
           version=$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")
           if [ "v$version" != "$GITHUB_REF_NAME" ]; then echo "Tag $GITHUB_REF_NAME does not match app version $version"; exit 1; fi
-      - uses: tauri-apps/tauri-action@v1
+      # Pinned to a commit because this step receives the updater signing key; the tag is v1.
+      - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_SIGNING_IDENTITY: '-'

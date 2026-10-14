@@ -5,7 +5,7 @@ import { closeSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, readS
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES } from '@augur/core';
 import type { PolicyFile } from '@augur/core';
-import { BRIEF_RESULTS, classifyTask, fitScores } from '@augur/decision';
+import { BRIEF_RESULTS, STUDENT_RE, classifyTask, fitScores } from '@augur/decision';
 import type { BriefResult, DecisionBackend } from '@augur/decision';
 import { BUDGET_WINDOW_MS, NAMED_PROMPT_WINDOW, PICK_WINDOW_MIN, TOOL_TIERS, account, attachmentKind, balanceReport, budgetStatus, calibrateRoutes, copilotSpend, checkLineage, routeSecretName, checkNamed, checkPick, evaluate, isTerminal, matchNamedModels, pressure, rank, usageFactors } from '@augur/dispatch-protocol';
 import type { Adapter, BalanceReport, BudgetStatus, Conversation, JobRecord, JobRequest, LaunchPlan, PickAnswer, PickParams, RateCard, Rejection, ResolvedAttachment, RouteConfig, UsageSnapshot } from '@augur/dispatch-protocol';
@@ -270,10 +270,12 @@ export class Supervisor {
     const depth = req.depth ? { depth: req.depth } : {};
     if (req.task && backend) {
       const asked = rank(policy, this.d.usage(), { activity, dataTier, proseSwitched: this.proseWas(), ...depth, ...snippet }, new Date(this.now())).ranking.map(r => r.model).filter(m => fits[m] === undefined);
-      if (asked.length) {
+      // Student-related text is scored only by a backend on this network, as classifyTask does; with none, fit stays neutral.
+      const fitter = STUDENT_RE.test(req.task) ? (backend.local ?? (backend.primary.local ? backend.primary : undefined)) : backend.primary;
+      if (asked.length && fitter) {
         const describe = (m: string) => { const e = Object.values(policy.providers).map(p => p.models[m]).find(Boolean); return `${e?.name ?? e?.id ?? m}. Permitted: ${Object.keys(e?.activities ?? {}).join(', ')}. ${e?.notes ?? ''}`.trim(); };
         for (const m of asked) descriptions[m] = describe(m);
-        const got = await fitScores(backend.primary, req.task, asked.map(m => ({ model: m, description: descriptions[m] as string })));
+        const got = await fitScores(fitter, req.task, asked.map(m => ({ model: m, description: descriptions[m] as string })));
         Object.assign(fits, got.fits); fitError = got.error;
       }
     }

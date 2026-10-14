@@ -6,7 +6,16 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Fixed
 
+- [Visible] [Security] **Fit scores for student-related task text come only from a decision backend on this network.** When no local backend is available, those scores stay neutral at 0.5.
+- [Visible] [Security] **The control endpoint answers a request that is not a JSON object with an error.** The service keeps running and handles the next request normally.
+- [Visible] [Security] **Rule sync skips a policy stamp that names a field the rule does not have.** The remaining stamps from the other device still merge.
+- [Visible] [Security] **The phone and browser app opens provider links only when they use http or https.** Links with any other scheme do nothing.
+- [Visible] [Security] **Desktop commands that read or write files, run the dispatch CLI, set the hotkey, or talk to the service now answer only the app's own popup window.** A provider page open in a sign-in window cannot call them.
 - [Visible] [Providers] **Codex, Copilot, and API jobs no longer count their reasoning tokens twice.** Those harnesses already include reasoning in the output count, so their output totals, characters-per-token calibration, and derived costs drop to the true figure. Costs a provider reports itself stay the same.
+
+### Changed
+
+- [Internal] [Platform] **The release workflow pins the Tauri build action to a specific commit.** That step receives the updater signing key, so it runs a fixed, known version.
 
 ## [1.10.1] - 2026-10-13
 

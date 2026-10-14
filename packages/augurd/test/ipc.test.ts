@@ -30,6 +30,20 @@ async function finished(o: { dir: string; pipe: string }, id: string) {
 }
 
 describe('the control endpoint', () => {
+  it('turns away JSON that is not an object without stopping the service', async () => {
+    const { o, pipe } = await boot();
+    const net = await import('node:net');
+    const reply = await new Promise<string>((resolve, reject) => {
+      const sock = net.connect(pipe);
+      let got = '';
+      sock.on('connect', () => sock.write('null\n'));
+      sock.on('data', d => { got += d.toString(); sock.destroy(); resolve(got); });
+      sock.on('error', reject);
+    });
+    expect(JSON.parse(reply.trim())).toMatchObject({ error: { code: 'bad_json' } });
+    expect(await call('ping', undefined, o)).toMatchObject({ pid: process.pid });
+  });
+
   it('answers a caller that holds the token, and turns away one that does not', async () => {
     const { o, e } = await boot();
     expect(await call('ping', undefined, o)).toMatchObject({ pid: process.pid, version: 1 });

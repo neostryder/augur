@@ -144,8 +144,24 @@ fn replace_file(from: &Path, to: &Path) -> Result<(), String> {
     }
 }
 
+/// Only the app's own popup page may call the commands that touch files, processes, hotkeys, or the service.
+/// A provider's page loaded in a sign-in or scrape window shares the app's command registry, so each of
+/// those commands checks the window it was called from.
+pub fn require_popup(webview: &tauri::Webview) -> Result<(), String> {
+    if webview.label() == "popup" {
+        Ok(())
+    } else {
+        Err("Not available from this window".into())
+    }
+}
+
 #[tauri::command]
-pub async fn read_home_file(app: tauri::AppHandle, path: String) -> Result<Option<String>, String> {
+pub async fn read_home_file(
+    webview: tauri::Webview,
+    app: tauri::AppHandle,
+    path: String,
+) -> Result<Option<String>, String> {
+    require_popup(&webview)?;
     let path = allowed_home_path(&app, &path).await?;
     match tokio::fs::read_to_string(path).await {
         Ok(text) => Ok(Some(text)),
@@ -156,10 +172,12 @@ pub async fn read_home_file(app: tauri::AppHandle, path: String) -> Result<Optio
 
 #[tauri::command]
 pub async fn write_home_file_atomic(
+    webview: tauri::Webview,
     app: tauri::AppHandle,
     path: String,
     text: String,
 ) -> Result<(), String> {
+    require_popup(&webview)?;
     let path = allowed_home_path(&app, &path).await?;
     atomic_write(&path, &text).await
 }
@@ -265,9 +283,11 @@ pub(crate) const SERVICE_NODE: &str = if cfg!(windows) {
 
 #[tauri::command]
 pub async fn dispatch_cli(
+    webview: tauri::Webview,
     app: tauri::AppHandle,
     args: Vec<String>,
 ) -> Result<CommandOutput, String> {
+    require_popup(&webview)?;
     if !dispatch_args_allowed(&args) {
         return Err("Command and arguments are not allowed".into());
     }

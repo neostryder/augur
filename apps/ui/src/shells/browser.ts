@@ -149,7 +149,8 @@ export function createBrowserShell(): Shell {
       if (reg) await reg.showNotification(title, { body, icon: 'icon-192.png' });
       else new Notification(title, { body });
     },
-    async openUrl(url) { window.open(url, '_blank', 'noopener'); },
+    // Only web addresses open; a custom provider's link cannot start a script in a new tab.
+    async openUrl(url) { if (/^https?:\/\//i.test(url)) window.open(url, '_blank', 'noopener'); },
     on(event, handler) {
       if (!handlers.has(event)) handlers.set(event, new Set());
       handlers.get(event)!.add(handler);

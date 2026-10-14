@@ -260,8 +260,8 @@ describe('augur pick and augur pressure', () => {
     await run(['run', 'fake', '--prompt', 'SLEEP 0', '--wait']);
     const text = await run(['usage']);
     expect(text.code).toBe(0);
-    expect(text.out).toMatch(/^fake\s+1,200 in, 39 out, no rate set/m);
-    expect(text.out).toContain('in 1,200 (reported), out 39 (reported), cost unknown');
+    expect(text.out).toMatch(/^fake\s+1,200 in, 34 out, no rate set/m);
+    expect(text.out).toContain('in 1,200 (reported), out 34 (reported), cost unknown');
     const json = JSON.parse((await run(['usage', '--json'])).out) as { routes: Record<string, { totals: { jobs: number } }> };
     expect(json.routes.fake!.totals.jobs).toBe(1);
   });
