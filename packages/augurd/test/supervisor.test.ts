@@ -18,7 +18,7 @@ describe('a job that finishes', () => {
     const id = submitOk(e.sup, request({ text: 'WRITE out.txt\nSLEEP 1', expectFile: 'out.txt', cwd: e.root }));
     const job = await terminal(e.sup, e.store, id);
     expect(job).toMatchObject({ state: 'completed', exitCode: 0, route: 'fake', adapter: 'codex-exec' });
-    expect(job.usage).toEqual({ inputTokens: 1200, outputTokens: 34, cachedReadTokens: 1000, reasoningTokens: 5, source: 'reported' });
+    expect(job.usage).toEqual({ inputTokens: 1200, outputTokens: 34, cachedReadTokens: 1000, reasoningTokens: 5, reasoningInOutput: true, source: 'reported' });
     expect(kinds(e, id)).toEqual(['requested', 'policy_evaluated', 'queued', 'running', 'process_created', 'first_update', 'process_exited', 'usage_recorded', 'artifact_validated', 'completed', 'finalized']);
     expect(e.sup.result(id)?.answer).toBe('final message');
   });

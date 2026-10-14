@@ -126,7 +126,7 @@ if (mode === 'embeddings') {
   const u = obj(data.usage);
   if (Object.keys(u).length) {
     const read = num(obj(u.prompt_tokens_details).cached_tokens), reasoning = num(obj(u.completion_tokens_details).reasoning_tokens);
-    usage = { inputTokens: num(u.prompt_tokens), outputTokens: num(u.completion_tokens), ...(read ? { cachedReadTokens: read } : {}), ...(reasoning ? { reasoningTokens: reasoning } : {}),
+    usage = { inputTokens: num(u.prompt_tokens), outputTokens: num(u.completion_tokens), ...(read ? { cachedReadTokens: read } : {}), ...(reasoning ? { reasoningTokens: reasoning, reasoningInOutput: true } : {}),
       ...(typeof u.cost === 'number' ? { costUsd: u.cost, currency: 'USD' } : {}) };
   }
 }

@@ -56,7 +56,7 @@ export const copilotExec: Adapter = {
     const written = detail(up, /written/), read = detail(up, /cached|cache read|read/), reasoning = detail(down, /reasoning/);
     if (read) usage.cachedReadTokens = read;
     if (written) usage.cachedWriteTokens = written;
-    if (reasoning) usage.reasoningTokens = reasoning;
+    if (reasoning) { usage.reasoningTokens = reasoning; usage.reasoningInOutput = true; }
     if (credits) { usage.costUsd = Math.round(Number(credits[1]) * USD_PER_CREDIT * 10000) / 10000; usage.currency = 'USD'; }
     return { answer, usage };
   },

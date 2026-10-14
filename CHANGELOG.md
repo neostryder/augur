@@ -4,6 +4,10 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+### Fixed
+
+- [Visible] [Providers] **Codex, Copilot, and API jobs no longer count their reasoning tokens twice.** Those harnesses already include reasoning in the output count, so their output totals, characters-per-token calibration, and derived costs drop to the true figure. Costs a provider reports itself stay the same.
+
 ## [1.10.1] - 2026-10-13
 
 ### Fixed

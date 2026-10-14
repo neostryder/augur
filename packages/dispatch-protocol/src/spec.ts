@@ -55,6 +55,8 @@ export interface UsageReport {
   cachedReadTokens?: number;
   cachedWriteTokens?: number;
   reasoningTokens?: number;
+  /** True when `outputTokens` already counts the reasoning tokens (Codex, Copilot and the OpenAI chat format do). Left out when the harness reports them apart, and accounting then adds them. */
+  reasoningInOutput?: boolean;
   costUsd?: number;
   currency?: string;
   /** Where the numbers came from. Imputed figures are added by the accounting layer and never replace these. */

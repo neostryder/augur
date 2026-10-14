@@ -49,6 +49,20 @@ describe('account', () => {
     const a = account(job({ id: 'a', usage: reported(1_000_000, 100_000) }), 'codex/luna', rates, cal);
     expect(a.costUsd).toEqual({ value: 3, provenance: 'derived' });
   });
+  it('adds reasoning tokens to output when the harness reports them apart', () => {
+    const a = account(job({ id: 'a', usage: reported(1_000_000, 100, { reasoningTokens: 20 }) }), 'codex/luna', rates, cal);
+    expect(a.outputTokens).toEqual({ value: 120, provenance: 'reported' });
+    expect(a.costUsd?.value).toBeCloseTo(2 + 120 / 1e6 * 10, 8);
+  });
+  it('does not add reasoning tokens that the output count already holds', () => {
+    const a = account(job({ id: 'a', usage: reported(1_000_000, 100, { reasoningTokens: 20, reasoningInOutput: true }) }), 'codex/luna', rates, cal);
+    expect(a.outputTokens).toEqual({ value: 100, provenance: 'reported' });
+    expect(a.costUsd?.value).toBeCloseTo(2 + 100 / 1e6 * 10, 8);
+  });
+  it('calibrates output characters against the same reasoning-inclusive count', () => {
+    const h = history.map(j => ({ ...j, usage: { ...j.usage!, reasoningTokens: 50, reasoningInOutput: true } }));
+    expect(calibrateRoutes(h).luna?.output?.charsPerToken).toBeCloseTo(4, 1);
+  });
   it('leaves the cost out when no rate is set', () => {
     expect(account(job({ id: 'a', usage: reported(1000, 100) }), 'codex/luna', {}, cal).costUsd).toBeNull();
   });

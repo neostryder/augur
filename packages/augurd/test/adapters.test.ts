@@ -29,7 +29,7 @@ describe('what each harness prints, read from real captured output', () => {
     const dir = join(tmpdir(), `codex-x-${Date.now()}`); mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'last-message.txt'), 'the answer\n');
     const out = '{"type":"turn.completed","usage":{"input_tokens":253105,"cached_input_tokens":209152,"output_tokens":4034,"reasoning_output_tokens":227}}\n';
-    expect(codexExec.extract(input({ stdout: out, jobDir: dir }))).toEqual({ answer: 'the answer', usage: { inputTokens: 253105, outputTokens: 4034, cachedReadTokens: 209152, reasoningTokens: 227, source: 'reported' } });
+    expect(codexExec.extract(input({ stdout: out, jobDir: dir }))).toEqual({ answer: 'the answer', usage: { inputTokens: 253105, outputTokens: 4034, cachedReadTokens: 209152, reasoningTokens: 227, reasoningInOutput: true, source: 'reported' } });
     expect(codexExec.extract(input({ stdout: 'tool said: failed to spawn code-mode host', jobDir: dir })).failure).toMatch(/tool host/);
     const started = '{"type":"thread.started","thread_id":"0199abcd-1234-5678-9abc-def012345678"}\n{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":2}}\n';
     expect(codexExec.extract(input({ stdout: started, jobDir: dir }))).toEqual({ answer: 'the answer', usage: { inputTokens: 10, outputTokens: 2, source: 'reported' }, sessionId: '0199abcd-1234-5678-9abc-def012345678' });
@@ -50,9 +50,9 @@ describe('what each harness prints, read from real captured output', () => {
     const out = 'pong\r\n\r\n\r\n\r\nChanges    +0 -0\r\nAI Credits 0.37 (5s)\r\nTokens     \u2191 14.1k \u2022 \u2193 87 (64 reasoning)\r\nResume     copilot --resume=352b320c\r\n';
     const x = copilotExec.extract(input({ stdout: out }));
     expect(x.answer).toBe('pong');
-    expect(x.usage).toEqual({ inputTokens: 14100, outputTokens: 87, reasoningTokens: 64, costUsd: 0.0037, currency: 'USD', source: 'reported' });
+    expect(x.usage).toEqual({ inputTokens: 14100, outputTokens: 87, reasoningTokens: 64, reasoningInOutput: true, costUsd: 0.0037, currency: 'USD', source: 'reported' });
     const b = copilotExec.extract(input({ stdout: 'pong\r\n\r\nChanges    +0 -0\r\nAI Credits 0.63 (5s)\r\nTokens     ↑ 49.9k (49.9k written) • ↓ 104 (97 reasoning)\r\n' }));
-    expect(b.usage).toEqual({ inputTokens: 49900, outputTokens: 104, cachedWriteTokens: 49900, reasoningTokens: 97, costUsd: 0.0063, currency: 'USD', source: 'reported' });
+    expect(b.usage).toEqual({ inputTokens: 49900, outputTokens: 104, cachedWriteTokens: 49900, reasoningTokens: 97, reasoningInOutput: true, costUsd: 0.0063, currency: 'USD', source: 'reported' });
     expect([parseCount('87'), parseCount('14.1k'), parseCount('1.2m'), parseCount('junk')]).toEqual([87, 14100, 1200000, 0]);
   });
 
@@ -222,7 +222,7 @@ describe('an API connector', () => {
     e.writeRoutes({ chat: { model: 'test/text', adapter: 'openai-api', options: { baseUrl: `${m.url}/api/v1`, model: 'cheap-1', apiKeyEnv: 'AUGUR_TEST_API_KEY', maxTokens: 50 } } });
     const id = submitOk(e.sup, { ...textReq('chat'), cwd: e.root });
     const job = await terminal(e.sup, e.store, id);
-    expect(job).toMatchObject({ state: 'completed', usage: { inputTokens: 100, outputTokens: 3, cachedReadTokens: 40, reasoningTokens: 1, costUsd: 0.00012, currency: 'USD' } });
+    expect(job).toMatchObject({ state: 'completed', usage: { inputTokens: 100, outputTokens: 3, cachedReadTokens: 40, reasoningTokens: 1, reasoningInOutput: true, costUsd: 0.00012, currency: 'USD' } });
     expect(e.sup.result(id)?.answer).toBe('pong');
     expect(m.seen[0]).toMatchObject({ url: '/api/v1/chat/completions', body: { model: 'cheap-1', max_tokens: 50, messages: [{ role: 'user', content: 'say pong' }] } });
     expect(m.seen[0]!.headers.authorization).toBe('Bearer sk-test-secret-value');

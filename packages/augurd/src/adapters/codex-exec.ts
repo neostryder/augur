@@ -100,7 +100,7 @@ function codexUsage(stdout: string): UsageReport | null {
     total.inputTokens += u.input_tokens ?? 0; total.outputTokens += u.output_tokens ?? 0;
     if (u.cached_input_tokens !== undefined) total.cachedReadTokens = (total.cachedReadTokens ?? 0) + u.cached_input_tokens;
     if (u.cache_write_input_tokens) total.cachedWriteTokens = (total.cachedWriteTokens ?? 0) + u.cache_write_input_tokens;
-    if (u.reasoning_output_tokens !== undefined) total.reasoningTokens = (total.reasoningTokens ?? 0) + u.reasoning_output_tokens;
+    if (u.reasoning_output_tokens !== undefined) { total.reasoningTokens = (total.reasoningTokens ?? 0) + u.reasoning_output_tokens; total.reasoningInOutput = true; }
   }
   return total;
 }

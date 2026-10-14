@@ -6,7 +6,7 @@
 // that cannot be backed that way is left out, never filled in. There is no fit against plan quotas: a subscription's quota moves in units the provider
 // does not publish, so the quota meters stay as the providers report them.
 import type { BudgetPeriod, RouteBudget } from './adapter.js';
-import type { JobRecord } from './spec.js';
+import type { JobRecord, UsageReport } from './spec.js';
 
 export type Provenance = 'reported' | 'derived' | 'imputed';
 export interface Figure { value: number; provenance: Provenance; /** Typical relative error of an imputed figure, as measured on the route's reported jobs (0.2 is 20%). */ error?: number }
@@ -41,13 +41,16 @@ export function calibrateRoutes(jobs: readonly JobRecord[]): Record<string, Rout
   for (const [route, js] of by) {
     out[route] = {
       input: calibrate(js.flatMap(j => j.promptChars ? [{ chars: j.promptChars, tokens: j.usage!.inputTokens }] : [])),
-      output: calibrate(js.flatMap(j => j.answerChars ? [{ chars: j.answerChars, tokens: j.usage!.outputTokens + (j.usage!.reasoningTokens ?? 0) }] : [])),
+      output: calibrate(js.flatMap(j => j.answerChars ? [{ chars: j.answerChars, tokens: outputWithReasoning(j.usage!) }] : [])),
     };
   }
   return out;
 }
 
 const per = (n: number, rate: number) => (n / 1_000_000) * rate;
+
+/** Output tokens including reasoning: added only when the harness reports reasoning apart from output, since adding it again would count it twice. */
+export const outputWithReasoning = (u: UsageReport): number => u.outputTokens + (u.reasoningInOutput ? 0 : (u.reasoningTokens ?? 0));
 
 /** Cost from token counts. Null when the counts include cached tokens the rate card does not price, since guessing their price would misstate the cost. */
 export function costFor(input: number, output: number, cachedRead: number, cachedWrite: number, rate: Rate): number | null {
@@ -61,7 +64,7 @@ export function account(job: JobRecord, model: string | null, rates: RateCard, c
   const u = job.usage, rate = model ? rates[model] : undefined;
   const reported = (value: number): Figure => ({ value, provenance: 'reported' });
   let inputTokens: Figure | null = u ? reported(u.inputTokens) : null;
-  let outputTokens: Figure | null = u ? reported(u.outputTokens + (u.reasoningTokens ?? 0)) : null;
+  let outputTokens: Figure | null = u ? reported(outputWithReasoning(u)) : null;
   if (!u) {
     if (cal?.input && job.promptChars) inputTokens = { value: Math.round(job.promptChars / cal.input.charsPerToken), provenance: 'imputed', error: cal.input.error };
     if (cal?.output && job.answerChars) outputTokens = { value: Math.round(job.answerChars / cal.output.charsPerToken), provenance: 'imputed', error: cal.output.error };
@@ -69,7 +72,7 @@ export function account(job: JobRecord, model: string | null, rates: RateCard, c
   let costUsd: Figure | null = null;
   if (u?.costUsd !== undefined) costUsd = reported(u.costUsd);
   else if (rate && u) {
-    const c = costFor(u.inputTokens, u.outputTokens + (u.reasoningTokens ?? 0), u.cachedReadTokens ?? 0, u.cachedWriteTokens ?? 0, rate);
+    const c = costFor(u.inputTokens, outputWithReasoning(u), u.cachedReadTokens ?? 0, u.cachedWriteTokens ?? 0, rate);
     if (c !== null) costUsd = { value: c, provenance: 'derived' };
   } else if (rate && inputTokens?.provenance === 'imputed' && outputTokens?.provenance === 'imputed') {
     // A cost from guessed tokens carries the error of the larger share, since that share sets how far the total can be off. Cache use is unknown, so it is priced as fresh input.
