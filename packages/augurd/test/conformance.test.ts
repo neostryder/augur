@@ -17,7 +17,7 @@ const local = process.env.LOCALAPPDATA ?? '';
 
 interface Case { name: string; adapter: string; model: string; options: Record<string, string | number | boolean>; route?: Partial<RouteConfig> }
 const CASES: Case[] = [
-  { name: 'hermes', adapter: 'hermes-exec', model: 'test/fake', options: { model: 'gpt-6-luna', command: join(local, 'hermes/hermes-agent/venv/Scripts/hermes.exe') } },
+  { name: 'hermes', adapter: 'hermes-exec', model: 'test/fake', options: { model: 'gpt-6-luna', command: join(local, 'hermes/bin/hermes.exe') } },
   { name: 'copilot', adapter: 'copilot-exec', model: 'test/fake', options: { model: 'gpt-6-luna' } },
   { name: 'grok', adapter: 'grok-exec', model: 'test/fake', options: { model: 'grok-4.7-fast' } },
   { name: 'mcode', adapter: 'mcode-sbx', model: 'test/patch', options: { sandbox: 'mc-m3', workRoot: 'C:/Temp/sbx/work/mc-m3', model: 'custom_provider:minimax-direct/MiniMax-M3', maxSteps: 8 } },
