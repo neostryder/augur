@@ -4,6 +4,8 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+## [1.10.1] - 2026-10-13
+
 ### Fixed
 
 - [Visible] [UI] **Signing in to TypeSafe or Claude with Google no longer fails partway through.** The sign-in window stays open and in front until you finish, and Augur checks your account only after you come back from Google. Closing the window still refreshes your numbers right away.
