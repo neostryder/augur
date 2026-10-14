@@ -87,19 +87,30 @@ pub async fn web_session_sign_in(app: tauri::AppHandle, site: String) -> Result<
     .inner_size(520.0, 760.0)
     .build()
     .map_err(|e| e.to_string())?;
-    // Signing in can take a while, with a Cloudflare check first, so the page is read again every few
-    // seconds while the window is open. The first signed-in reading refreshes the providers that use it.
+    // Signing in can take a while, with a Cloudflare check first, so the account page is read again every
+    // few seconds while the window is open, but only once the sign-in window itself is back on the site
+    // after the identity provider. Reading earlier opens a second window on the sign-in page every few
+    // seconds, which competes with the one being used. The first signed-in reading refreshes the providers
+    // that use it.
     let watcher = app.clone();
     let watched = site.clone();
+    let home = Url::parse(spec.sign_in_url).ok();
     tauri::async_runtime::spawn(async move {
         let started = Instant::now();
+        let mut seen_off_site = false;
         while started.elapsed() < WATCH_FOR {
             tokio::time::sleep(WATCH_EVERY).await;
-            if watcher
-                .get_webview_window(&format!("signin-{watched}"))
-                .is_none()
-            {
+            let Some(signin) = watcher.get_webview_window(&format!("signin-{watched}")) else {
                 return;
+            };
+            if let (Some(home), Ok(current)) = (home.as_ref(), signin.url()) {
+                if current.host_str() != home.host_str() {
+                    seen_off_site = true;
+                    continue;
+                }
+                if !landed_after_sign_in(&current, seen_off_site) {
+                    continue;
+                }
             }
             let reading = read_site(&watcher, &watched, true, false).await;
             if let Ok(Some(value)) = reading {
@@ -230,6 +241,50 @@ async fn read_site(
         .map_err(|e| e.to_string())?
         .insert(site, (Instant::now(), value.clone()));
     Ok(Some(value))
+}
+
+/// Whether the sign-in window, already on the site's own host, is showing a page that follows a sign-in.
+/// It is after a visit to another host (Google, an identity provider), or on a page other than the root
+/// and the sign-in paths, which is where a session that is still valid lands.
+fn landed_after_sign_in(url: &Url, seen_off_site: bool) -> bool {
+    if seen_off_site {
+        return true;
+    }
+    let path = url.path().trim_end_matches('/').to_ascii_lowercase();
+    !(path.is_empty()
+        || ["login", "log-in", "log_in", "signin", "sign-in", "sign_in", "signup", "sign-up", "auth"]
+            .iter()
+            .any(|word| path.contains(word)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn landed(url: &str, seen_off_site: bool) -> bool {
+        landed_after_sign_in(&Url::parse(url).unwrap(), seen_off_site)
+    }
+
+    #[test]
+    fn waits_on_the_login_screen_until_the_identity_provider_has_been_visited() {
+        assert!(!landed("https://console.typesafe.ai/", false));
+        assert!(!landed("https://console.typesafe.ai/login", false));
+        assert!(!landed("https://claude.ai/login", false));
+        assert!(!landed("https://console.typesafe.ai/auth/callback", false));
+    }
+
+    #[test]
+    fn reads_when_the_window_comes_back_from_the_identity_provider() {
+        assert!(landed("https://console.typesafe.ai/", true));
+        assert!(landed("https://console.typesafe.ai/auth/callback", true));
+    }
+
+    #[test]
+    fn reads_a_session_that_was_still_valid() {
+        assert!(landed("https://console.typesafe.ai/dashboard", false));
+        assert!(landed("https://claude.ai/new", false));
+        assert!(landed("https://console.typesafe.ai/design", false));
+    }
 }
 
 // WebView2 windows sharing one profile must be created with the same browser arguments,
