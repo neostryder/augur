@@ -51,6 +51,9 @@ augur pick-preview (--task <description> | --activity <a> --data <tier>) [--dept
 augur pressure
 augur balance [--days <n>]            where each kind of work goes now, each provider's pace and boost, Copilot's spend and the last days' picks
 augur label <pick or job id> --brief met|partly|missed [--note <text>]     record how a job's report met its brief, beside the pick in the decision log
+augur label <grade id> --grade agree|high|low [--note <text>]     record whether a grade was right, too high or too low
+augur grade <rubric> --task <text|@file> --candidate <text|@file> [--reference <text|@file>] [--tier <tier>]   score a candidate answer on each dimension of a rubric in ~/.augur/rubrics; the grade is recorded and its use follows the rubric's stakes
+augur grade --report [<rubric>]       each rubric's labelled grades, agreement, and the mode it has earned
 augur usage                             tokens and cost per route, each labelled reported, derived or imputed
 augur note-prompt --session <id>     tell the service a person sent the message on standard input; it keeps only the models named
 augur routes
@@ -72,7 +75,7 @@ Every command takes --json. Exit codes: 0 completed, 1 usage, 2 rejected, 3 need
 interface Parsed { cmd: string[]; flags: Map<string, string | true>; /** Values of the flags that may be given more than once, in order. */ repeated: Map<string, string[]> }
 const REPEATABLE = new Set(['attach']);
 export function parse(argv: string[]): Parsed {
-  const cmd: string[] = [], flags = new Map<string, string | true>(), repeated = new Map<string, string[]>(), boolean = new Set(['json', 'wait', 'named', 'follow', 'stderr', 'help', 'if-idle', 'no-failover', 'no-charter', 'urgent', 'waybar', 'all', 'force', 'stdin', 'dry-run', 'no-key', 'best', 'snippet']);
+  const cmd: string[] = [], flags = new Map<string, string | true>(), repeated = new Map<string, string[]>(), boolean = new Set(['json', 'wait', 'named', 'follow', 'stderr', 'help', 'if-idle', 'no-failover', 'no-charter', 'urgent', 'waybar', 'all', 'force', 'stdin', 'dry-run', 'no-key', 'best', 'snippet', 'report']);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] as string;
     if (a === '-') { cmd.push(a); continue; }
@@ -146,6 +149,28 @@ export async function main(argv: string[], io: Io): Promise<number> {
         if ('error' in r) { io.err(r.error + String.fromCharCode(10)); return EXIT_CODES.failed; }
         say(r.models.join(', ') || 'No models named.', r); return 0;
       }
+      case 'grade': {
+        if (p.flags.has('report')) {
+          const r = await call('grade_report', rest[0] ? { rubric: rest[0] } : undefined, opts);
+          if ('error' in r) { io.err(r.error + String.fromCharCode(10)); return EXIT_CODES.failed; }
+          const lines = r.rubrics.map(x => `${x.rubric} v${x.version} (${x.stakes} stakes): ${x.mode}; ${x.grades} graded, ${x.labeled} labelled, ${x.agreeShare === null ? 'no agreement yet' : Math.round(x.agreeShare * 100) + '% agree'} (${x.high} too high, ${x.low} too low)${x.next ? `; next: ${x.next}` : ''}`);
+          say([...lines, ...r.problems.map(x => `Cannot use: ${x}`)].join(String.fromCharCode(10)) || 'No rubrics in ~/.augur/rubrics.', r); return 0;
+        }
+        const text = (name: string, required: boolean) => {
+          const v = opt(name);
+          if (v === undefined) { if (required) throw new ServiceError('usage', `Give --${name}.`); return undefined; }
+          if (!v.startsWith('@')) return v;
+          try { return readFileSync(resolve(io.cwd, v.slice(1)), 'utf8'); } catch { throw new ServiceError('usage', `Cannot read ${v.slice(1)}.`); }
+        };
+        const tier = opt('tier');
+        if (tier !== undefined && !DATA_TIERS.includes(tier as DataTier)) { io.err(`--tier is one of ${DATA_TIERS.join(', ')}.
+`); return EXIT_CODES.usage; }
+        const reference = text('reference', false);
+        const r = await call('grade', { rubric: need(rest[0], 'rubric'), task: text('task', true) as string, candidate: text('candidate', true) as string, ...(reference ? { reference } : {}), ...(tier ? { tier: tier as DataTier } : {}) }, opts);
+        if ('error' in r) { io.err(r.error + String.fromCharCode(10)); return EXIT_CODES.failed; }
+        const dims = Object.entries(r.dims).map(([k, d]) => `  ${k.padEnd(20)} ${d.score.toFixed(2)}${d.spread > 0.2 ? `  (orders differ by ${d.spread.toFixed(2)})` : ''}`);
+        say([`Grade ${r.id}: overall ${r.overall.toFixed(2)} on ${r.rubric} v${r.version} (${r.tier} tier, ${r.backend}). Mode ${r.mode}${r.verdict ? `, verdict ${r.verdict}` : ''}${r.audit ? ', flagged for a spot check' : ''}.`, ...dims].join(String.fromCharCode(10)), r); return 0;
+      }
       case 'pick': return await pickCmd(io, opts, say, opt, n => p.flags.has(n));
       case 'pick-preview': return await pickCmd(io, opts, say, opt, n => p.flags.has(n), true);
       case 'balance': {
@@ -154,6 +179,11 @@ export async function main(argv: string[], io: Io): Promise<number> {
         say(renderReport(r).join(String.fromCharCode(10)), r); return 0;
       }
       case 'label': {
+        if (opt('grade')) {
+          const r = await call('grade_label', { id: need(rest[0], 'grade id'), label: opt('grade') as 'agree', ...(opt('note') ? { note: opt('note') as string } : {}) }, opts);
+          if ('error' in r) { io.err(r.error + String.fromCharCode(10)); return EXIT_CODES.failed; }
+          say(`Recorded: the grade was ${opt('grade')}. Rubric ${r.rubric} is in ${r.mode} mode.`, r); return 0;
+        }
         const result = opt('brief');
         if (result !== 'met' && result !== 'partly' && result !== 'missed') { io.err('Give --brief met, partly or missed.' + String.fromCharCode(10)); return EXIT_CODES.usage; }
         const r = await call('label', { id: need(rest[0], 'pick or job id'), result, ...(opt('note') ? { note: opt('note') as string } : {}) }, opts);

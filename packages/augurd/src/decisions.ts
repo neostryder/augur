@@ -1,10 +1,10 @@
 // A local record of what was picked and how it turned out, kept so the decision model can learn from everyday use.
 // Task text is written only when learning is on and the task's data tier is public or internal; otherwise a pick keeps its structure and no words.
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { STUDENT_RE, labelRows } from '@augur/decision';
-import type { BriefResult, DecisionRow, LabelRow } from '@augur/decision';
+import type { BriefResult, DecisionRow, GradeVerdictLabel, LabelRow } from '@augur/decision';
 import type { PickSummary } from '@augur/dispatch-protocol';
 
 export interface LearnSettings {
@@ -91,6 +91,27 @@ export class DecisionLog {
     try { text = readFileSync(path, 'utf8'); } catch { return []; }
     return text.split('\n').flatMap(l => { if (!l) return []; try { return [JSON.parse(l) as DecisionRow]; } catch { return []; } });
   }
+
+  /** Records a grade and returns its id. Candidate and task text is written only when learning is on and the tier allows it, as for a pick. */
+  grade(e: { rubric: string; version: number; tier: string; backend: string; overall: number; uncertainty: number; dims: Record<string, { score: number; spread: number }>; mode: string; verdictFor: (id: string) => { verdict: string | null; audit: boolean };
+    caller?: string | null; task: string; candidate: string }): { id: string; verdict: string | null; audit: boolean } {
+    const id = randomBytes(6).toString('hex'), keep = this.settings.recordTasks && KEEPABLE.has(e.tier) && !STUDENT_RE.test(`${e.task} ${e.candidate}`);
+    const { task, candidate, caller, verdictFor, ...rest } = e, v = verdictFor(id);
+    const hash = (t: string) => createHash('sha256').update(t).digest('hex').slice(0, 16);
+    this.write({ kind: 'grade', id, at: this.now(), ...rest, verdict: v.verdict, audit: v.audit, ...(caller ? { caller } : {}), taskHash: hash(task), candidateHash: hash(candidate), ...(keep ? { task, candidate } : {}) });
+    return { id, ...v };
+  }
+
+  /** A person's check of a grade. The latest label for a grade counts. */
+  gradeLabel(id: string, label: GradeVerdictLabel, note?: string): { ok: true; rubric: string; version: number } | { error: string } {
+    const g = this.rows().find(r => r.kind === 'grade' && (r as { id?: string }).id === id) as { rubric: string; version: number } | undefined;
+    if (!g) return { error: 'No grade with that id is in the decision log.' };
+    this.write({ kind: 'gradelabel', at: this.now(), grade: id, label, ...(note ? { note: note.slice(0, 200) } : {}) });
+    return { ok: true, rubric: g.rubric, version: g.version };
+  }
+
+  /** Every record, for the grade statistics. */
+  records(): DecisionRow[] { return this.rows(); }
 
   /** Every pick with its override, job outcomes and brief check, one row each and no task text. */
   labels(): LabelRow[] { return labelRows(this.rows()); }

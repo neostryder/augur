@@ -189,7 +189,7 @@ The service keeps a decision log of picks and jobs. `augur label <pick or job id
 Pauses, ask-first, data tiers and your weights apply first. The `balance` section of the rules sets each activity's depth, each model's tier, what each route suits, the excluded names, how strong each lean is, which models write prose, each provider's pace and boost, and the draw, and `"enabled": false` there switches it off. The rules live in the app's `config.json` and Augur writes them out to `policy.json`, so a hand edit to `policy.json` is lost the next time a rule is saved. [docs/configuring.md](docs/configuring.md) lists every setting, and [docs/adapting.md](docs/adapting.md) covers adding a provider or a new way to run a model.
 
 - **None** is the default. The agent gives the activity and data tier itself.
-- **Jev** is a hosted model from TypeSafe. The text of each task goes there with your API key, except text about students, which is checked on your computer first and never sent. Put the key in the `TYPESAFE_API_KEY` environment variable.
+- **Jev** is a hosted model from TypeSafe. The text of each task goes there with your API key, except text about students, which is checked on your computer first and never sent. Put the key in the `TYPESAFE_API_KEY` environment variable. Your other programs that call Jev can use the [Jev gateway](docs/jev-gateway.md) at `http://127.0.0.1:8020` instead, and it supplies the key for them.
 - **Laya** is an open-weight model of the same kind that runs on your own computer, so task text never leaves your network. It needs Python 3.10 or newer, PowerShell 7 from the Microsoft Store, and about 6 GB of disk: 2.3 GB for the model and around 3 GB for PyTorch with GPU support. An NVIDIA GPU makes it faster and is not required. From a checkout of this repository, in PowerShell:
 
 ```powershell
@@ -204,6 +204,12 @@ pwsh -NoProfile -File packages\laya\windows\install-task.ps1
 ```
 
 The last line registers a logon task named Augur Laya that serves the model at `http://127.0.0.1:8010`. Then choose Laya on the Service page. The server takes the model out of video memory while a game runs, while other programs keep the card busy, and after 10 minutes with no request. It loads the model again when the next request arrives, or by itself once a busy card is free. A Laya that another tool starts from the same `serve_lora.py` on port 8010 behaves the same way, and Augur uses it with no extra setting. To use several machines, list each one, this computer included, as `{"name": "...", "url": "http://...:8010"}` under `decision.servers` in the service's `config.json`, which is in `%LOCALAPPDATA%\Augur\dispatch` on Windows. Augur tries them in order and skips one that is busy or down. Another tool, such as Cogitator, can also serve Laya at `http://127.0.0.1:8010`, and Augur uses it there with no change to the Laya setting.
+
+### Grading and the Jev gateway
+
+`augur grade bug-report --task @task.txt --candidate @report.md` scores the candidate against `~/.augur/rubrics/bug-report.json` and prints a score for each dimension. Grades stay in shadow mode until `augur label` has recorded enough agreement for the rubric's stakes. [docs/grading.md](docs/grading.md) has the rubric fields and the thresholds.
+
+The Jev gateway is a System One server on `127.0.0.1:8020` that holds the TypeSafe key for other programs and keeps `sensitive` and `regulated` requests on Laya. [docs/jev-gateway.md](docs/jev-gateway.md) explains how to build and configure it, and how a client falls back when it is down.
 
 ## Phone app
 

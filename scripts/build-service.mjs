@@ -21,6 +21,7 @@ const entries = {
   'api-call': join(root, 'packages/augurd/src/adapters/api-call.ts'),
   augur: join(root, 'packages/dispatch-cli/src/main.ts'),
   'augur-mcp': join(root, 'packages/mcp/src/main.ts'),
+  'jev-gateway': join(root, 'packages/jev-gateway/src/main.ts'),
 };
 // Adapters kept on one computer are bundled beside the service when their folder is present, and are absent from every other build.
 const localDir = join(root, 'packages/augurd/src/adapters/private');

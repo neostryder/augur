@@ -386,3 +386,12 @@ describe('named conversations', () => {
     expect(raw.err).toContain('does not keep a conversation');
   });
 });
+
+describe('grade flags', () => {
+  it('takes --report with no value, and keeps a rubric name that follows it as an argument', () => {
+    const p = parse(['grade', '--report', 'answer']);
+    expect(p.cmd).toEqual(['grade', 'answer']);
+    expect(p.flags.get('report')).toBe(true);
+    expect(parse(['grade', '--report']).flags.get('report')).toBe(true);
+  });
+});

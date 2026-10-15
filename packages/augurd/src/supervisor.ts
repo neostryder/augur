@@ -5,10 +5,10 @@ import { closeSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, readS
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES } from '@augur/core';
 import type { PolicyFile } from '@augur/core';
-import { BRIEF_RESULTS, STUDENT_RE, classifyTask, fitScores } from '@augur/decision';
-import type { BriefResult, DecisionBackend } from '@augur/decision';
+import { BRIEF_RESULTS, GRADE_LABELS, STUDENT_RE, classifyTask, decide as decideGrade, fitScores, grade as gradeText, gradeStats, gradeTier } from '@augur/decision';
+import type { BriefResult, DecisionBackend, GradeVerdictLabel } from '@augur/decision';
 import { BUDGET_WINDOW_MS, NAMED_PROMPT_WINDOW, PICK_WINDOW_MIN, TOOL_TIERS, account, attachmentKind, balanceReport, budgetStatus, calibrateRoutes, copilotSpend, checkLineage, routeSecretName, checkNamed, checkPick, evaluate, isTerminal, matchNamedModels, pressure, rank, usageFactors } from '@augur/dispatch-protocol';
-import type { Adapter, BalanceReport, BudgetStatus, Conversation, JobRecord, JobRequest, LaunchPlan, PickAnswer, PickParams, RateCard, Rejection, ResolvedAttachment, RouteConfig, UsageSnapshot } from '@augur/dispatch-protocol';
+import type { Adapter, BalanceReport, BudgetStatus, Conversation, GradeAnswer, GradeParams, GradeReport, JobRecord, JobRequest, LaunchPlan, PickAnswer, PickParams, RateCard, Rejection, ResolvedAttachment, RouteConfig, UsageSnapshot } from '@augur/dispatch-protocol';
 import { MAX_COMMAND_LINE, optNum } from './adapters/util.js';
 import type { ServiceConfig } from './config.js';
 import { buildEnv } from './env.js';
@@ -18,6 +18,7 @@ import { buildCharter, resolveAmbient, resolveCharterDir } from './charter.js';
 import { MAX_HOPS, classifyFailure } from './failover.js';
 import { augurHome, scriptPath } from './paths.js';
 import { hasStoredKey } from './secrets.js';
+import { RubricStore } from './rubrics.js';
 
 export interface SupervisorDeps {
   store: Store; config: ServiceConfig; dir: string; adapters: Map<string, Adapter>;
@@ -341,6 +342,50 @@ export class Supervisor {
     if (!this.d.decisions) return { error: 'The service keeps no decision log.' };
     if (!BRIEF_RESULTS.includes(result as BriefResult)) return { error: `The brief result is one of ${BRIEF_RESULTS.join(', ')}.` };
     return this.d.decisions.label(id, result as BriefResult, note);
+  }
+
+  private rubricStore?: RubricStore;
+  private rubrics(): RubricStore { return this.rubricStore ??= new RubricStore(join(this.d.home ?? augurHome(), 'rubrics')); }
+
+  /**
+   * Grades a candidate against one of the owner's rubrics. The data tier is what the caller declared, or regulated when the text names students, and
+   * text in the sensitive and regulated tiers is graded only on this network. The grade is recorded; the answer says what it may be used for.
+   */
+  async grade(req: GradeParams): Promise<GradeAnswer | { error: string }> {
+    if (!this.d.decisions) return { error: 'The service keeps no decision log, so it cannot record grades.' };
+    if (!this.d.decision) return { error: 'No decision backend is configured, so there is nothing to grade with.' };
+    if (typeof req.task !== 'string' || typeof req.candidate !== 'string' || !req.task.trim() || !req.candidate.trim()) return { error: 'A grade needs a task and a candidate, both as text.' };
+    if (req.tier !== undefined && !DATA_TIERS.includes(req.tier)) return { error: 'Unknown data tier.' };
+    const r = this.rubrics().get(String(req.rubric ?? ''));
+    if ('error' in r) return r;
+    const tier = gradeTier(req.tier, `${req.task} ${req.candidate} ${req.reference ?? ''}`);
+    const out = await gradeText(this.d.decision, r.rubric, { task: req.task, candidate: req.candidate, ...(req.reference ? { reference: req.reference } : {}) }, tier);
+    if ('error' in out) return out;
+    const stats = gradeStats(this.d.decisions.records(), r.rubric);
+    const logged = this.d.decisions.grade({ rubric: r.rubric.id, version: r.rubric.version, tier, backend: out.grade.backend, overall: out.grade.overall, uncertainty: out.grade.uncertainty,
+      dims: out.grade.dims, mode: stats.mode, verdictFor: id => decideGrade(r.rubric, out.grade, stats.mode, id), task: req.task, candidate: req.candidate });
+    return { id: logged.id, rubric: r.rubric.id, version: r.rubric.version, tier, backend: out.grade.backend, dims: out.grade.dims, overall: out.grade.overall, uncertainty: out.grade.uncertainty,
+      mode: stats.mode, verdict: logged.verdict as GradeAnswer['verdict'], audit: logged.audit };
+  }
+
+  /** A person's check of a grade: agree, too high, or too low. */
+  gradeLabel(id: string, label: string, note?: string): { ok: true; rubric: string; mode: 'shadow' | 'advise' | 'gate' } | { error: string } {
+    if (!this.d.decisions) return { error: 'The service keeps no decision log.' };
+    if (!GRADE_LABELS.includes(label as GradeVerdictLabel)) return { error: `The grade label is one of ${GRADE_LABELS.join(', ')}.` };
+    const done = this.d.decisions.gradeLabel(id, label as GradeVerdictLabel, note);
+    if ('error' in done) return done;
+    const r = this.rubrics().get(done.rubric);
+    if ('error' in r) return { ok: true, rubric: done.rubric, mode: 'shadow' };
+    return { ok: true, rubric: done.rubric, mode: gradeStats(this.d.decisions.records(), r.rubric).mode };
+  }
+
+  /** Each rubric with its labelled grades, agreement and earned mode. */
+  gradeReport(only?: string): GradeReport | { error: string } {
+    if (!this.d.decisions) return { error: 'The service keeps no decision log.' };
+    const all = this.rubrics().list(), rows = this.d.decisions.records();
+    const picked = only ? all.rubrics.filter(r => r.id === only) : all.rubrics;
+    if (only && !picked.length) { const one = this.rubrics().get(only); return 'error' in one ? one : { rubrics: [], problems: [] }; }
+    return { rubrics: picked.map(r => ({ ...gradeStats(rows, r), stakes: r.stakes })), problems: only ? [] : all.problems };
   }
 
   private validate(req: JobRequest): string | null {

@@ -61,6 +61,12 @@ export interface Methods {
   balance: { params: { days?: number } | undefined; result: BalanceReport | { error: string } };
   /** Records how a job's report met its brief, beside the pick in the decision log. `id` is a pick id or a job id; the check itself runs in the caller's tooling. */
   label: { params: { id: string; result: 'met' | 'partly' | 'missed'; note?: string }; result: { ok: true; pick: string; job: string | null } | { error: string } };
+  /** Grades a candidate answer against a rubric (a Score per dimension, each asked in two orders). The grade is recorded in the decision log and what it may be used for follows the rubric's stakes. */
+  grade: { params: GradeParams; result: GradeAnswer | { error: string } };
+  /** Records whether a person agreed with a grade (or found it too high or too low), which is what moves a rubric up from shadow. */
+  grade_label: { params: { id: string; label: 'agree' | 'high' | 'low'; note?: string }; result: { ok: true; rubric: string; mode: 'shadow' | 'advise' | 'gate' } | { error: string } };
+  /** Each rubric in the rubrics folder with its labelled grades, agreement, and the mode it has earned; `rubric` limits it to one. */
+  grade_report: { params: { rubric?: string } | undefined; result: GradeReport | { error: string } };
   routes: { params: undefined; result: Array<{ name: string; model: string; adapter: string; problem: string | null }> };
   /** Adds one route and, optionally, its model. The model stays unreviewed. An existing route name is refused and nothing is written. */
   route_add: { params: RouteAddParams; result: RouteAddAnswer };
@@ -86,6 +92,22 @@ export type EngineEvent =
   | { event: 'views'; views: ViewInfo[] }
   | { event: 'request'; rid: string; method: string; params: unknown };
 export interface ViewReply { reply: string; result?: unknown; error?: string }
+
+export interface GradeParams { rubric: string; task: string; candidate: string; reference?: string; tier?: 'public' | 'internal' | 'sensitive' | 'regulated' }
+export interface GradeAnswer {
+  id: string; rubric: string; version: number; tier: string; backend: string;
+  dims: Record<string, { score: number; spread: number }>; overall: number; uncertainty: number;
+  /** shadow: recorded only. advise: shown beside the work. gate: a low-stakes caller may act on `verdict`. */
+  mode: 'shadow' | 'advise' | 'gate';
+  verdict: 'pass' | 'fail' | 'review' | null;
+  /** In gate mode, a share of grades are flagged for a person to check and label. */
+  audit: boolean;
+}
+export interface GradeReportRow {
+  rubric: string; version: number; stakes: 'low' | 'medium' | 'high'; grades: number; labeled: number; agree: number; high: number; low: number;
+  agreeShare: number | null; mode: 'shadow' | 'advise' | 'gate'; next: string | null;
+}
+export interface GradeReport { rubrics: GradeReportRow[]; problems: string[] }
 
 export interface AccountingAnswer {
   jobs: Array<{ id: string; route: string; model: string | null; accounted: Accounted }>;

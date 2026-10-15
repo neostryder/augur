@@ -125,6 +125,12 @@ describe('refresh', () => {
     expect(writes).toBe(1);
     expect(reads).toBeGreaterThanOrEqual(3);
   });
+  it('says to sign in again when the saved Claude login is refused on renewal', async () => {
+    const host = fakeHost(() => ({}));
+    host.readHomeFile = async () => JSON.stringify({ claudeAiOauth: { accessToken: 'old-test-only', refreshToken: 'refresh-test-only', expiresAt: 0 } });
+    host.http = async () => ({ status: 400, headers: {}, body: '{"error":"invalid_grant"}' });
+    await expect(claude.fetch(host, {})).rejects.toThrow(/Sign in to Claude Code again/);
+  });
   it.each(['expired', 'unauthorized'])('refreshes Codex on %s and preserves latest auth fields', async branch => {
     const data = await fixture('codex');
     let reads = 0, writes = 0, usageCalls = 0;

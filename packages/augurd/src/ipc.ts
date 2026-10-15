@@ -79,6 +79,9 @@ export class IpcServer {
       case 'human_prompt': return this.sup.humanPrompt(String(p.session ?? ''), String(p.text ?? ''));
       case 'pressure': return this.sup.pressure();
       case 'label': return this.sup.label(String(p.id ?? ''), String(p.result ?? ''), typeof p.note === 'string' ? p.note : undefined);
+      case 'grade': return this.sup.grade(params as never);
+      case 'grade_label': return this.sup.gradeLabel(String(p.id ?? ''), String(p.label ?? ''), typeof p.note === 'string' ? p.note : undefined);
+      case 'grade_report': return this.sup.gradeReport(typeof p.rubric === 'string' ? p.rubric : undefined);
       case 'balance': return this.sup.balance(typeof p.days === 'number' ? p.days : 7);
       case 'routes': return Object.entries(this.routes() ?? {}).map(([name, r]) => ({ name, model: r.model, adapter: r.adapter, problem: this.sup.routeProblem(r as RouteConfig, name) }));
       case 'route_add': return this.routeAdd(params);

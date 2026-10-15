@@ -4,8 +4,14 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+### Added
+
+- [Visible] [Providers] [Security] **Programs that call Jev can point at `http://127.0.0.1:8020` and leave the TypeSafe key out of their own config.** The new Jev gateway, built with `node scripts/build-gateway.mjs`, holds the key and the `jev-preview` alias in `~/.augur/jev-gateway.json` and refuses to send `sensitive` or `regulated` requests anywhere but Laya. Usage goes to `~/.augur/jev-gateway-usage.jsonl` without the request text; see [docs/jev-gateway.md](docs/jev-gateway.md).
+- [Visible] [Providers] [Security] **`augur grade <rubric> --task ... --candidate ...` scores an answer against a rubric in `~/.augur/rubrics`.** Grades start in shadow mode and only produce pass or fail verdicts after `augur label <grade id> --grade agree|high|low` has collected enough agreement, which for a low-stakes rubric means 30 labels at 85%. Text in the `sensitive` or `regulated` tier is graded on Laya only; [docs/grading.md](docs/grading.md) has the rubric format.
+
 ### Fixed
 
+- [Visible] [Providers] **The Claude card now says when the saved Claude Code login can no longer be renewed.** Once another Claude Code sign-in replaces the refresh token in `~/.claude/.credentials.json`, the card reads "The saved Claude login was refused, so Augur cannot renew it. Sign in to Claude Code again." in place of "Provider returned HTTP 400" beside numbers that had stopped updating.
 - [Visible] [Security] **Fit scores for student-related task text come only from a decision backend on this network.** When no local backend is available, those scores stay neutral at 0.5.
 - [Visible] [Security] **The control endpoint answers a request that is not a JSON object with an error.** The service keeps running and handles the next request normally.
 - [Visible] [Security] **Rule sync skips a policy stamp that names a field the rule does not have.** The remaining stamps from the other device still merge.

@@ -17,9 +17,11 @@ async function read(host: Host): Promise<{ data: Record<string, any>; keychain: 
 async function refresh(host: Host): Promise<string> {
   const current = await read(host);
   const oauth = obj(current.data.claudeAiOauth);
+  // A refused renewal (400 or 401) means the saved refresh token is spent, usually because another Claude Code sign-in replaced it.
   const response = obj(await json(host, { url: 'https://platform.claude.com/v1/oauth/token', method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ grant_type: 'refresh_token', refresh_token: oauth.refreshToken, client_id: client }) }));
+    body: JSON.stringify({ grant_type: 'refresh_token', refresh_token: oauth.refreshToken, client_id: client }) })
+    .catch(error => { if (error instanceof HttpError && (error.status === 400 || error.status === 401)) throw new Error('The saved Claude login was refused, so Augur cannot renew it. Sign in to Claude Code again.'); throw error; }));
   if (!response.access_token) throw new Error('Could not renew the Claude login. Sign in to Claude Code again.');
   const latest = await read(host);
   const target = obj(latest.data.claudeAiOauth);
