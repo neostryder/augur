@@ -41,7 +41,7 @@ The gateway compares the file's modified time on each request and rereads it whe
 | `model` | `jev-preview` | Alias sent to TypeSafe on every hosted request. A model the caller names is swapped for this one unless it appears in `pins`. |
 | `pins` | `[]` | Model ids a caller may name and keep, for example `jev-1.14.0` when a calibrated threshold was measured on that version. |
 | `endpoint` | `https://api.typesafe.ai/v1/systemone` | Hosted System One URL. Must start with `https://`. |
-| `defaultTier` | `internal` | Tier for a request with no `x-augur-data` header and no student wording. One of `public`, `internal`, `sensitive`, `regulated`. |
+| `defaultTier` | `internal` | Tier for a request with no `x-augur-data` header and no matching student term. One of `public`, `internal`, `sensitive`, `regulated`. |
 | `consumers` | `{}` | Consumer name to the lowercase hex SHA-256 of its token. `token` writes these. |
 | `requireToken` | `false` | When `true`, every request except `GET /health` needs a consumer token. When `false`, callers on this computer can skip it. |
 | `laya` | `[{ "name": "local", "url": "http://127.0.0.1:8010" }]` | Laya servers, tried in order. Each needs a `name` and an `http://` or `https://` `url`. |
@@ -78,7 +78,7 @@ A key that was found is cached for five minutes. If no key was found, the gatewa
 
 Callers set the tier with the `x-augur-data` header. Accepted values are `public`, `internal`, `sensitive`, `regulated`, and `local_only`, in any case, with `-` accepted for `_`. `local_only` is handled as `regulated`. Anything else gets a 400.
 
-When the header is missing, the gateway looks at the request's `state`. Words such as student, grade, course, rubric, roster, or FERPA make it `regulated`. Otherwise it gets `defaultTier`. A declared tier is trusted, so `x-augur-data: internal` sends text with student wording to the hosted model.
+When the header is missing, the gateway looks at the request's `state`. One of the terms `gcu`, `student`, `students`, `roster`, `ferpa`, `mis-600`, or `bit-200` makes it `regulated`; everyday words such as course, rubric, or grade do not. A caller that handles student data should declare the tier, because this check is a backstop. Otherwise it gets `defaultTier`. A declared tier is trusted, so `x-augur-data: internal` sends text with student wording to the hosted model.
 
 Only `public` and `internal` requests can go to TypeSafe. A `sensitive` or `regulated` request is sent to Laya, and if no Laya server answers it gets a 503 instead of being sent upstream. Laya handles text only. A local-only request with an image in `assets` or a Box question is refused with 422. So is one that asks for long context, which only the hosted model supports.
 
@@ -101,7 +101,7 @@ Headers the gateway reads:
 
 On the way to TypeSafe the gateway sets `Authorization` to its own key. It adds `TypeSafe-Danger-Zone-Images: true` when the body has a non-empty `assets` map or a Box question, and `TypeSafe-Danger-Zone-Long-Context: true` when the caller asked for long context. Callers never need to send the images header.
 
-Responses to answered requests carry `x-augur-route` (`hosted` or `laya`), `x-augur-tier`, and `x-augur-model`, which is the model named in the answer, or the model sent if the answer names none. Upstream responses, errors included, keep their status and body and do not have `x-augur-gateway`. A 422 from TypeSafe, or a 429 that is still a 429 after the retries, reaches the caller unchanged. Responses the gateway writes itself have `x-augur-gateway: 1`. When the gateway refuses on a rule, it also sets `x-augur-refused: 1`.
+Responses to answered requests carry `x-augur-route` (`hosted` or `laya`), `x-augur-tier`, `x-augur-tier-source` (`declared`, `default`, or `content`), and `x-augur-model`, which is the model named in the answer, or the model sent if the answer names none. Upstream responses, errors included, keep their status and body and do not have `x-augur-gateway`. A 422 from TypeSafe, or a 429 that is still a 429 after the retries, reaches the caller unchanged. Responses the gateway writes itself have `x-augur-gateway: 1`. When the gateway refuses on a rule, it also sets `x-augur-refused: 1`.
 
 ## Who may call it
 
@@ -137,7 +137,7 @@ Each request to `/v1/systemone` appends one JSON line to `usageLog`, for example
 {"at":"2026-10-14T18:02:11.204Z","consumer":"local","route":"hosted","tier":"internal","tierSource":"default","modelAsked":"jev-1.13.0","modelSent":"jev-preview","modelAnswered":"jev-1.14.0","status":200,"ms":412,"images":false,"longContext":false,"attempts":1,"usage":{"input_tokens":12}}
 ```
 
-`route` can also be `laya` or `refused`. `tierSource` is `declared`, `default`, or `content` when student wording set the tier. Laya requests add `server`, the Laya server that answered, and refused or failed ones add `reason`, which never quotes the request. If the log can't be written, the request still succeeds.
+`route` can also be `laya` or `refused`. `tierSource` is `declared`, `default`, or `content` when the request named no tier and its state contained one of `gcu`, `student`, `students`, `ferpa`, `roster`, `mis-600`, or `bit-200`. Callers that handle student data should declare the tier rather than rely on that check. Laya requests add `server`, the Laya server that answered, and refused or failed ones add `reason`, which never quotes the request. If the log can't be written, the request still succeeds.
 
 `~/.augur/jev-gateway.log` gets the address and model at startup, settings problems found at startup, listener errors, the signal that stopped the gateway, and the stack trace of any crash. Problems introduced by a later edit are not logged there; run `check` after editing.
 

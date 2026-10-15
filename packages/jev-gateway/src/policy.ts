@@ -1,11 +1,13 @@
 // What the gateway does with one request: which route answers it, which model name goes upstream, and which Danger Zone headers it needs. Pure.
 import { DATA_TIERS } from '@augur/core';
 import type { DataTier } from '@augur/core';
-import { STUDENT_RE } from '@augur/decision';
 import { HOSTED_TIERS } from './config.js';
 import type { GatewayConfig } from './config.js';
 
 export type Route = 'hosted' | 'laya';
+
+/** The content check for a request that names no tier. It is a backstop for student data and matches only unmistakable terms, because everyday words such as course, rubric, or grade also appear in ordinary text and sent it to Laya wrongly. A caller handling student data declares the tier. */
+export const CONTENT_RE = /\b(gcu|students?|ferpa|roster|mis-?600|bit-?200)\b/i;
 
 export interface Plan {
   route: Route;
@@ -50,7 +52,7 @@ export function plan(config: GatewayConfig, body: unknown, headers: Record<strin
 
   let tier: DataTier, tierSource: Plan['tierSource'];
   if (declared) { tier = declared; tierSource = 'declared'; }
-  else if (STUDENT_RE.test(JSON.stringify(body.state ?? ''))) { tier = 'regulated'; tierSource = 'content'; }
+  else if (CONTENT_RE.test(JSON.stringify(body.state ?? ''))) { tier = 'regulated'; tierSource = 'content'; }
   else { tier = config.defaultTier; tierSource = 'default'; }
 
   const images = usesImages(body);

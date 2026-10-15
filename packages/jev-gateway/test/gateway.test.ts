@@ -48,6 +48,12 @@ describe('plan', () => {
     expect(a.route).toBe('laya'); expect(a.tier).toBe('regulated'); expect(a.tierSource).toBe('content');
     expect(plan(cfg(), body, { 'x-augur-data': 'internal' }).route).toBe('hosted');
   });
+  it('leaves everyday words alone when no tier is declared', () => {
+    for (const state of ['Draft a blog post about the course of the project', 'Rubric for the grade report', 'Section 3 of the halo guide']) {
+      const p = plan(cfg(), { state, questions: NOUL }, {});
+      expect(p.route).toBe('hosted'); expect(p.tierSource).toBe('default');
+    }
+  });
   it('sends a laya model name to Laya whatever the tier', () => {
     const p = plan(cfg(), { model: 'laya:augur_fit', state: 'x', questions: NOUL }, { 'x-augur-data': 'public' });
     expect(p.route).toBe('laya'); expect(p.model).toBe('laya:augur_fit');
@@ -133,7 +139,7 @@ describe('gateway', () => {
     const r = await post(base, { model: 'jev-1.13.0', ...ok }, { authorization: 'Bearer some-consumer-key' });
     expect(r.status).toBe(200);
     expect((await r.json() as { answers: unknown }).answers).toEqual({ billing: { noul: 0.9 } });
-    expect(r.headers.get('x-augur-route')).toBe('hosted'); expect(r.headers.get('x-augur-model')).toBe('jev-1.14.0');
+    expect(r.headers.get('x-augur-route')).toBe('hosted'); expect(r.headers.get('x-augur-model')).toBe('jev-1.14.0'); expect(r.headers.get('x-augur-tier-source')).toBe('default');
     expect(calls).toHaveLength(1);
     expect(calls[0]!.body.model).toBe('jev-preview'); expect(calls[0]!.headers.authorization).toBe('Bearer hosted-key');
     expect(calls[0]!.headers['TypeSafe-Danger-Zone-Images']).toBeUndefined();

@@ -160,7 +160,7 @@ export function createGateway(opts: GatewayOptions = {}): { server: HttpServer; 
       if (p.refuse) { row.reason = p.refuse.detail; throw new HttpError(p.refuse.status, p.refuse.detail, true); }
       const out = p.route === 'hosted' ? await hosted(c, p, row) : await laya(c, p, row);
       row.status = out.status; row.modelAnswered = out.model;
-      res.writeHead(out.status, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(out.body), 'x-augur-route': p.route, 'x-augur-model': out.model ?? p.model, 'x-augur-tier': p.tier });
+      res.writeHead(out.status, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(out.body), 'x-augur-route': p.route, 'x-augur-model': out.model ?? p.model, 'x-augur-tier': p.tier, 'x-augur-tier-source': p.tierSource });
       res.end(out.body);
     } catch (e) {
       if (e instanceof HttpError) row.status = e.status; else row.status = 500;
