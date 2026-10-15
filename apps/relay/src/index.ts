@@ -32,7 +32,7 @@ interface Env {
 
 // The only TypeSafe request the web app makes is this fixed health check (see packages/core/src/providers/jev.ts),
 // so the relay refuses any other body rather than carrying arbitrary inference on someone's behalf.
-const JEV_PROBE = JSON.stringify({ model: 'jev-latest', state: { message: 'I was charged twice. Please fix this ASAP.' },
+const JEV_PROBE = JSON.stringify({ model: 'jev-preview', state: { message: 'I was charged twice. Please fix this ASAP.' },
   questions: { billing: { type: 'noul', instructions: 'Is this message about a billing problem?' } } });
 
 async function limited(limit: RateLimit | undefined, request: Request): Promise<boolean> {

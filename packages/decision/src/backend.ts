@@ -77,7 +77,7 @@ export class LayaBackend implements DecisionBackend {
 export class JevBackend implements DecisionBackend {
   readonly id = 'jev';
   readonly local = false;
-  constructor(private key: string, private fetcher: Fetch = fetch as unknown as Fetch, private endpoint = 'https://api.typesafe.ai/v1/systemone', private model = 'jev-latest') {}
+  constructor(private key: string, private fetcher: Fetch = fetch as unknown as Fetch, private endpoint = 'https://api.typesafe.ai/v1/systemone', private model = 'jev-preview') {}
   async ask(state: unknown, questions: Record<string, Question>): Promise<SystemOneResponse> {
     try {
       const r = await this.fetcher(this.endpoint, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${this.key}` }, body: JSON.stringify({ model: this.model, state, questions }) });

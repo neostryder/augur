@@ -24,11 +24,11 @@ export const jev: ProviderPlugin = {
     const start = (host.now?.() ?? new Date()).getTime();
     const data = obj(await json(host, { url: `${baseOf(settings)}/v1/systemone`, method: 'POST',
       headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'jev-latest', state: { message: 'I was charged twice. Please fix this ASAP.' },
+      body: JSON.stringify({ model: 'jev-preview', state: { message: 'I was charged twice. Please fix this ASAP.' },
         questions: { billing: { type: 'noul', instructions: 'Is this message about a billing problem?' } } }), timeoutMs: 60000 }));
     if (data.error || !obj(data.answers).billing) throw new Error('The provider did not accept the request. Check the key in settings.');
     const latencyMs = (host.now?.() ?? new Date()).getTime() - start;
-    const model = String(data.model ?? 'jev-latest');
+    const model = String(data.model ?? 'jev-preview');
     const notes: Record<string, unknown> = { latencyMs, model };
     const ledgerPath = typeof settings.ledgerPath === 'string' ? settings.ledgerPath : '';
     if (ledgerPath && host.readHomeFile) {
