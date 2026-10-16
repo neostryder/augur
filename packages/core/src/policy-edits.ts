@@ -89,6 +89,7 @@ export function checkValue(field: string, value: unknown): string | null {
 /** Whether a balance setting's path and value are the shape the balance can hold. The balance itself ignores a value of the wrong type, so this only keeps junk out of the stored rules. */
 export function checkBalanceEdit(segments: readonly string[], value: unknown): string | null {
   if (segments.length < 1 || segments.length > 4 || segments.some(x => !x || x.length > 120)) return 'A balance setting is a short path of names.';
+  if (segments.some(x => x === '__proto__' || x === 'constructor' || x === 'prototype')) return 'That name is not a balance setting.';
   if (!BALANCE_ROOTS.includes(segments[0] as string)) return `${segments[0]} is not a balance setting.`;
   if (value === INHERIT || value === null) return null;
   const small = (v: unknown): boolean => v === null || typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v)) || (typeof v === 'string' && v.length <= 200);
@@ -111,9 +112,9 @@ function setBalance(policy: PolicyConfig, segments: readonly string[], value: un
   policy.balance ??= {};
   const trail: Array<Record<string, unknown>> = [policy.balance];
   for (const k of segments.slice(0, -1)) {
-    const here = trail.at(-1) as Record<string, unknown>;
-    if (value === undefined && !isObj(here[k])) { trail.length = 0; break; }
-    if (!isObj(here[k])) here[k] = {};
+    const here = trail.at(-1) as Record<string, unknown>, own = Object.hasOwn(here, k) && isObj(here[k]);
+    if (value === undefined && !own) { trail.length = 0; break; }
+    if (!own) here[k] = {};
     trail.push(here[k] as Record<string, unknown>);
   }
   const last = segments.at(-1) as string;

@@ -219,7 +219,7 @@ export function createTools(d: McpDeps) {
   };
   /** The value a field has in policy.json now. */
   const current = (file: PolicyFile, e: PolicyEdit): unknown => {
-    if (isBalanceField(e.field)) { let at: unknown = file.balance; for (const k of balanceSegments(e.field)) { if (!isObj(at)) return null; at = at[k]; } return at ?? null; }
+    if (isBalanceField(e.field)) { let at: unknown = file.balance; for (const k of balanceSegments(e.field)) { if (!isObj(at) || !Object.hasOwn(at, k)) return null; at = at[k]; } return at ?? null; }
     const p = file.providers[e.provider];
     if (e.field.startsWith('thresholds.')) return (p?.thresholds as unknown as Record<string, unknown> | undefined)?.[e.field.slice(11)] ?? null;
     const m = p?.models[e.model] as unknown as Record<string, unknown> | undefined;

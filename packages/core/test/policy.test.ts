@@ -27,6 +27,16 @@ describe('policy', () => {
     expect(policy.providers.codex!.defaults.dataTier).toBe('internal');
   });
 
+  it('starts a new provider named before use when the file does not say, and lets the file override the starter values', () => {
+    const policy = emptyPolicy();
+    importPolicy(policy, { providers: { grok: { models: { 'xai/grok': { id: 'grok-4.7', rule: {} } } }, codex: { defaults: { dataTier: 'sensitive', askFirst: false }, models: {} } } }, t0);
+    expect(policy.providers.grok!.defaults.askFirst).toBe(true);
+    expect(policy.providers.grok!.defaults.dataTier).toBe('public');
+    expect(policy.providers.codex!.defaults.askFirst).toBe(false);
+    expect(policy.providers.codex!.defaults.dataTier).toBe('sensitive');
+    expect(resolveModel('grok', policy.providers.grok!.defaults, policy.providers.grok!.models['xai/grok']!).askFirst).toBe(true);
+  });
+
   it('imports rules already confirmed when setup accepts the recommended set', () => {
     const policy = emptyPolicy();
     importPolicy(policy, RULES, t0, 'confirmed');

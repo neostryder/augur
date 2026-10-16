@@ -157,6 +157,13 @@ describe('balance edits', () => {
     processInbox(p, [bal(['tilt', 'codex/gpt-6.1-sol'], 'inherit', 'b3')], r.state, 'desktop', now);
     expect(p.balance).toEqual({ profile: 'neutral' });
   });
+  it('refuse a path that names a prototype and leave Object.prototype alone', () => {
+    const p = policy();
+    const r = processInbox(p, [bal(['tilt', '__proto__', 'reserve'], 0.5, 'p1'), bal(['pace', '__proto__'], 0.5, 'p2'), bal(['tilt', 'constructor'], 1, 'p3')], emptyEditState(), 'desktop', now);
+    expect(r.state.results.map(x => x.status)).toEqual(['rejected', 'rejected', 'rejected']);
+    expect(({} as Record<string, unknown>).reserve).toBeUndefined();
+    expect(checkBalanceEdit(['__proto__', 'x'], 1)).not.toBeNull();
+  });
   it('are held at the strictest level and apply at the default', () => {
     expect(processInbox(policy(), [bal(['prose', 'mode'], 'none')], emptyEditState(), 'desktop', now, 'all').state.held).toHaveLength(1);
   });

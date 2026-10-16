@@ -74,10 +74,13 @@ describe('where a grade is asked', () => {
     const out = await grade({ primary: backend('jev', false, () => ({ error: 'Jev answered 429' })) }, rubric(), { task: 't', candidate: 'c' }, 'public');
     expect(out).toEqual({ error: 'Jev answered 429' });
   });
-  it('raises an undeclared tier to regulated on student wording', () => {
+  it('raises the tier to regulated on student wording, whatever was declared', () => {
     expect(gradeTier(undefined, 'the essay of a student')).toBe('regulated');
     expect(gradeTier(undefined, 'a poem about rain')).toBe('internal');
-    expect(gradeTier('public', 'the essay of a student')).toBe('public');
+    expect(gradeTier('public', 'the essay of a student')).toBe('regulated');
+    expect(gradeTier('internal', 'the essay of a student')).toBe('regulated');
+    expect(gradeTier('public', 'a poem about rain')).toBe('public');
+    expect(gradeTier('sensitive', 'a poem about rain')).toBe('sensitive');
   });
 });
 

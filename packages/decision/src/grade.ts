@@ -120,10 +120,10 @@ export function readGrade(rubric: Rubric, answers: Record<string, { score?: numb
   return { rubric: rubric.id, version: rubric.version, dims, overall: round(weighted / total), uncertainty: round(spread), backend };
 }
 
-/** The tier of a grading request: what the caller declared, raised to regulated when the text mentions students and nothing was declared. */
+/** The tier of a grading request: what the caller declared, raised to regulated whenever the text mentions students. A declaration can raise the tier and never lowers it below that floor. */
 export function gradeTier(declared: DataTier | undefined, text: string): DataTier {
-  if (declared) return declared;
-  return STUDENT_RE.test(text) ? 'regulated' : 'internal';
+  if (STUDENT_RE.test(text)) return 'regulated';
+  return declared ?? 'internal';
 }
 
 /** Grading text in the sensitive and regulated tiers goes only to a backend on this network. */
