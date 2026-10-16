@@ -10,6 +10,7 @@ import type { BriefResult, DecisionBackend, GradeVerdictLabel } from '@augur/dec
 import { BUDGET_WINDOW_MS, NAMED_PROMPT_WINDOW, PICK_WINDOW_MIN, TOOL_TIERS, account, agreement, attachmentKind, balanceReport, budgetStatus, calibrateRoutes, copilotSpend, checkLineage, routeSecretName, checkNamed, checkPick, evaluate, isTerminal, learnedShares, learnedTilt, matchNamedModels, pressure, propose, rank, resolveBalance, trainingKey, usageFactors } from '@augur/dispatch-protocol';
 import type { Adapter, BalanceReport, BudgetStatus, Conversation, Depth, GradeAnswer, GradeParams, GradeReport, JobRecord, JobRequest, LaunchPlan, PickAnswer, PickParams, RateCard, Rejection, ResolvedAttachment, RouteConfig, UsageSnapshot } from '@augur/dispatch-protocol';
 import { MAX_COMMAND_LINE, optNum } from './adapters/util.js';
+import { realInside, realInsideAny, realOf } from './real-paths.js';
 import type { ServiceConfig } from './config.js';
 import { buildEnv } from './env.js';
 import type { Store } from './store.js';
@@ -178,7 +179,7 @@ export class Supervisor {
       return reject('adapter_unavailable', 'The Windows job host (jobhost.exe) was not found, so jobs cannot be contained. Build it with pnpm build:jobhost.');
     }
     let prompt: string;
-    try { prompt = req.prompt.text ?? readFileSync(req.prompt.file as string, 'utf8'); } catch { return reject('bad_request', 'The prompt file could not be read.'); }
+    try { prompt = req.prompt.text ?? readFileSync(realOf(req.prompt.file as string) ?? (req.prompt.file as string), 'utf8'); } catch { return reject('bad_request', 'The prompt file could not be read.'); }
     // A route can name the largest prompt it takes. A bigger job is refused here and, when the route has a fallback, goes on to it: a prompt is never cut to fit.
     const attached = this.attachments(req, route, adapter);
     if ('rejected' in attached) { this.d.store.event(null, 'policy_evaluated', `rejected ${attached.rejected.code}: ${req.route}`, this.now()); return attached; }
@@ -440,11 +441,12 @@ export class Supervisor {
     if (!OUTPUT_MODES.includes(req.output)) return 'Unknown output mode.';
     if (!isAbsolute(req.cwd) || !existsSync(req.cwd) || !statSync(req.cwd).isDirectory()) return 'cwd must be an existing absolute directory.';
     const inData = relative(resolve(this.d.dir), resolve(req.cwd));
-    if (!inData.startsWith('..') && !isAbsolute(inData)) return 'cwd may not be inside the service data folder.';
+    if ((!inData.startsWith('..') && !isAbsolute(inData)) || realInside(req.cwd, this.d.dir)) return 'cwd may not be inside the service data folder.';
     if ((req.prompt.text === undefined) === (req.prompt.file === undefined)) return 'Give the prompt as text or as a file, not both.';
     if (req.prompt.file !== undefined) {
       const file = resolve(req.prompt.file), roots = [req.cwd, ...this.d.config.promptRoots].map(r => resolve(r));
-      if (!roots.some(r => file === r || file.startsWith(r + sep))) return 'A prompt file must be inside the job working folder or a folder listed in promptRoots.';
+      if (!roots.some(r => file === r || file.startsWith(r + sep)) || !realInsideAny(file, roots)) return 'A prompt file must be inside the job working folder or a folder listed in promptRoots.';
+      if (realInside(file, this.d.dir)) return 'A prompt file may not be inside the service data folder.';
     }
     if (req.expectFile !== undefined) {
       const target = resolve(req.cwd, req.expectFile);
@@ -467,8 +469,12 @@ export class Supervisor {
     const roots = [req.cwd, ...this.d.config.promptRoots].map(r => resolve(r)), cap = { image: optMb(route, 'maxImageMb', 10), audio: optMb(route, 'maxAudioMb', 25) };
     const items: ResolvedAttachment[] = [];
     for (const given of req.attach) {
-      const path = resolve(req.cwd, given), name = basename(path);
-      if (!roots.some(r => path === r || path.startsWith(r + sep))) return refuse(`Attachment ${name} must be inside the job working folder or a folder listed in promptRoots.`);
+      const named = resolve(req.cwd, given), name = basename(named);
+      if (!roots.some(r => named === r || named.startsWith(r + sep))) return refuse(`Attachment ${name} must be inside the job working folder or a folder listed in promptRoots.`);
+      // The file is read from its real location, which has to be inside a root too, and its type is judged by the real file's name.
+      const path = realOf(named);
+      if (path === null) return refuse(`Attachment ${name} could not be read.`);
+      if (!realInsideAny(path, roots) || realInside(path, this.d.dir)) return refuse(`Attachment ${name} must be inside the job working folder or a folder listed in promptRoots.`);
       let bytes: number;
       try { const st = statSync(path); if (!st.isFile()) return refuse(`Attachment ${name} is not a file.`); bytes = st.size; } catch { return refuse(`Attachment ${name} could not be read.`); }
       const kind = attachmentKind(path);

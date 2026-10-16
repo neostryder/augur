@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import type { IncomingHttpHeaders, Server } from 'node:http';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -357,6 +357,21 @@ describe('an API connector', () => {
       expect(m.seen[0]!.headers['content-type']).toMatch(/^multipart\/form-data/);
       expect(m.seen[0]!.raw).toContain('filename="clip.wav"');
       expect(m.seen[0]!.raw).toContain('names: Eru');
+    });
+
+    it('refuses an attachment or prompt file that reaches outside the allowed folders through a link', async () => {
+      const m = await mock(() => ({ json: { choices: [{ message: { content: 'x' } }] } }));
+      const e = env(); route(e, m.url);
+      const outside = mkdtempSync(join(tmpdir(), 'augur-outside-'));
+      writeFileSync(join(outside, 'secret.txt'), 'outside text'); writeFileSync(join(outside, 'secret'), 'no extension');
+      try {
+        symlinkSync(outside, join(e.root, 'linkdir'), 'junction');
+        const refuse = (attach: string[]) => expect(e.sup.submit({ ...textReq('chat'), cwd: e.root, attach })).toMatchObject({ rejected: { code: 'attachment_rejected', reason: expect.stringMatching(/must be inside/) } });
+        refuse(['linkdir/secret.txt']);
+        expect(e.sup.submit({ ...textReq('chat'), cwd: e.root, prompt: { file: join(e.root, 'linkdir', 'secret.txt') } })).toMatchObject({ rejected: { reason: expect.stringMatching(/prompt file must be inside/) } });
+        try { symlinkSync(join(outside, 'secret'), join(e.root, 'pretend.txt'), 'file'); refuse(['pretend.txt']); } catch (err) { if ((err as NodeJS.ErrnoException).code !== 'EPERM') throw err; }
+        expect(m.seen).toHaveLength(0);
+      } finally { rmSync(outside, { recursive: true, force: true }); }
     });
 
     it('refuses an attachment the route cannot take, with the reason', async () => {
