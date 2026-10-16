@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, generateKeyPairSync, randomBytes, sign as edSign } from 'node:crypto';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlink
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { PINNED_KEY, verifyMinisign } from '../src/minisign.js';
 import { checksumFor, installOf, realFetch, updateAdvice, updateScriptInstall, type UpdateDeps } from '../src/update.js';
 
 const cleanup: string[] = [];
@@ -21,16 +22,29 @@ function scriptInstall(have = '1.3.0', more: string[] = []) {
   return { root, install: installOf(join(root, 'versions', have)) };
 }
 
+/** A throwaway signing key, with the public key and signatures written the way minisign writes them. */
+const keys = generateKeyPairSync('ed25519');
+const keyId = randomBytes(8);
+const rawPub = (keys.publicKey.export({ format: 'der', type: 'spki' }) as Buffer).subarray(-32);
+const pubFile = `untrusted comment: minisign public key: test\n${Buffer.concat([Buffer.from('Ed'), keyId, rawPub]).toString('base64')}\n`;
+export const signSums = (text: string, algo: 'ED' | 'Ed' = 'ED'): string => {
+  const signed = algo === 'ED' ? createHash('blake2b512').update(text).digest() : Buffer.from(text);
+  return `untrusted comment: signature\n${Buffer.concat([Buffer.from(algo), keyId, edSign(null, signed, keys.privateKey)]).toString('base64')}\ntrusted comment: t\nAAAA\n`;
+};
+const base64Wrapped = (text: string): string => Buffer.from(text).toString('base64');
+
 const TAR = 'tar bytes';
-function deps(over: Partial<UpdateDeps> & { latest?: string; sums?: string } = {}) {
+function deps(over: Partial<UpdateDeps> & { latest?: string; sums?: string; sig?: string | null } = {}) {
   const latest = over.latest ?? '1.4.0', name = `augur-terminal-${latest}-macos.tar.gz`;
   const log: string[] = [];
   const d: UpdateDeps = {
-    current: '1.3.0', platform: 'darwin', env: { AUGUR_RELEASE_URL: 'https://example.test/releases' },
+    current: '1.3.0', platform: 'darwin', env: { AUGUR_RELEASE_URL: 'https://example.test/releases' }, pubkey: pubFile,
     async fetchText(url) {
       log.push(url);
       if (url.endsWith('/latest.json')) return JSON.stringify({ version: latest });
-      if (url.endsWith('/SHA256SUMS.txt')) return over.sums ?? `${sha(TAR)}  ${name}\n${'0'.repeat(64)}  other.dmg\n`;
+      const sums = over.sums ?? `${sha(TAR)}  ${name}\n${'0'.repeat(64)}  other.dmg\n`;
+      if (url.endsWith('/SHA256SUMS.txt')) return sums;
+      if (url.endsWith('/SHA256SUMS.txt.sig')) { if (over.sig === null) throw new Error('404'); return over.sig ?? signSums(sums); }
       throw new Error('unexpected ' + url);
     },
     async fetchTo(url, file) { log.push(url); writeFileSync(file, TAR); },
@@ -67,6 +81,22 @@ describe('installOf', () => {
   });
 });
 
+describe('verifyMinisign', () => {
+  it('accepts both signature algorithms and the base64-wrapped files Tauri writes, and refuses anything else', () => {
+    const text = 'a list\n';
+    expect(verifyMinisign(text, signSums(text), pubFile)).toBe(true);
+    expect(verifyMinisign(text, signSums(text, 'Ed'), pubFile)).toBe(true);
+    expect(verifyMinisign(text, base64Wrapped(signSums(text)), base64Wrapped(pubFile))).toBe(true);
+    expect(verifyMinisign('another\n', signSums(text), pubFile)).toBe(false);
+    expect(verifyMinisign(text, signSums(text), PINNED_KEY)).toBe(false);
+    expect(verifyMinisign(text, '', pubFile)).toBe(false);
+  });
+  it('pins the same key the desktop updater uses', () => {
+    const conf = JSON.parse(readFileSync(join(__dirname, '..', '..', '..', 'apps', 'desktop', 'src-tauri', 'tauri.conf.json'), 'utf8')) as { plugins: { updater: { pubkey: string } } };
+    expect(PINNED_KEY).toBe(conf.plugins.updater.pubkey);
+  });
+});
+
 describe('checksumFor', () => {
   it('finds the line for a file, with either separator style', () => {
     const a = 'a'.repeat(64), b = 'b'.repeat(64);
@@ -87,7 +117,7 @@ describe('updateScriptInstall', () => {
     expect(readdirSync(join(root, 'versions')).sort()).toEqual(['1.3.0', '1.4.0']);
     expect(JSON.parse(readFileSync(join(root, 'install.json'), 'utf8')).version).toBe('1.4.0');
     expect(readdirSync(root).filter((f) => f.startsWith('.update-'))).toEqual([]);
-    expect(log).toEqual(['https://example.test/releases/latest/download/latest.json', 'https://example.test/releases/download/v1.4.0/SHA256SUMS.txt', 'https://example.test/releases/download/v1.4.0/augur-terminal-1.4.0-macos.tar.gz']);
+    expect(log).toEqual(['https://example.test/releases/latest/download/latest.json', 'https://example.test/releases/download/v1.4.0/SHA256SUMS.txt', 'https://example.test/releases/download/v1.4.0/SHA256SUMS.txt.sig', 'https://example.test/releases/download/v1.4.0/augur-terminal-1.4.0-macos.tar.gz']);
   });
 
   it('does nothing when this is the newest version, unless forced', async () => {
@@ -103,6 +133,21 @@ describe('updateScriptInstall', () => {
     expect(r.message).toContain('does not match its checksum');
     expect(existsSync(join(root, 'versions', '1.4.0'))).toBe(false);
     expect(existsSync(join(root, 'current'))).toBe(false);
+  });
+
+  it('refuses checksums that are unsigned, signed by another key, or changed after signing', async () => {
+    const { root, install } = scriptInstall();
+    const name = 'augur-terminal-1.4.0-macos.tar.gz';
+    expect((await updateScriptInstall(install, deps({ sig: null }).d)).message).toContain("not signed with Augur's release key");
+    expect((await updateScriptInstall(install, deps({ sig: 'garbage' }).d)).message).toContain('not signed');
+    const other = generateKeyPairSync('ed25519');
+    const forged = `untrusted comment: s\n${Buffer.concat([Buffer.from('ED'), keyId, edSign(null, createHash('blake2b512').update('x').digest(), other.privateKey)]).toString('base64')}\n`;
+    expect((await updateScriptInstall(install, deps({ sig: forged }).d)).message).toContain('not signed');
+    const signedOnce = signSums(`${sha(TAR)}  ${name}\n`);
+    expect((await updateScriptInstall(install, deps({ sums: `${sha('evil')}  ${name}\n`, sig: signedOnce }).d)).message).toContain('not signed');
+    expect(existsSync(join(root, 'versions', '1.4.0'))).toBe(false);
+    const sums = `${sha(TAR)}  ${name}\n`;
+    expect((await updateScriptInstall(install, deps({ sums, sig: base64Wrapped(signSums(sums)) }).d)).ok).toBe(true);
   });
 
   it('refuses a release with no checksum for the file, or a package without Augur in it', async () => {

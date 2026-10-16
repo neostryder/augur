@@ -52,7 +52,7 @@ systemctl --user enable --now augurd
 
 The last line starts the service at each login; leave it out to start the service yourself with `augur service start`. The window app takes the `augur` name, so `augur-bin` puts the terminal command on your PATH as `augur-cli`, and it starts at login from its own settings. Install one of the two, not both. Either one tells you when a new version is out and leaves the update to pacman: download the new release's recipe and run the same makepkg line. The recipes are also in `packaging/arch` for building from a checkout.
 
-**Terminal only:** a computer with no tray or taskbar can run the terminal app and the background service without the window app (see [In a terminal](#in-a-terminal)). On macOS, run the install script. It downloads the newest terminal build, checks it against the release's `SHA256SUMS.txt`, and puts `augur` in `~/.local/bin`:
+**Terminal only:** a computer with no tray or taskbar can run the terminal app and the background service without the window app (see [In a terminal](#in-a-terminal)). On macOS, run the install script. It downloads the newest terminal build, checks the signature on the release's `SHA256SUMS.txt` and then the build against that list (this needs Node.js or minisign), and puts `augur` in `~/.local/bin`:
 
 ```bash
 curl -fsSL https://github.com/neostryder/augur/releases/latest/download/install.sh | sh
@@ -60,7 +60,7 @@ curl -fsSL https://github.com/neostryder/augur/releases/latest/download/install.
 
 The macOS build carries its own copy of Node, so nothing else has to be installed. Run `augur update` to move to a newer version; the previous one stays in place until the update after that.
 
-Every release also carries `SHA256SUMS.txt`, with a checksum for each installer, and a bill of materials for the JavaScript and Rust dependencies. Since the installers are not signed, compare a download against its line in that file before you run it: `Get-FileHash <file>` on Windows, `shasum -a 256 <file>` on macOS, `sha256sum <file>` on Linux.
+Every release also carries `SHA256SUMS.txt`, with a checksum for each installer, `SHA256SUMS.txt.sig`, a signature of that list made with the same key the window app's updater trusts, and a bill of materials for the JavaScript and Rust dependencies. The install script and `augur update` refuse a list whose signature does not verify. The installers themselves are not signed, so compare a download against its line in that file before you run it: `Get-FileHash <file>` on Windows, `shasum -a 256 <file>` on macOS, `sha256sum <file>` on Linux.
 
 Augur opens setup the first time it starts. Providers that are already signed in on the computer are turned on for you. For the others, paste an API key on the provider's card in Settings and turn it on. The Claude, Codex, and Grok cards need the matching app signed in on this computer. Without one of them, turn on a provider that takes an API key, such as OpenRouter. Keys are stored in the operating system's keychain (Windows Credential Manager, the macOS Keychain, or the Secret Service on Linux), and each one is sent only to its own provider.
 

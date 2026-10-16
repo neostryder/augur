@@ -1,5 +1,5 @@
 // `augur update`: what each kind of install does about a newer version. A copy put in place by the macOS install script downloads the new
-// release, checks it against the release's checksums and swaps it in. A package or the window app says how to update with its own tool.
+// release, checks the checksum list's signature against the key pinned in this code and the tarball against the list, and swaps it in. A package or the window app says how to update with its own tool.
 import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
@@ -7,6 +7,7 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { spawnSync } from 'node:child_process';
 import { compareVersions } from '@augur/core';
+import { verifyMinisign } from './minisign.js';
 
 export type InstallKind = 'script' | 'pacman' | 'app' | 'source';
 export interface Install { kind: InstallKind; /** The folder the script install keeps its versions in. */ root: string | null; /** The folder this copy runs from. */ dir: string }
@@ -48,6 +49,8 @@ export interface UpdateDeps {
   untar(file: string, into: string): void;
   /** Stops the service so the new version starts in its place, and rewrites the login entry when there is one. */
   afterSwap(newDir: string): Promise<string>;
+  /** The key a release must be signed with. The pinned one unless a test gives its own. */
+  pubkey?: string;
 }
 
 export interface UpdateResult { ok: boolean; changed: boolean; message: string; version?: string }
@@ -83,6 +86,9 @@ export async function updateScriptInstall(install: Install, deps: UpdateDeps, fo
   const work = mkdtempSync(join(install.root, '.update-'));
   try {
     const sums = await deps.fetchText(`${tag}/SHA256SUMS.txt`);
+    let sig = '';
+    try { sig = await deps.fetchText(`${tag}/SHA256SUMS.txt.sig`); } catch { /* no signature on the release */ }
+    if (!sig || !verifyMinisign(sums, sig, deps.pubkey)) return { ok: false, changed: false, message: `The checksums for ${latest} are not signed with Augur's release key, so ${name} was not installed.` };
     const want = checksumFor(sums, name);
     if (!want) return { ok: false, changed: false, message: `${name} has no checksum in the release, so it was not installed.` };
     const file = join(work, name);

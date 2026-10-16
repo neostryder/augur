@@ -205,9 +205,14 @@ jobs:
       - name: Checksum every file on the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
         run: |
           mkdir dl
           gh release download "$GITHUB_REF_NAME" --dir dl --clobber
           cp out/*.json dl/
           (cd dl && sha256sum * > ../out/SHA256SUMS.txt)
+          # The list is signed with the updater key, so an install script or `augur update` pointed at any origin can tell it from a forgery.
+          pnpm --filter @augur/desktop exec tauri signer sign "$GITHUB_WORKSPACE/out/SHA256SUMS.txt"
+          test -s out/SHA256SUMS.txt.sig
           gh release upload "$GITHUB_REF_NAME" out/* --clobber
