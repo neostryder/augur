@@ -23,7 +23,7 @@ import qrcode from 'qrcode-generator';
 import { HOSTED } from './hosted';
 import { attachPullToRefresh } from './pull-refresh';
 import { isApprovalLevel, acceptPairing, applySharedConfig, askDesktop, mergeSynced, parsePairing, pullPhoneState, pullRules, pullSnapshot, pushPhoneState, pushRules, type PhoneState, FeedKeeper, type Raise, tooltip } from '@augur/core';
-import { acceptPairingFromUrl } from './pairing';
+import { acceptPairingFromUrl, pairingQuestion, replacesPairing } from './pairing';
 import { connectEngine } from './engine-link';
 import type { EngineApi, EngineKey, EngineState, UpdateState, AlertFeed } from '@augur/core';
 import { scanQr } from './scan';
@@ -163,7 +163,7 @@ export class App {
       this.config = core.migrateConfig(saved ?? core.defaultConfig());
       this.syncProviderList();
       this.firstRun = !saved;
-      const link = await acceptPairingFromUrl(this.shell);
+      const link = await acceptPairingFromUrl(this.shell, this.sync);
       if (link) await this.pairWith(link, false);
       [this.snapshot, this.history, this.alertState] = await Promise.all([
         this.shell.loadSnapshot(), this.shell.loadHistory() as Promise<HistoryRow[]>, this.shell.loadAlertState(),
@@ -1495,7 +1495,7 @@ export class App {
         const text = await scanQr().catch((err: Error) => { this.scanError = err.message; return null; });
         const link = text ? parsePairing(text) : null;
         if (text && !link) this.scanError = 'That code is not an Augur pairing code. Open Pair a phone in the desktop app and scan the code it shows.';
-        if (link) await this.pairWith(await acceptPairing(this.shell, link));
+        if (link && (!replacesPairing(link, this.sync) || window.confirm(pairingQuestion(link, this.sync)))) await this.pairWith(await acceptPairing(this.shell, link));
         await this.render();
         break;
       }

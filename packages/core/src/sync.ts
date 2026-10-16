@@ -7,6 +7,7 @@ import type { FeedAlert } from './feed.js';
 import type { PushSubscriptionInfo } from './webpush.js';
 import type { HistoryRow } from './history.js';
 import { withCompactFleet } from './fleet.js';
+import { keyMayGoTo } from './net.js';
 
 /** The shared relay and web app. It serves the phone app and forwards its requests, so a fresh install can pair a phone without setup. */
 export const HOSTED = 'https://augur.rpgm.tools';
@@ -99,8 +100,13 @@ export function pairingUrl(pwaUrl: string, link: SyncLink, key: string): string 
   return `${pwaUrl.replace(/#.*$/, '')}#pair?r=${encodeURIComponent(link.relay)}&c=${link.channel}&k=${key}`;
 }
 
-/** Reads a pairing link in the current form or the older `|`-separated one, raw or percent-encoded. */
+/** Reads a pairing link in the current form or the older `|`-separated one, raw or percent-encoded. A link whose relay is not an https address (or a home-network one) is not a pairing link. */
 export function parsePairing(text: string): (SyncLink & { key: string }) | null {
+  const link = readPairing(text);
+  return link && keyMayGoTo(link.relay) ? link : null;
+}
+
+function readPairing(text: string): (SyncLink & { key: string }) | null {
   const hash = text.slice(text.indexOf('#') + 1);
   if (hash.startsWith('pair?')) {
     const q = new URLSearchParams(hash.slice(5));
