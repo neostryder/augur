@@ -4,6 +4,8 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-10-16
+
 ### Added
 
 - [Visible] [Providers] [Security] **Programs that call Jev can point at `http://127.0.0.1:8020` and leave the TypeSafe key out of their own config.** The new Jev gateway, built with `node scripts/build-gateway.mjs`, holds the key and the `jev-preview` alias in `~/.augur/jev-gateway.json` and refuses to send `sensitive` or `regulated` requests anywhere but Laya. Usage goes to `~/.augur/jev-gateway-usage.jsonl` without the request text; see [docs/jev-gateway.md](docs/jev-gateway.md).
@@ -15,6 +17,17 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 - [Visible] [Providers] **Augur can sign in to Claude and Codex on its own.** You open the sign-in link in a browser on any device, so Augur can meter a computer where the CLI is not signed in or there is no browser, or where Claude Code was signed in with `claude setup-token`, whose token cannot read usage. Augur saves just the refresh token, in the operating system's key store, and leaves the CLI's login alone while it has its own, so the two stop signing each other out. The Claude and Codex cards in Settings have a Sign-in block for it.
 - [Visible] [Providers] **`augur login claude`, `augur login codex`, `augur login status`, and `augur logout <provider>` handle that sign-in from a terminal.** Claude prints a link and asks for the code the page shows, with the typing hidden or through `--stdin`. Codex prints a link and a short code and waits until you approve it, which needs device-code sign-in turned on in the ChatGPT account's security settings, or by the workspace admin on a workspace account. `augur logout` forgets only Augur's own session, and an agent's token cannot sign in or out.
 - [Visible] [Platform] [Security] **The macOS install script and `augur update` check a signature on the release's checksum list.** Each release carries `SHA256SUMS.txt.sig`, signed with the key the window app's updater trusts, and a list whose signature does not verify is refused.
+
+### Changed
+
+- [Visible] [Security] **School and course names for the student-text check now come from `private-terms.json` in the Augur folder.** The shipped list keeps only everyday words such as student, roster, and ferpa. Add your own terms as `{ "terms": ["..."] }`, or set `contentTerms` in the gateway settings. A hyphen in a term matches with or without it.
+- [Visible] [Security] **The MCP server now has its own agent token.** With it an agent can run jobs, read their results, and add routes, but it cannot answer a pick, label a grade, change settings, or say that you named a model. The terminal app, the window app, and hooks still use your own token.
+- [Visible] [Security] **On Windows, keys are stored for this computer only.** They no longer travel with a roaming profile. A key saved by an older version keeps its old setting until it is saved again.
+- [Internal] [Platform] **The release workflow pins the Tauri build action to a specific commit.** That step receives the updater signing key, so it runs a fixed, known version.
+- [Visible] [Providers] [Security] **`augur_route_add` accepts fewer route options and leaves routes for models already in the rules to you.** It refuses any option that names a program, arguments, a folder, an environment variable, or a header, `keySource` must be `store`, and a route for a model the rules already hold waits until you add it in the app.
+- [Visible] [Platform] [Security] **Laya judges a browser request by the adapter it resolves to and refuses a body over 1 MB.** The adapters a browser may not use come from the registry's `browser_blocked_prefixes` list or `LAYA_BROWSER_BLOCKED_PREFIXES`, and a registry that cannot be read blocks every pilot request from a browser.
+- [Internal] [Platform] **Workflow actions and tools are pinned to exact commits, and checkout no longer keeps its credentials.** Dependabot proposes updates to the pins each week.
+- [Internal] [Providers] **Jev gateway usage summaries keep caller-supplied labels such as `__proto__` as plain keys.**
 
 ### Fixed
 
@@ -41,17 +54,6 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 - [Visible] [Security] **The phone and browser app opens provider links only when they use http or https.** Links with any other scheme do nothing.
 - [Visible] [Security] **Desktop commands that read or write files, run the dispatch CLI, set the hotkey, or talk to the service now answer only the app's own popup window.** A provider page open in a sign-in window cannot call them.
 - [Visible] [Providers] **Codex, Copilot, and API jobs no longer count their reasoning tokens twice.** Those harnesses already include reasoning in the output count, so their output totals, characters-per-token calibration, and derived costs drop to the true figure. Costs a provider reports itself stay the same.
-
-### Changed
-
-- [Visible] [Security] **School and course names for the student-text check now come from `private-terms.json` in the Augur folder.** The shipped list keeps only everyday words such as student, roster, and ferpa. Add your own terms as `{ "terms": ["..."] }`, or set `contentTerms` in the gateway settings. A hyphen in a term matches with or without it.
-- [Visible] [Security] **The MCP server now has its own agent token.** With it an agent can run jobs, read their results, and add routes, but it cannot answer a pick, label a grade, change settings, or say that you named a model. The terminal app, the window app, and hooks still use your own token.
-- [Visible] [Security] **On Windows, keys are stored for this computer only.** They no longer travel with a roaming profile. A key saved by an older version keeps its old setting until it is saved again.
-- [Internal] [Platform] **The release workflow pins the Tauri build action to a specific commit.** That step receives the updater signing key, so it runs a fixed, known version.
-- [Visible] [Providers] [Security] **`augur_route_add` accepts fewer route options and leaves routes for models already in the rules to you.** It refuses any option that names a program, arguments, a folder, an environment variable, or a header, `keySource` must be `store`, and a route for a model the rules already hold waits until you add it in the app.
-- [Visible] [Platform] [Security] **Laya judges a browser request by the adapter it resolves to and refuses a body over 1 MB.** The adapters a browser may not use come from the registry's `browser_blocked_prefixes` list or `LAYA_BROWSER_BLOCKED_PREFIXES`, and a registry that cannot be read blocks every pilot request from a browser.
-- [Internal] [Platform] **Workflow actions and tools are pinned to exact commits, and checkout no longer keeps its credentials.** Dependabot proposes updates to the pins each week.
-- [Internal] [Providers] **Jev gateway usage summaries keep caller-supplied labels such as `__proto__` as plain keys.**
 
 ## [1.10.1] - 2026-10-13
 
