@@ -31,6 +31,8 @@ Each server process makes one random session id, and sends it with every call. `
 
 The server never sends the `allow` list that skips the pick or plan-usage checks from the command line, and it never says a person named a model, so an agent cannot claim its owner did. Jobs from the server are recorded with the caller kind `mcp`.
 
+The server also signs in with its own token, `agent-token` in the service's data folder, and the service enforces what that token may do. It can run jobs, read their state and results, cancel them, pick, read the balance and add routes. It cannot record a person's message, answer a pick, label a grade or a brief, or call the app's engine, and any `named`, `allow` or `interactive` claim on a job it submits is dropped. Those belong to the owner's terminal, app and hooks, which use `token`.
+
 The data tier is required on every run and is never assumed. An agent has to say how sensitive its task is, and the service refuses a model that is not cleared for that tier.
 
 ## Tools

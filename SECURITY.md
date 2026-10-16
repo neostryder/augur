@@ -21,6 +21,8 @@ The dispatch service, `augurd`, is a separate program from the desktop app and r
 
 The service listens on a named pipe. Windows lets any local account open that pipe for reading but not for writing, and every request also has to carry a token kept in a file in your profile, so another account cannot send it commands. Nothing the service holds goes to the relay or the phone.
 
+The service keeps two tokens in your profile. The owner's token is for the terminal app, the window app, and hooks. The MCP server uses a separate agent token that can run jobs, read their results, and add routes, and cannot record a person's word: it cannot say a person is at the terminal or named a model, waive the pick or usage checks, answer a pick, label a grade, or change the app's settings. Another program that runs as you can read both files, so the two tokens keep honest tools in their roles. They do not wall off a hostile program that already runs as your account.
+
 On Windows a job starts only through the job host, jobhost.exe, which puts the job and every process it starts in one Job Object, so cancelling or timing out the job ends them all. Without the host the service will not start jobs. A prompt file has to be inside the job's working folder or a folder in promptRoots; the CLI reads its own prompt file and sends the text. An API route sends its key over https only, or over http to localhost.
 
 Hermes, Copilot and short OpenCode prompts travel as command-line arguments, and Grok and long OpenCode prompts go through a file, so a prompt can be visible in the process list or on disk while its job runs. The service deletes those files when the job ends and blanks the prompt in its own record of the job.
