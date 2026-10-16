@@ -1,5 +1,6 @@
 import type { Host, ProviderPlugin, Meter } from '../types.js';
 import { HttpError, json, obj, num, round, iso } from '../util.js';
+import { ownAccessToken, ownSession } from '../signin.js';
 
 const file = '.claude/.credentials.json';
 const service = 'Claude Code-credentials';
@@ -43,6 +44,12 @@ async function refresh(host: Host): Promise<string> {
 
 /** Renews the Claude Code login once on a 401 and tries the call again. */
 async function withLogin(host: Host, call: (token: string) => Promise<unknown>): Promise<Record<string, any>> {
+  // A sign-in made in Augur wins over the CLI's file, and while it exists the CLI's token is never renewed from here.
+  if (await ownSession(host, 'claude')) {
+    let token = await ownAccessToken(host, 'claude');
+    try { return obj(await call(token)); }
+    catch (error) { if (!(error instanceof HttpError) || error.status !== 401) throw error; token = await ownAccessToken(host, 'claude', true); return obj(await call(token)); }
+  }
   const oauth = obj((await read(host)).data.claudeAiOauth);
   let token = num(oauth.expiresAt) !== null && Number(oauth.expiresAt) > (host.now?.() ?? new Date()).getTime() + 300000 ? oauth.accessToken : await refresh(host);
   try { return obj(await call(token)); }
@@ -71,7 +78,7 @@ export const claude: ProviderPlugin = {
     { key: 'signin', label: 'claude.ai', kind: 'signin', site: 'claude', help: 'Sign in to claude.ai once so Augur can read your limit resets.' },
     { key: 'resets', label: 'Limit resets in hand', kind: 'text', placeholder: '0', help: 'The count to use when the claude.ai reading is off or unavailable.' },
   ],
-  detect: async host => { try { await read(host); return true; } catch { return false; } },
+  detect: async host => { if (await ownSession(host, 'claude')) return true; try { await read(host); return true; } catch { return false; } },
   async fetch(host, settings, options) {
     const data = await withLogin(host, token => json(host, { url: 'https://api.anthropic.com/api/oauth/usage', headers: headers(token) }));
     const meters: Meter[] = [];
@@ -92,11 +99,12 @@ export const claude: ProviderPlugin = {
     const extra = obj(data.extra_usage), spend = obj(data.spend), used = obj(spend.used);
     const money = extra.is_enabled && num(used.amount_minor) !== null ? [{ id: 'extra', label: 'Extra usage spend',
       amount: round(Number(used.amount_minor) / 10 ** (num(used.exponent) ?? 2), 2), currency: String(used.currency ?? 'USD') }] : [];
-    const manual = Math.max(0, Math.floor(Number(settings?.resets) || 0)), latest = await read(host);
+    const manual = Math.max(0, Math.floor(Number(settings?.resets) || 0)), own = await ownSession(host, 'claude');
+    const planName = own ? own.plan ?? null : obj((await read(host)).data.claudeAiOauth).subscriptionType ?? null;
     const web = settings?.web === true && host.webSession ? await host.webSession('claude', { fresh: options?.force === true }).catch(() => null) : null;
     const grants = web?.signedIn === true ? openGrants(web.grants, host.now?.() ?? new Date()) : null;
     const resets = grants ? grants.left : manual;
-    return { plan: obj(latest.data.claudeAiOauth).subscriptionType ?? null, meters, money,
+    return { plan: planName, meters, money,
       notes: { extra_usage_enabled: !!extra.is_enabled, spend_percent: spend.percent ?? null, ...(resets > 0 ? { resets_available: resets } : {}),
         ...(grants?.endsAt ? { resetsEndsAt: grants.endsAt } : {}),
         ...(web?.signedIn === true ? { webSessions: { claude: true } } : {}),

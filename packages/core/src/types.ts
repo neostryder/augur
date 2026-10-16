@@ -100,6 +100,8 @@ export interface Host {
   http(req: HttpRequest): Promise<HttpResponse>;
   /** A secret the user entered in setup, looked up by the field's secret name. */
   secret(name: string): Promise<string | null>;
+  /** Saves a secret the engine itself obtained, such as the sign-in session it keeps. Present where the shell has a key store. */
+  saveSecret?(name: string, value: string): Promise<void>;
   /** Paths are relative to the user's home directory, with forward slashes. */
   readHomeFile?(path: string): Promise<string | null>;
   writeHomeFileAtomic?(path: string, text: string): Promise<void>;

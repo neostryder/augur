@@ -1,5 +1,6 @@
 import type { Host, ProviderPlugin, Meter } from '../types.js';
 import { HttpError, json, obj, num, round, epoch, windowKind, windowLabel } from '../util.js';
+import { ownAccessToken, ownSession } from '../signin.js';
 
 const client = 'app_EMoamEEZ73f0CkXaXp7hrann';
 const path = (host: Host) => host.env?.('CODEX_HOME') ? `${host.env!('CODEX_HOME')}/auth.json` : '.codex/auth.json';
@@ -13,6 +14,9 @@ function expires(token: string): number | null {
   catch { return null; }
 }
 async function tokens(host: Host, force = false): Promise<Record<string, any>> {
+  // A sign-in made in Augur wins over the CLI's file, and while it exists the CLI's token is never renewed from here.
+  const own = await ownSession(host, 'codex');
+  if (own) return { access_token: await ownAccessToken(host, 'codex', force), account_id: (await ownSession(host, 'codex'))?.accountId ?? own.accountId };
   const auth = await read(host), current = obj(auth.tokens);
   const exp = expires(String(current.access_token ?? ''));
   if (!force && exp && exp * 1000 > (host.now?.() ?? new Date()).getTime() + 300000) return current;
@@ -31,7 +35,7 @@ export const codex: ProviderPlugin = {
   id: 'codex', color: { light: '#1baf7a', dark: '#199e70' }, name: 'Codex', needsLocalLogin: true,
   links: { usage: 'https://chatgpt.com/codex/settings/usage', status: 'https://status.openai.com/', statusApi: 'https://status.openai.com/api/v2/status.json',
     statusComponents: ['CLI', 'Codex API', 'Codex Web', 'VS Code extension', 'Responses', 'Login'] }, fields: [],
-  detect: async host => !!(await host.readHomeFile?.(path(host))),
+  detect: async host => !!(await ownSession(host, 'codex')) || !!(await host.readHomeFile?.(path(host))),
   async fetch(host) {
     const call = (auth: Record<string, any>) => json(host, { url: 'https://chatgpt.com/backend-api/wham/usage', headers: {
       Authorization: `Bearer ${auth.access_token}`, 'ChatGPT-Account-Id': String(auth.account_id ?? ''), 'User-Agent': 'codex_cli_rs/0.50.0' } });

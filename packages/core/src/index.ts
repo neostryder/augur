@@ -22,4 +22,5 @@ export * from './sync.js';
 export * from './feed-keeper.js';
 export * from './summary.js';
 export * from './registry.js';
+export * from './signin.js';
 export * from './usage-engine.js';

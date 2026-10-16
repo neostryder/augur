@@ -96,6 +96,7 @@ export function createEngineShell(opts: EngineShellOptions): NodeEngineShell {
     platform,
     http: req => httpsRequest(req),
     secret: async name => (await keys.get(name).catch(() => null)) ?? bwsSecret(name).catch(() => null),
+    saveSecret: (name, value) => keys.set(name, value),
     readHomeFile: async path => readText(resolveHomePath(home, path, await exportPath())),
     writeHomeFileAtomic: async (path, text) => atomicWrite(resolveHomePath(home, path, await exportPath()), text, isCredentialFile(path) ? 0o600 : undefined),
     async run(command, args, timeoutMs = 30000) {

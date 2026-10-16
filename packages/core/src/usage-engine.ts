@@ -6,6 +6,7 @@ import { createPairing, pairingUrl, pullPhoneState, pullRules, pushRules, pushSn
 import { feedFor, feedFromUsage, type AlertFeed } from './feed.js';
 import { RULES_ONLY_PROVIDERS, addModels, emptyPolicy, mergePolicy, policyDigest, policyFromFile, policyPathFor, buildPolicyFile } from './policy.js';
 import { genericProvider } from './generic.js';
+import { beginLogin, completeLogin, forgetAccess, isSignInProvider, ownSession, sessionSecretName, SIGN_IN_PROVIDERS, type LoginStart, type PendingLogin } from './signin.js';
 import { importPolicy } from './policy-import.js';
 import { DEFAULT_APPROVAL, emptyEditState, parseEditState, parseInbox, processInbox, resolveHeld, upgradeStoredBalance, INBOX_FILE, RESULTS_FILE, type EditState } from './policy-edits.js';
 import { listDue, syncModelList, type ModelCatalog } from './models.js';
@@ -116,10 +117,19 @@ export interface EngineCommands {
   checkUpdate(): Promise<void>;
   /** Marks the update as installing, or back to available when the install failed. */
   setInstalling(on: boolean): Promise<void>;
+  /** Starts Augur's own sign-in to Claude or Codex and returns the link to open on any device, and for Codex the code to enter there. */
+  signInBegin(provider: string): Promise<LoginStart>;
+  /** Finishes the sign-in `signInBegin` started. Claude takes the pasted code; Codex takes none and answers `done: false` until the code was approved. */
+  signInComplete(id: string, input?: string): Promise<{ done: boolean }>;
+  /** Forgets the sign-in Augur holds for a provider. The provider's own CLI login is left alone. */
+  signOut(provider: string): Promise<void>;
+  /** Which login each sign-in provider reads now: Augur's own, the CLI's, or none. */
+  signInStatus(): Promise<Record<string, 'own' | 'cli' | null>>;
 }
 
 export const ENGINE_COMMANDS = ['refresh', 'refreshSignIns', 'viewShown', 'saveConfig', 'finishSetup', 'dismiss', 'setProviderKey', 'setSecret', 'addProvider', 'deleteSecret',
-  'hasSecret', 'setClaude', 'listModels', 'answerEdit', 'retryPolicy', 'pair', 'pairUrl', 'unpair', 'checkUpdate', 'setInstalling'] as const satisfies ReadonlyArray<keyof EngineCommands>;
+  'hasSecret', 'setClaude', 'listModels', 'answerEdit', 'retryPolicy', 'pair', 'pairUrl', 'unpair', 'checkUpdate', 'setInstalling',
+  'signInBegin', 'signInComplete', 'signOut', 'signInStatus'] as const satisfies ReadonlyArray<keyof EngineCommands>;
 export type EngineCommand = (typeof ENGINE_COMMANDS)[number];
 
 /** What a view holds: the engine's state, a way to hear which parts changed, and the commands. */
@@ -147,6 +157,7 @@ export class UsageEngine implements EngineApi {
   private lastRulesSync = 0;
   private checkingEdits = false;
   private readonly device: string;
+  private logins = new Map<string, PendingLogin>();
 
   constructor(private shell: EngineShell, private options: EngineOptions) {
     this.device = options.device ?? 'desktop';
@@ -667,6 +678,54 @@ export class UsageEngine implements EngineApi {
 
   async hasSecret(name: string): Promise<boolean> {
     return this.shell.hasSecret(name).catch(() => false);
+  }
+
+  // ------------------------------------------------------------------ sign-in
+
+  async signInBegin(provider: string): Promise<LoginStart> {
+    if (!isSignInProvider(provider)) throw new Error(`Sign in is not available for ${provider}.`);
+    const now = Date.now();
+    for (const [id, p] of this.logins) if (p.expiresAt < now) this.logins.delete(id);
+    // A person who starts over leaves the earlier attempt behind; a handful at once is plenty.
+    for (const [id, p] of this.logins) if (p.provider === provider) this.logins.delete(id);
+    while (this.logins.size >= 8) this.logins.delete(this.logins.keys().next().value as string);
+    const { pending, start } = await beginLogin(this.shell.host, provider);
+    this.logins.set(pending.id, pending);
+    return start;
+  }
+
+  async signInComplete(id: string, input?: string): Promise<{ done: boolean }> {
+    const pending = this.logins.get(String(id));
+    if (!pending) throw new Error('Sign in again: this sign-in is no longer open. Start a new one.');
+    let result: { done: boolean };
+    try { result = await completeLogin(this.shell.host, pending, input); }
+    catch (error) {
+      // A code that was refused can be fixed and pasted again until the sign-in expires; anything else ends it.
+      if (!(error instanceof Error) || !/^Sign in again: (paste|that code|Claude did not accept)/.test(error.message)) this.logins.delete(pending.id);
+      throw error;
+    }
+    if (!result.done) return result;
+    this.logins.delete(pending.id);
+    const pc = this.config.providers.find((p) => p.id === pending.provider);
+    if (pc && !pc.enabled) { pc.enabled = true; await this.persist(); this.emit('config'); }
+    if (!this.state.firstRun) void this.refresh(true, [pending.provider]);
+    return result;
+  }
+
+  async signOut(provider: string): Promise<void> {
+    if (!isSignInProvider(provider)) throw new Error(`Sign in is not available for ${provider}.`);
+    if (await ownSession(this.shell.host, provider)) await this.shell.deleteSecret(sessionSecretName(provider));
+    forgetAccess(this.shell.host, provider);
+  }
+
+  async signInStatus(): Promise<Record<string, 'own' | 'cli' | null>> {
+    const out: Record<string, 'own' | 'cli' | null> = {};
+    for (const id of SIGN_IN_PROVIDERS) {
+      if (await ownSession(this.shell.host, id)) { out[id] = 'own'; continue; }
+      const plugin = this.pluginMap().get(id);
+      out[id] = plugin && await detectProvider(plugin, this.shell.host).catch(() => false) ? 'cli' : null;
+    }
+    return out;
   }
 
   // ------------------------------------------------------------------ Claude
