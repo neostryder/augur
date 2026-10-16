@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
@@ -220,6 +220,27 @@ describe('gateway', () => {
     writeFileSync(path, JSON.stringify({ port: 0, usageLog: join(dir, 'usage.jsonl'), model: 'jev-1.14.0' })); utimesSync(path, new Date(Date.now() + 9000), new Date(Date.now() + 9000));
     await post(base, ok);
     expect(calls.map(c => c.body.model)).toEqual(['jev-preview', 'jev-1.14.0']);
+  });
+
+  it('keeps requiring tokens after the settings move to loopback while the socket stays on the address it started on', async () => {
+    const path = join(dir, 'g.json');
+    writeFileSync(path, JSON.stringify({ port: 0, host: '0.0.0.0', usageLog: join(dir, 'usage.jsonl'), consumers: { a: sha('t') } }));
+    const g = createGateway({ configFile: new ConfigFile(path, {}), env: { TYPESAFE_API_KEY: 'hosted-key' }, fetcher: upstream as unknown as typeof fetch, sleep: async () => undefined });
+    await new Promise<void>(r => g.server.listen(0, '127.0.0.1', r));
+    closers.push(() => g.server.close());
+    const base = `http://127.0.0.1:${(g.server.address() as AddressInfo).port}`;
+    writeFileSync(path, JSON.stringify({ port: 0, host: '127.0.0.1', requireToken: false, usageLog: join(dir, 'usage.jsonl') })); utimesSync(path, new Date(Date.now() + 9000), new Date(Date.now() + 9000));
+    expect((await post(base, ok)).status).toBe(401);
+    expect((await post(base, ok, { authorization: 'Bearer t' })).status).toBe(401);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('does not start the key command to answer a health check', async () => {
+    const marker = join(dir, 'ran');
+    const { base } = await start({ key: { command: [process.execPath, '-e', `require('fs').writeFileSync(${JSON.stringify(marker)}, 'x'); console.log('k')`] } }, { env: {} });
+    const h = await (await fetch(`${base}/health`)).json() as { ok: boolean; hostedKey: boolean };
+    expect(h.ok).toBe(true); expect(h.hostedKey).toBe(false);
+    expect(existsSync(marker)).toBe(false);
   });
 
   it('reports health without needing a token', async () => {

@@ -36,7 +36,7 @@ The gateway compares the file's modified time on each request and rereads it whe
 
 | Field | Default | Effect |
 | --- | --- | --- |
-| `host` | `127.0.0.1` | Address the listener binds to. Any address other than `localhost`, `::1`, or `127.x.x.x` turns `requireToken` on, even if the file sets it to `false`. |
+| `host` | `127.0.0.1` | Address the listener binds to. Any address other than `localhost`, `::1`, or `127.x.x.x` turns `requireToken` on, even if the file sets it to `false`. The address is read once, when the listener starts, so editing `host` later cannot relax the token rule for a socket that opened on a wider address. |
 | `port` | `8020` | Port the listener binds to. |
 | `model` | `jev-preview` | Alias sent to TypeSafe on every hosted request. A model the caller names is swapped for this one unless it appears in `pins`. |
 | `pins` | `[]` | Model ids a caller may name and keep, for example `jev-1.14.0` when a calibrated threshold was measured on that version. |
@@ -106,7 +106,7 @@ Responses to answered requests carry `x-augur-route` (`hosted` or `laya`), `x-au
 
 ## Who may call it
 
-With `requireToken` off, the `Host` header must be `localhost`, `127.x.x.x`, or `[::1]`, and any request with an `Origin` header gets a 403. Browsers send `Origin`, so a web page cannot call the gateway even though it runs on the same machine. With `requireToken` on, a missing or unknown token gets a 401 on every path except `GET /health`. Token hashes are compared in constant time.
+With `requireToken` off, the `Host` header must be `localhost`, `127.x.x.x`, or `[::1]`, and any request with an `Origin` header gets a 403. The connection itself must also come from this computer, whatever the `Host` header says. Browsers send `Origin`, so a web page cannot call the gateway even though it runs on the same machine. With `requireToken` on, a missing or unknown token gets a 401 on every path except `GET /health`. Token hashes are compared in constant time.
 
 Callers get 15 seconds to send headers and 120 seconds to finish the request.
 
@@ -126,7 +126,7 @@ Don't retry a response that has `x-augur-refused: 1` anywhere else. A response w
 { "ok": true, "model": "jev-preview", "hostedKey": true, "laya": ["local"], "tokens": false, "loopback": true, "defaultTier": "internal" }
 ```
 
-`hostedKey` says whether a key was found, `laya` lists server names, `tokens` is `requireToken`, and `loopback` says whether the listener is on a loopback address.
+`hostedKey` says whether a key was found without running the key command (a key that only the command supplies shows `false` until a request has fetched it), `laya` lists server names, `tokens` is `requireToken`, and `loopback` says whether the listener is on a loopback address.
 
 `GET /usage?days=7` summarizes the usage log. `days` defaults to 7 and is clamped to 1 through 90. It needs the same token, or the same local-only conditions, as `/v1/systemone`. The response contains `requests`, a `byConsumer` map with each consumer's `hosted`, `laya`, `refused`, and `failed` counts, a `byModel` count of answering models, `inputTokens` summed from the `input_tokens` or `prompt_tokens` the answers reported, and `p50Ms`, the median time of successful requests (`null` when there were none).
 

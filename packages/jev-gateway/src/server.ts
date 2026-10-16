@@ -16,6 +16,8 @@ export interface GatewayOptions {
   configFile?: ConfigFile;
   env?: NodeJS.ProcessEnv;
   fetcher?: typeof fetch;
+  /** The address the listener is bound to. Whether tokens are required follows this, not the settings file, which can change after the socket is open. The default is the host in the settings at start. */
+  boundHost?: string;
   /** The Laya pool's own fetcher, for tests. */
   poolFetcher?: Fetch;
   sleep?: (ms: number) => Promise<void>;
@@ -30,6 +32,9 @@ export const REFUSED_HEADER = 'x-augur-refused';
 
 const RETRY_STATUS = new Set([429, 500, 502, 503, 504, 529]);
 const LOOPBACK_HOST = /^(localhost|127\.\d+\.\d+\.\d+|\[::1\])(:\d+)?$/i;
+
+/** Whether an address of a connection is this computer, in the plain or the IPv4-mapped form. */
+const loopbackAddress = (a: string | undefined): boolean => !!a && isLoopback(a.replace(/^::ffff:/i, ''));
 
 class HttpError extends Error { constructor(readonly status: number, message: string, readonly refused = false) { super(message); } }
 
@@ -71,7 +76,8 @@ export function createGateway(opts: GatewayOptions = {}): { server: HttpServer; 
   const env = opts.env ?? process.env, configFile = opts.configFile ?? new ConfigFile(undefined, env), doFetch = opts.fetcher ?? fetch;
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>(r => setTimeout(r, ms))), now = opts.now ?? Date.now;
   const usage = new UsageLog(() => configFile.get().config.usageLog);
-  const key = opts.key ?? new KeyCache(() => readKey(configFile.get().config.key, env));
+  const key = opts.key ?? new KeyCache(() => readKey(configFile.get().config.key, env), undefined, undefined, () => readKey(configFile.get().config.key, env, false));
+  const boundHost = opts.boundHost ?? configFile.get().config.host;
   const pools = new Map<string, ServerPool>();
   const poolFor = (c: GatewayConfig): ServerPool => {
     const id = JSON.stringify(c.laya);
@@ -91,7 +97,8 @@ export function createGateway(opts: GatewayOptions = {}): { server: HttpServer; 
     const bearer = /^Bearer\s+(\S+)$/i.exec(first(req.headers.authorization) ?? '')?.[1] ?? null;
     const named = consumerOf(c, bearer);
     if (named) return named;
-    if (c.requireToken) throw new HttpError(401, 'A valid consumer token is required.', true);
+    if (c.requireToken || !isLoopback(boundHost)) throw new HttpError(401, 'A valid consumer token is required.', true);
+    if (!loopbackAddress(req.socket.remoteAddress) || !loopbackAddress(req.socket.localAddress)) throw new HttpError(403, 'Without a consumer token the gateway answers only connections from this computer.', true);
     // Without tokens the listener is for this computer only. A browser page could still reach it, so a request with an Origin header, or one addressed to another host name, is refused.
     if (req.headers.origin) throw new HttpError(403, 'Requests from a web page are not accepted.', true);
     if (!LOOPBACK_HOST.test(first(req.headers.host) ?? '')) throw new HttpError(403, 'Without a consumer token the gateway answers only requests addressed to this computer.', true);
@@ -176,7 +183,7 @@ export function createGateway(opts: GatewayOptions = {}): { server: HttpServer; 
       try {
         if (req.method === 'GET' && url.pathname === '/health') {
           const loop = isLoopback(c.host);
-          return send(res, 200, { ok: true, model: c.model, hostedKey: !!key.get(), laya: c.laya.map(s => s.name), tokens: c.requireToken, loopback: loop, defaultTier: c.defaultTier });
+          return send(res, 200, { ok: true, model: c.model, hostedKey: key.has(), laya: c.laya.map(s => s.name), tokens: c.requireToken, loopback: loop, defaultTier: c.defaultTier });
         }
         const consumer = authenticate(c, req);
         if (req.method === 'POST' && url.pathname === '/v1/systemone') return await systemone(req, res, c, consumer, started);

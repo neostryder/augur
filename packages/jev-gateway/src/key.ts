@@ -5,11 +5,11 @@ import type { KeySource } from './config.js';
 
 const DEFAULT_ENV = ['TYPESAFE_API_KEY', 'JEV_API_KEY'];
 
-/** The key, or null when no source yields one. Each source is tried in the order env, file, command. */
-export function readKey(source: KeySource, env: NodeJS.ProcessEnv = process.env): string | null {
+/** The key, or null when no source yields one. Each source is tried in the order env, file, command; `tryCommand` false skips the command, for a caller that must not start a program. */
+export function readKey(source: KeySource, env: NodeJS.ProcessEnv = process.env, tryCommand = true): string | null {
   for (const name of source.env ?? DEFAULT_ENV) { const v = env[name]?.trim(); if (v) return v; }
   if (source.file) { try { const v = readFileSync(source.file, 'utf8').trim(); if (v) return v; } catch { /* try the next source */ } }
-  if (source.command?.length) {
+  if (tryCommand && source.command?.length) {
     const [program, ...args] = source.command as [string, ...string[]];
     try { const v = execFileSync(program, args, { encoding: 'utf8', windowsHide: true, timeout: 15000, stdio: ['ignore', 'pipe', 'ignore'] }).trim(); if (v) return v; } catch { /* no key */ }
   }
@@ -19,7 +19,12 @@ export function readKey(source: KeySource, env: NodeJS.ProcessEnv = process.env)
 /** Keeps the key for a few minutes so a request does not run a command. `forget` drops it after the upstream refuses it. */
 export class KeyCache {
   private value: { key: string | null; at: number } | null = null;
-  constructor(private read: () => string | null, private ttlMs = 300_000, private now: () => number = Date.now) {}
+  constructor(private read: () => string | null, private ttlMs = 300_000, private now: () => number = Date.now, private peek?: () => string | null) {}
+  /** Whether a key is available without starting a program: a fresh cached key, or one the cheap sources hold. */
+  has(): boolean {
+    if (this.value && this.value.key && this.now() - this.value.at < this.ttlMs) return true;
+    return !!this.peek?.();
+  }
   get(): string | null {
     if (this.value && this.value.key && this.now() - this.value.at < this.ttlMs) return this.value.key;
     // A missing key is looked for again on the next request, so adding one needs no restart.

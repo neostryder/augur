@@ -26,7 +26,7 @@ async function serve(): Promise<void> {
   const file = new ConfigFile();
   const { config, problems } = file.get();
   for (const p of problems) log(`settings: ${p}`);
-  const { server } = createGateway({ configFile: file });
+  const { server } = createGateway({ configFile: file, boundHost: config.host });
   server.on('error', e => { log(`listener error: ${(e as Error).message}`); console.error((e as Error).message); process.exit(1); });
   server.listen(config.port, config.host, () => {
     const a = server.address();
