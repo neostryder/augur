@@ -5,6 +5,8 @@ import type { GenericProviderDef } from '@augur/core';
 import { SECRET_OPTION, looksLikeSecretValue } from './secrets.js';
 
 const NAME = /^[a-z][a-z0-9_-]*$/;
+/** The only options an agent may set. Anything that names a program, an argument list, a folder, an environment variable or a header is the owner's to set in Routes, because it decides what the service runs or sends. */
+export const AGENT_OPTIONS: readonly string[] = ['baseUrl', 'model', 'mode', 'maxTokens', 'timeoutS', 'effort', 'requestClass', 'maxImageMb', 'maxAudioMb', 'maxInput', 'keySource'];
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 export type ProviderKind = 'builtin' | 'custom' | 'rules-only' | 'none';
@@ -56,6 +58,8 @@ export function routeAddShapeProblems(input: Record<string, unknown>): string[] 
   else if (isObj(input.options)) {
     for (const [key, value] of Object.entries(input.options)) {
       if (SECRET_OPTION.test(key)) problems.push(`The option ${key} looks like a key. A route never carries one; set it with augur key set ${name}.`);
+      else if (!AGENT_OPTIONS.includes(key)) problems.push(`The option ${key} is set by the owner in Routes. A route add takes ${AGENT_OPTIONS.join(', ')}.`);
+      else if (key === 'keySource' && value !== 'store') problems.push('A route add takes keySource store only, so the key lives in the key store and not in an environment variable.');
       else if (typeof value === 'string' && looksLikeSecretValue(value)) problems.push(`An option value looks like a key. A route never carries one; set it with augur key set ${name}.`);
       else if (typeof value === 'number' && !Number.isFinite(value)) problems.push(`options.${key} is not a finite number.`);
       else if (!['string', 'number', 'boolean'].includes(typeof value)) problems.push('options is an object of strings, numbers and booleans.');

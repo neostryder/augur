@@ -119,4 +119,21 @@ describe('route_add', () => {
     expect(open.engine.state.config.policy?.providers.acme?.models['acme/fast']?.status).toBe('unreviewed');
     expect(existsSync(open.routesPath)).toBe(true);
   });
+  it('refuses options that name a program, a folder or an environment variable, and holds a route for a model the rules already hold', async () => {
+    const { engine, routesPath, add } = await boot();
+    for (const options of [{ command: '/bin/sh' }, { argsJson: '["-c","x"]' }, { envAllow: 'HOME' }, { apiKeyEnv: 'PATH' }, { workRoot: '/' }, { headersJson: '{}' }, { keySource: 'env' }]) {
+      const r = await add({ ...good, options });
+      expect(r.ok, JSON.stringify(options)).toBe(false);
+      expect(r.held).toBeUndefined();
+    }
+    expect(existsSync(routesPath)).toBe(false);
+    const first = await add(good);
+    expect(first.ok).toBe(true);
+    const again = await add({ ...good, name: 'second' });
+    expect(again.ok).toBe(false);
+    expect(again.held).toBe(true);
+    expect(again.text).toContain('already in the rules');
+    expect(JSON.parse(readFileSync(routesPath, 'utf8')).routes.second).toBeUndefined();
+    expect(Object.keys(engine.state.config.policy?.providers.acme?.models ?? {})).toEqual(['acme/fast']);
+  });
 });

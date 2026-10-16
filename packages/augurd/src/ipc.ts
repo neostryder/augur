@@ -164,6 +164,10 @@ export class IpcServer {
     const approval = engine.api.state.config.agentApproval ?? DEFAULT_APPROVAL;
     if (approval === 'all') return { ok: false, held: true, text: 'Nothing was written. The approval setting holds every agent edit, so this route was not added. The owner can add it in the app.' };
     const plan = planned.plan;
+    // A route that points at a model the rules already hold would borrow that model's review, so the owner adds it.
+    const label = plan.model?.label ?? plan.entry.model;
+    const known = Object.values(engine.api.state.config.policy?.providers ?? {}).some(p => Object.hasOwn(p.models, label) || (plan.model !== null && Object.values(p.models).some(m => m.id === plan.model!.id)));
+    if (known) return { ok: false, held: true, text: `Nothing was written. The model ${label} is already in the rules, so a route for it needs the owner. The owner can add it in the app.` };
     let added: string[] = [];
     if (plan.model || plan.custom) {
       const addition: ProviderAddition = { provider: plan.provider, name: plan.provider, ...(plan.model ? { models: [plan.model] } : {}), ...(plan.custom ? { custom: plan.custom, usageOff: true as const } : {}) };

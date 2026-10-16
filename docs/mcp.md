@@ -79,7 +79,9 @@ The owner's approval setting, on the window app's Service page and under Service
 
 A key is never accepted. An argument or option named like a key (`key`, `apiKey`, `api_key`, `token`, `secret` or `password`) is refused, and so is a value that looks like one, such as a string starting with `sk-`. The owner sets the key afterwards with `augur key set <route>`.
 
-With a `model`, the model goes into the rules unreviewed, so nothing runs it until the owner confirms it in Model rules. A label with no slash is filed as `<provider>/<label>`, and a model already in the rules is left as it is. A `model` takes only a label, an id and a name, and rule fields in it are refused, since the owner sets those in Model rules. Without a `model`, the route points at `<provider>/<name>`, which has to be added to the rules and confirmed before the route can run.
+A route add takes only these options: `baseUrl`, `model`, `mode`, `maxTokens`, `timeoutS`, `effort`, `requestClass`, `maxImageMb`, `maxAudioMb`, `maxInput`, and `keySource` set to `store`. An option that names a program, an argument list, a folder, an environment variable or a header (`command`, `argsJson`, `workRoot`, `envAllow`, `apiKeyEnv`, `headersJson` and the like) is refused, since the owner sets those in Routes.
+
+With a `model`, the model goes into the rules unreviewed, so nothing runs it until the owner confirms it in Model rules. A label with no slash is filed as `<provider>/<label>`, and a route for a model already in the rules is held for the owner, who adds it in the app. A `model` takes only a label, an id and a name, and rule fields in it are refused, since the owner sets those in Model rules. Without a `model`, the route points at `<provider>/<name>`, which has to be added to the rules and confirmed before the route can run.
 
 `balance_url` and `balance_path` add a balance reading for a provider Augur does not know yet, read with the route's key sent as a bearer token. The two go together, the URL starts with `https://`, or with `http://` for a service on this computer, and both are refused for a provider that already exists. The reading stays off until the owner sets the key.
 
