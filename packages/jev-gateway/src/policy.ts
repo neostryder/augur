@@ -1,5 +1,6 @@
 // What the gateway does with one request: which route answers it, which model name goes upstream, and which Danger Zone headers it needs. Pure.
-import { DATA_TIERS } from '@augur/core';
+import { DATA_TIERS, termRegex } from '@augur/core';
+import { privateTerms } from '@augur/decision';
 import type { DataTier } from '@augur/core';
 import { HOSTED_TIERS } from './config.js';
 import type { GatewayConfig } from './config.js';
@@ -7,7 +8,9 @@ import type { GatewayConfig } from './config.js';
 export type Route = 'hosted' | 'laya';
 
 /** The content check for a request that names no tier. It is a backstop for student data and matches only unmistakable terms, because everyday words such as course, rubric, or grade also appear in ordinary text and sent it to Laya wrongly. A caller handling student data declares the tier. */
-export const CONTENT_RE = /\b(gcu|students?|ferpa|roster|mis-?600|bit-?200)\b/i;
+const CONTENT_BASE = 'students?|ferpa|roster';
+/** The matcher for one config: the everyday words above, the config's `contentTerms`, and the terms in `private-terms.json`. */
+export const contentRegex = (extra: readonly string[] = []): RegExp => termRegex(CONTENT_BASE, [...extra, ...privateTerms()]);
 
 export interface Plan {
   route: Route;
@@ -52,7 +55,7 @@ export function plan(config: GatewayConfig, body: unknown, headers: Record<strin
 
   let tier: DataTier, tierSource: Plan['tierSource'];
   if (declared) { tier = declared; tierSource = 'declared'; }
-  else if (CONTENT_RE.test(JSON.stringify(body.state ?? ''))) { tier = 'regulated'; tierSource = 'content'; }
+  else if (contentRegex(config.contentTerms).test(JSON.stringify(body.state ?? ''))) { tier = 'regulated'; tierSource = 'content'; }
   else { tier = config.defaultTier; tierSource = 'default'; }
 
   const images = usesImages(body);

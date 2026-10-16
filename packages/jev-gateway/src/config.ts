@@ -29,6 +29,8 @@ export interface GatewayConfig {
   defaultTier: DataTier;
   /** Consumer name to the SHA-256 (hex) of its token. */
   consumers: Record<string, string>;
+  /** Extra words that mark a request as student data when it names no tier, such as the name of a school or a course code. `private-terms.json` in the Augur folder adds more. */
+  contentTerms: string[];
   /** With this off, a loopback caller needs no token. */
   requireToken: boolean;
   /** Laya servers tried in order for local-only requests and for a request that names a laya model. */
@@ -52,7 +54,7 @@ export const configPath = (env: NodeJS.ProcessEnv = process.env): string => env.
 
 export function defaults(env: NodeJS.ProcessEnv = process.env): GatewayConfig {
   return { host: '127.0.0.1', port: 8020, model: 'jev-preview', pins: [], endpoint: 'https://api.typesafe.ai/v1/systemone', defaultTier: 'internal',
-    consumers: {}, requireToken: false, laya: [{ name: 'local', url: 'http://127.0.0.1:8010' }], layaModel: 'laya', key: {},
+    consumers: {}, contentTerms: [], requireToken: false, laya: [{ name: 'local', url: 'http://127.0.0.1:8010' }], layaModel: 'laya', key: {},
     usageLog: join(augurHome(env), 'jev-gateway-usage.jsonl'), retries: 2, timeoutMs: 60000, maxBodyMb: 32 };
 }
 
@@ -76,6 +78,7 @@ export function parseConfig(raw: unknown, env: NodeJS.ProcessEnv = process.env):
     if (o && typeof o === 'object' && !Array.isArray(o) && Object.values(o).every(v => typeof v === 'string' && /^[0-9a-f]{64}$/.test(v))) c.consumers = o as Record<string, string>;
     else problems.push('consumers: expected names mapped to the SHA-256 of a token');
   }
+  take('contentTerms', strs(r.contentTerms), 'expected a list of words');
   take('requireToken', typeof r.requireToken === 'boolean' ? r.requireToken : undefined, 'expected true or false');
   if (r.laya !== undefined) {
     const l = r.laya;

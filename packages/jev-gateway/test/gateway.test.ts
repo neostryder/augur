@@ -43,13 +43,13 @@ describe('plan', () => {
     expect(plan(cfg(), { state: 'x', questions: NOUL }, { 'x-augur-data': 'sensitive', 'x-augur-long-context': 'true' }).refuse?.status).toBe(422);
   });
   it('treats student wording as regulated when no tier is declared, and trusts a declared tier', () => {
-    const body = { state: 'Grade for student essay in MIS-600', questions: NOUL };
+    const body = { state: 'Grade for student essay in ACME-101', questions: NOUL };
     const a = plan(cfg(), body, {});
     expect(a.route).toBe('laya'); expect(a.tier).toBe('regulated'); expect(a.tierSource).toBe('content');
     expect(plan(cfg(), body, { 'x-augur-data': 'internal' }).route).toBe('hosted');
   });
   it('leaves everyday words alone when no tier is declared', () => {
-    for (const state of ['Draft a blog post about the course of the project', 'Rubric for the grade report', 'Section 3 of the halo guide']) {
+    for (const state of ['Draft a blog post about the course of the project', 'Rubric for the grade report', 'Section 3 of the orion guide']) {
       const p = plan(cfg(), { state, questions: NOUL }, {});
       expect(p.route).toBe('hosted'); expect(p.tierSource).toBe('default');
     }

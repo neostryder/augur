@@ -1,6 +1,7 @@
 // The typed questions Augur puts to a System One model, and how their answers are read. These are classifier input, worded to match
 // what the routing script asks, so a model answers the same question whichever backend is behind it.
-import { ACTIVITIES, DATA_TIERS } from '@augur/core';
+import { ACTIVITIES, DATA_TIERS, termRegex } from '@augur/core';
+import { privateTerms } from './private-terms.js';
 import type { ActivityId, DataTier } from '@augur/core';
 
 export type Question =
@@ -46,8 +47,16 @@ export const FIT_LEVELS = [
 
 /** A data class this likely or more counts, and the strictest one wins. */
 export const DATA_CAUTION = 0.25;
-/** A task that could involve student records is judged on this machine only, and never below `sensitive`. */
-export const STUDENT_RE = /\b(gcu|student|students|grad(e|es|ing)|halo|course|section|rubric|roster|ferpa|mis-?600|bit-?200)\b/i;
+/** A task that could involve student records is judged on this machine only, and never below `sensitive`. Everyday words match here; the names of a person's own school and courses come from `private-terms.json` in the Augur folder. */
+const STUDENT_BASE = 'students?|grad(e|es|ing)|course|section|rubric|roster|ferpa';
+let studentRe: { key: string; re: RegExp } | null = null;
+export const STUDENT_RE: { test(text: string): boolean } = {
+  test(text: string): boolean {
+    const terms = privateTerms(), key = terms.join('|');
+    if (!studentRe || studentRe.key !== key) studentRe = { key, re: termRegex(STUDENT_BASE, terms) };
+    return studentRe.re.test(text);
+  },
+};
 
 export const activityQuestion = (): Record<string, Question> => ({
   activity: { type: 'choice', criteria: { ...ACTIVITY_TEXT, none_of_these: 'None of these activities.' },

@@ -256,7 +256,7 @@ describe('picking by task description', () => {
   });
 
   it('scores student-related text only on a backend that runs on this network', async () => {
-    const task = 'grade the MIS-600 rubric for this section roster';
+    const task = 'grade the ACME-101 rubric for this section roster';
     const e = setup(), hosted: string[] = [], local: string[] = [];
     (e.sup as unknown as { d: { decision: unknown } }).d.decision = { primary: { ...backend(hosted), id: 'jev', local: false }, local: backend(local) };
     const r = await e.sup.pick({ task, activity: 'write_code', dataTier: 'internal' });
