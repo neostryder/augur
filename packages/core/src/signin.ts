@@ -112,7 +112,7 @@ export interface LoginStart { id: string; provider: SignInProvider; mode: 'paste
 export async function beginLogin(host: Host, provider: SignInProvider): Promise<{ pending: PendingLogin; start: LoginStart }> {
   const id = random(12), expiresAt = clock(host) + LOGIN_TTL_MS, expiresInS = LOGIN_TTL_MS / 1000;
   if (provider === 'claude') {
-    const verifier = random(32), state = random(16);
+    const verifier = random(32), state = random(32);
     const challenge = b64url(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))));
     const query = form({ code: 'true', client_id: CLAUDE.client, response_type: 'code', redirect_uri: CLAUDE.redirect, scope: CLAUDE.scope,
       code_challenge: challenge, code_challenge_method: 'S256', state });
