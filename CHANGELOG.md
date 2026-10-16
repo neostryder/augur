@@ -23,6 +23,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Changed
 
+- [Visible] [Security] **School and course names for the student-text check now come from `private-terms.json` in the Augur folder.** The shipped list keeps only everyday words such as student, roster, and ferpa. Add your own terms as `{ "terms": ["..."] }`, or set `contentTerms` in the gateway settings. A hyphen in a term matches with or without it.
 - [Internal] [Platform] **The release workflow pins the Tauri build action to a specific commit.** That step receives the updater signing key, so it runs a fixed, known version.
 
 ## [1.10.1] - 2026-10-13
