@@ -20,8 +20,8 @@ GET /adapters returns the registry and what is loaded. GET /load reports whether
 Browsers: /v1/systemone answers CORS preflights for any origin (POST and OPTIONS, Content-Type and
 Authorization headers, no credentials) and sends Access-Control-Allow-Private-Network, so a web
 page such as the Squire mod can call it. A request that carries an Origin header (so came from a
-browser) may not use a GCU pilot or adapter (BROWSER_BLOCKED): those adapters were trained on
-FERPA-derived evidence. Every other path stays same-origin.
+browser) may not use a restricted pilot or adapter (see browser_guard.py): those adapters were trained on
+private evidence. Every other path stays same-origin.
 
 Repeat cache: the encoder is bidirectional and puts each question ahead of the state, so no part
 of one sequence's attention can be reused for another and prefix KV caching does not apply. An
@@ -43,6 +43,7 @@ sys.path.insert(0, HERE)
 import laya.serve as S  # noqa: E402
 
 import lora  # noqa: E402
+import browser_guard  # noqa: E402
 from ctxutil import LONG_CONTEXT  # noqa: E402
 
 from env import home  # noqa: E402
@@ -55,7 +56,6 @@ HARD_MAX_LEN = int(os.environ.get("LAYA_HARD_MAX_LEN", "4096"))
 STATE_CHARS_PER_TOKEN = 6
 CACHE_SIZE = 512
 CORS_PATHS = {"/v1/systemone"}
-BROWSER_BLOCKED = ("laya:gcu_", "laya:@gcu_")
 
 # Stock laya-serve caps states at 50K characters, which already covers a 4K-token state; raise it
 # only if the cap is set higher.
@@ -97,10 +97,13 @@ class Adapters:
         self._refresh()
         if spec.startswith("@"):
             name = spec[1:]
-            man = json.load(open(os.path.join(ADAPTERS, name, "manifest.json"), encoding="utf-8"))
+            man = json.load(open(os.path.join(browser_guard.adapter_dir(ADAPTERS, name), "manifest.json"), encoding="utf-8"))
             return name, man.get("max_len")
         cfg = self.registry.get("pilots", {}).get(spec) or {}
-        return cfg.get("adapter"), cfg.get("max_len")
+        name = cfg.get("adapter")
+        if name:
+            browser_guard.adapter_dir(ADAPTERS, name)
+        return name, cfg.get("max_len")
 
     def hard_max_len(self):
         self._refresh()
@@ -108,7 +111,7 @@ class Adapters:
 
     def activate(self, name):
         if name and name not in self.loaded:
-            lora.load_adapter(self.agent.model, name, os.path.join(ADAPTERS, name))
+            lora.load_adapter(self.agent.model, name, browser_guard.adapter_dir(ADAPTERS, name))
             self.loaded.add(name)
         lora.set_active(self.agent.model, name)
 
@@ -155,7 +158,7 @@ class ResultCache:
 
 
 class BrowserAccess:
-    """CORS for CORS_PATHS only, and no GCU pilots for requests that come from a browser."""
+    """CORS for CORS_PATHS only, and no restricted pilots for requests that come from a browser."""
 
     def __init__(self, app):
         from starlette.middleware.cors import CORSMiddleware
@@ -171,21 +174,28 @@ class BrowserAccess:
         headers = dict(scope.get("headers") or [])
         if b"origin" not in headers or scope["method"] != "POST":
             return await self.cors(scope, receive, send)
-        chunks, more = [], True
+        from starlette.responses import JSONResponse
+        refuse = lambda status, text: JSONResponse({"error": text}, status_code=status, headers={"Access-Control-Allow-Origin": "*"})  # noqa: E731
+        declared = headers.get(b"content-length")
+        if browser_guard.body_too_large(declared.decode("latin-1") if declared is not None else None):
+            return await refuse(413, "The request is too large")(scope, receive, send)
+        chunks, more, total = [], True, 0
         while more:
             msg = await receive()
-            chunks.append(msg.get("body", b""))
+            chunk = msg.get("body", b"")
+            total += len(chunk)
+            if browser_guard.body_too_large(None, total):
+                return await refuse(413, "The request is too large")(scope, receive, send)
+            chunks.append(chunk)
             more = msg.get("more_body", False)
         body = b"".join(chunks)
         try:
             model = json.loads(body or b"{}").get("model")
         except (ValueError, AttributeError):
             model = None
-        if isinstance(model, str) and model.startswith(BROWSER_BLOCKED):
-            from starlette.responses import JSONResponse
-            resp = JSONResponse({"error": "GCU pilots are not available to browser requests"}, status_code=403,
-                                headers={"Access-Control-Allow-Origin": "*"})
-            return await resp(scope, receive, send)
+        allowed, reason = browser_guard.browser_may_use(model, REGISTRY)
+        if not allowed:
+            return await refuse(403, reason)(scope, receive, send)
         sent = False
 
         async def replay():
@@ -300,7 +310,7 @@ def main():
             for cfg in adapters.registry.get("pilots", {}).values():
                 name = cfg.get("adapter")
                 if name and name not in train_ids:
-                    man = json.load(open(os.path.join(ADAPTERS, name, "manifest.json"), encoding="utf-8"))
+                    man = json.load(open(os.path.join(browser_guard.adapter_dir(ADAPTERS, name), "manifest.json"), encoding="utf-8"))
                     train_ids[name] = man.get("train_ids", [])
             return {"registry": adapters.registry, "loaded": sorted(adapters.loaded), "train_ids": train_ids}
 

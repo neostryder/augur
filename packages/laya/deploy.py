@@ -14,7 +14,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(HERE, "src")
-FILES = ["env.py", "lora.py", "ctxutil.py", "loadgate.py", "pool.py", "sync.py", "selftrain.py", "serve_lora.py", "train.py"]
+FILES = ["browser_guard.py", "env.py", "lora.py", "ctxutil.py", "loadgate.py", "pool.py", "sync.py", "selftrain.py", "serve_lora.py", "train.py"]
 sys.path.insert(0, os.path.join(HERE, "src"))
 from pool import load_config  # noqa: E402
 
