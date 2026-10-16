@@ -121,7 +121,7 @@ describe('route_add', () => {
   });
   it('refuses options that name a program, a folder or an environment variable, and holds a route for a model the rules already hold', async () => {
     const { engine, routesPath, add } = await boot();
-    for (const options of [{ command: '/bin/sh' }, { argsJson: '["-c","x"]' }, { envAllow: 'HOME' }, { apiKeyEnv: 'PATH' }, { workRoot: '/' }, { headersJson: '{}' }, { keySource: 'env' }]) {
+    for (const options of <Array<Record<string, string>>>[{ command: '/bin/sh' }, { argsJson: '["-c","x"]' }, { envAllow: 'HOME' }, { apiKeyEnv: 'PATH' }, { workRoot: '/' }, { headersJson: '{}' }, { keySource: 'env' }]) {
       const r = await add({ ...good, options });
       expect(r.ok, JSON.stringify(options)).toBe(false);
       expect(r.held).toBeUndefined();
