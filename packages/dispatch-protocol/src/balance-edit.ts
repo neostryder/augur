@@ -3,7 +3,7 @@
 import { ACTIVITIES } from '@augur/core';
 import { BALANCE_FIELDS } from './config-reference.js';
 
-const CHOICES: Record<string, readonly string[]> = { 'classic or neutral': ['classic', 'neutral'], 'deep or everyday': ['deep', 'everyday'], 'strong or light': ['strong', 'light'], 'true or false': ['true', 'false'] };
+const CHOICES: Record<string, readonly string[]> = { 'classic or neutral': ['classic', 'neutral'], 'routine, everyday, deep or core': ['routine', 'everyday', 'deep', 'core'], 'strong or light': ['strong', 'light'], 'true or false': ['true', 'false'] };
 const isText = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= 200;
 const listOf = (v: unknown, each: (x: string) => boolean): boolean => Array.isArray(v) && v.length <= 50 && v.every(x => isText(x) && each(x));
 
@@ -15,6 +15,7 @@ function valueProblem(type: string, value: unknown): string | null {
   const choices = CHOICES[type];
   if (choices) return choices.includes(String(value)) && (type !== 'true or false' || typeof value === 'boolean') ? null : `The value is one of: ${choices.join(', ')}.`;
   switch (type) {
+    case 'count': return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? null : 'The value is a whole number of 0 or more.';
     case 'number above 0': return typeof value === 'number' && Number.isFinite(value) && value > 0 ? null : 'The value is a number above 0.';
     case 'number of 1 or more': return typeof value === 'number' && Number.isFinite(value) && value >= 1 ? null : 'The value is a number of 1 or more.';
     case 'number from 0 to 1': return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1 ? null : 'The value is a number from 0 to 1.';

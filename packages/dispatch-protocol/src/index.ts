@@ -6,6 +6,7 @@ export * from './rules.js';
 export * from './pick.js';
 export * from './fleet-pick.js';
 export * from './balance.js';
+export * from './pick-training.js';
 export * from './seats.js';
 export * from './balance-report.js';
 export * from './balance-edit.js';

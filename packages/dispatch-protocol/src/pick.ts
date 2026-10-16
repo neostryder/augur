@@ -1,7 +1,7 @@
 // Ranks the models a task may use, and checks a job against the picks made for its caller. Pure.
 import { DATA_TIERS, pauseActive } from '@augur/core';
 import type { ActivityId, DataTier, PolicyFile, WeightLevel } from '@augur/core';
-import { boostFor, govern, listed, paceState, pacedProviders, reasonLine, resolveBalance } from './balance.js';
+import { boostFor, govern, listed, lookup, paceState, pacedProviders, reasonLine, resolveBalance } from './balance.js';
 import type { Depth, ProseSwitch } from './balance.js';
 import { seatsFor } from './seats.js';
 import type { Seats } from './seats.js';
@@ -16,7 +16,7 @@ export interface PickRequest {
   named?: string;
   /** How well each model fits the task, 0 to 1, judged by the caller. A model with no figure counts as 0.5. */
   fits?: Record<string, number>;
-  /** Whether the task is deep thinking or serious coding, or everyday work. Left out, the activity decides. */
+  /** How much the task weighs: routine, everyday, deep, or core. Left out, the activity decides. */
   depth?: Depth;
   /** Whether the prose pace switch was on at the last pick. The service keeps this, since the switch turns off at a lower lead than it turns on at. */
   proseSwitched?: boolean;
@@ -28,6 +28,8 @@ export interface PickRequest {
   seed?: number | string;
   /** One sentence or one bullet, with no prose batch to attach it to. */
   snippet?: boolean;
+  /** Picks already made per route label: over the last 24 hours and within the caller's session. Picks where the route was named are left out. The service counts them. */
+  spent?: { day: Record<string, number>; session: Record<string, number> };
 }
 
 export interface Ranked {
@@ -118,6 +120,15 @@ export function rank(policy: PolicyFile, usage: UsageSnapshot | null, req: PickR
   const governed = govern(policy, req.activity, req.depth, rows.map(r => r.model), req.named, usage, now, req.proseSwitched ?? false, req.snippet === true);
   for (const b of governed.blocks) { const at = rows.findIndex(r => r.model === b.model); if (at >= 0) { rows.splice(at, 1); blocked.push(b); } }
   notes.push(...governed.notes);
+  // A route over its cap leaves the running, unless the caller named it.
+  const caps = resolveBalance((policy as { balance?: unknown }).balance).caps;
+  for (const r of [...rows]) {
+    const cap = lookup(caps, { label: r.model, provider: r.provider, id: policy.providers[r.provider]?.models[r.model]?.id ?? '' });
+    if (!cap || r.model === req.named) continue;
+    const day = req.spent?.day[r.model] ?? 0, session = req.spent?.session[r.model] ?? 0;
+    const over = cap.perDay > 0 && day >= cap.perDay ? `${day} picks in the last 24 hours (limit ${cap.perDay})` : cap.perSession > 0 && session >= cap.perSession ? `${session} picks in this session (limit ${cap.perSession})` : '';
+    if (over) { rows.splice(rows.indexOf(r), 1); blocked.push({ model: r.model, why: `capped: ${over}; name the route to use it anyway` }); }
+  }
   // A local route is gated and nudged by the live fleet: a machine that is down blocks it, and a model that is not loaded or a machine short of memory lowers its score.
   const local = new Map<string, { factor: number; why: string }>();
   for (const r of [...rows]) {

@@ -32,7 +32,7 @@ export function buildServer(tools: Tools, version: string): McpServer {
       activity: z.enum(ACTIVITIES).optional().describe('What the work is.'),
       data_tier: z.enum(DATA_TIERS).optional().describe('The most sensitive data the task touches.'),
       task: z.string().optional().describe('A description of the task, when no activity and data tier are given. Its text goes to the classifier the owner chose.'),
-      depth: z.enum(['deep', 'everyday']).optional().describe('Deep for hard reasoning and serious coding, everyday for routine review, research and summaries. Left out, the activity decides.'),
+      depth: z.enum(['routine', 'everyday', 'deep', 'core']).optional().describe('How much the task weighs: routine (glue, plumbing, small edits), everyday (review, research, summaries), deep (hard reasoning, substantial coding), or core (an engine, core logic, security-critical code). Heavier work leans toward strong models. Left out, the classifier judges the task description, or the default for the activity applies.'),
       best_only: z.boolean().optional().describe('Take the top score. Left out, the pick is drawn from the odds.'),
       snippet: z.boolean().optional().describe('One sentence or one bullet, with no prose batch to attach it to.'),
     },

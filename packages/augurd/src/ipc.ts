@@ -78,6 +78,7 @@ export class IpcServer {
       case 'pick': return this.sup.pick(params as never);
       case 'human_prompt': return this.sup.humanPrompt(String(p.session ?? ''), String(p.text ?? ''));
       case 'pressure': return this.sup.pressure();
+      case 'pick_answer': return this.sup.pickAnswer(String(p.id ?? ''), String(p.model ?? ''), typeof p.why === 'string' ? p.why : undefined);
       case 'label': return this.sup.label(String(p.id ?? ''), String(p.result ?? ''), typeof p.note === 'string' ? p.note : undefined);
       case 'grade': return this.sup.grade(params as never);
       case 'grade_label': return this.sup.gradeLabel(String(p.id ?? ''), String(p.label ?? ''), typeof p.note === 'string' ? p.note : undefined);

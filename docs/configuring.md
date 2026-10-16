@@ -256,6 +256,29 @@ To set the balance by hand, put the object in `config.json` under `policy`, with
 
 `augur balance` shows what the settings are doing. `augur_pick_preview` and `augur pick-preview` rank a task against them and show each route's odds without drawing or recording a pick, and `augur_pick_preview` can also apply edits that have not been made yet.
 
+### Task weight, caps, and training mode
+
+Every pick has a depth that says how much the task weighs. Routine work is glue, plumbing, renames, and boilerplate, and everyday work is review, research, summaries, and modest changes. Deep work is hard reasoning, a substantial feature, or a tricky bug. Core work is an engine, core logic, security-critical code, or anything costly to get wrong. The `tilt.<depth>.strong` and `tilt.<depth>.light` multipliers turn the depth into a lean, so under the classic profile a strong route scores 0.35 times as much on routine work and 1.6 times as much on core work. A caller sets the depth with `--depth` on `augur pick` or `depth` on `augur_pick`. Otherwise the decision backend judges it from the task description, with a keyword check when the backend gives no answer, and the activity's `depth.<activity>` setting applies when neither settles it.
+
+`caps.<route>` limits how often a route is picked: `perDay` counts the last 24 hours and `perSession` counts one caller session. A route at its limit drops out of the ranking with a `capped` reason, and a caller that names it still gets it. No route is capped until you add one.
+
+Training mode checks Augur's picks with you before you trust them. With `training.enabled` on, a pick on a strong route, or on any route listed in `training.askRoutes`, comes back as a proposal (`training.askTiers` sets which tiers ask). No job can run on a proposal until it is answered. You answer it with `augur pick-answer <pick id> --model <route>`, naming either the proposed route or the one you would rather use, and `--why <text>` keeps your reason. Augur counts your answers for each kind of work, meaning an activity at one depth such as `write_code:deep`. Once a kind of work has at least 10 answers (`min`) and 90% (`agree`) of its newest 20 (`window`) agree with the proposal, it stops asking. One pick in 10 (`spot`) still asks so the count stays current, and core work on an asked route asks every time, as does anything in `askRoutes`. Running a job on a different model than an unasked pick counts against the proposal. Your past choices also nudge each route's fit for that kind of work, from 0.85 for a route you never chose to 1.15 for one you always chose. Answers come only from the command line, since the MCP server has no tool for them.
+
+This example lets `codex/sol` take six picks a day and two in one session, and turns training mode on with its default thresholds:
+
+```json
+{
+  "policy": {
+    "balance": {
+      "caps": { "codex/sol": { "perDay": 6, "perSession": 2 } },
+      "training": { "enabled": true }
+    }
+  }
+}
+```
+
+### Every balance setting
+
 <!-- balance-reference:start -->
 
 | Setting | Value | What it does |
@@ -265,13 +288,27 @@ To set the balance by hand, put the object in `config.json` under `policy`, with
 | `boostFitFloor` | number from 0 to 1 | The lowest caller fit that still gets the unused-allowance boost. A route the caller gave no fit for is boosted. |
 | `draw.enabled` | true or false | Draws each pick at random by its odds. Off, every pick takes the top score. |
 | `draw.tail` | number from 0 to 1 | The share of the top score a route needs to stay in the draw. A route below it gets 0% odds and stays in the ranking. |
-| `depth.<activity>` | deep or everyday | How hard an activity is when the caller does not say. Deep work leans to strong models and everyday work to light ones. |
+| `depth.<activity>` | routine, everyday, deep or core | The depth an activity gets when neither the caller nor the task description gives one. Out of the box, write_code and reason_critique are deep and every other activity is everyday. |
 | `tiers.<route>` | strong or light | The tier of a route. A route with no tier is never tilted. Set a shipped entry to null to remove it. |
 | `exclude` | list of words | Route labels, or ids containing any of these words, that are never picked unless a caller names one. |
 | `tilt.deep.strong` | number above 0 | The score multiplier for a strong route on deep work. |
 | `tilt.deep.light` | number above 0 | The score multiplier for a light route on deep work. |
 | `tilt.everyday.strong` | number above 0 | The score multiplier for a strong route on everyday work. |
 | `tilt.everyday.light` | number above 0 | The score multiplier for a light route on everyday work. |
+| `tilt.routine.strong` | number above 0 | The score multiplier for a strong route on routine work, such as renames, plumbing, and boilerplate. |
+| `tilt.routine.light` | number above 0 | The score multiplier for a light route on routine work. |
+| `tilt.core.strong` | number above 0 | The score multiplier for a strong route on core work: an engine, core logic, security-critical code, or anything costly to redo. |
+| `tilt.core.light` | number above 0 | The score multiplier for a light route on core work. |
+| `caps.<route>.perDay` | count | The most times this route can be picked in 24 hours. At the limit it is left out of picks unless a caller names it, and picks that named it do not count. 0 turns the limit off. |
+| `caps.<route>.perSession` | count | The most times this route can be picked in one caller session. Named picks do not count here either, and 0 turns the limit off. |
+| `training.enabled` | true or false | Turns training mode on. A pick on a route in training.askTiers or training.askRoutes then waits for a person to confirm it or choose another route with augur pick-answer, and no job can run on it until then. Off by default. |
+| `training.agree` | number from 0 to 1 | How often your answers must match the proposal, as a share of the recent ones, before a kind of work stops asking. A kind of work is an activity at one depth, such as write_code at deep. 0.9 by default. |
+| `training.window` | number of 1 or more | How many of the newest answers for a kind of work count toward its agreement share. 20 by default. |
+| `training.min` | number of 1 or more | How many answers a kind of work needs before it can stop asking. 10 by default. |
+| `training.spot` | count | After a kind of work stops asking, one pick in this many asks anyway. 10 by default, and 0 means it never asks again. |
+| `training.askDepths` | list of words | Picks at these depths ask every time on an asked route, even after the answers agree. Core by default. |
+| `training.askTiers` | list of words | Picks of routes in these tiers ask until the answers agree often enough. Strong by default, so light routes never ask. |
+| `training.askRoutes` | list of routes | Routes that ask on every pick, whatever their tier. Empty by default. |
 | `prose.models` | list of routes | The routes that write the best prose. They get prose.tilt on draft_prose at any depth. |
 | `prose.tilt` | number above 0 | The multiplier a prose route gets on draft_prose in place of the depth tilt. |
 | `prose.pace.enabled` | true or false | Turns the prose pace switches on or off. Each provider with a route in prose.models has its own switch. While a provider's switch is on, draft_prose moves off its prose routes if another route can take the work. |

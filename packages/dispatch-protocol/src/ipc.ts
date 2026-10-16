@@ -5,6 +5,7 @@ import type { Headroom } from './pace.js';
 import type { BalanceReport } from './balance-report.js';
 import type { ActivityId, DataTier, EngineKey, EngineState } from '@augur/core';
 import type { PickRequest, PickResult } from './pick.js';
+import type { Proposal } from './pick-training.js';
 import type { Conversation, JobEvent, JobRecord, JobRequest, Rejection } from './spec.js';
 import type { JobState } from './states.js';
 
@@ -15,7 +16,7 @@ export const PROTOCOL_VERSION = 1;
  * fit scores from the caller; models without one are scored by the decision backend when there is one, and count as 0.5 otherwise.
  * Describe the kind of work in `task`, never paste its data.
  */
-export interface PickParams extends Omit<PickRequest, 'activity' | 'dataTier'> {
+export interface PickParams extends Omit<PickRequest, 'activity' | 'dataTier' | 'spent'> {
   activity?: ActivityId;
   dataTier?: DataTier;
   task?: string;
@@ -29,6 +30,8 @@ export type PickAnswer = (PickResult & {
   dataTier: DataTier;
   /** Id of the recorded pick, when the service keeps a decision record. */
   pickId?: string;
+  /** Training mode's reading of the pick. `pending` means the pick waits for a person and no job may run on it until `pick_answer` records the answer. */
+  proposal?: Proposal & { pending: boolean };
   /** What the decision backend answered, when it was asked. */
   decision?: { backend: string; classified?: unknown; fitError?: string };
 }) | { error: string };
@@ -59,6 +62,8 @@ export interface Methods {
   pressure: { params: undefined; result: { pressure: Record<string, Headroom>; factors: Record<string, number>; scarcity: number } | null };
   /** The read-only balance report: one pace row per paced provider, Copilot's spend, each provider's stance, where each kind of work goes now, and what the pick log shows for the last few days. */
   balance: { params: { days?: number } | undefined; result: BalanceReport | { error: string } };
+  /** Records a person's answer to a pending proposal: the route they chose, and an optional reason. The chosen route is then cleared for jobs, and the answer feeds training mode. */
+  pick_answer: { params: { id: string; model: string; why?: string }; result: { ok: true; agreed: boolean; key: string; n: number; agreedOf: number } | { error: string } };
   /** Records how a job's report met its brief, beside the pick in the decision log. `id` is a pick id or a job id; the check itself runs in the caller's tooling. */
   label: { params: { id: string; result: 'met' | 'partly' | 'missed'; note?: string }; result: { ok: true; pick: string; job: string | null } | { error: string } };
   /** Grades a candidate answer against a rubric (a Score per dimension, each asked in two orders). The grade is recorded in the decision log and what it may be used for follows the rubric's stakes. */

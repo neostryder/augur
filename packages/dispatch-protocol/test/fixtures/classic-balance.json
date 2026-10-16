@@ -49,6 +49,14 @@
     "everyday": {
       "strong": 0.85,
       "light": 1.15
+    },
+    "routine": {
+      "strong": 0.35,
+      "light": 1.3
+    },
+    "core": {
+      "strong": 1.6,
+      "light": 0.6
     }
   },
   "exclude": [
@@ -183,5 +191,20 @@
       ],
       "tilt": 3
     }
+  },
+  "caps": {},
+  "training": {
+    "enabled": false,
+    "agree": 0.9,
+    "window": 20,
+    "min": 10,
+    "spot": 10,
+    "askDepths": [
+      "core"
+    ],
+    "askTiers": [
+      "strong"
+    ],
+    "askRoutes": []
   }
 }

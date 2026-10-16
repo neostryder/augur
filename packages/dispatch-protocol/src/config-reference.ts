@@ -12,13 +12,27 @@ export const BALANCE_FIELDS: readonly FieldDoc[] = [
   { path: 'boostFitFloor', type: 'number from 0 to 1', summary: 'The lowest caller fit that still gets the unused-allowance boost. A route the caller gave no fit for is boosted.' },
   { path: 'draw.enabled', type: 'true or false', summary: 'Draws each pick at random by its odds. Off, every pick takes the top score.' },
   { path: 'draw.tail', type: 'number from 0 to 1', summary: 'The share of the top score a route needs to stay in the draw. A route below it gets 0% odds and stays in the ranking.' },
-  { path: 'depth.<activity>', type: 'deep or everyday', summary: 'How hard an activity is when the caller does not say. Deep work leans to strong models and everyday work to light ones.' },
+  { path: 'depth.<activity>', type: 'routine, everyday, deep or core', summary: 'The depth an activity gets when neither the caller nor the task description gives one. Out of the box, write_code and reason_critique are deep and every other activity is everyday.' },
   { path: 'tiers.<route>', type: 'strong or light', summary: 'The tier of a route. A route with no tier is never tilted. Set a shipped entry to null to remove it.' },
   { path: 'exclude', type: 'list of words', summary: 'Route labels, or ids containing any of these words, that are never picked unless a caller names one.' },
   { path: 'tilt.deep.strong', type: 'number above 0', summary: 'The score multiplier for a strong route on deep work.' },
   { path: 'tilt.deep.light', type: 'number above 0', summary: 'The score multiplier for a light route on deep work.' },
   { path: 'tilt.everyday.strong', type: 'number above 0', summary: 'The score multiplier for a strong route on everyday work.' },
   { path: 'tilt.everyday.light', type: 'number above 0', summary: 'The score multiplier for a light route on everyday work.' },
+  { path: 'tilt.routine.strong', type: 'number above 0', summary: 'The score multiplier for a strong route on routine work, such as renames, plumbing, and boilerplate.' },
+  { path: 'tilt.routine.light', type: 'number above 0', summary: 'The score multiplier for a light route on routine work.' },
+  { path: 'tilt.core.strong', type: 'number above 0', summary: 'The score multiplier for a strong route on core work: an engine, core logic, security-critical code, or anything costly to redo.' },
+  { path: 'tilt.core.light', type: 'number above 0', summary: 'The score multiplier for a light route on core work.' },
+  { path: 'caps.<route>.perDay', type: 'count', summary: 'The most times this route can be picked in 24 hours. At the limit it is left out of picks unless a caller names it, and picks that named it do not count. 0 turns the limit off.' },
+  { path: 'caps.<route>.perSession', type: 'count', summary: 'The most times this route can be picked in one caller session. Named picks do not count here either, and 0 turns the limit off.' },
+  { path: 'training.enabled', type: 'true or false', summary: 'Turns training mode on. A pick on a route in training.askTiers or training.askRoutes then waits for a person to confirm it or choose another route with augur pick-answer, and no job can run on it until then. Off by default.' },
+  { path: 'training.agree', type: 'number from 0 to 1', summary: 'How often your answers must match the proposal, as a share of the recent ones, before a kind of work stops asking. A kind of work is an activity at one depth, such as write_code at deep. 0.9 by default.' },
+  { path: 'training.window', type: 'number of 1 or more', summary: 'How many of the newest answers for a kind of work count toward its agreement share. 20 by default.' },
+  { path: 'training.min', type: 'number of 1 or more', summary: 'How many answers a kind of work needs before it can stop asking. 10 by default.' },
+  { path: 'training.spot', type: 'count', summary: 'After a kind of work stops asking, one pick in this many asks anyway. 10 by default, and 0 means it never asks again.' },
+  { path: 'training.askDepths', type: 'list of words', summary: 'Picks at these depths ask every time on an asked route, even after the answers agree. Core by default.' },
+  { path: 'training.askTiers', type: 'list of words', summary: 'Picks of routes in these tiers ask until the answers agree often enough. Strong by default, so light routes never ask.' },
+  { path: 'training.askRoutes', type: 'list of routes', summary: 'Routes that ask on every pick, whatever their tier. Empty by default.' },
   { path: 'prose.models', type: 'list of routes', summary: 'The routes that write the best prose. They get prose.tilt on draft_prose at any depth.' },
   { path: 'prose.tilt', type: 'number above 0', summary: 'The multiplier a prose route gets on draft_prose in place of the depth tilt.' },
   { path: 'prose.pace.enabled', type: 'true or false', summary: 'Turns the prose pace switches on or off. Each provider with a route in prose.models has its own switch. While a provider\'s switch is on, draft_prose moves off its prose routes if another route can take the work.' },
@@ -55,7 +69,7 @@ export const BALANCE_FIELDS: readonly FieldDoc[] = [
   { path: 'seats.jev.tilt', type: 'number above 0', summary: 'The multiplier the classifier route gets on those activities.' },
 ];
 
-const MAP_NODES: Record<string, string> = { depth: '<activity>', tiers: '<route>', prefer: '<route>', 'fallback.routes': '<route>', 'seats.web': '<activity>', 'prefer.<route>': '<activity>', pace: '<provider>' };
+const MAP_NODES: Record<string, string> = { caps: '<route>', depth: '<activity>', tiers: '<route>', prefer: '<route>', 'fallback.routes': '<route>', 'seats.web': '<activity>', 'prefer.<route>': '<activity>', pace: '<provider>' };
 
 /** The settings of the shipped balance rules, with each map's keys written as <route> or <activity>. */
 export function balancePaths(rules: object = DEFAULT_BALANCE): string[] {
@@ -67,6 +81,8 @@ export function balancePaths(rules: object = DEFAULT_BALANCE): string[] {
     if (key && Object.keys(value).length === 0) out.add(`${path}.${key}`);
   };
   walk(rules, '');
+  // A cap has two limits, so an empty map still names both.
+  if (out.delete('caps.<route>')) { out.add('caps.<route>.perDay'); out.add('caps.<route>.perSession'); }
   return [...out].sort();
 }
 

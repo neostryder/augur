@@ -5,7 +5,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { STUDENT_RE, labelRows } from '@augur/decision';
 import type { BriefResult, DecisionRow, GradeVerdictLabel, LabelRow } from '@augur/decision';
-import type { PickSummary } from '@augur/dispatch-protocol';
+import type { AnswerRow, PickSummary } from '@augur/dispatch-protocol';
 
 export interface LearnSettings {
   /** Keep the task text of a pick, when the data tier allows it. Off by default. */
@@ -13,6 +13,8 @@ export interface LearnSettings {
 }
 
 export interface PickEntry {
+  /** A caller-chosen id, when the proposal logic needed it before the pick was written. */
+  id?: string;
   session: string | null; task?: string; activity: string; dataTier: string; pick: string | null;
   ranking: Array<{ model: string; fit?: number }>; named: string | null; backend?: string;
   /** Whether the activity and the data tier came from the classifier (true) or from the caller (false). Only declared values are labels. */
@@ -20,6 +22,8 @@ export interface PickEntry {
   /** What the fit questions said about each ranked model, needed to rebuild those questions for training. */
   descriptions?: Record<string, string>;
   /** The balance's reading of the task, the reason line for the pick (why it won, or the odds it was drawn at when it was not the top score), and the models named beside it. A job that used another model than the pick is the override label. */
+  /** Training mode's reading: whether the pick asks, the kind of work it belongs to, and why. */
+  proposal?: { mode: 'ask' | 'auto' | 'spot'; key: string; reason: string };
   depth?: string; reason?: string; seats?: { second?: string; web?: string; shadow?: string };
   /** Copilot's spend for the month when a pick landed on a Copilot model, so each such spend can be reported. */
   spend?: number | null;
@@ -33,7 +37,7 @@ export interface PickEntry {
 const KEEPABLE = new Set(['public', 'internal']);
 
 export class DecisionLog {
-  private lastBySession = new Map<string, { id: string; at: number; model: string | null }>();
+  private lastBySession = new Map<string, { id: string; at: number; model: string | null; key: string | null; auto: boolean }>();
   private links = new Map<string, string>();
   constructor(private dir: string, private settings: LearnSettings, private now: () => number = Date.now) {}
 
@@ -43,11 +47,11 @@ export class DecisionLog {
 
   /** Records a pick and returns its id. */
   pick(e: PickEntry): string {
-    const id = randomBytes(6).toString('hex'), at = this.now();
+    const id = e.id ?? randomBytes(6).toString('hex'), at = this.now();
     const keep = this.settings.recordTasks && e.task && KEEPABLE.has(e.dataTier) && !STUDENT_RE.test(e.task);
-    const { task, ...rest } = e;
+    const { task, id: _id, ...rest } = e;
     this.write({ kind: 'pick', id, at, ...rest, ...(keep ? { task } : {}) });
-    if (e.session) this.lastBySession.set(e.session, { id, at, model: e.pick });
+    if (e.session) this.lastBySession.set(e.session, { id, at, model: e.pick, key: e.proposal?.key ?? null, auto: e.proposal?.mode === 'auto' });
     return id;
   }
 
@@ -56,7 +60,10 @@ export class DecisionLog {
     const last = session ? this.lastBySession.get(session) : undefined;
     if (!last || this.now() - last.at > windowMs) return null;
     this.links.set(jobId, last.id);
-    this.write({ kind: 'job', job: jobId, pick: last.id, model, at: this.now(), overridden: last.model !== null && last.model !== model });
+    const overridden = last.model !== null && last.model !== model;
+    this.write({ kind: 'job', job: jobId, pick: last.id, model, at: this.now(), overridden });
+    // A job that ran on another model than a pick that did not ask counts as a disagreement for its kind of work.
+    if (overridden && last.auto && last.key && last.model) this.write({ kind: 'answer', pick: last.id, key: last.key, proposed: last.model, chosen: model, agreed: false, implicit: true, at: this.now() });
     return last.id;
   }
 
@@ -82,6 +89,21 @@ export class DecisionLog {
     }
     if (copilot.length) out.copilot = copilot.slice(-20);
     return out;
+  }
+
+  /** The pick row with this id, as written. */
+  pickRow(id: string): (PickEntry & { id: string; at: number }) | null {
+    return (this.rows().find(r => r.kind === 'pick' && (r as { id?: string }).id === id) as unknown as (PickEntry & { id: string; at: number }) | undefined) ?? null;
+  }
+
+  /** Every answer to a proposal, oldest first. */
+  answers(): AnswerRow[] {
+    return this.rows().filter(r => r.kind === 'answer').map(r => r as unknown as AnswerRow);
+  }
+
+  /** Records a person's answer to a proposal. The newest answer for a pick counts. */
+  answer(e: { pick: string; key: string; proposed: string; chosen: string; why?: string }): void {
+    this.write({ kind: 'answer', pick: e.pick, key: e.key, proposed: e.proposed, chosen: e.chosen, agreed: e.proposed === e.chosen, at: this.now(), ...(e.why ? { why: e.why.slice(0, 200) } : {}) });
   }
 
   private rows(): DecisionRow[] {

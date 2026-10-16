@@ -5,10 +5,10 @@ import { closeSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, readS
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES } from '@augur/core';
 import type { PolicyFile } from '@augur/core';
-import { BRIEF_RESULTS, GRADE_LABELS, STUDENT_RE, classifyTask, decide as decideGrade, fitScores, grade as gradeText, gradeStats, gradeTier } from '@augur/decision';
+import { BRIEF_RESULTS, GRADE_LABELS, STUDENT_RE, classifyDepth, classifyTask, decide as decideGrade, fitScores, grade as gradeText, gradeStats, gradeTier } from '@augur/decision';
 import type { BriefResult, DecisionBackend, GradeVerdictLabel } from '@augur/decision';
-import { BUDGET_WINDOW_MS, NAMED_PROMPT_WINDOW, PICK_WINDOW_MIN, TOOL_TIERS, account, attachmentKind, balanceReport, budgetStatus, calibrateRoutes, copilotSpend, checkLineage, routeSecretName, checkNamed, checkPick, evaluate, isTerminal, matchNamedModels, pressure, rank, usageFactors } from '@augur/dispatch-protocol';
-import type { Adapter, BalanceReport, BudgetStatus, Conversation, GradeAnswer, GradeParams, GradeReport, JobRecord, JobRequest, LaunchPlan, PickAnswer, PickParams, RateCard, Rejection, ResolvedAttachment, RouteConfig, UsageSnapshot } from '@augur/dispatch-protocol';
+import { BUDGET_WINDOW_MS, NAMED_PROMPT_WINDOW, PICK_WINDOW_MIN, TOOL_TIERS, account, agreement, attachmentKind, balanceReport, budgetStatus, calibrateRoutes, copilotSpend, checkLineage, routeSecretName, checkNamed, checkPick, evaluate, isTerminal, learnedShares, learnedTilt, matchNamedModels, pressure, propose, rank, resolveBalance, trainingKey, usageFactors } from '@augur/dispatch-protocol';
+import type { Adapter, BalanceReport, BudgetStatus, Conversation, Depth, GradeAnswer, GradeParams, GradeReport, JobRecord, JobRequest, LaunchPlan, PickAnswer, PickParams, RateCard, Rejection, ResolvedAttachment, RouteConfig, UsageSnapshot } from '@augur/dispatch-protocol';
 import { MAX_COMMAND_LINE, optNum } from './adapters/util.js';
 import type { ServiceConfig } from './config.js';
 import { buildEnv } from './env.js';
@@ -256,19 +256,24 @@ export class Supervisor {
     const policy = this.d.policy();
     if (!policy) return { error: 'policy.json was not found. Augur writes it when a rule is saved.' };
     const declared = { activity: !!req.activity, dataTier: !!req.dataTier }, descriptions: Record<string, string> = {};
-    let activity = req.activity, dataTier = req.dataTier, classified: unknown, fitError: string | undefined;
+    let activity = req.activity, dataTier = req.dataTier, classified: unknown, fitError: string | undefined, weight = req.depth;
     const fits = { ...(req.fits ?? {}) };
     const backend = this.d.decision;
     if (req.task && backend && (!activity || !dataTier)) {
       const c = await classifyTask(backend, req.task);
       activity ??= c.activity ?? undefined; dataTier ??= c.dataTier; classified = c.detail;
+      weight ??= c.depth ?? undefined;
+    } else if (req.task && backend && !weight) {
+      const c = await classifyDepth(backend, req.task);
+      weight = c.depth ?? undefined; classified = { depth: c.detail };
     }
     if (!activity) return { error: req.task ? 'The task could not be classified. Pass the activity, or configure a decision backend.' : 'Give an activity and data tier, or a task description.' };
     dataTier ??= 'sensitive';
     if (!ACTIVITIES.includes(activity) || !DATA_TIERS.includes(dataTier)) return { error: 'Unknown activity or data tier.' };
     const preview = req.preview === true;
     const snippet = req.snippet === true ? { snippet: true as const } : {};
-    const depth = req.depth ? { depth: req.depth } : {};
+    const depth = weight ? { depth: weight } : {};
+    const spent = this.spentPicks(req.session ?? null);
     if (req.task && backend) {
       const asked = rank(policy, this.d.usage(), { activity, dataTier, proseSwitched: this.proseWas(), ...depth, ...snippet }, new Date(this.now())).ranking.map(r => r.model).filter(m => fits[m] === undefined);
       // Student-related text is scored only by a backend on this network, as classifyTask does; with none, fit stays neutral.
@@ -280,23 +285,63 @@ export class Supervisor {
         Object.assign(fits, got.fits); fitError = got.error;
       }
     }
+    const rules = resolveBalance((policy as { balance?: unknown }).balance), answers = rules.training.enabled && this.d.decisions ? this.d.decisions.answers() : [];
+    const key = trainingKey(activity, weight ?? rules.depth[activity] ?? 'everyday');
+    // What a person chose before for this kind of work leans each fit a little, and never decides the pick alone.
+    const shares = learnedShares(answers, key, rules.training.window, rules.training.min);
+    if (Object.keys(shares).length) {
+      const live = rank(policy, this.d.usage(), { activity, dataTier, ...(req.named ? { named: req.named } : {}), ...depth, ...snippet, spent }, new Date(this.now())).ranking.map(r => r.model);
+      for (const m of live) fits[m] = Math.min(1, Math.round((fits[m] ?? 0.5) * learnedTilt(shares[m] ?? 0) * 1000) / 1000);
+    }
     const result = rank(policy, this.d.usage(), {
       activity, dataTier, ...(req.named ? { named: req.named } : {}), ...depth, fits, proseSwitched: this.proseWas(), ...snippet,
-      draw: !preview && req.best !== true, ...(req.best === true ? { best: true } : {}), ...(req.seed !== undefined ? { seed: req.seed } : {}),
+      spent, draw: !preview && req.best !== true, ...(req.best === true ? { best: true } : {}), ...(req.seed !== undefined ? { seed: req.seed } : {}),
     }, new Date(this.now()));
     const routes: Record<string, string[]> = {};
     for (const [name, r] of Object.entries(this.d.routes() ?? {})) if (this.d.adapters.has(r.adapter)) (routes[r.model] ??= []).push(name);
     if (preview) return { ...result, routes, activity, dataTier, ...(backend ? { decision: { backend: backend.primary.id, ...(classified ? { classified } : {}), ...(fitError ? { fitError } : {}) } } : {}) };
     this.proseKeep(result.proseSwitch.on);
     const picked = result.ranking.find(r => r.model === result.pick);
-    const pickId = this.d.decisions?.pick({ session: req.session ?? null, ...(req.task ? { task: req.task } : {}), activity, dataTier, pick: result.pick ?? null,
+    const newId = randomBytes(6).toString('hex');
+    const owner = result.pick ? Object.entries(policy.providers).find(([, p]) => p.models[result.pick as string]) : undefined;
+    const proposal = rules.training.enabled && this.d.decisions && result.pick && owner && !req.named
+      ? propose(rules, { label: result.pick, provider: owner[0], id: owner[1].models[result.pick]?.id ?? '' }, key, result.depth, newId, answers) : null;
+    const pending = proposal !== null && proposal.mode !== 'auto';
+    const pickId = this.d.decisions?.pick({ id: newId, ...(proposal ? { proposal: { mode: proposal.mode, key: proposal.key, reason: proposal.reason } } : {}), session: req.session ?? null, ...(req.task ? { task: req.task } : {}), activity, dataTier, pick: result.pick ?? null,
       ranking: result.ranking.map(r => ({ model: r.model, ...(fits[r.model] !== undefined ? { fit: fits[r.model] } : {}) })), named: req.named ?? null,
       ...(backend ? { backend: backend.primary.id } : {}), classified: { activity: !declared.activity, dataTier: !declared.dataTier }, descriptions,
       ...(result.pick?.startsWith('copilot/') ? { spend: copilotSpend(this.d.usage()) } : {}),
       depth: result.depth, reason: result.reason, seats: { ...(result.seats.second ? { second: result.seats.second.model } : {}), ...(result.seats.web ? { web: result.seats.web.model } : {}), ...(result.seats.shadow ? { shadow: result.seats.shadow.model } : {}) },
       ...(picked ? { odds: picked.odds } : {}), drawn: result.drawn, seed: result.seed });
-    if (result.pick) this.d.store.addPick({ at: this.now(), session: req.session ?? null, model: result.pick, activity, dataTier, named: req.named ?? null, cleared: result.ranking.map(r => r.model), ...(picked ? { odds: picked.odds } : {}), drawn: result.drawn, seed: result.seed });
-    return { ...result, routes, activity, dataTier, ...(pickId ? { pickId } : {}), ...(backend ? { decision: { backend: backend.primary.id, ...(classified ? { classified } : {}), ...(fitError ? { fitError } : {}) } } : {}) };
+    if (result.pick && !pending) this.d.store.addPick({ at: this.now(), session: req.session ?? null, model: result.pick, activity, dataTier, named: req.named ?? null, cleared: result.ranking.map(r => r.model), ...(picked ? { odds: picked.odds } : {}), drawn: result.drawn, seed: result.seed });
+    return { ...result, routes, activity, dataTier, ...(pickId ? { pickId } : {}), ...(proposal ? { proposal: { ...proposal, pending } } : {}), ...(backend ? { decision: { backend: backend.primary.id, ...(classified ? { classified } : {}), ...(fitError ? { fitError } : {}) } } : {}) };
+  }
+
+  /** Records a person's answer to a pending proposal and clears the route they chose for jobs. The newest answer for a pick counts. */
+  pickAnswer(id: string, model: string, why?: string): { ok: true; agreed: boolean; key: string; n: number; agreedOf: number } | { error: string } {
+    const log = this.d.decisions, policy = this.d.policy();
+    if (!log || !policy) return { error: 'The service keeps no decision record, so there is nothing to answer.' };
+    const row = log.pickRow(id);
+    if (!row || !row.pick) return { error: 'No pick with that id is in the decision log.' };
+    if (!Object.values(policy.providers).some(p => p.models[model])) return { error: `${model} is not a model in the rules.` };
+    const key = row.proposal?.key ?? trainingKey(row.activity, (row.depth ?? 'everyday') as Depth);
+    log.answer({ pick: id, key, proposed: row.pick, chosen: model, ...(why ? { why } : {}) });
+    const agreed = model === row.pick;
+    // A proposal that waited was not registered when it was made; the chosen route is registered now so jobs may run on it.
+    if (row.proposal && row.proposal.mode !== 'auto') this.d.store.addPick({ at: this.now(), session: row.session, model, activity: row.activity, dataTier: row.dataTier, named: agreed ? null : model, cleared: agreed ? row.ranking.map(r => r.model) : [model] });
+    const stats = agreement(log.answers(), key, resolveBalance((policy as { balance?: unknown }).balance).training.window);
+    return { ok: true, agreed, key, n: stats.n, agreedOf: stats.agreed };
+  }
+
+  /** Picks per route over the last 24 hours and within one session, for the route caps. A pick where the route was named does not count. */
+  private spentPicks(session: string | null): NonNullable<import('@augur/dispatch-protocol').PickRequest['spent']> {
+    const out = { day: {} as Record<string, number>, session: {} as Record<string, number> };
+    for (const p of this.d.store.picksSince(this.now() - 86400_000)) {
+      if (p.named) continue;
+      out.day[p.model] = (out.day[p.model] ?? 0) + 1;
+      if (session && p.session === session) out.session[p.model] = (out.session[p.model] ?? 0) + 1;
+    }
+    return out;
   }
 
   /** The balance report for the policy and usage as they stand, with what the pick log shows for the last `days` days. */

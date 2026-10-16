@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES, feedFor } from '@augur/core';
 import type { ActivityId, DataTier, EngineState, OutputMode, ProviderAdded } from '@augur/core';
 import { EXIT_CODES, TOOL_TIERS, describeFigure, exitCodeForState, isTerminal, renderReport, seatLines } from '@augur/dispatch-protocol';
-import type { Conversation, JobRecord, JobRequest, ToolTier } from '@augur/dispatch-protocol';
+import type { Conversation, Depth, JobRecord, JobRequest, ToolTier } from '@augur/dispatch-protocol';
 import { STATUS_TEXT, duration, servedText, statusLine } from '@augur/view-model';
 import { bridge, stdioBridge } from './bridge.js';
 import { SERVICE_VERSION, ServiceError, call, configLines, dataDir, disableLogin, enableLogin, loginState, setConfigValue, startViaLogin } from '@augur/augurd';
@@ -46,8 +46,9 @@ augur result <job>                    prints that job's answer, or the last retr
 augur logs <job> [--stderr] [--follow]
 augur cancel <job>
 augur apply <job> [--check]
-augur pick (--task <description> | --activity <a> --data <tier>) [--depth deep|everyday] [--named <model>] [--fit <model>=<0-1>,...] [--best] [--snippet]   a route drawn by its odds; --best takes the top score, --snippet marks a one-sentence draft
-augur pick-preview (--task <description> | --activity <a> --data <tier>) [--depth deep|everyday] [--named <model>] [--fit <model>=<0-1>,...] [--snippet]   every route's score and odds; no draw is made and nothing is recorded
+augur pick (--task <description> | --activity <a> --data <tier>) [--depth routine|everyday|deep|core] [--named <model>] [--fit <model>=<0-1>,...] [--best] [--snippet]   a route drawn by its odds; --best takes the top score, --snippet marks a one-sentence draft
+augur pick-preview (--task <description> | --activity <a> --data <tier>) [--depth routine|everyday|deep|core] [--named <model>] [--fit <model>=<0-1>,...] [--snippet]   every route's score and odds; no draw is made and nothing is recorded
+augur pick-answer <pick id> --model <route> [--why <text>]     records the route a person chose for a proposed pick and clears that route for jobs
 augur pressure
 augur balance [--days <n>]            where each kind of work goes now, each provider's pace and boost, Copilot's spend and the last days' picks
 augur label <pick or job id> --brief met|partly|missed [--note <text>]     record how a job's report met its brief, beside the pick in the decision log
@@ -189,6 +190,11 @@ export async function main(argv: string[], io: Io): Promise<number> {
         const r = await call('label', { id: need(rest[0], 'pick or job id'), result, ...(opt('note') ? { note: opt('note') as string } : {}) }, opts);
         if ('error' in r) { io.err(r.error + String.fromCharCode(10)); return EXIT_CODES.failed; }
         say(`Recorded: the brief was ${result} for pick ${r.pick}${r.job ? `, job ${r.job}` : ''}.`, r); return 0;
+      }
+      case 'pick-answer': {
+        const r = await call('pick_answer', { id: need(rest[0], 'pick id'), model: need(opt('model'), '--model'), ...(opt('why') ? { why: opt('why') as string } : {}) }, opts);
+        if ('error' in r) { io.err(r.error + String.fromCharCode(10)); return EXIT_CODES.failed; }
+        say(`Recorded: ${r.agreed ? 'the proposal stood' : 'the person chose another route'} for ${r.key}. ${r.agreedOf} of the last ${r.n} answers for it agreed.`, r); return 0;
       }
       case 'pressure': {
         const r = await call('pressure', undefined, opts);
@@ -412,7 +418,7 @@ async function pickCmd(io: Io, opts: Opts, say: (h: string, d: unknown) => void,
   const okA = !activity || ACTIVITIES.includes(activity as ActivityId), okD = !dataTier || DATA_TIERS.includes(dataTier as DataTier);
   if (!okA || !okD || (!task && (!activity || !dataTier))) { io.err('Give --task, or both --activity and --data, each one of the known values.' + String.fromCharCode(10)); return EXIT_CODES.usage; }
   const depth = opt('depth');
-  if (depth && depth !== 'deep' && depth !== 'everyday') { io.err('--depth is deep or everyday.' + String.fromCharCode(10)); return EXIT_CODES.usage; }
+  if (depth && !['routine', 'everyday', 'deep', 'core'].includes(depth)) { io.err('--depth is routine, everyday, deep, or core.' + String.fromCharCode(10)); return EXIT_CODES.usage; }
   const fits: Record<string, number> = {};
   for (const part of (opt('fit') ?? '').split(',').filter(Boolean)) {
     const [model, v] = part.split('='), n = Number(v);
@@ -420,13 +426,14 @@ async function pickCmd(io: Io, opts: Opts, say: (h: string, d: unknown) => void,
     fits[model] = n;
   }
   const r = await call('pick', { ...(activity ? { activity: activity as ActivityId } : {}), ...(dataTier ? { dataTier: dataTier as DataTier } : {}), ...(task ? { task } : {}),
-    ...(opt('named') ? { named: opt('named') as string } : {}), ...(depth ? { depth: depth as 'deep' | 'everyday' } : {}), fits, ...(flag('best') ? { best: true } : {}), ...(flag('snippet') ? { snippet: true } : {}), ...(preview ? { preview: true } : {}), ...(io.env.CLAUDE_CODE_SESSION_ID ? { session: io.env.CLAUDE_CODE_SESSION_ID } : {}) }, opts);
+    ...(opt('named') ? { named: opt('named') as string } : {}), ...(depth ? { depth: depth as Depth } : {}), fits, ...(flag('best') ? { best: true } : {}), ...(flag('snippet') ? { snippet: true } : {}), ...(preview ? { preview: true } : {}), ...(io.env.CLAUDE_CODE_SESSION_ID ? { session: io.env.CLAUDE_CODE_SESSION_ID } : {}) }, opts);
   if ('error' in r) { io.err(r.error + String.fromCharCode(10)); return EXIT_CODES.failed; }
   const lines = r.ranking.map(x => `  ${x.model.padEnd(22)} ${x.score.toFixed(2)}   fit ${x.fit.toFixed(2)} x ${x.level} ${x.weight.toFixed(2)} x usage ${x.usage.toFixed(2)}   odds ${Math.round((x.odds ?? 0) * 100)}%   routes ${(r.routes[x.model] ?? []).join(', ') || 'none'}`);
   for (const b of r.blocked) lines.push(`  ${b.model.padEnd(22)} --     ${b.why}`);
   const nl = String.fromCharCode(10);
   const note = preview ? `${nl}preview: no draw made` : '';
-  say(r.pick ? `Pick: ${r.pick}   (${r.activity}, ${r.dataTier} data; scarcity ${r.scarcity}${r.decision ? `; ${r.decision.backend}` : ''})${note}${nl}${[r.reason, ...seatLines(r.seats)].join(nl)}${nl}${lines.join(nl)}` : `No model is permitted ${r.activity} on ${r.dataTier} data.${note}${nl}${lines.join(nl)}`, r);
+  const ask = r.proposal && r.proposal.mode !== 'auto' ? `${nl}Proposal ${r.pickId ?? ''}: ${r.proposal.reason}. No job can run on this pick yet. Ask the person which route to use, then record it with augur pick-answer <pick id> --model <route>.` : '';
+  say(r.pick ? `Pick: ${r.pick}   (${r.activity}, ${r.dataTier} data; scarcity ${r.scarcity}${r.decision ? `; ${r.decision.backend}` : ''})${note}${ask}${nl}${[r.reason, ...seatLines(r.seats)].join(nl)}${nl}${lines.join(nl)}` : `No model is permitted ${r.activity} on ${r.dataTier} data.${note}${nl}${lines.join(nl)}`, r);
   return r.pick ? 0 : EXIT_CODES.rejected;
 }
 

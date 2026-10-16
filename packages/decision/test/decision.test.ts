@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ACTIVITIES, DATA_TIERS } from '@augur/core';
-import { ACTIVITY_TEXT, DATA_TEXT, JevBackend, LayaBackend, NoBackend, PoolError, ServerPool, classifyTask, createBackend, fitQuestions, fitScores, readFits } from '../src/index.js';
+import { ACTIVITY_TEXT, DATA_TEXT, JevBackend, LayaBackend, NoBackend, PoolError, ServerPool, classifyDepth, classifyTask, createBackend, heuristicDepth, fitQuestions, fitScores, readFits } from '../src/index.js';
 import { ShadowBackend } from '../src/index.js';
 import type { Comparison, DecisionBackend, Fetch, Question, SystemOneResponse } from '../src/index.js';
 
@@ -110,7 +110,7 @@ describe('classifying a task', () => {
     expect(c.dataTier).toBe('regulated');
     expect(c.detail.data?.backend).toBe('laya');
     expect(hosted.asked).toEqual([]);
-    expect(local.asked).toEqual(['activity', 'data']);
+    expect(local.asked).toEqual(['activity', 'data', 'depth']);
     const noLocal = await classifyTask({ primary: hosted }, 'grade the rubric for the section 4 students');
     expect(noLocal).toMatchObject({ activity: null, dataTier: 'regulated' });
     expect(noLocal.detail.data?.backend).toBe('none');
@@ -155,5 +155,32 @@ describe('comparing two backends', () => {
     await failing.ask({ task: 'fix the build' }, {});
     await failing.idle();
     expect(seen).toEqual([]);
+  });
+});
+
+describe('task weight', () => {
+  it('reads the weight from the backend when it answers', async () => {
+    const c = await classifyDepth({ primary: scripted(q => 'depth' in q ? { answers: { depth: { choice: 'core', confidence: 0.9 } } } : {}, true) }, 'build the scheduler');
+    expect(c.depth).toBe('core');
+    expect(c.detail).toEqual({ choice: 'core', confidence: 0.9, source: 'backend' });
+  });
+
+  it('falls back to keywords when the backend gives nothing usable, and to null when they do not settle it', async () => {
+    const none = { primary: scripted(() => ({ answers: {} }), true) };
+    expect((await classifyDepth(none, 'rename the helper and bump the version')).depth).toBe('routine');
+    expect((await classifyDepth(none, 'rewrite the core logic of the importer')).depth).toBe('core');
+    expect((await classifyDepth(none, 'look at the importer')).depth).toBeNull();
+  });
+
+  it('keeps the words of a student-related task on this network', async () => {
+    const asked: string[] = [];
+    const hosted = { ...scripted(q => { asked.push(Object.keys(q)[0] as string); return { answers: { depth: { choice: 'deep' } } }; }, false), local: false };
+    const c = await classifyDepth({ primary: hosted }, 'grade the rubric for the section 4 students');
+    expect(asked).toEqual([]);
+    expect(c.depth).toBeNull();
+  });
+
+  it('judges keywords the same way for every phrasing in the table', () => {
+    for (const [text, want] of [['wire up the config loader', 'routine'], ['fix a typo', 'routine'], ['implement the crypto layer', 'core'], ['add a state machine', 'core'], ['summarize the notes', null]] as const) expect(heuristicDepth(text), text).toBe(want);
   });
 });

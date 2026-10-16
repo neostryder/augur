@@ -2,12 +2,14 @@
 import { DATA_TIERS } from '@augur/core';
 import type { ActivityId, DataTier } from '@augur/core';
 import type { DecisionBackend } from './backend.js';
-import { DATA_CAUTION, STUDENT_RE, activityQuestion, dataQuestion, fitQuestions, isActivity, isTier, readFits } from './questions.js';
+import { DATA_CAUTION, DEPTH_TEXT, STUDENT_RE, activityQuestion, dataQuestion, depthQuestion, fitQuestions, heuristicDepth, isActivity, isTier, readFits } from './questions.js';
 
 export interface Classification {
   activity: ActivityId | null;
   dataTier: DataTier;
-  detail: { activity?: { choice?: string; confidence?: number; error?: unknown }; data?: { choice?: string; probabilities?: Record<string, number>; backend: string; error?: unknown } };
+  /** How much the task weighs, or null when neither the backend nor the keywords settled it. */
+  depth: 'routine' | 'everyday' | 'deep' | 'core' | null;
+  detail: { depth?: { choice?: string; confidence?: number; source: 'backend' | 'keywords' | 'none'; error?: unknown }; activity?: { choice?: string; confidence?: number; error?: unknown }; data?: { choice?: string; probabilities?: Record<string, number>; backend: string; error?: unknown } };
 }
 
 /**
@@ -38,7 +40,25 @@ export async function classifyTask(backends: { primary: DecisionBackend; local?:
     detail.data = { ...(d?.choice ? { choice: d.choice } : {}), probabilities: probs, backend: asker.id, ...(res.error ? { error: res.error } : {}) };
   } else detail.data = { backend: 'none', error: 'no backend on this network to judge student-related text' };
   if (student && (tier === null || DATA_TIERS.indexOf(tier) < floor)) tier = 'regulated';
-  return { activity, dataTier: tier ?? 'sensitive', detail };
+  const d = await classifyDepth(backends, task);
+  detail.depth = d.detail;
+  return { activity, dataTier: tier ?? 'sensitive', depth: d.depth, detail };
+}
+
+/** How much the task weighs. A task that could involve student records is asked only of a backend on this network; with none, the keywords decide. */
+export async function classifyDepth(backends: { primary: DecisionBackend; local?: DecisionBackend }, task: string): Promise<{ depth: Classification['depth']; detail: NonNullable<Classification['detail']['depth']> }> {
+  const { primary } = backends, local = backends.local ?? (primary.local ? primary : undefined);
+  const asker = STUDENT_RE.test(task) ? local : primary;
+  const isDepth = (v: unknown): v is NonNullable<Classification['depth']> => typeof v === 'string' && Object.hasOwn(DEPTH_TEXT, v);
+  let detail: NonNullable<Classification['detail']['depth']> = { source: 'none' };
+  if (asker) {
+    const res = await asker.ask({ task }, depthQuestion(), 'laya:augur_depth');
+    const d = res.answers?.depth;
+    if (isDepth(d?.choice)) return { depth: d.choice, detail: { choice: d.choice, ...(typeof d.confidence === 'number' ? { confidence: d.confidence } : {}), source: 'backend' } };
+    detail = { source: 'none', ...(res.error ? { error: res.error } : {}) };
+  }
+  const k = heuristicDepth(task);
+  return k ? { depth: k as NonNullable<Classification['depth']>, detail: { choice: k, source: 'keywords' } } : { depth: null, detail };
 }
 
 /** How well each model fits the task, 0 to 1. A backend that fails leaves every model at 0.5, so ranking falls back to weights and usage. */

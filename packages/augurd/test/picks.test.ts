@@ -103,6 +103,84 @@ describe('picks through the service', () => {
   });
 });
 
+describe('route caps through the service', () => {
+  it('counts each unnamed pick against the route, and a named pick overrides the limit without counting', async () => {
+    const e = setup();
+    const d = (e.sup as unknown as { d: { policy: () => Record<string, unknown> | null } }).d, base = d.policy() as Record<string, unknown>;
+    d.policy = () => ({ ...base, balance: { caps: { 'test/fake': { perDay: 2, perSession: 0 } } } });
+    const ask = async (over: object = {}) => { const r = await e.sup.pick({ activity: 'write_code', dataTier: 'internal', session: 's1', fits: { 'test/fake': 1 }, best: true, ...over }); if ('error' in r) throw new Error(r.error); return r; };
+    expect((await ask()).pick).toBe('test/fake');
+    expect((await ask()).pick).toBe('test/fake');
+    const third = await ask();
+    expect(third.pick).not.toBe('test/fake');
+    expect(third.blocked.find(b => b.model === 'test/fake')?.why).toMatch(/capped: 2 picks in the last 24 hours \(limit 2\)/);
+    expect((await ask({ named: 'test/fake' })).pick).toBe('test/fake');
+    expect((await ask({ preview: true })).blocked.some(b => b.model === 'test/fake')).toBe(true);
+  });
+});
+
+describe('training mode through the service', () => {
+  const train = (e: Env, training: object = {}) => {
+    const d = (e.sup as unknown as { d: { policy: () => Record<string, unknown> | null; decisions: DecisionLog } }).d, base = d.policy() as Record<string, unknown>;
+    d.decisions = new DecisionLog(e.dir, { recordTasks: false });
+    d.policy = () => ({ ...base, balance: { tiers: { 'test/fake': 'strong' }, training: { enabled: true, min: 2, spot: 0, askDepths: [], ...training } } });
+  };
+  const ask = async (e: Env, over: object = {}) => { const r = await e.sup.pick({ activity: 'write_code', dataTier: 'internal', session: 's1', fits: { 'test/fake': 1 }, best: true, ...over }); if ('error' in r) throw new Error(r.error); return r; };
+  const asOne = (e: Env) => request({ text: 'SLEEP 0', caller: caller('s1') } as never, e.root);
+
+  it('holds a proposed pick until a person answers, then clears the chosen route', async () => {
+    const e = setup({ requirePick: true });
+    train(e);
+    const r = await ask(e);
+    expect(r.pick).toBe('test/fake');
+    expect(r.proposal).toMatchObject({ mode: 'ask', pending: true, key: 'write_code:deep' });
+    expect(e.sup.submit(asOne(e))).toMatchObject({ rejected: { code: 'not_picked' } });
+    expect(e.sup.pickAnswer('nope', 'test/fake')).toHaveProperty('error');
+    expect(e.sup.pickAnswer(r.pickId as string, 'test/nothing')).toHaveProperty('error');
+    expect(e.sup.pickAnswer(r.pickId as string, 'test/fake')).toMatchObject({ ok: true, agreed: true, n: 1, agreedOf: 1 });
+    expect('id' in e.sup.submit(asOne(e))).toBe(true);
+  });
+
+  it('records an override as a disagreement and clears the route the person chose', async () => {
+    const e = setup({ requirePick: true });
+    train(e);
+    const r = await ask(e);
+    expect(e.sup.pickAnswer(r.pickId as string, 'test/public', 'prefers the public route')).toMatchObject({ ok: true, agreed: false, n: 1, agreedOf: 0 });
+    const job = e.sup.submit({ ...request({ text: 'SLEEP 0', route: 'pub', dataTier: 'public' }, e.root), caller: caller('s1') } as never);
+    expect('id' in job).toBe(true);
+  });
+
+  it('stops asking after enough agreeing answers and leans toward what the person chose', async () => {
+    const e = setup({ requirePick: true });
+    train(e);
+    for (let i = 0; i < 2; i++) { const r = await ask(e); expect(e.sup.pickAnswer(r.pickId as string, 'test/fake')).toMatchObject({ ok: true }); }
+    const third = await ask(e);
+    expect(third.proposal).toMatchObject({ mode: 'auto', pending: false });
+    expect('id' in e.sup.submit(asOne(e))).toBe(true);
+    // A named pick is never proposed.
+    expect((await ask(e, { named: 'test/fake' })).proposal).toBeUndefined();
+  });
+
+  it('counts a job that ran on another model than an unasked pick as a disagreement', async () => {
+    const e = setup({ requirePick: true });
+    train(e, { min: 1 });
+    const first = await ask(e);
+    e.sup.pickAnswer(first.pickId as string, 'test/fake');
+    const auto = await ask(e, { dataTier: 'public', fits: { 'test/fake': 1, 'test/public': 0.9 } });
+    expect(auto.proposal).toMatchObject({ mode: 'auto' });
+    const job = e.sup.submit({ ...request({ text: 'SLEEP 0', route: 'pub', dataTier: 'public' }, e.root), caller: caller('s1') } as never);
+    expect('id' in job).toBe(true);
+    const log = (e.sup as unknown as { d: { decisions: DecisionLog } }).d.decisions;
+    expect(log.answers().filter(a => a.implicit)).toMatchObject([{ proposed: 'test/fake', chosen: 'test/public', agreed: false }]);
+  });
+
+  it('keeps picks as drawn while training mode is off', async () => {
+    const e = setup({ requirePick: true });
+    expect((await ask(e)).proposal).toBeUndefined();
+    expect('id' in e.sup.submit(asOne(e))).toBe(true);
+  });
+});
+
 describe('confirming that a person named the model', () => {
   const ask = (e: Env, session: string, extra: object = {}) => ({ ...request({ route: 'ask', text: 'SLEEP 0', ...extra } as never, e.root), named: true, caller: { kind: 'other' as const, session, ...extra } });
 

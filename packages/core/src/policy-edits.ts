@@ -35,7 +35,7 @@ export const BALANCE_PREFIX = 'balance:';
 export const balanceField = (segments: readonly string[]): string => BALANCE_PREFIX + segments.join('|');
 export const isBalanceField = (field: string): boolean => field.startsWith(BALANCE_PREFIX);
 export const balanceSegments = (field: string): string[] => field.slice(BALANCE_PREFIX.length).split('|');
-const BALANCE_ROOTS = ['profile', 'enabled', 'depth', 'tiers', 'exclude', 'tilt', 'prose', 'claude', 'pace', 'fallback', 'prefer', 'seats', 'boostFitFloor', 'draw'];
+const BALANCE_ROOTS = ['profile', 'enabled', 'depth', 'tiers', 'exclude', 'tilt', 'prose', 'claude', 'pace', 'fallback', 'prefer', 'seats', 'boostFitFloor', 'draw', 'caps', 'training'];
 
 /** The value that puts a field back to the provider's default, since JSON has no undefined. */
 export const INHERIT = 'inherit';

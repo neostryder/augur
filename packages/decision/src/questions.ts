@@ -54,6 +54,25 @@ export const activityQuestion = (): Record<string, Question> => ({
     instructions: 'Which kind of work is the task, taken as a whole? Pick the activity the engine will spend most of its effort on.' },
 });
 
+export const DEPTH_TEXT: Record<string, string> = {
+  routine: 'Routine: glue, plumbing, wiring, renames, formatting, boilerplate, small edits, or anything cheap to redo.',
+  everyday: 'Everyday: ordinary review, research, summaries, documentation, or a modest self-contained change.',
+  deep: 'Deep: hard reasoning, a substantial feature, a tricky bug, or code that many parts depend on.',
+  core: 'Core: the engine or core logic of a tool, security-critical code, a foundation others build on, or work that is costly to get wrong or redo.',
+};
+
+export const depthQuestion = (): Record<string, Question> => ({
+  depth: { type: 'choice', criteria: { ...DEPTH_TEXT },
+    instructions: 'How much does this task weigh? Judge the size and the cost of getting it wrong, not how interesting it is. Most tasks are routine or everyday; core is rare.' },
+});
+
+/** A keyword reading of how much a task weighs, for when no decision backend answers. Null when the words do not settle it. */
+export function heuristicDepth(task: string): keyof typeof DEPTH_TEXT | null {
+  if (/\b(core (logic|engine)|the engine|kernel|scheduler|state machine|from scratch|security[- ]critical|crypto\w*|authenticat\w+|authoriz\w+|migration engine|foundation)\b/i.test(task)) return 'core';
+  if (/\b(renam\w+|typos?|boilerplate|scaffold\w*|plumbing|glue|wire[ -]?up|bump|reformat|lint|stub|one-?liner|trivial|tiny|small (fix|tweak|change))\b/i.test(task)) return 'routine';
+  return null;
+}
+
 export const dataQuestion = (): Record<string, Question> => ({
   data: { type: 'choice', criteria: { ...DATA_TEXT },
     instructions: 'What is the most sensitive class of data the engine doing this task will see? Judge from the description; the data itself is not included.' },

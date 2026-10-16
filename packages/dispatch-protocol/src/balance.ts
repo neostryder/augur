@@ -5,8 +5,12 @@ import type { ActivityId, PolicyFile } from '@augur/core';
 import { BOOST, PACE, ageMinutes, freshLimits, pressure } from './pace.js';
 import type { UsageSnapshot } from './pace.js';
 
-/** Deep work is hard reasoning, serious coding and long chains. Everyday work is review, research, summaries and bulk work. */
-export type Depth = 'deep' | 'everyday';
+/**
+ * How much the task weighs. Routine work is glue, plumbing, renames, boilerplate and anything cheap to redo. Everyday work is review, research, summaries and bulk work.
+ * Deep work is hard reasoning and serious coding. Core work is the engine of a tool, core logic, security-critical code, or anything costly to get wrong or redo.
+ */
+export type Depth = 'routine' | 'everyday' | 'deep' | 'core';
+export const DEPTHS: readonly Depth[] = ['routine', 'everyday', 'deep', 'core'];
 /** A strong model suits deep work and is overkill for everyday work. A light one is the reverse. A model with no tier is not tilted. */
 export type ModelTier = 'strong' | 'light';
 
@@ -51,6 +55,10 @@ export interface BalanceRules {
   exclude: string[];
   /** The score multiplier for a tier at each depth. */
   tilt: Record<Depth, Record<ModelTier, number>>;
+  /** Limits on how often a route is picked, by route label, standard name or pattern. A route over a limit is out of the running unless it is named. */
+  caps: Record<string, RouteCap>;
+  /** Training mode: whether a pick on an expensive route waits for a person, and when a kind of work has earned the right to stop asking. */
+  training: TrainingRules;
   /** Route labels that write the best prose, and the multiplier they get on draft_prose in place of the depth tilt. */
   prose: {
     models: string[]; tilt: number;
@@ -99,6 +107,30 @@ export interface BalanceRules {
   };
 }
 
+export interface TrainingRules {
+  /** Switches training mode on. Off, every pick stands as drawn. */
+  enabled: boolean;
+  /** The share of recent answers that must agree with the proposal before a kind of work stops asking. */
+  agree: number;
+  /** How many of the newest answers for a kind of work are weighed. */
+  window: number;
+  /** How many answers a kind of work needs before it can stop asking. */
+  min: number;
+  /** Once a kind of work has stopped asking, one pick in this many is still asked, to keep measuring. 0 turns the spot check off. */
+  spot: number;
+  /** Picks at these depths always ask. */
+  askDepths: Depth[];
+  /** Picks of routes in these tiers ask, or learn to stop. A pick of a route in neither a listed tier nor askRoutes is never asked. */
+  askTiers: ModelTier[];
+  /** Routes that always ask, by label, standard name or pattern. */
+  askRoutes: string[];
+}
+
+export const DEFAULT_TRAINING: TrainingRules = { enabled: false, agree: 0.9, window: 20, min: 10, spot: 10, askDepths: ['core'], askTiers: ['strong'], askRoutes: [] };
+
+/** Picks of a route that count against it: `perDay` over the last 24 hours, `perSession` within one caller session. 0 turns that limit off. */
+export interface RouteCap { perDay: number; perSession: number }
+
 const DEEP: ActivityId[] = ['write_code', 'reason_critique'];
 
 export const DEFAULT_BALANCE: BalanceRules = {
@@ -114,7 +146,9 @@ export const DEFAULT_BALANCE: BalanceRules = {
     'copilot/claude-sonnet-5.5': 'light', 'copilot/gpt-6-luna': 'light', 'copilot/gemini-3.8-flash': 'light',
   },
   exclude: ['fable', 'astra'],
-  tilt: { deep: { strong: 1.4, light: 0.8 }, everyday: { strong: 0.85, light: 1.15 } },
+  tilt: { routine: { strong: 0.35, light: 1.3 }, everyday: { strong: 0.85, light: 1.15 }, deep: { strong: 1.4, light: 0.8 }, core: { strong: 1.6, light: 0.6 } },
+  caps: {},
+  training: { ...DEFAULT_TRAINING },
   prose: { models: ['claude/live', 'claude/opus', 'copilot/claude-opus-5.5'], tilt: 1.3, pace: { enabled: true, ahead: 12, aheadAtReserve: 3, returnAt: 0 } },
   pace: { claude: CLAUDE_PACE },
   claude: { provider: 'claude', band: CLAUDE_PACE.band, reserve: CLAUDE_PACE.reserve, hot: CLAUDE_PACE.hot, behind: CLAUDE_PACE.behind },
@@ -143,7 +177,9 @@ export const NEUTRAL_BALANCE: BalanceRules = {
   pace: DEFAULT_BALANCE.pace,
   tiers: { 'claude/*opus*': 'strong', 'claude/*sonnet*': 'light', 'claude/*haiku*': 'light' },
   exclude: [],
-  tilt: { deep: { strong: 1, light: 1 }, everyday: { strong: 1, light: 1 } },
+  tilt: { routine: { strong: 1, light: 1 }, everyday: { strong: 1, light: 1 }, deep: { strong: 1, light: 1 }, core: { strong: 1, light: 1 } },
+  caps: {},
+  training: { ...DEFAULT_TRAINING },
   prose: { models: [], tilt: 1, pace: DEFAULT_BALANCE.prose.pace },
   fallback: { providers: [], routes: {}, anthropic: [], aim: DEFAULT_BALANCE.fallback.aim, cap: DEFAULT_BALANCE.fallback.cap, margin: DEFAULT_BALANCE.fallback.margin },
   prefer: {},
@@ -192,10 +228,24 @@ const rec = (v: unknown): Record<string, unknown> => v && typeof v === 'object' 
 export function resolveBalance(raw: unknown): BalanceRules {
   const s = rec(raw), profile: Profile = s.profile === 'neutral' ? 'neutral' : 'classic', d = profile === 'neutral' ? NEUTRAL_BALANCE : DEFAULT_BALANCE;
   const depth = { ...d.depth }, tiers = { ...d.tiers };
-  for (const [a, v] of Object.entries(rec(s.depth))) if ((ACTIVITIES as readonly string[]).includes(a) && (v === 'deep' || v === 'everyday')) depth[a as ActivityId] = v;
+  for (const [a, v] of Object.entries(rec(s.depth))) if ((ACTIVITIES as readonly string[]).includes(a) && (DEPTHS as readonly unknown[]).includes(v)) depth[a as ActivityId] = v as Depth;
   for (const [m, v] of Object.entries(rec(s.tiers))) { if (v === 'strong' || v === 'light') tiers[m] = v; else if (v === null) delete tiers[m]; }
-  const tilt = { deep: { ...d.tilt.deep }, everyday: { ...d.tilt.everyday } };
-  for (const depthKey of ['deep', 'everyday'] as const) for (const tier of ['strong', 'light'] as const) tilt[depthKey][tier] = num(rec(rec(s.tilt)[depthKey])[tier], tilt[depthKey][tier]);
+  const tilt = Object.fromEntries(DEPTHS.map(k => [k, { ...d.tilt[k] }])) as BalanceRules['tilt'];
+  const caps: Record<string, RouteCap> = Object.fromEntries(Object.entries(d.caps).map(([k, v]) => [k, { ...v }]));
+  for (const [m, v] of Object.entries(rec(s.caps))) {
+    if (v === null) { delete caps[m]; continue; }
+    const o = rec(v), was = caps[m] ?? { perDay: 0, perSession: 0 };
+    caps[m] = { perDay: Math.floor(zeroUp(o.perDay, was.perDay)), perSession: Math.floor(zeroUp(o.perSession, was.perSession)) };
+  }
+  const tr = rec(s.training), tdef = d.training;
+  const training: TrainingRules = {
+    enabled: typeof tr.enabled === 'boolean' ? tr.enabled : tdef.enabled,
+    agree: unit(tr.agree, tdef.agree), window: Math.max(1, Math.floor(num(tr.window, tdef.window))), min: Math.max(1, Math.floor(num(tr.min, tdef.min))), spot: Math.floor(zeroUp(tr.spot, tdef.spot)),
+    askDepths: (strings(tr.askDepths) ?? tdef.askDepths).filter((x): x is Depth => (DEPTHS as readonly string[]).includes(x)),
+    askTiers: (strings(tr.askTiers) ?? tdef.askTiers).filter((x): x is ModelTier => x === 'strong' || x === 'light'),
+    askRoutes: strings(tr.askRoutes) ?? [...tdef.askRoutes],
+  };
+  for (const depthKey of DEPTHS) for (const tier of ['strong', 'light'] as const) tilt[depthKey][tier] = num(rec(rec(s.tilt)[depthKey])[tier], tilt[depthKey][tier]);
   const prose = rec(s.prose), proseSwitch = rec(prose.pace), cl = rec(s.claude), fb = rec(s.fallback), st = rec(s.seats);
   const acts = (v: unknown): ActivityId[] | null => { const a = strings(v); return a ? a.filter((x): x is ActivityId => (ACTIVITIES as readonly string[]).includes(x)) : null; };
   const web: Partial<Record<ActivityId, string[]>> = { ...d.seats.web };
@@ -234,7 +284,7 @@ export function resolveBalance(raw: unknown): BalanceRules {
     enabled: typeof s.enabled === 'boolean' ? s.enabled : d.enabled,
     boostFitFloor: unit(s.boostFitFloor, d.boostFitFloor),
     draw: { enabled: typeof draw.enabled === 'boolean' ? draw.enabled : d.draw.enabled, tail: unit(draw.tail, d.draw.tail) },
-    depth, tiers, tilt,
+    depth, tiers, tilt, caps, training,
     exclude: strings(s.exclude) ?? [...d.exclude],
     prose: {
       models: strings(prose.models) ?? [...d.prose.models], tilt: num(prose.tilt, d.prose.tilt),
