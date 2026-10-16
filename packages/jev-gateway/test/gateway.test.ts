@@ -203,6 +203,15 @@ describe('gateway', () => {
     expect(usage.summary(1).byConsumer.mercury?.hosted).toBe(1);
   });
 
+  it('keeps a consumer label like __proto__ out of the prototype when it counts usage', async () => {
+    const { base, usage } = await start();
+    await post(base, ok, { 'x-augur-consumer': '__proto__' });
+    const s = usage.summary(1);
+    expect(s.byConsumer['__proto__']?.requests).toBe(1);
+    expect(({} as Record<string, unknown>).requests).toBeUndefined();
+    expect(Object.keys(s.byConsumer)).toContain('__proto__');
+  });
+
   it('records one line per request with the tier and models and no request text', async () => {
     const { base } = await start();
     await post(base, ok, { 'x-augur-consumer': 'jev-py' });

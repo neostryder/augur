@@ -44,7 +44,8 @@ export class UsageLog {
   }
 
   summary(days: number, now = Date.now()): UsageSummary {
-    const out: UsageSummary = { days, requests: 0, byConsumer: {}, byModel: {}, inputTokens: 0, p50Ms: null };
+    // Consumer labels and model names come from callers, so these maps have no prototype: a label like __proto__ is then a plain key.
+    const out: UsageSummary = { days, requests: 0, byConsumer: Object.create(null), byModel: Object.create(null), inputTokens: 0, p50Ms: null };
     const p = this.path();
     if (!existsSync(p)) return out;
     const since = now - days * 86400_000, times: number[] = [];

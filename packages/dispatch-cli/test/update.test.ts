@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { PINNED_KEY, verifyMinisign } from '../src/minisign.js';
-import { checksumFor, installOf, realFetch, updateAdvice, updateScriptInstall, type UpdateDeps } from '../src/update.js';
+import { checksumFor, installOf, plainVersion, realFetch, updateAdvice, updateScriptInstall, type UpdateDeps } from '../src/update.js';
 
 const cleanup: string[] = [];
 afterEach(() => { while (cleanup.length) rmSync(cleanup.pop()!, { recursive: true, force: true }); });
@@ -118,6 +118,20 @@ describe('updateScriptInstall', () => {
     expect(JSON.parse(readFileSync(join(root, 'install.json'), 'utf8')).version).toBe('1.4.0');
     expect(readdirSync(root).filter((f) => f.startsWith('.update-'))).toEqual([]);
     expect(log).toEqual(['https://example.test/releases/latest/download/latest.json', 'https://example.test/releases/download/v1.4.0/SHA256SUMS.txt', 'https://example.test/releases/download/v1.4.0/SHA256SUMS.txt.sig', 'https://example.test/releases/download/v1.4.0/augur-terminal-1.4.0-macos.tar.gz']);
+  });
+
+  it('refuses a version that is not a plain version number before any path is built', async () => {
+    for (const latest of ['../../evil', '1.4.0/../../x', '1.4.0-rc1', '1..4', '1.4.0 x', '1']) {
+      const { root, install } = scriptInstall();
+      const { d, log } = deps({ latest });
+      const r = await updateScriptInstall(install, d, true);
+      expect(r.ok, latest).toBe(false);
+      expect(r.message).toContain('not a plain version number');
+      expect(log, latest).toEqual(['https://example.test/releases/latest/download/latest.json']);
+      expect(readdirSync(root).filter((f) => f.startsWith('.update-')), latest).toEqual([]);
+    }
+    expect(plainVersion('1.4.0')).toBe(true);
+    expect(plainVersion('10.20.30.40')).toBe(true);
   });
 
   it('does nothing when this is the newest version, unless forced', async () => {

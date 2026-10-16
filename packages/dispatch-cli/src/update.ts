@@ -70,6 +70,9 @@ export function checksumFor(sums: string, name: string): string | null {
   return null;
 }
 
+/** A release version is dotted numbers and nothing else, since it becomes part of file names and folder paths. */
+export const plainVersion = (v: string): boolean => /^\d{1,6}(\.\d{1,6}){1,3}$/.test(v);
+
 export async function updateScriptInstall(install: Install, deps: UpdateDeps, force = false): Promise<UpdateResult> {
   if (install.kind !== 'script' || !install.root) return { ok: false, changed: false, message: updateAdvice(install.kind) };
   if (deps.platform !== 'darwin') return { ok: false, changed: false, message: 'The script install is for macOS.' };
@@ -80,6 +83,7 @@ export async function updateScriptInstall(install: Install, deps: UpdateDeps, fo
     latest = String(feed.version ?? '').replace(/^v/, '');
   } catch (e) { return { ok: false, changed: false, message: `Could not read the latest version (${(e as Error).message}).` }; }
   if (!latest) return { ok: false, changed: false, message: 'The release list does not name a version.' };
+  if (!plainVersion(latest)) return { ok: false, changed: false, message: 'The release list names a version that is not a plain version number, so nothing was installed.' };
   if (!force && compareVersions(latest, deps.current) <= 0) return { ok: true, changed: false, message: `Version ${deps.current} is the latest.`, version: deps.current };
 
   const name = `augur-terminal-${latest}-macos.tar.gz`, tag = `${base}/download/v${latest}`;

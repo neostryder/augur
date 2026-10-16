@@ -24,6 +24,10 @@ if [ -z "$version" ]; then
   [ -n "$version" ] || die "could not read the latest version from $release."
 fi
 version=${version#v}
+# The version becomes part of file names and folder paths, so it must be dotted numbers and nothing else.
+case $version in
+  ''|*[!0-9.]*|.*|*.|*..*) die "the version '$version' is not a plain version number." ;;
+esac
 name=augur-terminal-$version-macos.tar.gz
 tag=$release/download/v$version
 
