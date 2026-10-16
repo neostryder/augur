@@ -611,6 +611,7 @@ export class Supervisor {
     if (!gone) return;
     const child = state?.childPid ?? inner.childPid, orphan = alive(child);
     if (orphan) this.killTree(child as number);
+    this.killFollowed(dir);
     // A scope can hold processes that outlived the child, so it is stopped whether or not the child is still there.
     const scope = readJson<JobFile>(join(dir, 'job.json'))?.scope;
     if (scope) spawnSync('systemctl', ['--user', 'kill', '--signal=SIGKILL', `${scope}.scope`], { stdio: 'ignore', timeout: 10000 });
@@ -698,6 +699,18 @@ export class Supervisor {
     const file = readJson<JobFile>(join(this.jobDir(id), 'job.json')), rec = this.d.store.get(id);
     for (const f of file?.files ?? []) {
       try { unlinkSync(f.inWorkspace && rec?.workspace ? join(rec.workspace, f.name) : join(this.jobDir(id), f.name)); } catch { /* not written or already gone */ }
+    }
+  }
+
+  /** Ends what a runner that is gone had followed out of the job's process group, matching each pid to its recorded start time. */
+  private killFollowed(dir: string): void {
+    if (process.platform === 'win32') return;
+    const list = readJson<Array<{ pid: number; started: string }>>(join(dir, 'descendants.json'));
+    if (!Array.isArray(list)) return;
+    for (const { pid, started } of list) {
+      if (!Number.isInteger(pid) || pid <= 1 || typeof started !== 'string') continue;
+      const r = spawnSync('ps', ['-o', 'lstart=', '-p', String(pid)], { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] });
+      if (r.status === 0 && String(r.stdout).trim() === started) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } }
     }
   }
 

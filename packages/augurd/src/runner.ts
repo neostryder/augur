@@ -38,6 +38,33 @@ const argv = viaHost ? [job.jobhost as string, job.command, ...job.args]
 const stopScope = () => { if (scope) spawnSync('systemctl', ['--user', 'kill', '--signal=SIGKILL', `${scope}.scope`], { stdio: 'ignore', timeout: 10000, env: scopeEnv }); };
 let killedBy: 'cancel' | 'timeout' | null = null;
 
+// With no Job Object and no systemd scope, a descendant that starts its own process group or session would outlive its job. The runner looks at the
+// process table once a second, remembers every descendant with its start time (so a reused pid is never mistaken for it), and ends them by pid on
+// cancel, timeout and exit. A process that starts and detaches between two looks is missed, which is the gap a scope or a Job Object does not have.
+const follow = !win && !scope;
+const followed = new Map<number, string>();
+const processTable = (): Array<{ pid: number; ppid: number; started: string }> => {
+  const r = spawnSync('ps', ['-A', '-o', 'pid=,ppid=,lstart='], { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] });
+  if (r.status !== 0 || typeof r.stdout !== 'string') return [];
+  return r.stdout.split('\n').flatMap(line => { const m = /^\s*(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line); return m ? [{ pid: Number(m[1]), ppid: Number(m[2]), started: m[3] as string }] : []; });
+};
+function lookAround(): void {
+  if (!follow || child.pid === undefined) return;
+  const rows = processTable();
+  if (!rows.length) return;
+  const known = new Set<number>([child.pid]);
+  for (const [pid, started] of followed) if (rows.some(r => r.pid === pid && r.started === started)) known.add(pid);
+  for (let grew = true; grew;) { grew = false; for (const r of rows) if (!known.has(r.pid) && known.has(r.ppid)) { known.add(r.pid); grew = true; } }
+  let changed = false;
+  for (const r of rows) if (known.has(r.pid) && r.pid !== child.pid && followed.get(r.pid) !== r.started) { followed.set(r.pid, r.started); changed = true; }
+  if (changed) atomic('descendants.json', [...followed].map(([pid, started]) => ({ pid, started })));
+}
+function endFollowed(): void {
+  if (!follow) return;
+  const rows = processTable();
+  for (const [pid, started] of followed) if (rows.some(r => r.pid === pid && r.started === started)) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } }
+}
+
 const child = spawn(argv[0] as string, argv.slice(1), {
   cwd: job.cwd, env: scope ? scopeEnv : process.env, windowsHide: true, detached: !win,
   stdio: [job.stdin === 'prompt' ? 'pipe' : 'ignore', out, err],
@@ -52,23 +79,27 @@ if (child.pid === undefined) { /* the error handler reports it */ } else {
 const beat = () => { const now = new Date(); try { utimesSync(join(dir, 'heartbeat'), now, now); } catch { /* next beat */ } };
 writeFileSync(join(dir, 'heartbeat'), 'hb');
 const heartbeat = setInterval(beat, 1000);
+const watcher = follow ? setInterval(lookAround, 1000) : null;
 
 function killTree(why: 'cancel' | 'timeout'): void {
   if (killedBy || child.pid === undefined) return;
   killedBy = why;
+  lookAround();
   if (win) spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true });
   else { try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch { /* gone */ } } }
   stopScope();
+  endFollowed();
 }
 const cancelPoll = setInterval(() => { if (existsSync(join(dir, 'cancel.request'))) killTree('cancel'); }, 300);
 const timer = job.timeoutS ? setTimeout(() => killTree('timeout'), job.timeoutS * 1000) : null;
 
 child.on('exit', (code, signal) => {
-  clearInterval(heartbeat); clearInterval(cancelPoll); if (timer) clearTimeout(timer);
+  clearInterval(heartbeat); clearInterval(cancelPoll); if (watcher) clearInterval(watcher); if (timer) clearTimeout(timer);
   // Whatever the job left running ends with it, as the job host's Job Object does on Windows: the rest of its process group, and its scope.
   if (!win && child.pid !== undefined) {
     try { process.kill(-child.pid, 'SIGKILL'); } catch { /* the group is already empty */ }
     stopScope();
+    endFollowed();
   }
   try { closeSync(out); closeSync(err); } catch { /* already closed */ }
   atomic('result.json', { exitCode: code, signal, killedBy, endedAt: Date.now() });

@@ -233,6 +233,19 @@ describe.runIf(process.platform === 'win32' ? existsSync(JOBHOST) : systemdScope
   });
 });
 
+// With neither of those, the runner follows the job's process tree itself, so a descendant in its own process group still ends with the job.
+describe.runIf(process.platform !== 'win32')('without a job host or a systemd scope', () => {
+  it('ends a descendant that detached from the job', async () => {
+    const e = setup({}, undefined, { scopes: () => false });
+    const marker = `follow-marker-${Date.now()}`;
+    const id = submitOk(e.sup, request({ text: `ESCAPE ${marker}\nSLEEP 3`, cwd: e.root }));
+    expect((await terminal(e.sup, e.store, id)).state).toBe('completed');
+    await sleep(1200);
+    expect(processesWith(marker)).toBe(0);
+    killEverything(marker);
+  });
+});
+
 describe('runtime failover', () => {
   const runnerOn = { charterDir: '', ambient: 'keep' as const, failover: 'on' as const };
   const limit = (fallback: string[]) => ({
