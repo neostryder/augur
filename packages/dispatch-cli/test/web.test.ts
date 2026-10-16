@@ -23,13 +23,13 @@ describe('augur web', () => {
   it('lists a link per address with the token in the fragment', () => {
     const r = run([]);
     expect(r.out).toContain(`http://127.0.0.1:7420/#token=${TOKEN}`);
-    expect(r.out).not.toContain('without TLS');
+    expect(r.out).not.toContain('plain http');
   });
 
   it('warns about a network address with no TLS, and not with TLS or on this computer only', () => {
     const open = run([], { host: '0.0.0.0' }, ['http://192.168.1.5:7420/']);
-    expect(open.out).toContain('without TLS');
-    expect(run([], { host: '0.0.0.0', tlsCert: 'c', tlsKey: 'k' }, ['https://192.168.1.5:7420/']).out).not.toContain('without TLS');
+    expect(open.out).toContain('plain http');
+    expect(run([], { host: '0.0.0.0', tlsCert: 'c', tlsKey: 'k' }, ['https://192.168.1.5:7420/']).out).not.toContain('plain http');
   });
 
   it('replaces the token on rotate and shows the new links', () => {

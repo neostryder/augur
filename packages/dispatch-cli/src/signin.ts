@@ -3,9 +3,9 @@
 import type { LoginStart } from '@augur/core';
 import { EXIT_CODES } from '@augur/dispatch-protocol';
 
-export const LOGIN_HELP = `augur login <claude|codex> [--stdin]    sign Augur in to a provider itself; the link opens in a browser on any device. Claude: paste the code back (hidden prompt, or --stdin). Codex: type the shown code there, and this waits
-augur login status                      which login Augur reads for each provider: its own, the provider CLI's, or none
-augur logout <claude|codex>             forget the sign-in Augur holds; the provider CLI's own login is left alone`;
+export const LOGIN_HELP = `augur login <claude|codex> [--stdin]    sign Augur in to a provider with a session of its own; open the link on any device. Claude: paste the code the page gives you (typing is hidden, or use --stdin). Codex: enter the code shown here on the page, and this command waits
+augur login status                      which login Augur uses for each provider: its own, the provider CLI's, or none
+augur logout <claude|codex>             remove the session Augur holds; the provider CLI's login is left alone`;
 
 export interface LoginIo {
   err(text: string): void;
@@ -22,7 +22,7 @@ export interface LoginDeps {
 
 const PROVIDERS = ['claude', 'codex'];
 const NAME: Record<string, string> = { claude: 'Claude', codex: 'Codex' };
-const SOURCE: Record<string, string> = { own: 'signed in through Augur', cli: "reading the provider CLI's login" };
+const SOURCE: Record<string, string> = { own: 'signed in through Augur', cli: "using the provider CLI's login" };
 
 export async function loginCmd(rest: string[], flags: { stdin: boolean }, io: LoginIo, say: (human: string, data: unknown) => void, deps: LoginDeps, logout = false): Promise<number> {
   const [first] = rest;
@@ -34,18 +34,18 @@ export async function loginCmd(rest: string[], flags: { stdin: boolean }, io: Lo
   if (!first || !PROVIDERS.includes(first)) { io.err(`${LOGIN_HELP}\n`); return EXIT_CODES.usage; }
   if (logout) {
     await deps.call('signOut', [first]);
-    say(`${NAME[first]}: the sign-in Augur held was removed.`, { provider: first, signedIn: false });
+    say(`${NAME[first]}: Augur removed its own session. The provider CLI's login is unchanged.`, { provider: first, signedIn: false });
     return EXIT_CODES.completed;
   }
   const start = await deps.call('signInBegin', [first]) as LoginStart;
   const minutes = Math.round(start.expiresInS / 60);
   if (start.mode === 'paste') {
     // The link goes to the error stream so a pipe can still carry the code in on standard input.
-    io.err(`Open this link in a browser on any device and sign in to ${NAME[first]}. It stays open for ${minutes} minutes:\n\n${start.url}\n\n`);
+    io.err(`Open this link in a browser on any device and sign in to ${NAME[first]}. The link works for ${minutes} minutes:\n\n${start.url}\n\n`);
     let code: string;
     if (flags.stdin) code = io.stdin().trim();
     else if (io.interactive && io.readSecret) code = (await io.readSecret('Paste the code the page shows (typing is hidden): ')).trim();
-    else { io.err('There is no terminal to type the code in. Run this at a terminal, or give the code on standard input with --stdin.\n'); return EXIT_CODES.usage; }
+    else { io.err('There is no terminal here to type the code into. Run this in a terminal, or pass the code on standard input with --stdin.\n'); return EXIT_CODES.usage; }
     await deps.call('signInComplete', [start.id, code]);
   } else {
     io.err(`Open ${start.url} in a browser on any device and enter this code within ${minutes} minutes:\n\n${start.code}\n\nWaiting for you to approve it...\n`);
@@ -56,6 +56,6 @@ export async function loginCmd(rest: string[], flags: { stdin: boolean }, io: Lo
       await deps.sleep(5000);
     }
   }
-  say(`${NAME[first]}: Augur is signed in and keeps this session itself. It no longer reads the provider CLI's login.`, { provider: first, signedIn: true });
+  say(`${NAME[first]}: Augur is signed in with its own session and no longer reads the provider CLI's login.`, { provider: first, signedIn: true });
   return EXIT_CODES.completed;
 }

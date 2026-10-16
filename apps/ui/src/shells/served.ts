@@ -88,14 +88,14 @@ export function createServedShell(): Shell {
     stream = null;
     old?.abort();
     for (;;) {
-      if (!token) { token = await askToken('Enter the web token for this Augur. Run "augur web" on the computer to see it.'); saveToken(token); }
+      if (!token) { token = await askToken('Enter the web token. To see it, run "augur web" on the computer that runs Augur.'); saveToken(token); }
       const ctrl = new AbortController();
       let res: Response;
       try { res = await fetch('/api/watch', { headers: headers(), signal: ctrl.signal, cache: 'no-store' }); }
-      catch { throw new Error('Cannot reach Augur on this computer. Trying again.'); }
+      catch { throw new Error('Cannot reach the Augur service. Trying again.'); }
       if (res.status === 401) { forgetToken(); continue; }
       if (res.status === 429) throw new Error('Too many wrong tokens. Wait a minute, then try again.');
-      if (!res.ok || !res.body) throw new Error(`Augur answered ${res.status}. Trying again.`);
+      if (!res.ok || !res.body) throw new Error(`The Augur service answered HTTP ${res.status}. Trying again.`);
       stream = ctrl;
       // The stream ending is a lost link; the engine link starts it again with a growing wait.
       void readLines(res.body, onLine).catch(() => undefined).finally(() => { if (stream === ctrl) onLine(JSON.stringify({ t: 'exit' })); });
@@ -108,10 +108,10 @@ export function createServedShell(): Shell {
         const result = (body: Record<string, unknown>) => onLine(JSON.stringify({ t: 'result', id: msg.id, ...body }));
         try {
           const r = await fetch('/api/call', { method: 'POST', headers: headers({ 'Content-Type': 'application/json' }), body: JSON.stringify({ method: msg.method, args: msg.args ?? [] }), cache: 'no-store' });
-          if (r.status === 401) { forgetToken(); result({ error: 'The web token was refused.' }); stream?.abort(); return; }
+          if (r.status === 401) { forgetToken(); result({ error: 'The web token was refused. Enter the current one.' }); stream?.abort(); return; }
           const out = await r.json().catch(() => ({})) as { result?: unknown; error?: string };
           if (typeof out.error === 'string') result({ error: out.error }); else result({ result: out.result ?? null });
-        } catch { result({ error: 'Cannot reach Augur on this computer.' }); }
+        } catch { result({ error: 'Cannot reach the Augur service.' }); }
       },
     };
   };

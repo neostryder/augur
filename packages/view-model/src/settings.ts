@@ -45,20 +45,20 @@ export const STARTER_RULES_TEXT = 'Each provider starts with cautious rules that
 /** Augur's own sign-in to Claude and Codex, used where the command-line app is not signed in or the computer has no browser. */
 export const LOGIN_TEXT = {
   heading: 'Sign-in',
-  own: (name: string) => `Signed in through Augur. Augur keeps this session itself and does not read the ${name} command-line login.`,
-  cli: (name: string) => `Reading the ${name} command-line login on this computer.`,
+  own: (name: string) => `Signed in through Augur. Augur keeps its own session and does not read the ${name} command-line login.`,
+  cli: (name: string) => `Using the ${name} command-line login on this computer.`,
   none: 'Not signed in.',
-  why: 'Sign in here when the command-line app is not signed in on this computer, or when it has no browser. The link opens in a browser on any device, and Augur keeps its own session, so it never competes with the command-line app for its login.',
-  begin: 'Sign in with Augur',
-  again: 'Sign in again with Augur',
+  why: 'Sign in here if the command-line app is not signed in on this computer, or if this computer has no browser. The link opens in a browser on any device. Augur keeps its own session, so it and the command-line app never sign each other out.',
+  begin: 'Sign in through Augur',
+  again: 'Sign in again through Augur',
   out: 'Sign out',
-  outHelp: 'Forgets the session Augur holds. The command-line login is left alone.',
+  outHelp: 'Removes the session Augur holds and leaves the command-line login alone.',
   link: 'Open the sign-in page',
-  pasteStep: (name: string) => `Open the page, sign in to ${name}, then paste the code it shows.`,
+  pasteStep: (name: string) => `Open the page, sign in to ${name}, and paste the code it shows here.`,
   pasteLabel: 'Code from the page',
   finish: 'Finish',
   cancel: 'Cancel',
-  deviceStep: (code: string) => `Open the page and enter ${code}. This updates when it is approved.`,
+  deviceStep: (code: string) => `Open the page and enter ${code}. Sign-in finishes on its own once you approve it.`,
   waiting: 'Waiting for approval...',
 };
 

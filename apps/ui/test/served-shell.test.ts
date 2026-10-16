@@ -66,7 +66,7 @@ describe('the served shell', () => {
     expect(lines).toContainEqual({ t: 'result', id: 1, error: 'Unknown engine command start' });
     callStatus = 401;
     await link.send(JSON.stringify({ t: 'call', id: 2, method: 'dismiss', args: [] }));
-    expect(lines).toContainEqual({ t: 'result', id: 2, error: 'The web token was refused.' });
+    expect(lines).toContainEqual({ t: 'result', id: 2, error: 'The web token was refused. Enter the current one.' });
     expect(store.has('augur.webToken')).toBe(false);
     await vi.waitFor(() => expect(lines.filter((l) => l.t === 'exit')).toHaveLength(1));
   });

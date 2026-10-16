@@ -46,7 +46,7 @@ export async function ownSession(host: Host, provider: SignInProvider): Promise<
 }
 
 async function saveSession(host: Host, provider: SignInProvider, session: OwnSession): Promise<void> {
-  if (!host.saveSecret) throw new Error('Could not save the sign-in on this computer.');
+  if (!host.saveSecret) throw new Error('Could not save the sign-in: Augur has no key store to write to here.');
   await host.saveSecret(sessionSecretName(provider), JSON.stringify(session));
 }
 
@@ -70,7 +70,7 @@ async function renew(host: Host, provider: SignInProvider): Promise<string> {
       : obj(await json(host, { url: `${CODEX.issuer}/oauth/token`, method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ client_id: CODEX.client, grant_type: 'refresh_token', refresh_token: session.refreshToken, scope: 'openid profile email' }) }));
   } catch (error) {
-    if (error instanceof HttpError && (error.status === 400 || error.status === 401)) throw new Error(`Sign in again: the ${NAMES[provider]} sign-in Augur holds was refused, so it cannot be renewed.`);
+    if (error instanceof HttpError && (error.status === 400 || error.status === 401)) throw new Error(`Sign in again: ${NAMES[provider]} refused the sign-in Augur holds, so Augur cannot renew it.`);
     throw error;
   }
   if (typeof response.access_token !== 'string' || !response.access_token) throw new Error(`Could not renew the ${NAMES[provider]} sign-in. Sign in again from Augur.`);
@@ -120,10 +120,10 @@ export async function beginLogin(host: Host, provider: SignInProvider): Promise<
   }
   const res = await host.http({ url: `${CODEX.issuer}/api/accounts/deviceauth/usercode`, method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ client_id: CODEX.client }), timeoutMs: 20000 });
-  if (res.status === 404) throw new Error('Sign in with a device code is not turned on for this ChatGPT account. Turn it on in the ChatGPT security settings, then try again.');
+  if (res.status === 404) throw new Error('Device-code sign-in is off for this ChatGPT account. Turn it on in the ChatGPT security settings and try again.');
   if (res.status < 200 || res.status >= 300) throw new Error(`Could not start the Codex sign-in (HTTP ${res.status}).`);
   const body = obj(safeParse(res.body)), userCode = String(body.user_code ?? body.usercode ?? ''), deviceAuthId = String(body.device_auth_id ?? '');
-  if (!userCode || !deviceAuthId) throw new Error('Could not start the Codex sign-in. The answer had no device code.');
+  if (!userCode || !deviceAuthId) throw new Error('Could not start the Codex sign-in: OpenAI sent back no device code.');
   return { pending: { id, provider, mode: 'device', expiresAt, deviceAuthId, userCode },
     start: { id, provider, mode: 'device', url: `${CODEX.issuer}/codex/device`, code: userCode, expiresInS } };
 }
@@ -135,22 +135,22 @@ const safeParse = (text: string): unknown => { try { return JSON.parse(text || '
  * the device code was approved yet and answers `done: false` until it was. Nothing is saved unless the grant can read usage.
  */
 export async function completeLogin(host: Host, pending: PendingLogin, input?: string): Promise<{ done: boolean }> {
-  if (clock(host) > pending.expiresAt) throw new Error('Sign in again: this sign-in expired. Start a new one.');
+  if (clock(host) > pending.expiresAt) throw new Error('Sign in again: this sign-in has expired.');
   let tokens: Record<string, any>;
   if (pending.provider === 'claude') {
     const [code, state] = String(input ?? '').trim().split('#');
     if (!code) throw new Error('Sign in again: paste the code the sign-in page showed.');
-    if (state && state !== pending.state) throw new Error('Sign in again: that code belongs to a different sign-in. Use the link Augur just gave you.');
+    if (state && state !== pending.state) throw new Error('Sign in again: that code is from a different sign-in. Use the link Augur gave you most recently.');
     try {
       tokens = obj(await json(host, { url: CLAUDE.token, method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify({ grant_type: 'authorization_code', code, state: pending.state, redirect_uri: CLAUDE.redirect, client_id: CLAUDE.client, code_verifier: pending.verifier }) }));
     } catch (error) {
-      if (error instanceof HttpError && error.status >= 400 && error.status < 500) throw new Error('Sign in again: Claude did not accept that code. Codes work once and expire quickly.');
+      if (error instanceof HttpError && error.status >= 400 && error.status < 500) throw new Error('Sign in again: Claude refused that code. Each code works only once and expires soon after it is shown.');
       throw error;
     }
     const scopes = typeof tokens.scope === 'string' ? tokens.scope.split(/\s+/).filter(Boolean) : null;
     if (scopes && !scopes.includes('user:profile')) throw new Error('Sign in again: Claude granted a sign-in that cannot read usage, so nothing was saved.');
-    if (typeof tokens.access_token !== 'string' || typeof tokens.refresh_token !== 'string') throw new Error('Could not finish the Claude sign-in. The answer had no tokens.');
+    if (typeof tokens.access_token !== 'string' || typeof tokens.refresh_token !== 'string') throw new Error('Could not finish the Claude sign-in: Claude sent back no tokens.');
     await saveSession(host, 'claude', { refreshToken: tokens.refresh_token, ...(scopes ? { scopes } : {}), plan: null, savedAt: new Date(clock(host)).toISOString() });
     slot(access, host).set('claude', { token: tokens.access_token, expiresAt: clock(host) + (num(tokens.expires_in) ?? 3600) * 1000 });
     return { done: true };
@@ -160,12 +160,12 @@ export async function completeLogin(host: Host, pending: PendingLogin, input?: s
   if (poll.status === 403 || poll.status === 404) return { done: false };
   if (poll.status < 200 || poll.status >= 300) throw new Error(`Could not finish the Codex sign-in (HTTP ${poll.status}).`);
   const grant = obj(safeParse(poll.body));
-  if (typeof grant.authorization_code !== 'string' || typeof grant.code_verifier !== 'string') throw new Error('Could not finish the Codex sign-in. The answer had no authorization code.');
+  if (typeof grant.authorization_code !== 'string' || typeof grant.code_verifier !== 'string') throw new Error('Could not finish the Codex sign-in: OpenAI sent back no authorization code.');
   const exchange: HttpResponse = await host.http({ url: `${CODEX.issuer}/oauth/token`, method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: form({ grant_type: 'authorization_code', code: grant.authorization_code, redirect_uri: `${CODEX.issuer}/deviceauth/callback`, client_id: CODEX.client, code_verifier: grant.code_verifier }), timeoutMs: 20000 });
   if (exchange.status < 200 || exchange.status >= 300) throw new Error(`Could not finish the Codex sign-in (HTTP ${exchange.status}).`);
   tokens = obj(safeParse(exchange.body));
-  if (typeof tokens.access_token !== 'string' || typeof tokens.refresh_token !== 'string') throw new Error('Could not finish the Codex sign-in. The answer had no tokens.');
+  if (typeof tokens.access_token !== 'string' || typeof tokens.refresh_token !== 'string') throw new Error('Could not finish the Codex sign-in: OpenAI sent back no tokens.');
   const auth = obj(claims(tokens.id_token)['https://api.openai.com/auth']);
   await saveSession(host, 'codex', { refreshToken: tokens.refresh_token, ...(typeof auth.chatgpt_account_id === 'string' ? { accountId: auth.chatgpt_account_id } : {}),
     plan: typeof auth.chatgpt_plan_type === 'string' ? auth.chatgpt_plan_type : null, savedAt: new Date(clock(host)).toISOString() });
