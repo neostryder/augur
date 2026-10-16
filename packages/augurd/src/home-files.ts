@@ -5,6 +5,9 @@ import { dirname, join, normalize, posix, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 const LOGIN_FILES = ['.claude/.credentials.json', '.codex/auth.json', '.grok/auth.json', '.codex/models_cache.json'];
+/** The login files that hold tokens: written readable by their owner only. */
+const CREDENTIAL_FILES = new Set(['.claude/.credentials.json', '.codex/auth.json', '.grok/auth.json']);
+export const isCredentialFile = (rel: string): boolean => CREDENTIAL_FILES.has(rel);
 const BESIDE_EXPORT = ['policy.json', 'policy-import.json', 'policy-edits.jsonl', 'policy-edit-results.json', 'alerts.json', 'alerts-acks.jsonl'];
 
 /** A path relative to home with forward slashes and only plain parts: no drive, no leading slash, no backslash, no `.` or `..`. */
@@ -53,7 +56,7 @@ export function readText(path: string): string | null {
 
 /** Writes beside the target and renames over it, so a reader sees the old file or the new one and never half of one. */
 export function atomicWrite(path: string, text: string, mode?: number): void {
-  mkdirSync(dirname(path), { recursive: true });
+  mkdirSync(dirname(path), mode === undefined ? { recursive: true } : { recursive: true, mode: 0o700 });
   const tmp = join(dirname(path), `.augur-${randomUUID()}.tmp`);
   writeFileSync(tmp, text, mode === undefined ? undefined : { mode });
   // On Windows the rename fails while another program holds the target open for a moment, so it is tried a few times before giving up.
