@@ -19,6 +19,8 @@ jobs:
           - platform: ubuntu-24.04
             args: '--bundles appimage,deb,rpm'
     runs-on: ${{ matrix.platform }}
+    # Each build waits for the owner's approval in this environment. Keep the signing key in the environment's secrets, not the repository's.
+    environment: release
     permissions:
       contents: write
     steps:
