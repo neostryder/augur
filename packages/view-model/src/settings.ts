@@ -58,7 +58,7 @@ export const LOGIN_TEXT = {
   pasteLabel: 'Code from the page',
   finish: 'Finish',
   cancel: 'Cancel',
-  deviceStep: (code: string) => `Open the page and enter ${code}. Sign-in finishes on its own once you approve it.`,
+  deviceStep: (code: string) => `Open the page and enter ${code}. Sign-in finishes on its own once you approve it. If the page says device-code sign-in is off, your workspace admin has to turn it on, and until then Augur keeps using the Codex command-line login.`,
   waiting: 'Waiting for approval...',
 };
 

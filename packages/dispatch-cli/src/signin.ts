@@ -48,7 +48,7 @@ export async function loginCmd(rest: string[], flags: { stdin: boolean }, io: Lo
     else { io.err('There is no terminal here to type the code into. Run this in a terminal, or pass the code on standard input with --stdin.\n'); return EXIT_CODES.usage; }
     await deps.call('signInComplete', [start.id, code]);
   } else {
-    io.err(`Open ${start.url} in a browser on any device and enter this code within ${minutes} minutes:\n\n${start.code}\n\nWaiting for you to approve it...\n`);
+    io.err(`Open ${start.url} in a browser on any device and enter this code within ${minutes} minutes:\n\n${start.code}\n\nIf the page says device-code sign-in is off, your workspace admin has to turn it on. Until then, Augur keeps using the Codex CLI's login.\n\nWaiting for you to approve it...\n`);
     const until = deps.now() + start.expiresInS * 1000;
     for (;;) {
       if ((await deps.call('signInComplete', [start.id]) as { done: boolean }).done) break;
