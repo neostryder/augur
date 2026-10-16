@@ -3,7 +3,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ALL_ADAPTERS } from './adapters/index.js';
-import { DEFAULT_CONFIG, loadConfig } from './config.js';
+import { DEFAULT_CONFIG, loadConfig, plainHost } from './config.js';
 import type { ServiceConfig } from './config.js';
 
 export interface ConfigKey {
@@ -16,6 +16,8 @@ export interface ConfigKey {
   max?: number;
   /** A setting that lowers what the service checks. The app never changes it; a person does, with the command or by editing the file. */
   weakens?: boolean;
+  /** For a text setting: null when the value is fine, or what is wrong with it. */
+  check?(text: string): string | null;
 }
 
 export const CONFIG_KEYS: readonly ConfigKey[] = [
@@ -33,6 +35,14 @@ export const CONFIG_KEYS: readonly ConfigKey[] = [
   { key: 'adapters', label: 'Adapters', help: 'The adapters a route may use, separated by commas. codex-exec by default. The exec adapter runs any command a route names.', kind: 'list', choices: ALL_ADAPTERS.map(a => a.id) },
   { key: 'requirePick', label: 'Require a pick', help: 'Refuses a job unless its model was picked for the caller in the last hour. On by default.', kind: 'bool', weakens: true },
   { key: 'verifyNamed', label: 'Named-model claims', help: 'What happens when a caller says a person named the model. Off takes their word, record notes when it cannot be confirmed, and enforce refuses the job.', kind: 'choice', choices: ['off', 'record', 'enforce'], weakens: true },
+  { key: 'web.enabled', label: 'Web app', help: "Serves Augur's web app from this service, so a browser on this computer or your network can open it. The link, with its sign-in token, comes from augur web. Off by default.", kind: 'bool', weakens: true },
+  { key: 'web.host', label: 'Web app address', help: '127.0.0.1 by default, which only this computer can reach. 0.0.0.0 or the network address of this computer opens it to your network, where anyone who has the token can use Augur; serve HTTPS (web.tlsCert and web.tlsKey) or keep it behind a tunnel you trust.', kind: 'text', weakens: true,
+    check: t => (plainHost(t) ? null : 'web.host is an IP address or a plain host name.') },
+  { key: 'web.port', label: 'Web app port', help: '7420 by default.', kind: 'number', min: 1024, max: 65535 },
+  { key: 'web.allowedHosts', label: 'Web app host names', help: 'Names besides this computer that requests may use, separated by commas, such as a DNS name or tunnel address that points here. Requests with any other host name are refused.', kind: 'text', weakens: true,
+    check: t => (t.split(',').map(s => s.trim()).filter(Boolean).every(plainHost) ? null : 'web.allowedHosts is a comma-separated list of host names.') },
+  { key: 'web.tlsCert', label: 'Web app certificate', help: 'Path of a PEM certificate chain. With web.tlsKey, the web app is served over HTTPS.', kind: 'text' },
+  { key: 'web.tlsKey', label: 'Web app key', help: 'Path of the PEM private key for web.tlsCert.', kind: 'text' },
 ];
 
 const path = (dir: string) => join(dir, 'config.json');
@@ -51,6 +61,12 @@ function valueOf(config: ServiceConfig, key: string): string {
     case 'runner.ambient': return config.runner.ambient;
     case 'runner.failover': return config.runner.failover;
     case 'adapters': return config.adapters.join(',');
+    case 'web.enabled': return String(config.web.enabled);
+    case 'web.host': return config.web.host;
+    case 'web.port': return String(config.web.port);
+    case 'web.allowedHosts': return config.web.allowedHosts.join(',');
+    case 'web.tlsCert': return config.web.tlsCert;
+    case 'web.tlsKey': return config.web.tlsKey;
     default: return String((config as unknown as Record<string, unknown>)[key]);
   }
 }
@@ -83,7 +99,7 @@ export function parseValue(k: ConfigKey, text: string): { ok: true; stored: unkn
     if (!(k.choices ?? []).includes(t)) return { ok: false, error: `${k.key} is one of ${(k.choices ?? []).join(', ')}.` };
     return { ok: true, stored: t, shown: t };
   }
-  if (k.kind === 'text') return { ok: true, stored: t, shown: t };
+  if (k.kind === 'text') { const problem = k.check?.(t) ?? null; return problem ? { ok: false, error: problem } : { ok: true, stored: t, shown: t }; }
   const items = t.split(',').map(s => s.trim()).filter(Boolean);
   const unknown = items.filter(i => !(k.choices ?? []).includes(i));
   if (!items.length || unknown.length) return { ok: false, error: `${k.key} is a comma-separated list from ${(k.choices ?? []).join(', ')}${unknown.length ? `; not known: ${unknown.join(', ')}` : ''}.` };

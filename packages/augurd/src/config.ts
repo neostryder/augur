@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { isIP } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import type { LearnSettings } from './decisions.js';
 
@@ -18,6 +19,19 @@ export interface RunnerSettings {
   ambient: 'keep' | 'trim';
   /** `off` leaves a job that failed after it started. `on` retries it on the route's fallback list when the failure can be retried. */
   failover: 'off' | 'on';
+}
+
+export interface WebSettings {
+  /** Serve the web app from the service. Off by default: nothing listens on the network until the owner turns it on. */
+  enabled: boolean;
+  /** The address to listen on. Loopback by default, so only this computer can connect; 0.0.0.0 or a LAN address opens it to the network. */
+  host: string;
+  port: number;
+  /** Host names besides this computer's own that a request may use, for a name that points here (a DNS name or a tunnel). */
+  allowedHosts: string[];
+  /** A certificate and key (PEM files) to serve HTTPS with. Without them the web app is plain HTTP. */
+  tlsCert: string;
+  tlsKey: string;
 }
 
 export interface ServiceConfig {
@@ -46,10 +60,12 @@ export interface ServiceConfig {
   runnerStaleS: number;
   /** Run the usage engine (provider readings, alerts, phone sync) in the service. The window app and the terminal app show it. AUGURD_ENGINE=0 or 1 overrides it for one start. */
   engine: boolean;
+  web: WebSettings;
 }
 
 export const DEFAULT_CONFIG: ServiceConfig = { retentionDays: 30, persistPrompts: false, maxConcurrent: 8, maxDepth: 2, maxDescendants: 16,
   jobhostPath: null, adapters: ['codex-exec'], requirePick: true, promptRoots: [], verifyNamed: 'enforce', decision: { backend: 'none' }, learn: { recordTasks: false }, runnerStaleS: 20, engine: true,
+  web: { enabled: false, host: '127.0.0.1', port: 7420, allowedHosts: [], tlsCert: '', tlsKey: '' },
   runner: { charterDir: '', ambient: 'keep', failover: 'off' } };
 
 /** The launcher built by `pnpm build:jobhost` sits beside the package's sources, and a packaged install places it next to the service. */
@@ -78,6 +94,24 @@ function decisionSettings(v: unknown): DecisionSettings {
   return { backend: kind(d.backend) ?? 'none', ...(servers?.length ? { servers } : {}), shadow: kind(d.shadow) };
 }
 
+/** A bind address: an IP literal, or a plain host name. The loader and the settings editor share this, so a typo is refused instead of silently replaced. */
+export function plainHost(v: string): boolean {
+  return isIP(v) !== 0 || /^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/.test(v);
+}
+
+function webSettings(v: unknown): WebSettings {
+  const d = (typeof v === 'object' && v !== null && !Array.isArray(v) ? v : {}) as Record<string, unknown>, c = DEFAULT_CONFIG.web;
+  const names = (x: unknown) => (Array.isArray(x) ? x : typeof x === 'string' ? x.split(',') : []).map(h => String(h).trim().toLowerCase()).filter(h => h && plainHost(h));
+  return {
+    enabled: d.enabled === true,
+    host: typeof d.host === 'string' && plainHost(d.host.trim()) ? d.host.trim() : c.host,
+    port: num(d.port, c.port, 1024, 65535),
+    allowedHosts: names(d.allowedHosts),
+    tlsCert: typeof d.tlsCert === 'string' ? d.tlsCert.trim() : '',
+    tlsKey: typeof d.tlsKey === 'string' ? d.tlsKey.trim() : '',
+  };
+}
+
 export function loadConfig(dir: string): ServiceConfig {
   const path = join(dir, 'config.json');
   let raw: Record<string, unknown> = {};
@@ -96,5 +130,6 @@ export function loadConfig(dir: string): ServiceConfig {
     learn: { recordTasks: (raw.learn as { recordTasks?: unknown } | undefined)?.recordTasks === true },
     runnerStaleS: num(raw.runnerStaleS, c.runnerStaleS, 5, 600),
     engine: typeof raw.engine === 'boolean' ? raw.engine : c.engine,
+    web: webSettings(raw.web),
   };
 }

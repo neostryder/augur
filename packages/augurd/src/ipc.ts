@@ -40,6 +40,20 @@ export function ensureToken(dir: string, file = 'token'): string {
   return token;
 }
 
+/** The web app's token, apart from the owner's and the agent's: a browser holds it, so it can be rotated without touching the terminal's or an agent's. Empty when there is none. */
+export function webToken(dir: string): string {
+  try { const t = readFileSync(join(dir, 'web-token'), 'utf8').trim(); return t.length >= 32 ? t : ''; } catch { return ''; }
+}
+
+/** Replaces the web token. Every browser signed in with the old one is signed out. */
+export function rotateWebToken(dir: string): string {
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, 'web-token'), token = randomBytes(32).toString('hex');
+  writeFileSync(path, token, { mode: 0o600 });
+  ownerOnly(path, 0o600);
+  return token;
+}
+
 /** Who holds a token: the owner's terminal, app and hooks, or an agent's tool server. An agent can run work and read results, and cannot make the claims that stand in for the owner. */
 export type Role = 'owner' | 'agent';
 
@@ -63,6 +77,9 @@ export class IpcServer {
 
   /** Serves the usage engine's methods from now on. Before this they are refused. */
   attachEngine(engine: EngineLink | null): void { this.engine = engine; }
+
+  /** The usage engine and its views, for the web app, or null when it is not running. */
+  engineLink(): EngineLink | null { return this.engine; }
 
   private needEngine(): EngineLink {
     if (!this.engine) throw new Error('The usage engine is not running in this service.');

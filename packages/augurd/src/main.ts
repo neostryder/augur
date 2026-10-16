@@ -10,7 +10,8 @@ import { enabledAdapters, loadLocalAdapters } from './adapters/index.js';
 import { loadConfig } from './config.js';
 import { DecisionLog } from './decisions.js';
 import { createEngineShell } from './engine-shell.js';
-import { IpcServer, ensureToken } from './ipc.js';
+import { IpcServer, ensureToken, webToken } from './ipc.js';
+import { WebServer, webDir } from './web.js';
 import { writeDailyReport, writeLabels } from './balance-files.js';
 import { augurHome, dataDir, pipeName } from './paths.js';
 import { policySource, routeSource, usageSource } from './sources.js';
@@ -72,6 +73,18 @@ export async function startService(opts: ServiceOptions = {}) {
   engine = (opts.engine ?? override ?? config.engine) ? await startEngine(server, log) : null;
   try { await server.start(opts.pipe ?? pipeName(dir)); }
   catch (e) { engine?.stop(); store.close(); throw e; }
+  // The web app listens only when the owner turned it on. A port that is taken is logged and leaves the rest of the service running.
+  let web: WebServer | null = null;
+  if (config.web.enabled) {
+    ensureToken(dir, 'web-token');
+    web = new WebServer({ settings: config.web, engine: () => server.engineLink(), token: () => webToken(dir), staticDir: webDir(), log });
+    try {
+      const at = await web.start();
+      log(`web app listening on ${at.tls ? 'https' : 'http'}://${at.host}:${at.port}`);
+      if (!at.tls && !['127.0.0.1', '::1', 'localhost'].includes(at.host)) log('warning: the web app is served over plain HTTP on the network, so its token can be read by anyone on the path. Serve HTTPS with web.tlsCert and web.tlsKey, or keep it behind a tunnel you trust.');
+      if (!webDir()) log('warning: this build has no web app to serve, so the address answers 404.');
+    } catch (e) { log(`web app did not start: ${(e as Error).message}`); web = null; }
+  }
   supervisor.reconcile();
   const timer = setInterval(() => { try { supervisor.tick(); } catch (e) { log(`tick failed: ${(e as Error).message}`); } }, 500);
   const daily = setInterval(() => { try { supervisor.purge(); } catch (e) { log(`purge failed: ${(e as Error).message}`); } }, 86400000);
@@ -84,8 +97,8 @@ export async function startService(opts: ServiceOptions = {}) {
   log('started');
   return {
     supervisor, store, config,
-    engine,
-    async stop() { engine?.stop(); clearInterval(timer); clearInterval(daily); clearInterval(hourly); await server.close(); store.close(); log('stopped'); },
+    engine, web,
+    async stop() { await web?.close(); engine?.stop(); clearInterval(timer); clearInterval(daily); clearInterval(hourly); await server.close(); store.close(); log('stopped'); },
   };
 }
 

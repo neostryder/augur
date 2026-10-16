@@ -23,3 +23,4 @@ export * from './views.js';
 export * from './engine-shell.js';
 export * from './login.js';
 export * from './rubrics.js';
+export * from './web.js';
