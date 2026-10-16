@@ -6,17 +6,18 @@ import type { EngineEvent, Methods, MethodName, RpcResponse, ViewHello, ViewInfo
 import type { EngineKey, EngineState } from '@augur/core';
 import { dataDir, pipeName } from './paths.js';
 
-export interface ClientOptions { pipe?: string; token?: string; dir?: string; timeoutMs?: number }
+/** `agent` reads the agent token, for a tool server an agent drives; the default is the owner's token. */
+export interface ClientOptions { pipe?: string; token?: string; dir?: string; timeoutMs?: number; role?: 'owner' | 'agent' }
 
 export class ServiceError extends Error { constructor(public code: string, message: string) { super(message); } }
 
-export function readToken(dir = dataDir()): string { return readFileSync(join(dir, 'token'), 'utf8').trim(); }
+export function readToken(dir = dataDir(), role: 'owner' | 'agent' = 'owner'): string { return readFileSync(join(dir, role === 'agent' ? 'agent-token' : 'token'), 'utf8').trim(); }
 
 export function call<M extends MethodName>(method: M, params?: Methods[M]['params'], opts: ClientOptions = {}): Promise<Methods[M]['result']> {
   const dir = opts.dir ?? dataDir(), pipe = opts.pipe ?? pipeName(dir);
   return new Promise((resolve, reject) => {
     let token: string;
-    try { token = opts.token ?? readToken(dir); } catch { reject(new ServiceError('no_token', 'The service has not been started: its token file is missing.')); return; }
+    try { token = opts.token ?? readToken(dir, opts.role); } catch { reject(new ServiceError('no_token', 'The service has not been started: its token file is missing.')); return; }
     const sock = net.connect(pipe);
     let buf = '';
     const timer = setTimeout(() => { sock.destroy(); reject(new ServiceError('timeout', 'The service did not answer in time.')); }, opts.timeoutMs ?? 10000);
@@ -51,7 +52,7 @@ export function watchEngine(hello: ViewHello, handlers: EngineWatchHandlers = {}
   const dir = opts.dir ?? dataDir(), pipe = opts.pipe ?? pipeName(dir);
   return new Promise((resolve, reject) => {
     let token: string;
-    try { token = opts.token ?? readToken(dir); } catch { reject(new ServiceError('no_token', 'The service has not been started: its token file is missing.')); return; }
+    try { token = opts.token ?? readToken(dir, opts.role); } catch { reject(new ServiceError('no_token', 'The service has not been started: its token file is missing.')); return; }
     const sock = net.connect(pipe);
     let buf = '', started = false, closing = false;
     const timer = setTimeout(() => { sock.destroy(); reject(new ServiceError('timeout', 'The service did not answer in time.')); }, opts.timeoutMs ?? 10000);

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { openRules } from './open-rules.js';
 import { buildPolicyFile, emptyPolicy, importPolicy, fieldPath, setField } from '@augur/core';
 import type { PolicyFile } from '@augur/core';
 import { DEFAULT_BALANCE, rank, resolveBalance } from '../src/index.js';
@@ -12,7 +13,7 @@ const RULES = { providers: {
 } };
 const NO_PREFER = Object.fromEntries(Object.keys(DEFAULT_BALANCE.prefer).map(m => [m, null]));
 function policy(balance?: Record<string, unknown>): PolicyFile {
-  const p = emptyPolicy(); importPolicy(p, RULES, now);
+  const p = emptyPolicy(); importPolicy(p, openRules(RULES), now);
   for (const [id, provider] of Object.entries(p.providers)) for (const label of Object.keys(provider.models)) setField(p, fieldPath(id, label, 'status'), 'confirmed', 'test', now);
   p.balance = { prefer: NO_PREFER, ...balance };
   return buildPolicyFile(p, Object.keys(p.providers).map(id => ({ id, name: id, metered: true })), now);

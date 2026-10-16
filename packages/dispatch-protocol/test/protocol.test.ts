@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { openRules } from './open-rules.js';
 import { addModels, buildPolicyFile, emptyPolicy, fieldPath, importPolicy, setField } from '@augur/core';
 import type { PolicyFile } from '@augur/core';
 import { JOB_STATES, canTransition, exitCodeForState, isTerminal, statesBefore } from '../src/states.js';
@@ -15,7 +16,7 @@ const RULES = { providers: {
   fable: { models: { 'claude/fable': { id: 'fable', rule: { askFirst: true, dataTier: 'internal', activities: { research: 'normal' } } } } },
 } };
 function policy(confirm = ['codex/sol', 'codex/luna', 'minimax/m3', 'claude/fable']): PolicyFile {
-  const p = emptyPolicy(); importPolicy(p, RULES, now);
+  const p = emptyPolicy(); importPolicy(p, openRules(RULES), now);
   for (const [id, provider] of Object.entries(p.providers)) for (const label of Object.keys(provider.models)) if (confirm.includes(label)) setField(p, fieldPath(id, label, 'status'), 'confirmed', 'test', now);
   return buildPolicyFile(p, Object.keys(p.providers).map(id => ({ id, name: id, metered: true })), now);
 }

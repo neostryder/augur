@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { openRules } from './open-rules.js';
 import { buildPolicyFile, emptyPolicy, fieldPath, importPolicy, readFleet, setField } from '@augur/core';
 import type { PolicyFile } from '@augur/core';
 import { COLD_FACTOR, PRESSURE_FACTOR, localReading, rank } from '../src/index.js';
@@ -16,7 +17,7 @@ function policy(): PolicyFile {
       'cogitator/judge': { id: 'judge', rule: { activities: level } },
       'cogitator/embed': { id: 'embed', rule: { activities: level } } } },
   } };
-  const p = emptyPolicy(); importPolicy(p, rules, now);
+  const p = emptyPolicy(); importPolicy(p, openRules(rules), now);
   for (const [id, provider] of Object.entries(p.providers)) for (const label of Object.keys(provider.models)) setField(p, fieldPath(id, label, 'status'), 'confirmed', 'test', now);
   return buildPolicyFile(p, [{ id: 'grok', name: 'grok', metered: true }, { id: 'cogitator', name: 'Cogitator', metered: false }], now);
 }

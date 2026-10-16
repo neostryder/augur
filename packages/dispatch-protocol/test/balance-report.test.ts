@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { openRules } from './open-rules.js';
 import { buildPolicyFile, emptyPolicy, importPolicy, fieldPath, setField } from '@augur/core';
 import { ACTIVITIES } from '@augur/core';
 import { balanceReport, renderReport, reportSections } from '../src/index.js';
@@ -13,7 +14,7 @@ const RULES = { providers: {
   minimax: { defaults: { dataTier: 'internal', output: 'write_files', cost: 'free' }, models: { 'minimax/m3': { id: 'minimax-m3', rule: { activities: level } } } },
 } };
 const policy = () => {
-  const p = emptyPolicy(); importPolicy(p, RULES, now);
+  const p = emptyPolicy(); importPolicy(p, openRules(RULES), now);
   for (const [id, provider] of Object.entries(p.providers)) for (const label of Object.keys(provider.models)) setField(p, fieldPath(id, label, 'status'), 'confirmed', 'test', now);
   return buildPolicyFile(p, Object.keys(p.providers).map(id => ({ id, name: id, metered: true })), now);
 };
@@ -112,7 +113,7 @@ describe('pace rows in the balance report', () => {
   };
   const entry = (meters: UsageMeter[]) => ({ fetchedAt: now.toISOString(), meters });
   const p = (() => {
-    const built = emptyPolicy(); importPolicy(built, { providers: owners }, now);
+    const built = emptyPolicy(); importPolicy(built, openRules({ providers: owners }), now);
     for (const [id, provider] of Object.entries(built.providers)) for (const label of Object.keys(provider.models)) setField(built, fieldPath(id, label, 'status'), 'confirmed', 'test', now);
     return buildPolicyFile(built, Object.keys(built.providers).map(id => ({ id, name: names[id] ?? id, metered: true })), now);
   })();

@@ -29,10 +29,10 @@ export function ownerOnly(path: string, mode: number): void {
   } catch { /* the profile folder's access list still applies */ }
 }
 
-/** The token sits in the service's data folder, which is inside the user's profile. Callers read it from there. */
-export function ensureToken(dir: string): string {
+/** The owner's token and the agent token sit in the service's data folder, which is inside the user's profile. Callers read the one for their role from there. */
+export function ensureToken(dir: string, file = 'token'): string {
   mkdirSync(dir, { recursive: true });
-  const path = join(dir, 'token');
+  const path = join(dir, file);
   if (existsSync(path)) { const t = readFileSync(path, 'utf8').trim(); if (t.length >= 32) { ownerOnly(path, 0o600); return t; } }
   const token = randomBytes(32).toString('hex');
   writeFileSync(path, token, { mode: 0o600 });
@@ -40,12 +40,26 @@ export function ensureToken(dir: string): string {
   return token;
 }
 
+/** Who holds a token: the owner's terminal, app and hooks, or an agent's tool server. An agent can run work and read results, and cannot make the claims that stand in for the owner. */
+export type Role = 'owner' | 'agent';
+
+/** What an agent token may call. Everything else, including every request that records a person's word (a prompt, a pick answer, a grade label) and the engine's settings, is the owner's. */
+export const AGENT_METHODS: ReadonlySet<string> = new Set(['ping', 'submit', 'status', 'list', 'events', 'logs', 'result', 'cancel', 'pick', 'pressure', 'balance', 'routes', 'route_add']);
+
+/** A job request as an agent may make it: it cannot say a person is at the terminal or named the model, and it cannot waive the pick or quota checks. */
+export function attestAgentRequest(req: JobRequest): JobRequest {
+  const { named: _named, allow: _allow, ...rest } = req;
+  const caller = { ...(rest.caller ?? { kind: 'mcp' as const }) };
+  delete caller.interactive;
+  return { ...rest, caller };
+}
+
 export class IpcServer {
   private server: net.Server | null = null;
   private sockets = new Set<net.Socket>();
   private readonly startedAt = Date.now();
   private engine: EngineLink | null = null;
-  constructor(private sup: Supervisor, private store: Store, private token: string, private routes: () => Record<string, RouteConfig> | null, private rates: () => RateCard = () => ({}), private routeFile: { read(): string | null; write(text: string): void } | null = null) {}
+  constructor(private sup: Supervisor, private store: Store, private token: string, private routes: () => Record<string, RouteConfig> | null, private rates: () => RateCard = () => ({}), private routeFile: { read(): string | null; write(text: string): void } | null = null, private agentToken: string | null = null) {}
 
   /** Serves the usage engine's methods from now on. Before this they are refused. */
   attachEngine(engine: EngineLink | null): void { this.engine = engine; }
@@ -73,11 +87,12 @@ export class IpcServer {
     return { view, stop, result: { state: engine.api.state, views: engine.views.info() } };
   }
 
-  private handle(method: MethodName, params: unknown): unknown | Promise<unknown> {
+  private handle(method: MethodName, params: unknown, role: Role = 'owner'): unknown | Promise<unknown> {
     const p = (params ?? {}) as Record<string, unknown>;
+    if (role === 'agent' && !AGENT_METHODS.has(method)) throw new Error(`This caller may not use ${String(method)}. It is for the owner's terminal and app.`);
     switch (method) {
       case 'ping': return { pid: process.pid, version: PROTOCOL_VERSION, startedAt: this.startedAt };
-      case 'submit': return this.sup.submit(params as JobRequest);
+      case 'submit': return this.sup.submit(role === 'agent' ? attestAgentRequest(params as JobRequest) : params as JobRequest);
       case 'status': return this.store.get(String(p.id));
       case 'list': return this.store.list({ state: p.state as never, root: p.root as string | undefined, limit: p.limit as number | undefined });
       case 'conversations': return this.sup.conversations();
@@ -188,9 +203,11 @@ export class IpcServer {
     return { ok: true, text: this.routeAddedText(plan.name, model, model !== null && added.includes(model), plan.custom !== null, host), route: plan.name, model };
   }
 
-  private authorized(given: unknown): boolean {
-    const a = Buffer.from(String(given ?? '')), b = Buffer.from(this.token);
-    return a.length === b.length && timingSafeEqual(a, b);
+  /** The role a token holds, or null. Both tokens are always compared, so the time taken does not say which one was close. */
+  private roleOf(given: unknown): Role | null {
+    const a = Buffer.from(String(given ?? '')), same = (t: string | null): boolean => { const b = Buffer.from(t ?? ''); return t !== null && a.length === b.length && timingSafeEqual(a, b); };
+    const owner = same(this.token), agent = same(this.agentToken);
+    return owner ? 'owner' : agent ? 'agent' : null;
   }
 
   start(pipe: string): Promise<void> {
@@ -221,7 +238,7 @@ export class IpcServer {
             // Answered at once, so the whole state is on the line before the first change that follows it.
             if (req.method === 'engine_watch') {
               let res: RpcResponse;
-              if (!this.authorized(req.token)) res = { id: req.id, error: { code: 'unauthorized', message: 'Missing or wrong token.' } };
+              if (this.roleOf(req.token) !== 'owner') res = { id: req.id, error: { code: 'unauthorized', message: 'Missing or wrong token.' } };
               else if (watching) res = { id: req.id, error: { code: 'failed', message: 'This connection is already watching.' } };
               else {
                 try { const w = this.watch(sock, req.params); watching = w; res = { id: req.id, result: w.result }; }
@@ -231,8 +248,9 @@ export class IpcServer {
               continue;
             }
             const respond = async (): Promise<RpcResponse> => {
-              if (!this.authorized(req.token)) return { id: req.id, error: { code: 'unauthorized', message: 'Missing or wrong token.' } };
-              try { return { id: req.id, result: (await this.handle(req.method, req.params)) ?? null }; } catch (e) { return { id: req.id, error: { code: 'failed', message: (e as Error).message } }; }
+              const role = this.roleOf(req.token);
+              if (!role) return { id: req.id, error: { code: 'unauthorized', message: 'Missing or wrong token.' } };
+              try { return { id: req.id, result: (await this.handle(req.method, req.params, role)) ?? null }; } catch (e) { return { id: req.id, error: { code: 'failed', message: (e as Error).message } }; }
             };
             void respond().then(res => { if (!sock.destroyed) sock.write(JSON.stringify(res) + '\n'); });
           }

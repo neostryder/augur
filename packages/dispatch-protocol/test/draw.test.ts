@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { openRules } from './open-rules.js';
 import { buildPolicyFile, emptyPolicy, fieldPath, importPolicy, setField } from '@augur/core';
 import type { PolicyFile } from '@augur/core';
 import { rank } from '../src/index.js';
@@ -13,7 +14,7 @@ function policy(models: Record<string, Record<string, string>>, balance?: Record
   for (const [id, rows] of Object.entries(models)) {
     providers[id] = { defaults: { dataTier: 'sensitive', output: 'write_files', cost: 'moderate' }, models: Object.fromEntries(Object.entries(rows).map(([label, weight]) => [label, { id: label.split('/').pop(), rule: { activities: { write_code: weight }, ...(useAfter[label] ? { useAfter: useAfter[label] } : {}) } }])) };
   }
-  const p = emptyPolicy(); importPolicy(p, { providers }, now);
+  const p = emptyPolicy(); importPolicy(p, openRules({ providers }), now);
   for (const [id, provider] of Object.entries(p.providers)) for (const label of Object.keys(provider.models)) setField(p, fieldPath(id, label, 'status'), 'confirmed', 'test', now);
   p.balance = { enabled: false, ...balance };
   return buildPolicyFile(p, Object.keys(p.providers).map(id => ({ id, name: id, metered: true })), now);

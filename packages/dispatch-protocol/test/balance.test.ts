@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { openRules } from './open-rules.js';
 import { buildPolicyFile, emptyPolicy, importPolicy, fieldPath, setField } from '@augur/core';
 import type { PolicyFile } from '@augur/core';
 import { DEFAULT_BALANCE, govern, lookup, nameMatches, rank, resolveBalance, resolveLabel } from '../src/index.js';
@@ -19,7 +20,7 @@ const RULES = { providers: {
 // The shipped route preferences are tested on their own; the rest of these tests read the depth, pace and backup rules without them.
 const NO_PREFER = Object.fromEntries(Object.keys(DEFAULT_BALANCE.prefer).map(m => [m, null]));
 function policy(balance?: Record<string, unknown>): PolicyFile {
-  const p = emptyPolicy(); importPolicy(p, RULES, now);
+  const p = emptyPolicy(); importPolicy(p, openRules(RULES), now);
   for (const [id, provider] of Object.entries(p.providers)) for (const label of Object.keys(provider.models)) setField(p, fieldPath(id, label, 'status'), 'confirmed', 'test', now);
   p.balance = { prefer: NO_PREFER, ...balance };
   return buildPolicyFile(p, Object.keys(p.providers).map(id => ({ id, name: id, metered: true })), now);
@@ -189,7 +190,7 @@ const BACKUPS = { providers: {
   openrouter: { defaults: { dataTier: 'internal', output: 'write_files', cost: 'very_cheap' }, models: { 'deepseek/v4.1-flash': { id: 'deepseek-v4.1-flash', rule: { activities: level } } } },
 } };
 function backupPolicy(): PolicyFile {
-  const p = emptyPolicy(); importPolicy(p, BACKUPS, now);
+  const p = emptyPolicy(); importPolicy(p, openRules(BACKUPS), now);
   for (const [id, provider] of Object.entries(p.providers)) for (const label of Object.keys(provider.models)) setField(p, fieldPath(id, label, 'status'), 'confirmed', 'test', now);
   return buildPolicyFile(p, Object.keys(p.providers).map(id => ({ id, name: id, metered: true })), now);
 }
@@ -269,7 +270,7 @@ const SEATS = { providers: {
   laya: { defaults: { dataTier: 'regulated', output: 'text', cost: 'free' }, models: { 'laya/laya': { id: 'laya', rule: { activities: { typed_decisions: 'normal' } } } } },
 } };
 function seatPolicy(balance?: Record<string, unknown>): PolicyFile {
-  const p = emptyPolicy(); importPolicy(p, SEATS, now);
+  const p = emptyPolicy(); importPolicy(p, openRules(SEATS), now);
   for (const [id, provider] of Object.entries(p.providers)) for (const label of Object.keys(provider.models)) setField(p, fieldPath(id, label, 'status'), 'confirmed', 'test', now);
   p.balance = { prefer: NO_PREFER, ...balance };
   return buildPolicyFile(p, Object.keys(p.providers).map(id => ({ id, name: id, metered: true })), now);

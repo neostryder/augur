@@ -51,7 +51,7 @@ export async function startService(opts: ServiceOptions = {}) {
   const dir = opts.dir ?? dataDir(), home = opts.home ?? augurHome();
   mkdirSync(dir, { recursive: true });
   const log = (msg: string) => { try { appendFileSync(join(dir, 'service.log'), `${new Date().toISOString()} ${msg}\n`); } catch { /* logging is best effort */ } };
-  const config = loadConfig(dir), store = new Store(dir), token = ensureToken(dir);
+  const config = loadConfig(dir), store = new Store(dir), token = ensureToken(dir), agentToken = ensureToken(dir, 'agent-token');
   const policy = policySource(join(home, 'policy.json')), usage = usageSource(join(home, 'usage.json'));
   const routesPath = opts.routesPath ?? process.env.AUGURD_ROUTES ?? join(home, 'dispatch', 'routes.json');
   const routes = routeSource(routesPath);
@@ -66,7 +66,7 @@ export async function startService(opts: ServiceOptions = {}) {
   const server = new IpcServer(supervisor, store, token, () => routes.read(), rates, {
     read: () => { try { return readFileSync(routesPath, 'utf8'); } catch { return null; } },
     write: (text: string) => { mkdirSync(dirname(routesPath), { recursive: true }); const tmp = `${routesPath}.tmp`; writeFileSync(tmp, text, 'utf8'); renameSync(tmp, routesPath); },
-  });
+  }, agentToken);
   // The engine is ready before the endpoint opens, so no caller ever finds the service half started.
   const override = process.env.AUGURD_ENGINE === '0' ? false : process.env.AUGURD_ENGINE === '1' ? true : undefined;
   engine = (opts.engine ?? override ?? config.engine) ? await startEngine(server, log) : null;

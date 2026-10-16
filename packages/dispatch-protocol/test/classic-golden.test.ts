@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { openRules } from './open-rules.js';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { ACTIVITIES, buildPolicyFile, emptyPolicy, fieldPath, importPolicy, setField } from '@augur/core';
@@ -29,7 +30,7 @@ const OWNER = { providers: {
 } };
 
 function policy(balance?: Record<string, unknown>): PolicyFile {
-  const p = emptyPolicy(); importPolicy(p, OWNER, now);
+  const p = emptyPolicy(); importPolicy(p, openRules(OWNER), now);
   for (const [id, provider] of Object.entries(p.providers)) for (const label of Object.keys(provider.models)) setField(p, fieldPath(id, label, 'status'), 'confirmed', 'test', now);
   if (balance) p.balance = balance;
   return buildPolicyFile(p, Object.keys(p.providers).map(id => ({ id, name: id, metered: true })), now);

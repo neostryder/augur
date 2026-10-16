@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { openRules } from './open-rules.js';
 import { buildPolicyFile, emptyPolicy, fieldPath, importPolicy, setField } from '@augur/core';
 import type { PolicyFile } from '@augur/core';
 import { BOOST, boostFor, govern, paceState, rank, resolveBalance } from '../src/index.js';
@@ -17,7 +18,7 @@ function policy(balance?: Record<string, unknown>, extra: Record<string, unknown
       'claude/claude-sonnet-5-5': { id: 'claude-sonnet-5-5', rule: { activities: level } } } },
     ...extra,
   } };
-  const p = emptyPolicy(); importPolicy(p, rules, now);
+  const p = emptyPolicy(); importPolicy(p, openRules(rules), now);
   for (const [id, provider] of Object.entries(p.providers)) for (const label of Object.keys(provider.models)) setField(p, fieldPath(id, label, 'status'), 'confirmed', 'test', now);
   if (balance) p.balance = balance;
   return buildPolicyFile(p, Object.keys(p.providers).map(id => ({ id, name: id, metered: true })), now);

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { openRules } from './open-rules.js';
 import { ACTIVITIES, buildPolicyFile, emptyPolicy, fieldPath, importPolicy, setField } from '@augur/core';
 import type { PolicyFile } from '@augur/core';
 import { NEUTRAL_BALANCE, balanceReport, claudeState, proseSwitchState, rank, renderReport, resolveBalance } from '../src/index.js';
@@ -14,7 +15,7 @@ const OWNER = { providers: {
 } };
 
 function policy(balance?: Record<string, unknown>): PolicyFile {
-  const p = emptyPolicy(); importPolicy(p, OWNER, now);
+  const p = emptyPolicy(); importPolicy(p, openRules(OWNER), now);
   for (const [id, provider] of Object.entries(p.providers)) for (const label of Object.keys(provider.models)) setField(p, fieldPath(id, label, 'status'), 'confirmed', 'test', now);
   if (balance) p.balance = balance;
   return buildPolicyFile(p, Object.keys(p.providers).map(id => ({ id, name: id, metered: true })), now);

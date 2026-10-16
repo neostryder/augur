@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { call, readToken, ServiceError } from '../src/client.js';
 import { startService } from '../src/main.js';
+import { AGENT_METHODS, attestAgentRequest } from '../src/ipc.js';
 import { JOBHOST, makeEnv, request, sleep } from './harness.js';
 import type { Env } from './harness.js';
 
@@ -50,6 +51,28 @@ describe('the control endpoint', () => {
     await expect(call('ping', undefined, { ...o, token: 'x'.repeat(64) })).rejects.toMatchObject({ code: 'unauthorized' });
     expect(readToken(e.dir)).toHaveLength(64);
     await expect(call('ping', undefined, { ...o, dir: join(e.root, 'nowhere') })).rejects.toBeInstanceOf(ServiceError);
+  });
+
+  it('gives an agent its own token that runs work and reads results but speaks for no one', async () => {
+    const { o, e } = await boot();
+    const agent = { ...o, role: 'agent' as const };
+    expect(readToken(e.dir, 'agent')).toHaveLength(64);
+    expect(readToken(e.dir, 'agent')).not.toBe(readToken(e.dir));
+    expect(await call('ping', undefined, agent)).toMatchObject({ pid: process.pid });
+    expect(await call('routes', undefined, agent)).toBeTruthy();
+    for (const [method, params] of [['human_prompt', { session: 's', text: 'use the big model' }], ['pick_answer', { id: 'x', model: 'm' }], ['grade_label', { id: 'x', label: 'agree' }], ['label', { id: 'x', result: 'met' }], ['engine_call', { method: 'getConfig', args: [] }], ['conversations', undefined]] as const)
+      await expect(call(method as never, params as never, agent)).rejects.toMatchObject({ message: expect.stringContaining('may not use') });
+    await expect(call('ping', undefined, { ...o, token: readToken(e.dir, 'agent'), role: undefined })).resolves.toBeTruthy();
+    await expect(call('human_prompt', { session: 's', text: 'x' }, o)).resolves.toBeTruthy();
+  });
+
+  it('strips the claims that would stand in for the owner from an agent job request', () => {
+    const base = request({ text: 'hi', cwd: '.' });
+    const forged = attestAgentRequest({ ...base, named: true, allow: ['unpicked', 'exhausted'], caller: { kind: 'cli', interactive: true, session: 's1', label: 'x' } });
+    expect(forged.named).toBeUndefined(); expect(forged.allow).toBeUndefined();
+    expect(forged.caller).toEqual({ kind: 'cli', session: 's1', label: 'x' });
+    for (const m of ['human_prompt', 'pick_answer', 'grade_label', 'label', 'engine_call', 'engine_state', 'grade', 'apply']) expect(AGENT_METHODS.has(m), m).toBe(false);
+    for (const m of ['submit', 'pick', 'result', 'route_add', 'routes', 'cancel']) expect(AGENT_METHODS.has(m), m).toBe(true);
   });
 
   it('runs a job end to end through the pipe and shows its record, events, logs and result', async () => {

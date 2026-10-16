@@ -20,6 +20,10 @@ describe('token file access', () => {
         expect(statSync(path).mode & 0o077).toBe(0);
       }
       expect(ensureToken(dir)).toBe(token);
+      const agent = ensureToken(dir, 'agent-token');
+      expect(agent).toHaveLength(64);
+      expect(agent).not.toBe(token);
+      if (process.platform !== 'win32') expect(statSync(join(dir, 'agent-token')).mode & 0o077).toBe(0);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });

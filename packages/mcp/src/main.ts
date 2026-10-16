@@ -15,7 +15,7 @@ const version = typeof __AUGUR_VERSION__ === 'string' ? __AUGUR_VERSION__ : 'dev
 const dir = dataDir();
 const read = (name: string): string | null => { try { return readFileSync(join(augurHome(), name), 'utf8'); } catch { return null; } };
 const tools = createTools({
-  call, opts: { dir, ...(process.env.AUGURD_PIPE ? { pipe: process.env.AUGURD_PIPE } : {}) },
+  call, opts: { dir, role: 'agent' as const, ...(process.env.AUGURD_PIPE ? { pipe: process.env.AUGURD_PIPE } : {}) },
   policyText: () => read('policy.json'), usageText: () => read('usage.json'), inboxText: () => read(INBOX_FILE), editStateText: () => read(RESULTS_FILE),
   appendInbox: (lines) => appendPolicyEdits(lines),
   session: `mcp-${randomUUID()}`, cwd: process.cwd(),

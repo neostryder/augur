@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { openRules } from './open-rules.js';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -20,7 +21,7 @@ const RULES = { providers: {
   claude: { defaults: { dataTier: 'regulated', cost: 'moderate', output: 'write_files' }, models: { 'claude/sonnet': { id: 'sonnet', rule: { activities: { write_code: 'last_resort', research: 'last_resort' } } } } },
 } };
 function policy(): PolicyFile {
-  const p = emptyPolicy(); importPolicy(p, RULES, now);
+  const p = emptyPolicy(); importPolicy(p, openRules(RULES), now);
   for (const [id, provider] of Object.entries(p.providers)) for (const label of Object.keys(provider.models)) setField(p, fieldPath(id, label, 'status'), 'confirmed', 'test', now);
   return buildPolicyFile(p, Object.keys(p.providers).map(id => ({ id, name: id === 'codex' ? 'Codex' : id, metered: id !== 'openrouter' })), now);
 }
@@ -243,7 +244,7 @@ describe('spending a provider in full before the models that wait on it', () => 
       'copilot/kimi-k3': { id: 'kimi-k3', rule: { activities: { write_code: 'occasional' } } } } },
   } };
   const policy2 = (tweak: (p: ReturnType<typeof emptyPolicy>) => void = () => {}): PolicyFile => {
-    const p = emptyPolicy(); importPolicy(p, RULES2, now);
+    const p = emptyPolicy(); importPolicy(p, openRules(RULES2), now);
     for (const [id, provider] of Object.entries(p.providers)) for (const label of Object.keys(provider.models)) setField(p, fieldPath(id, label, 'status'), 'confirmed', 'test', now);
     tweak(p);
     return buildPolicyFile(p, [{ id: 'codex', name: 'Codex', metered: true }, { id: 'copilot', name: 'GitHub Copilot', metered: true }], now);
