@@ -89,10 +89,12 @@ if (mode === 'embeddings') {
 const abort = new AbortController();
 const timer = setTimeout(() => abort.abort(), timeoutS * 1000);
 let res: Response;
-try { res = await fetch(endpoint, { method: 'POST', headers, body, signal: abort.signal }); }
+// A redirect is never followed: the key rides in a header that a cross-origin redirect would carry to the new host.
+try { res = await fetch(endpoint, { method: 'POST', headers, body, signal: abort.signal, redirect: 'manual' }); }
 catch (e) { console.error(`request failed: ${(e as Error).message}`); process.exit(66); }
 clearTimeout(timer);
 const text = await res.text();
+if (res.status >= 300 && res.status < 400) { console.error(`HTTP ${res.status}: the endpoint redirected the request, and Augur does not follow a redirect with a key attached. Set the route's base URL to the address the redirect points to.`); process.exit(2); }
 if (!res.ok) { console.error(`HTTP ${res.status}: ${text.slice(0, 300)}`); process.exit(2); }
 
 interface Json { [k: string]: unknown }
