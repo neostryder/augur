@@ -1,4 +1,5 @@
 import type { Host, HttpRequest, HttpResponse, Platform } from '../types.js';
+import { keyMayGoTo } from '../net.js';
 import { readFile, writeFile, rename, mkdir } from 'node:fs/promises';
 import { homedir, userInfo } from 'node:os';
 import { resolve, dirname, isAbsolute, relative } from 'node:path';
@@ -35,8 +36,23 @@ export function createNodeHost(options: NodeHostOptions = {}): Host {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), req.timeoutMs ?? 15000);
       try {
-        const response = await fetch(req.url, { method: req.method ?? 'GET', headers: req.headers, body: req.body, signal: controller.signal });
-        return { status: response.status, headers: Object.fromEntries(response.headers.entries()), body: await response.text() };
+        // Every hop must pass the same https-or-home rule as the key itself, and a redirect to another origin leaves the request's own headers and body behind.
+        let url = new URL(req.url), method = req.method ?? 'GET', headers = req.headers, body = req.body;
+        for (let hop = 0; ; hop++) {
+          if (!keyMayGoTo(url.href)) throw new Error('HTTPS is required');
+          const response = await fetch(url, { method, headers, body, redirect: 'manual', signal: controller.signal });
+          const location = response.headers.get('location');
+          if (response.status >= 300 && response.status < 400 && location) {
+            if (hop >= 10) throw new Error('Too many redirects');
+            const next = new URL(location, url);
+            if (next.origin !== url.origin) headers = headers && Object.fromEntries(Object.entries(headers).filter(([name]) => ['accept', 'content-type'].includes(name.toLowerCase())));
+            if (response.status === 303 || ((response.status === 301 || response.status === 302) && method !== 'GET')) { method = 'GET'; body = undefined; }
+            if (next.origin !== url.origin) body = undefined;
+            url = next;
+            continue;
+          }
+          return { status: response.status, headers: Object.fromEntries(response.headers.entries()), body: await response.text() };
+        }
       } finally { clearTimeout(timeout); }
     },
     async secret(name) {

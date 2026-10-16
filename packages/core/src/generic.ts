@@ -1,5 +1,6 @@
 import type { GenericProviderDef, Host, ProviderPlugin } from './types.js';
 import { json, num, obj, round, iso, epoch } from './util.js';
+import { keyMayGoTo } from './net.js';
 
 export function readPath(root: unknown, path: string): unknown {
   if (!path.startsWith('$')) throw new Error('Invalid path');
@@ -78,6 +79,7 @@ export function genericProvider(def: GenericProviderDef): ProviderPlugin {
       const responses: Record<string, unknown> = {};
       await Promise.all(Object.entries(def.requests).map(async ([key, request]) => {
         const url = new URL(request.url);
+        if (secret && !keyMayGoTo(url.href)) throw new Error('A key only goes over https, or over http to a machine on the home network.');
         const headers: Record<string, string> = { Accept: 'application/json', ...request.headers };
         if (def.auth.type === 'bearer') headers.Authorization = `${def.auth.prefix ?? 'Bearer '}${secret}`;
         if (def.auth.type === 'header') headers[def.auth.name ?? 'X-API-Key'] = `${def.auth.prefix ?? ''}${secret}`;
