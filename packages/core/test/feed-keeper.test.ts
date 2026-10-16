@@ -17,6 +17,7 @@ function fakeShell() {
       writeHomeFileAtomic: async (p: string, t: string) => { files.set(p, t); },
     },
     setSecret: async (n: string, v: string) => { secrets.set(n, v); },
+    deleteSecret: async (n: string) => { secrets.delete(n); },
     notify: async (title: string) => { notified.push(title); },
     sendWebPush: async (endpoint: string, headers: Record<string, string>, body: Uint8Array) => { pushed.push({ endpoint, headers, body }); return pushStatus; },
   } as unknown as Shell;
@@ -98,6 +99,21 @@ describe('the desktop alert feed', () => {
     expect(keeper.phonePush).toBeNull();
     await keeper.raise([item('c')]);
     expect(f.pushed.length).toBe(2);
+  });
+
+  it('cuts the push path when the phone is unpaired, and makes a new key for the next pairing', async () => {
+    const f = fakeShell(), c = config();
+    const keeper = new FeedKeeper(f.shell, () => c, () => 'https://augur.example.com');
+    await keeper.mergePhone({ acks: [], push: await phoneKeys() });
+    await keeper.raise([item('a')]);
+    expect(f.pushed.length).toBe(1);
+    const first = await keeper.pushKey();
+    await keeper.forgetPhone();
+    expect(keeper.phonePush).toBeNull();
+    expect(f.secrets.has('push.vapid')).toBe(false);
+    await keeper.raise([item('b')]);
+    expect(f.pushed.length).toBe(1);
+    expect(await keeper.pushKey()).not.toBe(first);
   });
 
   it('takes dismissals from the phone', async () => {

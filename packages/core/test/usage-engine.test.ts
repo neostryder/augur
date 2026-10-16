@@ -139,3 +139,17 @@ describe('the usage engine', () => {
     await expect(callEngine(engine, 'start', [])).rejects.toThrow(/Unknown engine command/);
   });
 });
+
+describe('unpairing', () => {
+  it('deletes the pairing secrets and the push key, and stops pushing to the phone', async () => {
+    const c = base();
+    c.sync = { relay: 'https://relay.example', channel: 'a'.repeat(64), pwaUrl: 'https://augur.example.com/' };
+    const f = fakeShell(c);
+    for (const n of ['sync.key', 'sync.writeSecret', 'push.vapid']) f.secrets.set(n, 'x');
+    engine = new UsageEngine(f.shell, { hosted: 'https://augur.example.com' });
+    await engine.start();
+    await engine.unpair();
+    expect([...f.secrets.keys()]).toEqual([]);
+    expect(f.saved()?.sync?.channel).toBe('');
+  });
+});

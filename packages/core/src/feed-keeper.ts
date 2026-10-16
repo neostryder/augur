@@ -8,7 +8,7 @@ import type { Shell } from './shell.js';
 import type { PhoneState } from './sync.js';
 
 /** What the keeper needs from where it runs: the window app's shell, or the engine. */
-export type KeeperShell = Pick<Shell, 'host' | 'notify' | 'setSecret' | 'loadAlertFeed' | 'saveAlertFeed' | 'sendWebPush'>;
+export type KeeperShell = Pick<Shell, 'host' | 'notify' | 'setSecret' | 'deleteSecret' | 'loadAlertFeed' | 'saveAlertFeed' | 'sendWebPush'>;
 
 /** An alert to raise. The keeper adds the time, and the outlet grid picks where it goes. */
 export type Raise = Omit<FeedAlert, 'raisedAt' | 'outlets'>;
@@ -112,6 +112,16 @@ export class FeedKeeper {
   async mergePhone(state: PhoneState): Promise<boolean> {
     this.phonePush = state.push;
     return this.dismiss(state.acks);
+  }
+
+  /**
+   * Cuts the push path to the phone when it is unpaired: the subscription is dropped and the VAPID key is deleted, so a subscription the phone still holds
+   * stays useless even if it is replayed. A new pairing makes a new key.
+   */
+  async forgetPhone(): Promise<void> {
+    this.phonePush = null;
+    this.vapid = null;
+    await this.shell.deleteSecret(VAPID_SECRET).catch(() => undefined);
   }
 
   /** The public half of this desktop's VAPID key. It is made once and kept in the keychain, and is null when the keychain is unavailable. */

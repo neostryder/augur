@@ -42,7 +42,9 @@ export function shortAgo(iso: string, now: Date = new Date()): string {
 export function money(v: number | null | undefined, cur = 'USD'): string {
   if (v == null || !Number.isFinite(v)) return '-';
   const n = v.toLocaleString([], { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  return cur === 'USD' ? `$${n}` : `${n} ${cur}`;
+  // The currency comes from a provider, so only a plain code is shown; anything else is left off rather than passed on to a page.
+  if (cur === 'USD') return `$${n}`;
+  return /^[A-Za-z]{3,8}$/.test(cur) ? `${n} ${cur}` : n;
 }
 
 /** One meter's readings over time, as [time in ms, percent used]. */

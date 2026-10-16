@@ -96,7 +96,7 @@ function cardHtml(model: DashboardModel, pid: string): string {
     const tiles = p.money.filter((x) => x.amount != null && !hidden.includes('$' + x.id));
     if (tiles.length) {
       body += '<div class="money">' + tiles.map((x) => `<div class="tile"><div class="l">${esc(x.label)}</div>
-        <div class="v">${money(x.amount, x.currency)}${x.total != null ? `<small>of ${money(x.total, x.currency)}</small>` : ''}</div></div>`).join('') + '</div>';
+        <div class="v">${esc(money(x.amount, x.currency))}${x.total != null ? `<small>of ${esc(money(x.total, x.currency))}</small>` : ''}</div></div>`).join('') + '</div>';
     }
     const notes = notesLine(p);
     if (notes) body += `<div class="notes">${notes}</div>`;

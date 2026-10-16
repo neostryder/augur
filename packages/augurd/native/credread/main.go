@@ -20,10 +20,10 @@ import (
 )
 
 const (
-	credTypeGeneric       = 1
-	credPersistEnterprise = 3
-	errorNotFound         = syscall.Errno(1168)
-	maxBlob               = 2560 // CRED_MAX_CREDENTIAL_BLOB_SIZE
+	credTypeGeneric         = 1
+	credPersistLocalMachine = 2
+	errorNotFound           = syscall.Errno(1168)
+	maxBlob                 = 2560 // CRED_MAX_CREDENTIAL_BLOB_SIZE
 )
 
 type credential struct {
@@ -114,7 +114,7 @@ func write(target *uint16, name string) int {
 		Comment:            empty,
 		CredentialBlobSize: uint32(len(blob)),
 		CredentialBlob:     &blob[0],
-		Persist:            credPersistEnterprise,
+		Persist:            credPersistLocalMachine,
 		TargetAlias:        empty,
 		UserName:           user,
 	}

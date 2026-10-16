@@ -366,7 +366,8 @@ export class UsageEngine implements EngineApi {
     if (!this.sync?.channel) return;
     this.lastPhoneCheck = Date.now();
     const state = await pullPhoneState(this.shell.host, this.sync).catch(() => null);
-    if (state && await this.keeper.mergePhone(state)) this.feedChanged();
+    // An unpair that happened while the pull was out leaves nothing to merge.
+    if (state && this.sync?.channel && await this.keeper.mergePhone(state)) this.feedChanged();
   }
 
   /** Uploads the current snapshot for the phone. If the relay says it is too soon, it tries again once the gap has passed. */
@@ -416,7 +417,7 @@ export class UsageEngine implements EngineApi {
 
   async unpair(): Promise<void> {
     if (this.sync) this.config.sync = { ...this.sync, channel: '' };
-    await Promise.all([this.shell.deleteSecret('sync.key'), this.shell.deleteSecret('sync.writeSecret')]);
+    await Promise.all([this.shell.deleteSecret('sync.key'), this.shell.deleteSecret('sync.writeSecret'), this.keeper.forgetPhone()]);
     await this.persist();
     this.emit('config');
   }
