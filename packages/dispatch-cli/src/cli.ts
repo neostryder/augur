@@ -10,9 +10,11 @@ import { EXIT_CODES, TOOL_TIERS, describeFigure, exitCodeForState, isTerminal, r
 import type { Conversation, Depth, JobRecord, JobRequest, ToolTier } from '@augur/dispatch-protocol';
 import { STATUS_TEXT, duration, servedText, statusLine } from '@augur/view-model';
 import { bridge, stdioBridge } from './bridge.js';
-import { SERVICE_VERSION, ServiceError, call, configLines, dataDir, disableLogin, enableLogin, loginState, setConfigValue, startViaLogin } from '@augur/augurd';
+import { SERVICE_VERSION, ServiceError, call, configLines, dataDir, disableLogin, enableLogin, ensureToken, loadConfig, loginState, rotateWebToken, setConfigValue, startViaLogin, webAddresses } from '@augur/augurd';
 import { subagentHook } from './claude-hook.js';
 import { KEY_HELP, keyCmd } from './key.js';
+import { LOGIN_HELP, loginCmd } from './signin.js';
+import { WEB_HELP, webCmd } from './web.js';
 import { PROFILE_HELP, profileCmd } from './profile.js';
 import { PROVIDER_HELP, providerCmd } from './provider.js';
 import { installOf, realFetch, updateAdvice, updateScriptInstall, versionOf } from './update.js';
@@ -62,6 +64,8 @@ augur refresh                         read every provider's usage now
 augur alerts [dismiss <id>|--all]     list the alerts, or dismiss one or all of them
 augur update [--force]                install the newest version, for a copy the macOS install script put in place
 ${KEY_HELP}
+${LOGIN_HELP}
+${WEB_HELP}
 ${PROFILE_HELP}
 ${PROVIDER_HELP}
 augur claude status | install | remove <code|desktop>     add or take out Augur's part of Claude Code or Claude Desktop
@@ -220,6 +224,11 @@ export async function main(argv: string[], io: Io): Promise<number> {
       case 'provider': return await providerCmd(rest, { text: new Map([...p.flags].filter((e): e is [string, string] => typeof e[1] === 'string')), stdin: p.flags.has('stdin'), noKey: p.flags.has('no-key'), dryRun: p.flags.has('dry-run') },
         { ...io, out: io.out }, say, { addProvider: i => engineCall('addProvider', [i], io, opts) as Promise<ProviderAdded>, setProviderKey: (pv, field, value) => engineCall('setProviderKey', [pv, field, value], io, opts).then(() => undefined) });
       case 'key': return await keyCmd(rest, { ...(opt('env') ? { env: opt('env') as string } : {}), stdin: p.flags.has('stdin') }, io, say);
+      case 'login': case 'logout': return await loginCmd(rest, { stdin: p.flags.has('stdin') }, io, say, { call: (m, a) => engineCall(m, a, io, opts), sleep, now: () => Date.now() }, cmd === 'logout');
+      case 'web': {
+        const settings = loadConfig(opts.dir).web;
+        return webCmd(rest, say, { settings, token: () => ensureToken(opts.dir, 'web-token'), rotate: () => rotateWebToken(opts.dir), addresses: () => webAddresses(settings) }, io.err);
+      }
       case 'claude': return await claudeCmd(rest, io, opts, say);
       case 'routes': { const r = await call('routes', undefined, opts); say(r.map(x => `${x.name.padEnd(14)} ${x.model.padEnd(16)} ${x.adapter}${x.problem ? `   cannot run: ${x.problem}` : ''}`).join('\n') || 'No routes.', r); return 0; }
       case 'test': return await testCmd(need(rest[0], 'route'), p, io, opts, say, json);

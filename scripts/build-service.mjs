@@ -37,6 +37,11 @@ await build({
   legalComments: 'none', logLevel: 'warning', define: { __AUGUR_VERSION__: JSON.stringify(JSON.parse(readFileSync(join(root, 'apps/desktop/src-tauri/tauri.conf.json'), 'utf8')).version) },
 });
 
+// The app the service shows to a browser (the web.enabled setting) is the same build as the desktop panel. Without it the service still answers
+// the web API, but has no page to serve. Build the app first with `pnpm --filter @augur/ui build`.
+const ui = join(root, 'apps/ui/dist');
+if (existsSync(join(ui, 'index.html'))) cpSync(ui, join(out, 'web'), { recursive: true });
+
 if (process.platform === 'win32' && !terminal) {
   const host = join(root, 'packages/augurd/native/bin/jobhost.exe'), cred = join(root, 'packages/augurd/native/bin/credread.exe');
   if (!existsSync(host) || !existsSync(cred)) execFileSync('pnpm', ['--filter', '@augur/augurd', 'build:jobhost'], { cwd: root, stdio: 'inherit', windowsHide: true, shell: true });

@@ -42,6 +42,26 @@ export const CLAUDE_TEXT = {
 
 export const STARTER_RULES_TEXT = 'Each provider starts with cautious rules that its models inherit: public data only, text output only, and named before use. A model cannot be used until you confirm it on the model rules page and allow the activities it needs.';
 
+/** Augur's own sign-in to Claude and Codex, used where the command-line app is not signed in or the computer has no browser. */
+export const LOGIN_TEXT = {
+  heading: 'Sign-in',
+  own: (name: string) => `Signed in through Augur. Augur keeps this session itself and does not read the ${name} command-line login.`,
+  cli: (name: string) => `Reading the ${name} command-line login on this computer.`,
+  none: 'Not signed in.',
+  why: 'Sign in here when the command-line app is not signed in on this computer, or when it has no browser. The link opens in a browser on any device, and Augur keeps its own session, so it never competes with the command-line app for its login.',
+  begin: 'Sign in with Augur',
+  again: 'Sign in again with Augur',
+  out: 'Sign out',
+  outHelp: 'Forgets the session Augur holds. The command-line login is left alone.',
+  link: 'Open the sign-in page',
+  pasteStep: (name: string) => `Open the page, sign in to ${name}, then paste the code it shows.`,
+  pasteLabel: 'Code from the page',
+  finish: 'Finish',
+  cancel: 'Cancel',
+  deviceStep: (code: string) => `Open the page and enter ${code}. This updates when it is approved.`,
+  waiting: 'Waiting for approval...',
+};
+
 export const PROVIDER_TEXT = {
   heading: 'Providers',
   localLogin: (name: string) => `Reads the login of the ${name} command-line app on this computer. Sign in there first. No key is needed here.`,

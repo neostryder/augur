@@ -5,7 +5,7 @@ import type { HistoryRow } from './core';
 import { renderDashboard, tightest, updateTip, type DashboardModel } from './views/dashboard';
 import { BULK_FIELDS, RULES_TEXT, dialEndChoices, heldRows, localPage, parseCustom, parsePercents, pauseResets, pauseValue, planDialBack, previewBulk, validModelId, type BulkPreview, type DialBackPlan } from '@augur/view-model';
 import { renderPair } from './views/pair';
-import { CUSTOM_EXAMPLE, PUSH_TEXT, renderSettings, type SettingsModel } from './views/settings';
+import { CUSTOM_EXAMPLE, PUSH_TEXT, renderSettings, type LoginUi, type SettingsModel } from './views/settings';
 import { addUnfound, applyDetection, fillRank, goStep, initialView, loadProfile, moveRank, noteAdded, openSetup, providerHasWindow, refreshPlan, renderSetup, runApply, selectStack, setConfirmed, setHold, setListAnswer, setPayAmount, setPayNone, setStrength, shiftStep, toggleListModel, togglePayProvider, useStrongFor, modelsOf, type SetupModel, type SetupTrack } from './views/setup';
 import { renderRules, type RulesFilter, type RulesModel } from './views/rules';
 import { renderJobs, type JobsModel } from './views/jobs';
@@ -145,6 +145,11 @@ export class App {
   /** Saves of this panel's own still on their way to the engine. Their echo needs no redraw. */
   private ownSaves = 0;
   private renderQueued = false;
+  /** Engine-backed: where each provider's login comes from, and the sign-in Augur has started and is waiting on. */
+  private signIns: Record<string, 'own' | 'cli' | null> = {};
+  private login: (LoginUi & { id: string }) | null = null;
+  private loginTimer: ReturnType<typeof setInterval> | undefined;
+  private loginEnds = 0;
 
   private pluginMap(): Map<string, ProviderPlugin> {
     return new Map(core.plugins(this.config).map((p) => [p.id, p]));
@@ -152,10 +157,12 @@ export class App {
 
   async start(): Promise<void> {
     document.body.classList.add(this.shell.kind);
+    if (this.shell.served) document.body.classList.add('served');
     if (this.shell.kind === 'desktop') {
       this.engine = await connectEngine(this.shell, (message) => this.setLinkDown(message));
       this.takeState(Object.keys(this.engine.state) as EngineKey[]);
       this.engine.onChange((keys) => this.onEngine(keys));
+      await this.loadSignIns();
     } else {
       // Asks the browser to keep this app's data, so a pairing is not cleared when the phone is short on space.
       void navigator.storage?.persist?.().catch(() => undefined);
@@ -198,7 +205,7 @@ export class App {
     this.shell.on('settings-requested', () => { if (this.firstRun) { if (this.view !== 'setup') void this.openInterview(true); else void this.render(); return; } this.view = 'settings'; void this.render(); });
     if (this.shell.kind === 'desktop') this.resizeWatch.observe(this.root);
     this.shell.on('popup-shown', () => {
-      if (this.shell.kind === 'desktop' && !this.firstRun) this.goHome();
+      if (this.shell.kind === 'desktop' && !this.shell.served && !this.firstRun) this.goHome();
       void this.render();
       void this.engine?.viewShown();
     });
@@ -239,6 +246,7 @@ export class App {
     this.takeState(keys);
     if (!own && this.setup && (keys.includes('config') || keys.includes('secrets') || keys.includes('snapshot'))) this.syncSetupFromConfig();
     if (keys.includes('feed')) this.drawStrip();
+    if (keys.includes('snapshot')) void this.loadSignIns();
     if (keys.includes('snapshot') || keys.includes('config')) void this.updateTray();
     if (keys.includes('update') && this.update.status === 'available') void this.autoInstall();
     // A save of this panel's own comes back as a config change; the page already shows it.
@@ -472,6 +480,7 @@ export class App {
       sync: this.sync, relay: this.relay(), pwaUrl: this.pwaUrl(), pairQr: this.pairQr, pairUrl: this.pairUrl,
       scanError: this.scanError, iosInstallHint: iosInstallHint(), hotkeyError: this.hotkeyError, canHotkey: !!this.shell.setHotkey,
       claude: this.engine ? { status: this.claude, error: this.claudeError } : null,
+      signIn: this.engine ? { status: this.signIns, login: this.login } : null, served: this.shell.served === true,
       platform: this.shell.host.platform, push: this.shell.kind === 'pwa' ? { status: this.pushStatus, error: this.pushError, hasKey: !!this.pushKey } : null,
     };
   }
@@ -530,7 +539,7 @@ export class App {
     const mode = this.config.layout.columns;
     const draw = () => { this.root.innerHTML = renderDashboard(this.dashboardModel()); };
     if (mode === 1 || mode === 2) { this.twoColumns = mode === 2; draw(); return; }
-    if (this.shell.kind === 'pwa') { this.twoColumns = innerWidth >= 760; draw(); return; }
+    if (this.shell.kind === 'pwa' || this.shell.served) { this.twoColumns = innerWidth >= 760; draw(); return; }
     const maxH = (await this.shell.maxPopupHeight?.().catch(() => 0)) || screen.availHeight - 40;
     this.twoColumns = false;
     draw();
@@ -1420,6 +1429,10 @@ export class App {
     }
     switch (t.dataset.action) {
       case 'refresh': await this.refresh(true); break;
+      case 'login-begin': await this.beginLogin(t.dataset.value ?? ''); break;
+      case 'login-finish': await this.finishLogin(); break;
+      case 'login-cancel': this.stopLogin(); await this.render(); break;
+      case 'login-out': await this.signOutOf(t.dataset.value ?? ''); break;
       case 'update-check': await this.engine?.checkUpdate(); break;
       case 'update-install': await this.installUpdate(); break;
       case 'settings': if (this.firstRun) { if (this.view !== 'setup') await this.openInterview(true); break; } this.view = 'settings'; await this.render(); break;
@@ -1548,6 +1561,82 @@ export class App {
 
   private async autoInstall(): Promise<void> {
     if (this.update.status === 'available' && !this.update.available?.managedBy && this.config.autoUpdate !== false && document.visibilityState === 'hidden') await this.installUpdate();
+  }
+
+  private async loadSignIns(): Promise<void> {
+    if (this.engine) this.signIns = await this.engine.signInStatus().catch(() => this.signIns);
+  }
+
+  private stopLogin(): void {
+    clearInterval(this.loginTimer);
+    this.loginTimer = undefined;
+    this.login = null;
+  }
+
+  /** Asks the engine for a sign-in link. Codex also gets a code to type there, and the page checks for its approval every few seconds. */
+  private async beginLogin(provider: string): Promise<void> {
+    if (!this.engine || !provider) return;
+    this.stopLogin();
+    this.login = { provider, mode: 'paste', url: '', error: '', busy: true, id: '' };
+    await this.render();
+    try {
+      const s = await this.engine.signInBegin(provider);
+      this.login = { provider, mode: s.mode, url: s.url, ...(s.code ? { code: s.code } : {}), error: '', busy: false, id: s.id };
+      if (s.mode === 'device') {
+        this.loginEnds = Date.now() + s.expiresInS * 1000;
+        this.loginTimer = setInterval(() => void this.pollLogin(), 5000);
+      }
+    } catch (e) {
+      this.login = { provider, mode: 'paste', url: '', error: e instanceof Error ? e.message : String(e), busy: false, id: '' };
+    }
+    await this.render();
+  }
+
+  private async finishLogin(): Promise<void> {
+    const login = this.login;
+    if (!this.engine || !login) return;
+    const code = (document.getElementById('login-code') as HTMLInputElement | null)?.value.trim() ?? '';
+    if (!code) return;
+    login.busy = true;
+    try {
+      await this.engine.signInComplete(login.id, code);
+      await this.signedIn();
+    } catch (e) {
+      login.busy = false;
+      login.error = e instanceof Error ? e.message : String(e);
+      await this.render();
+    }
+  }
+
+  private async pollLogin(): Promise<void> {
+    const login = this.login;
+    if (!this.engine || !login || login.mode !== 'device' || login.busy) return;
+    if (Date.now() > this.loginEnds) { clearInterval(this.loginTimer); login.error = 'The code expired before it was approved. Start the sign-in again.'; await this.render(); return; }
+    login.busy = true;
+    try {
+      if ((await this.engine.signInComplete(login.id)).done) { await this.signedIn(); return; }
+      login.busy = false;
+    } catch (e) {
+      clearInterval(this.loginTimer);
+      login.busy = false;
+      login.error = e instanceof Error ? e.message : String(e);
+      await this.render();
+    }
+  }
+
+  private async signedIn(): Promise<void> {
+    this.stopLogin();
+    await this.loadSignIns();
+    this.savedFlash = 'Signed in';
+    await this.render();
+    setTimeout(() => { this.savedFlash = null; if (this.view === 'settings') void this.render(); }, 1500);
+  }
+
+  private async signOutOf(provider: string): Promise<void> {
+    if (!this.engine || !provider) return;
+    await this.engine.signOut(provider).catch(() => undefined);
+    await this.loadSignIns();
+    await this.render();
   }
 
   private async installUpdate(): Promise<void> {

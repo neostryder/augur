@@ -2,10 +2,13 @@ import { ALERT_KINDS } from '@augur/core';
 import type { AlertKind, AppConfig, ClaudeStatus, Outlet, Platform, ProviderPlugin, PushStatus, Snapshot } from '@augur/core';
 import type { UpdateState } from '../app';
 import { ICON, esc } from '../util';
-import { ALERT_TEXT, CLAUDE_TEXT, COMPUTER_TEXT, CUSTOM_TEXT, KIND_LABELS, PHONE_TEXT, PROVIDER_TEXT, REFRESH_CHOICES, STARTER_RULES_TEXT, refreshDefault } from '@augur/view-model';
+import { ALERT_TEXT, CLAUDE_TEXT, COMPUTER_TEXT, CUSTOM_TEXT, KIND_LABELS, LOGIN_TEXT, PHONE_TEXT, PROVIDER_TEXT, REFRESH_CHOICES, STARTER_RULES_TEXT, refreshDefault } from '@augur/view-model';
 import { classifierChooser, modeChooser } from './service';
 
 export { ALERT_TEXT, CLAUDE_TEXT, CUSTOM_EXAMPLE, KIND_LABELS, STARTER_RULES_TEXT } from '@augur/view-model';
+
+/** A sign-in that Augur has started and is waiting on: a link to open, and a code to paste (Claude) or to type there (Codex). */
+export interface LoginUi { provider: string; mode: 'paste' | 'device'; url: string; code?: string; error: string; busy: boolean }
 
 export interface SettingsModel {
   config: AppConfig;
@@ -40,6 +43,10 @@ export interface SettingsModel {
   push: { status: PushStatus | null; error: string; hasKey: boolean } | null;
   /** Desktop only: where the two Claude installs stand, and the last error from turning one on or off. */
   claude: { status: ClaudeStatus | null; error: string } | null;
+  /** Where each provider's login comes from, and the sign-in under way. Null where the app has no engine to sign in with. */
+  signIn: { status: Record<string, 'own' | 'cli' | null>; login: LoginUi | null } | null;
+  /** The app is served to a browser by the background service: no sign-in windows, no popup. */
+  served: boolean;
 }
 
 export const PUSH_TEXT = {
@@ -109,6 +116,32 @@ const seg = (name: string, value: string, options: Array<[string, string]>) =>
 const toggle = (key: string, on: boolean, label: string) =>
   `<label class="switch"><input type="checkbox" data-toggle="${esc(key)}" ${on ? 'checked' : ''} aria-label="${esc(label)}"><span></span></label>`;
 
+function loginBlock(m: SettingsModel, pid: string, name: string): string {
+  const status = m.signIn!.status[pid] ?? null, login = m.signIn!.login?.provider === pid ? m.signIn!.login : null;
+  const state = status === 'own' ? LOGIN_TEXT.own(name) : status === 'cli' ? LOGIN_TEXT.cli(name) : LOGIN_TEXT.none;
+  let html = `<div class="field"><label>${LOGIN_TEXT.heading} <span class="saved">${esc(state)}</span></label>`;
+  if (login) {
+    const err = login.error ? `<span class="help" role="alert">${esc(login.error)}</span>` : '';
+    if (!login.url) {
+      html += `${login.busy ? `<span class="help">${LOGIN_TEXT.waiting}</span>` : ''}${err}<div class="row" style="padding:0;border:0"><button class="btn small" data-action="login-cancel">${LOGIN_TEXT.cancel}</button></div>`;
+    } else if (login.mode === 'paste') {
+      html += `<span class="help">${esc(LOGIN_TEXT.pasteStep(name))}</span>
+        <div class="row" style="padding:0;border:0"><a class="btn small" href="${esc(login.url)}" target="_blank" rel="noopener noreferrer" data-open="${esc(login.url)}">${LOGIN_TEXT.link}</a></div>
+        <div class="row" style="padding:0;border:0"><input type="password" id="login-code" autocomplete="off" spellcheck="false" aria-label="${LOGIN_TEXT.pasteLabel}" placeholder="${LOGIN_TEXT.pasteLabel}">
+        <button class="btn small" data-action="login-finish" ${login.busy ? 'disabled' : ''}>${LOGIN_TEXT.finish}</button><button class="btn small" data-action="login-cancel">${LOGIN_TEXT.cancel}</button></div>${err}`;
+    } else {
+      html += `<span class="help">${esc(LOGIN_TEXT.deviceStep(login.code ?? ''))}</span>
+        <div class="row" style="padding:0;border:0"><a class="btn small" href="${esc(login.url)}" target="_blank" rel="noopener noreferrer" data-open="${esc(login.url)}">${LOGIN_TEXT.link}</a><strong>${esc(login.code ?? '')}</strong>
+        <span class="help">${LOGIN_TEXT.waiting}</span><button class="btn small" data-action="login-cancel">${LOGIN_TEXT.cancel}</button></div>${err}`;
+    }
+  } else {
+    html += `<span class="help">${LOGIN_TEXT.why}</span><div class="row" style="padding:0;border:0">
+      <button class="btn small" data-action="login-begin" data-value="${esc(pid)}">${status === 'own' ? LOGIN_TEXT.again : LOGIN_TEXT.begin}</button>
+      ${status === 'own' ? `<button class="btn small" data-action="login-out" data-value="${esc(pid)}" title="${esc(LOGIN_TEXT.outHelp)}">${LOGIN_TEXT.out}</button>` : ''}</div>`;
+  }
+  return `${html}</div>`;
+}
+
 function providerCard(m: SettingsModel, pid: string): string {
   const pc = m.config.providers.find((p) => p.id === pid)!;
   const plugin = m.plugins.get(pid);
@@ -120,9 +153,11 @@ function providerCard(m: SettingsModel, pid: string): string {
   let detail = '';
   if (open) {
     if (plugin.needsLocalLogin) {
-      detail += `<div class="field"><span class="help">${m.shellKind === 'pwa'
+      const own = m.signIn?.status[pid] === 'own';
+      if (!own) detail += `<div class="field"><span class="help">${m.shellKind === 'pwa'
         ? 'Reads the login of the command-line app on your computer, so it only works in the desktop app.'
         : esc(PROVIDER_TEXT.localLogin(plugin.name))}</span></div>`;
+      if (m.signIn && pid in m.signIn.status) detail += loginBlock(m, pid, plugin.name);
     }
     for (const f of plugin.fields) {
       const id = `f-${pid}-${f.key}`;
@@ -135,7 +170,7 @@ function providerCard(m: SettingsModel, pid: string): string {
           ${f.help ? `<span class="help">${esc(f.help)}</span>` : ''}</div>`;
       } else if (f.kind === 'signin') {
         const signedIn = ((m.snapshot?.providers[pid]?.notes as { webSessions?: Record<string, boolean> } | null | undefined)?.webSessions ?? {})[f.site ?? pid] === true;
-        if (m.shellKind === 'desktop') detail += `<div class="row"><label class="name">${esc(f.label)} ${signedIn ? `<span class="saved">${PROVIDER_TEXT.signedIn}</span>` : ''}${f.help ? `<span class="desc">${esc(f.help)}</span>` : ''}</label><button class="btn small" data-signin="${esc(f.site ?? pid)}">${signedIn ? 'Sign in again' : 'Sign in'}</button></div>`;
+        if (m.shellKind === 'desktop' && !m.served) detail += `<div class="row"><label class="name">${esc(f.label)} ${signedIn ? `<span class="saved">${PROVIDER_TEXT.signedIn}</span>` : ''}${f.help ? `<span class="desc">${esc(f.help)}</span>` : ''}</label><button class="btn small" data-signin="${esc(f.site ?? pid)}">${signedIn ? 'Sign in again' : 'Sign in'}</button></div>`;
       } else if (f.kind === 'toggle') {
         detail += `<div class="row"><label class="name">${esc(f.label)}${f.help ? `<span class="desc">${esc(f.help)}</span>` : ''}</label>${toggle(`setting:${pid}:${f.key}`, !!pc.settings[f.key], f.label)}</div>`;
       } else if (f.kind === 'select') {

@@ -17,11 +17,11 @@
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--page); color: var(--ink); }
 body { font: calc(13px * var(--fs))/1.35 "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
-body.desktop { user-select: none; }
+body.desktop:not(.served) { user-select: none; }
 button, input, select, textarea { font: inherit; color: inherit; }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 #app { padding: 14px 14px 12px; max-width: 880px; margin: 0 auto; }
-body.pwa #app { padding: max(14px, env(safe-area-inset-top)) 14px max(16px, env(safe-area-inset-bottom)); }
+body:is(.pwa, .served) #app { padding: max(14px, env(safe-area-inset-top)) 14px max(16px, env(safe-area-inset-bottom)); }
 
 /* desktop title strip; while pinned the whole strip moves the window */
 #strip { background: var(--surface); border-bottom: 1px solid var(--line); }
@@ -63,8 +63,8 @@ button.strip-btn.small svg { width: 13px; height: 13px; }
 #strip .text-btn { border: 0; background: none; color: var(--accent); font: inherit; font-size: calc(12px * var(--fs)); cursor: pointer; padding: 2px 4px; border-radius: 5px; }
 #strip .text-btn:hover { background: var(--hover); }
 /* On the phone the strip takes the notch inset, so the page under it no longer needs it. */
-body.pwa #strip .strip-row { padding-top: env(safe-area-inset-top); }
-body.pwa #strip + #app { padding-top: 14px; }
+body:is(.pwa, .served) #strip .strip-row { padding-top: env(safe-area-inset-top); }
+body:is(.pwa, .served) #strip + #app { padding-top: 14px; }
 table.outlets { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: calc(12px * var(--fs)); }
 table.outlets th { font-weight: 500; color: var(--ink-2); text-align: center; padding: 4px 2px; }
 table.outlets th[scope="row"] { text-align: left; color: var(--ink); font-weight: 400; }
@@ -284,46 +284,46 @@ input[type=color] { width: 26px; height: 22px; border: 0; padding: 0; background
 
 /* Phones and tablets: larger text and touch targets. The desktop popup has a fine pointer and keeps its compact size. */
 @media (pointer: coarse) {
-  body.pwa { --fs: 1.22; }
-  body.pwa #app { padding-left: max(12px, env(safe-area-inset-left)); padding-right: max(12px, env(safe-area-inset-right)); }
-  body.pwa header.top { gap: 10px; margin-bottom: 14px; }
-  body.pwa button.icon { width: 42px; height: 42px; border-radius: 10px; }
-  body.pwa button.icon svg { width: 20px; height: 20px; }
-  body.pwa .tight { padding: 12px 14px; border-radius: 14px; }
-  body.pwa .card { padding: 12px 14px 11px; border-radius: 14px; margin-bottom: 10px; }
-  body.pwa .card h2 { gap: 9px; min-height: 30px; }
-  body.pwa .card .handle { width: 22px; }
-  body.pwa .card .handle svg { width: 16px; height: 16px; }
-  body.pwa .dot { width: 11px; height: 11px; }
-  body.pwa .chip { line-height: 21px; padding: 0 9px; }
-  body.pwa a.ext, body.pwa button.link { width: 34px; height: 34px; border-radius: 8px; }
-  body.pwa a.ext svg, body.pwa button.link svg { width: 17px; height: 17px; }
-  body.pwa .meter { padding: 6px 0; }
-  body.pwa .mrow .pct { min-width: 46px; }
-  body.pwa svg.spark { width: 72px; height: 22px; }
-  body.pwa .bar { height: 8px; border-radius: 4px; margin: 6px 0 5px; }
-  body.pwa .bar i { border-radius: 4px; }
-  body.pwa .mfoot { gap: 4px 10px; }
-  body.pwa .money { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
-  body.pwa .tile { padding: 9px 11px; border-radius: 11px; }
-  body.pwa footer.bottom { margin-top: 12px; }
-  body.pwa .row { padding: 10px 0; gap: 10px; }
-  body.pwa .field { padding: 8px 0; gap: 5px; }
+  body:is(.pwa, .served) { --fs: 1.22; }
+  body:is(.pwa, .served) #app { padding-left: max(12px, env(safe-area-inset-left)); padding-right: max(12px, env(safe-area-inset-right)); }
+  body:is(.pwa, .served) header.top { gap: 10px; margin-bottom: 14px; }
+  body:is(.pwa, .served) button.icon { width: 42px; height: 42px; border-radius: 10px; }
+  body:is(.pwa, .served) button.icon svg { width: 20px; height: 20px; }
+  body:is(.pwa, .served) .tight { padding: 12px 14px; border-radius: 14px; }
+  body:is(.pwa, .served) .card { padding: 12px 14px 11px; border-radius: 14px; margin-bottom: 10px; }
+  body:is(.pwa, .served) .card h2 { gap: 9px; min-height: 30px; }
+  body:is(.pwa, .served) .card .handle { width: 22px; }
+  body:is(.pwa, .served) .card .handle svg { width: 16px; height: 16px; }
+  body:is(.pwa, .served) .dot { width: 11px; height: 11px; }
+  body:is(.pwa, .served) .chip { line-height: 21px; padding: 0 9px; }
+  body:is(.pwa, .served) a.ext, body:is(.pwa, .served) button.link { width: 34px; height: 34px; border-radius: 8px; }
+  body:is(.pwa, .served) a.ext svg, body:is(.pwa, .served) button.link svg { width: 17px; height: 17px; }
+  body:is(.pwa, .served) .meter { padding: 6px 0; }
+  body:is(.pwa, .served) .mrow .pct { min-width: 46px; }
+  body:is(.pwa, .served) svg.spark { width: 72px; height: 22px; }
+  body:is(.pwa, .served) .bar { height: 8px; border-radius: 4px; margin: 6px 0 5px; }
+  body:is(.pwa, .served) .bar i { border-radius: 4px; }
+  body:is(.pwa, .served) .mfoot { gap: 4px 10px; }
+  body:is(.pwa, .served) .money { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
+  body:is(.pwa, .served) .tile { padding: 9px 11px; border-radius: 11px; }
+  body:is(.pwa, .served) footer.bottom { margin-top: 12px; }
+  body:is(.pwa, .served) .row { padding: 10px 0; gap: 10px; }
+  body:is(.pwa, .served) .field { padding: 8px 0; gap: 5px; }
   /* iOS zooms the page when a field's text is under 16px. */
-  body.pwa input[type=text], body.pwa input[type=password], body.pwa input[type=number], body.pwa select { font-size: 16px; padding: 10px 11px; border-radius: 9px; }
-  body.pwa textarea { font-size: 16px; }
-  body.pwa input[type=number] { width: 96px; }
-  body.pwa .seg button { padding: 9px 14px; }
-  body.pwa .switch { width: 50px; height: 30px; }
-  body.pwa .switch span { border-radius: 15px; }
-  body.pwa .switch span::after { width: 26px; height: 26px; }
-  body.pwa .switch input:checked + span::after { transform: translateX(20px); }
-  body.pwa button.btn { padding: 11px 16px; border-radius: 10px; }
-  body.pwa button.btn.small { padding: 8px 12px; }
-  body.pwa .swatch { width: 28px; height: 28px; }
-  body.pwa input[type=color] { width: 40px; height: 32px; }
-  body.pwa .metersel { gap: 10px 16px; }
-  body.pwa .metersel input[type=checkbox] { width: 20px; height: 20px; }
+  body:is(.pwa, .served) input[type=text], body:is(.pwa, .served) input[type=password], body:is(.pwa, .served) input[type=number], body:is(.pwa, .served) select { font-size: 16px; padding: 10px 11px; border-radius: 9px; }
+  body:is(.pwa, .served) textarea { font-size: 16px; }
+  body:is(.pwa, .served) input[type=number] { width: 96px; }
+  body:is(.pwa, .served) .seg button { padding: 9px 14px; }
+  body:is(.pwa, .served) .switch { width: 50px; height: 30px; }
+  body:is(.pwa, .served) .switch span { border-radius: 15px; }
+  body:is(.pwa, .served) .switch span::after { width: 26px; height: 26px; }
+  body:is(.pwa, .served) .switch input:checked + span::after { transform: translateX(20px); }
+  body:is(.pwa, .served) button.btn { padding: 11px 16px; border-radius: 10px; }
+  body:is(.pwa, .served) button.btn.small { padding: 8px 12px; }
+  body:is(.pwa, .served) .swatch { width: 28px; height: 28px; }
+  body:is(.pwa, .served) input[type=color] { width: 40px; height: 32px; }
+  body:is(.pwa, .served) .metersel { gap: 10px 16px; }
+  body:is(.pwa, .served) .metersel input[type=checkbox] { width: 20px; height: 20px; }
 }
 
 /* camera view for scanning a pairing code */
@@ -430,12 +430,12 @@ input[type=color] { width: 26px; height: 22px; border: 0; padding: 0; background
   .setup-stacks, .setup-pair { grid-template-columns: 1fr; }
 }
 @media (pointer: coarse) {
-  body.pwa .setup button, body.pwa .setup .seg button, body.pwa .setup-stack, body.pwa .setup-step { min-height: 44px; }
-  body.pwa .setup .switch { width: 52px; height: 32px; }
-  body.pwa .setup .switch span { border-radius: 16px; }
-  body.pwa .setup .switch span::after { width: 26px; height: 26px; top: 3px; }
-  body.pwa .setup .switch input:checked + span::after { transform: translateX(22px); }
-  body.pwa .setup input[type=file], body.pwa .setup input[type=number], body.pwa .setup textarea { min-height: 44px; }
+  body:is(.pwa, .served) .setup button, body:is(.pwa, .served) .setup .seg button, body:is(.pwa, .served) .setup-stack, body:is(.pwa, .served) .setup-step { min-height: 44px; }
+  body:is(.pwa, .served) .setup .switch { width: 52px; height: 32px; }
+  body:is(.pwa, .served) .setup .switch span { border-radius: 16px; }
+  body:is(.pwa, .served) .setup .switch span::after { width: 26px; height: 26px; top: 3px; }
+  body:is(.pwa, .served) .setup .switch input:checked + span::after { transform: translateX(22px); }
+  body:is(.pwa, .served) .setup input[type=file], body:is(.pwa, .served) .setup input[type=number], body:is(.pwa, .served) .setup textarea { min-height: 44px; }
 }
 
 /* local compute: the dashboard card and the Local page */

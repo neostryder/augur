@@ -31,6 +31,8 @@ export interface UpdateInfo {
 
 export interface Shell {
   kind: 'desktop' | 'pwa';
+  /** Set when augurd serves the app to a browser. It is a view of the engine like the desktop panel, with no popup, tray, or sign-in windows of its own. */
+  served?: boolean;
   host: Host;
 
   loadConfig(): Promise<AppConfig | null>;
