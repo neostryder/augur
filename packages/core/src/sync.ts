@@ -81,6 +81,34 @@ async function aesKey(raw: Uint8Array<ArrayBuffer>): Promise<CryptoKey> {
   return crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']);
 }
 
+/** What the relay stores for a channel. */
+interface Box { v?: number; iv: string; data: string }
+
+// Version 3 binds the channel name into the encryption as additional data, so a relay that moves a box from one channel to another cannot have it accepted there.
+const aad = (channel: string) => new TextEncoder().encode(`augur sync v3|${channel}`);
+
+async function seal(key: Uint8Array<ArrayBuffer>, channel: string, text: string): Promise<string> {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const data = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: aad(channel) }, await aesKey(key), await gzip(text)));
+  return JSON.stringify({ v: 3, iv: b64(iv), data: b64(data) });
+}
+
+/** Opens a box from `channel`. Boxes written before version 3 carry no channel binding and are still read, so an update on one device does not cut the other off. */
+async function open(key: Uint8Array<ArrayBuffer>, channel: string, box: Box): Promise<string> {
+  if (!box || typeof box.iv !== 'string' || typeof box.data !== 'string') throw new Error('Sync data is malformed');
+  const params: AesGcmParams = box.v === 3 ? { name: 'AES-GCM', iv: unb64(box.iv), additionalData: aad(channel) } : { name: 'AES-GCM', iv: unb64(box.iv) };
+  const plain = await crypto.subtle.decrypt(params, await aesKey(key), unb64(box.data));
+  return box.v === 2 || box.v === 3 ? gunzip(plain) : new TextDecoder().decode(plain);
+}
+
+/** Whether a snapshot stamped `at` is newer than the newest one already applied. A relay that serves an old box again is not newer. */
+export function isNewerSnapshot(seen: string | null | undefined, at: unknown): boolean {
+  const next = typeof at === 'string' ? Date.parse(at) : NaN;
+  if (!Number.isFinite(next)) return false;
+  const last = seen ? Date.parse(seen) : NaN;
+  return !Number.isFinite(last) || next > last;
+}
+
 /** Creates a new channel on the desktop and returns the link the phone opens. */
 export async function createPairing(shell: SecretWriter, relay: string, pwaUrl: string): Promise<{ link: SyncLink; pairUrl: string }> {
   const key = crypto.getRandomValues(new Uint8Array(32));
@@ -125,12 +153,10 @@ export async function pushSnapshot(host: Host, link: SyncLink, snapshot: Snapsho
   if (!keyText || !writeSecret) return;
   const cut = Date.now() - 7 * 86400e3;
   const payload = JSON.stringify({ snapshot: withCompactFleet(snapshot), history: history.filter((r) => new Date(r.t).getTime() >= cut), config, secrets, ...extra } satisfies SyncPayload);
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const data = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await aesKey(unb64(keyText)), await gzip(payload)));
   const res = await host.http({
     url: `${link.relay}/sync/${link.channel}`, method: 'PUT',
     headers: { 'content-type': 'application/json', 'x-sync-secret': writeSecret },
-    body: JSON.stringify({ v: 2, iv: b64(iv), data: b64(data) }),
+    body: await seal(unb64(keyText), link.channel, payload),
   });
   if (res.status !== 200) throw new SyncUploadError(res.status);
 }
@@ -151,9 +177,9 @@ export async function pullSnapshot(host: Host, link: SyncLink): Promise<SyncPayl
   const r = await fetch(`${link.relay}/sync/${link.channel}`, { cache: 'no-store' });
   if (r.status === 404) return null;
   if (!r.ok) throw new Error(`Sync download failed (${r.status})`);
-  const box = (await r.json()) as { v?: number; iv: string; data: string };
-  const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(box.iv) }, await aesKey(unb64(keyText)), unb64(box.data));
-  return JSON.parse(box.v === 2 ? await gunzip(plain) : new TextDecoder().decode(plain));
+  const parsed = JSON.parse(await open(unb64(keyText), link.channel, (await r.json()) as Box)) as Partial<SyncPayload> | null;
+  // Anything that is not a desktop snapshot, such as a box moved here from another channel, is not an answer.
+  return parsed && typeof parsed === 'object' && parsed.snapshot && typeof parsed.snapshot.generatedAt === 'string' && parsed.snapshot.providers && Array.isArray(parsed.history) ? (parsed as SyncPayload) : null;
 }
 
 /**
@@ -186,10 +212,8 @@ async function relayCall(host: Host, direct: boolean, url: string, init: Omit<Ht
 export async function pushRules(host: Host, link: SyncLink, policy: PolicyConfig, direct = false): Promise<void> {
   const rc = await rulesChannel(host);
   if (!rc) return;
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const data = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await aesKey(rc.key), await gzip(JSON.stringify({ policy }))));
   const res = await relayCall(host, direct, `${link.relay}/sync/${rc.channel}`, { method: 'PUT', headers: { 'content-type': 'application/json', 'x-sync-secret': rc.secret },
-    body: JSON.stringify({ v: 2, iv: b64(iv), data: b64(data) }) });
+    body: await seal(rc.key, rc.channel, JSON.stringify({ policy })) });
   if (res.status !== 200) throw new SyncUploadError(res.status);
 }
 
@@ -200,9 +224,7 @@ export async function pullRules(host: Host, link: SyncLink, direct = false): Pro
   const res = await relayCall(host, direct, `${link.relay}/sync/${rc.channel}`, { method: 'GET' });
   if (res.status === 404) return null;
   if (res.status !== 200) throw new Error(`Rules download failed (${res.status})`);
-  const box = JSON.parse(res.body) as { iv: string; data: string };
-  const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(box.iv) }, await aesKey(rc.key), unb64(box.data));
-  const parsed = JSON.parse(await gunzip(plain)) as { policy?: unknown };
+  const parsed = JSON.parse(await open(rc.key, rc.channel, JSON.parse(res.body) as Box)) as { policy?: unknown };
   return parsed.policy ? migratePolicy(parsed.policy) : null;
 }
 
@@ -220,10 +242,8 @@ export async function pushPhoneState(host: Host, link: SyncLink, state: PhoneSta
   const pc = await phoneChannel(host);
   if (!pc) return;
   const body: PhoneState = { acks: state.acks.slice(-PHONE_ACKS_KEPT), push: state.push };
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const data = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await aesKey(pc.key), await gzip(JSON.stringify(body))));
   const res = await relayCall(host, true, `${link.relay}/sync/${pc.channel}`, { method: 'PUT', headers: { 'content-type': 'application/json', 'x-sync-secret': pc.secret },
-    body: JSON.stringify({ v: 2, iv: b64(iv), data: b64(data) }) });
+    body: await seal(pc.key, pc.channel, JSON.stringify(body)) });
   if (res.status !== 200) throw new SyncUploadError(res.status);
 }
 
@@ -234,9 +254,8 @@ export async function pullPhoneState(host: Host, link: SyncLink, direct = false)
   const res = await relayCall(host, direct, `${link.relay}/sync/${pc.channel}`, { method: 'GET' });
   if (res.status === 404) return null;
   if (res.status !== 200) throw new Error(`Phone state download failed (${res.status})`);
-  const box = JSON.parse(res.body) as { iv: string; data: string };
-  const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(box.iv) }, await aesKey(pc.key), unb64(box.data));
-  const raw = JSON.parse(await gunzip(plain)) as Partial<PhoneState>;
+  const raw = JSON.parse(await open(pc.key, pc.channel, JSON.parse(res.body) as Box)) as Partial<PhoneState>;
+  if (!Array.isArray(raw.acks)) return null;
   return { acks: Array.isArray(raw.acks) ? raw.acks.filter((a): a is string => typeof a === 'string') : [], push: isPushSubscription(raw.push) ? raw.push : null };
 }
 

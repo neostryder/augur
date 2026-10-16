@@ -219,7 +219,7 @@ export interface AppConfig {
   openOnLaunch?: boolean;
   /** Desktop-to-phone sync channel. The encryption key and write secret live in the keychain. */
   /** shareKeys: send key-based providers' API keys to the paired phone, inside the encrypted sync. Defaults to off. */
-  sync?: { relay: string; channel: string; pwaUrl: string; shareKeys?: boolean } | null;
+  sync?: { relay: string; channel: string; pwaUrl: string; shareKeys?: boolean; /** The generatedAt of the newest desktop snapshot this phone applied. An older one is never applied after it. */ seenAt?: string } | null;
   /**
    * Fallback for secrets missing from the keychain: read them from a Bitwarden Secrets Manager
    * project with the `bws` CLI, mapped from `<providerId>.<fieldKey>` to the secret's key there.

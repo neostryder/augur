@@ -22,7 +22,7 @@ import { renderTrayIcon } from './trayicon';
 import qrcode from 'qrcode-generator';
 import { HOSTED } from './hosted';
 import { attachPullToRefresh } from './pull-refresh';
-import { isApprovalLevel, acceptPairing, applySharedConfig, askDesktop, mergeSynced, parsePairing, pullPhoneState, pullRules, pullSnapshot, pushPhoneState, pushRules, type PhoneState, FeedKeeper, type Raise, tooltip } from '@augur/core';
+import { isApprovalLevel, acceptPairing, applySharedConfig, askDesktop, mergeSynced, parsePairing, isNewerSnapshot, pullPhoneState, pullRules, pullSnapshot, pushPhoneState, pushRules, type PhoneState, FeedKeeper, type Raise, tooltip } from '@augur/core';
 import { acceptPairingFromUrl, pairingQuestion, replacesPairing } from './pairing';
 import { connectEngine } from './engine-link';
 import type { EngineApi, EngineKey, EngineState, UpdateState, AlertFeed } from '@augur/core';
@@ -408,6 +408,9 @@ export class App {
   private async pullFromDesktop(runConfig: AppConfig): Promise<void> {
     const pulled = await pullSnapshot(this.shell.host, this.sync!).catch(() => null);
     if (!pulled || !this.snapshot) return;
+    // A relay can serve an old box again. Applying it would roll the desktop's reading, history and keys back, so only a newer snapshot goes in.
+    if (!isNewerSnapshot(this.sync?.seenAt, pulled.snapshot.generatedAt)) return;
+    this.sync = { ...this.sync!, seenAt: pulled.snapshot.generatedAt };
     if (this.desktopAt !== pulled.snapshot.generatedAt && this.desktopWait === 'timeout') this.desktopWait = null;
     this.desktopAt = pulled.snapshot.generatedAt;
     await this.storeSyncedSecrets(pulled.secrets);
@@ -428,6 +431,7 @@ export class App {
       mine.set(row.t, r as HistoryRow);
     }
     this.history = [...mine.values()].sort((a, b) => a.t.localeCompare(b.t));
+    if (!this.justPaired) await this.shell.saveConfig(this.config);
     if (this.justPaired) {
       if (pulled.config) {
         this.config = applySharedConfig(this.config, pulled.config);
