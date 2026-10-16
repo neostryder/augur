@@ -19,8 +19,8 @@ Augur shows how much of your AI plans and credits you have used, in one place: a
 
 | Provider | What you see | What it needs |
 | --- | --- | --- |
-| Claude | Current session, weekly limit, weekly limit per model, limit resets | The Claude Code app signed in on this computer, plus a one-time sign-in to claude.ai for the resets |
-| Codex | Weekly plan limit, limit resets available | The Codex CLI signed in on this computer |
+| Claude | Current session, weekly limit, weekly limit per model, limit resets | The Claude Code app signed in on this computer or Augur's own sign-in, plus a one-time sign-in to claude.ai for the resets |
+| Codex | Weekly plan limit, limit resets available | The Codex CLI signed in on this computer or Augur's own sign-in |
 | Grok | Weekly SuperGrok limit | The Grok CLI signed in on this computer |
 | MiniMax | Coding plan: 5-hour and weekly text limits, video counts | An API key |
 | OpenRouter | Credits left, spend by the key today, this week and this month | An API key |
@@ -28,7 +28,7 @@ Augur shows how much of your AI plans and credits you have used, in one place: a
 | Jev (TypeSafe) | Credit balance, spend and requests over the last 7 days, response time | An API key, plus a one-time sign-in to the TypeSafe console for the balance |
 | Cogitator | Each of your machines, up or down, with its free memory and the models it holds; each role and the machine serving it | The gateway's address and a Cogitator key with the manage scope |
 
-Claude, Codex and Grok only report plan limits to their own signed-in apps, so the desktop app reads those three. An API key for Anthropic, OpenAI or xAI shows API billing, not plan limits, so it cannot stand in for the sign-in. The phone app shows them once you pair it with your desktop (see below).
+Claude, Codex, and Grok only report plan limits to a signed-in account, so Augur reads the login those apps keep on this computer, or holds its own sign-in to Claude or Codex (see [Signing in to Claude and Codex](#signing-in-to-claude-and-codex)). An API key for Anthropic, OpenAI or xAI shows API billing, not plan limits, so it cannot stand in for the sign-in. The phone app shows them once you pair it with your desktop (see below).
 
 You can add any other provider whose usage endpoint returns JSON, without writing code. See [Custom providers](#custom-providers). To run models on an API that uses the OpenAI or Anthropic format, choose Add provider on the Routes page or run `augur provider add`. Either one takes a base URL, a model and a key and sets up the route. [Adding a provider](docs/configuring.md#adding-a-provider) has the steps.
 
@@ -62,13 +62,28 @@ The macOS build carries its own copy of Node, so nothing else has to be installe
 
 Every release also carries `SHA256SUMS.txt`, with a checksum for each installer, `SHA256SUMS.txt.sig`, a signature of that list made with the same key the window app's updater trusts, and a bill of materials for the JavaScript and Rust dependencies. The install script and `augur update` refuse a list whose signature does not verify. The installers themselves are not signed, so compare a download against its line in that file before you run it: `Get-FileHash <file>` on Windows, `shasum -a 256 <file>` on macOS, `sha256sum <file>` on Linux.
 
-Augur opens setup the first time it starts. Providers that are already signed in on the computer are turned on for you. For the others, paste an API key on the provider's card in Settings and turn it on. The Claude, Codex, and Grok cards need the matching app signed in on this computer. Without one of them, turn on a provider that takes an API key, such as OpenRouter. Keys are stored in the operating system's keychain (Windows Credential Manager, the macOS Keychain, or the Secret Service on Linux), and each one is sent only to its own provider.
+Augur opens setup the first time it starts. Providers that are already signed in on the computer are turned on for you. For the others, paste an API key on the provider's card in Settings and turn it on. The Grok card needs the Grok CLI signed in on this computer, and the Claude and Codex cards need their app signed in here or Augur's own sign-in. Without any of them, turn on a provider that takes an API key, such as OpenRouter. Keys are stored in the operating system's keychain (Windows Credential Manager, the macOS Keychain, or the Secret Service on Linux), and each one is sent only to its own provider.
 
 Setup asks its questions in five steps, and it looks the same in the window app and the terminal app. First you pick what you pay for: Claude only, several subscriptions, API keys only, or a profile file saved on another computer. Then you confirm the providers Augur found, add any API service, and say how much of each subscription to hold back, which one to use first, and how much to spend on pay-per-use providers. On the review step you mark each model as strong or light and choose the models that write prose and give second opinions. A summary lists each setting your answers touch, and nothing is saved until you press Apply. A step you leave alone changes nothing. The last step tests each route that has a key and lists the models whose rules you still need to confirm. To change your answers later, choose Run setup again in Settings; it opens with your current settings filled in.
 
 To see your TypeSafe balance, open Jev in settings and choose Sign in. Augur keeps that console session in its own window and uses it only to read your billing page.
 
 To count your Claude limit resets, open Claude in settings, turn on Read resets from claude.ai and choose Sign in. Augur keeps that session in its own window and uses it only to read your usage page, about every six hours. Without the sign-in, enter the count under Limit resets in hand.
+
+## Signing in to Claude and Codex
+
+Augur reads the login that Claude Code or the Codex CLI keeps on this computer, or it can sign in to Claude and Codex itself and keep its own session. Its own sign-in suits a computer where the CLI is not signed in or has no browser, such as a home server that only meters, and a Claude Code login made with `claude setup-token`, whose token cannot read usage. It also keeps Augur and the CLI from signing each other out: a refresh token works only once, so when both renew the same login, whichever renews second loses it.
+
+```bash
+augur login claude    # prints a link, then asks for the code the page shows
+augur login codex     # prints a link and a code, then waits until you approve it
+augur login status    # which login Augur reads for each provider: its own, the CLI's, or none
+augur logout codex    # forgets Augur's own session and leaves the CLI's login alone
+```
+
+The link opens in a browser on any device, and it stays open for 15 minutes. For Claude, sign in on that page and paste the code it shows at the prompt, where the typing is hidden, or pipe the code in with `--stdin`. Augur asks Claude only for the `user:profile` and `user:inference` scopes and saves nothing if the grant cannot read usage. For Codex, enter the short code on the page, and the command finishes once you approve it. The ChatGPT account needs sign-in with a device code turned on in its security settings. The Claude and Codex cards in Settings have the same steps under Sign-in, in the window app and in the [web app](#web-app-on-your-own-computer).
+
+Augur stores only the refresh token of its own session, in the operating system's key store (the Windows credential store, the macOS Keychain, or the Secret Service on Linux, with a file only you can read as the fallback), and keeps access tokens in memory. While it holds its own session it neither reads nor renews the CLI's login. Signing in and out needs the owner's token, so an agent working through the MCP server cannot do either.
 
 ## Using it
 
@@ -108,7 +123,7 @@ Claude Desktop chat lets your chats in Claude Desktop pick and run models throug
 
 ## In a terminal
 
-Run `augur` in a terminal and it opens a full-screen version of the panel. Tabs across the top hold Usage, Alerts, Rules, Dispatch, Balance, Local, Settings, and Setup. Press 1 to 8 or Tab to move between them, and ? for the keys on the page you are on. The first run opens on Setup. On that page, 1 to 5 and Tab move between its steps instead. The terminal app starts the Augur service if it is not running, and the window app and the terminal app are two views of that one service, so a change in either shows in the other. Providers, alerts, rules, routes, jobs, phone pairing, and the Claude Code and Claude Desktop switches are all there. The sign-ins that need a browser window, such as the Claude resets and the TypeSafe balance, still need the window app. Pairing draws its QR code in the terminal when the terminal is tall enough, and shows the link with a key to copy it when it is not.
+Run `augur` in a terminal and it opens a full-screen version of the panel. Tabs across the top hold Usage, Alerts, Rules, Dispatch, Balance, Local, Settings, and Setup. Press 1 to 8 or Tab to move between them, and ? for the keys on the page you are on. The first run opens on Setup. On that page, 1 to 5 and Tab move between its steps instead. The terminal app starts the Augur service if it is not running, and the window app and the terminal app are two views of that one service, so a change in either shows in the other. Providers, alerts, rules, routes, jobs, phone pairing, and the Claude Code and Claude Desktop switches are all there. The sign-ins that need a browser window, such as the Claude resets and the TypeSafe balance, still need the window app, and `augur login` signs Augur in to Claude or Codex from the terminal. Pairing draws its QR code in the terminal when the terminal is tall enough, and shows the link with a key to copy it when it is not.
 
 The same command answers short questions that suit a status bar or a script:
 
@@ -144,7 +159,7 @@ A run has to state its activity and data tier, and it has to follow a pick made 
 
 A few options change what a run sends. When the service has a [charter folder](docs/configuring.md#standing-instructions-for-every-job), every prompt starts with its standing instructions, `--pack <names>` adds packs from it, and `--no-charter` leaves it out. `--conversation <name>` opens a conversation on a Grok or Codex route, and later runs with the same name resume that session, so `augur run grok --conversation parser --prompt "Now check the error paths" ...` picks up where the last run on `parser` stopped. `augur conversations` lists them and `--forget <name>` drops one. With Retry on failure turned on in the service settings, a job that fails on a provider limit, a harness that will not start or a read-only timeout runs again on its route's [fallback](docs/accounting.md#budgets-and-fallback-routes), and `--no-failover` keeps it where it is.
 
-- The Jobs page lists what agents started, with each job's result, output and errors, and lets you cancel one that is still going. Cancelling a job, or a job reaching its time limit, ends everything it started: through a job object on Windows, a systemd user scope on Linux where systemd runs, and the job's process group otherwise.
+- The Jobs page lists what agents started, with each job's result, output and errors, and lets you cancel one that is still going. Cancelling a job, or a job reaching its time limit, ends everything it started: through a job object on Windows, a systemd user scope on Linux where systemd runs, and otherwise the job's process group plus every process the service saw descend from the job. Without a job object or a scope the service looks for those processes about once a second, so one that starts and detaches between two looks can outlive a cancel.
 - The Routes page joins a model to the program that runs it. A route is an entry in `dispatch/routes.json`, and Test route checks that it works. For a new API in the OpenAI or Anthropic format, Add provider adds the route, the model and the key in one form. An API route can keep its key in the operating system's key store: choose store as the key source and save the key on the page or with `augur key set <route>` (it asks for the key with the typing hidden, or reads a variable you set yourself with `--env <NAME>`, and names the host the key will be sent to), and it never appears in `routes.json` or a job record. The store is the Windows credential store, the macOS Keychain, or the Secret Service on Linux, with a file only you can read as the fallback where no Secret Service answers.
 - The Service page holds the service's settings, and `augur config` shows the same list.
 - Tokens and cost appear with each job, labelled reported, derived or imputed. [docs/accounting.md](docs/accounting.md) explains how they are worked out and how to set a rate.
@@ -219,7 +234,13 @@ The web app works in any modern mobile browser. Open [augur.rpgm.tools](https://
 
 To use it with your desktop, choose Pair a phone in the desktop app's settings. Then open Augur on the phone. A phone with nothing saved opens on a Pair with your desktop screen, where Scan pairing code scans the code and Set up without a desktop skips pairing; a paired or set-up phone has the same button in settings. On an iPhone, scan from inside the home-screen app rather than with the Camera app: the camera opens links in Safari, which keeps its storage apart from the home-screen app. A pairing link that opens in the phone's browser first asks you to confirm the relay it names, and a code scanned in the app asks only when it would replace a pairing that already works. A relay has to use https, or sit on your home network. The phone then shows everything the desktop tracks, set up the way you have it there, and receives the desktop's API keys, so there is nothing to type. It refreshes key-based providers itself. Claude, Codex, Grok and Jev's balance come from the desktop, which sends new numbers every 10 minutes. Tapping refresh on the phone asks the desktop to read them again, and the new numbers arrive within about two minutes while the desktop app is running. Turn on alerts in the phone's own settings if you want them there too. Augur asks the browser to keep its saved data, so a phone that runs short on space should not clear the pairing, although the browser can turn the request down. If the home-screen app on an iPhone still opens on setup, remove it from the home screen, add it again from Safari, and scan the code inside the new app.
 
-The desktop encrypts each update, keys included, with a key only it and your phone hold, and the relay stores only that ciphertext. To keep your API keys on the desktop, turn off Send API keys to the phone in the desktop's settings.
+The desktop encrypts each update, keys included, with a key only it and your phone hold, and the relay stores only that ciphertext. Each update is tied to its pairing, and the phone applies one only when it is newer than the last update it applied, so the relay cannot hand it another pairing's data or an older copy. A desktop whose clock moves backwards sends updates the phone ignores until the clock passes the time of the last one. To keep your API keys on the desktop, turn off Send API keys to the phone in the desktop's settings.
+
+## Web app on your own computer
+
+The Augur service can also serve this app to a browser on any device that can reach your computer. It works differently from the phone app above. With the relay, your computer pushes encrypted updates to a server elsewhere and the phone fetches them there. With the web app, the browser connects to your computer itself, like any service you host at home. Nothing passes through a server in between, your computer has to be on and reachable (on your home network, over a VPN, or through a tunnel you set up), and who can reach it depends on your network.
+
+The web app is off by default. Turn it on with `augur config set web.enabled true`, restart the service with `augur service stop` and `augur service start`, then run `augur web` for the links that open it. Each link carries a web token that the page keeps in that browser, and `augur web rotate` replaces the token and signs every browser out. The service listens on `127.0.0.1:7420`, which only this computer can reach, until you change `web.host`. Whoever holds the web token can do anything the panel does, including changing settings and signing in to providers, so keep it like a password and serve https with `web.tlsCert` and `web.tlsKey` before you open the app to a network. [docs/web.md](docs/web.md) lists every setting and what the service checks.
 
 ## Custom providers
 
@@ -259,7 +280,7 @@ pnpm --filter @augur/ui build
 pnpm --filter @augur/relay run deploy
 ```
 
-The desktop and web apps use `https://augur.rpgm.tools` until you enter another relay address in settings.
+The desktop and web apps use `https://augur.rpgm.tools` until you enter another relay address in settings. For the service to serve the web app itself, build the web app before `pnpm build:service`, which copies it into the service's `web` folder.
 
 ### Keys from Bitwarden Secrets Manager
 
@@ -278,7 +299,7 @@ A key saved in settings takes priority over the same key in the project.
 
 ## Privacy
 
-Augur has no accounts, and the only server it uses is the optional relay behind the phone app. The desktop app talks to each provider directly and keeps its settings and usage history on your computer. If you run the dispatch service, it also keeps a job history in a SQLite file in your profile: each job's route, model, state, timing, usage, folder and the length of its prompt and answer, and the prompt itself only if you turn that on. Job folders are deleted after 30 days by default, and the records stay until you delete the service's data folder. The relay the phone app uses passes each request, including the API key in it, to a fixed list of usage and status endpoints. Its code stores and logs none of it, though Cloudflare, which runs it, keeps its own request logs. Sync data on the relay is encrypted on your computer with a key only your paired phone has, so the relay holds ciphertext it cannot read, and it expires after 14 days. See SECURITY.md for what is stored where and how to report a problem.
+Augur has no accounts, and the only server it uses is the optional relay behind the phone app. The web app the service can serve talks only to your own computer. The desktop app talks to each provider directly and keeps its settings and usage history on your computer. If you run the dispatch service, it also keeps a job history in a SQLite file in your profile: each job's route, model, state, timing, usage, folder and the length of its prompt and answer, and the prompt itself only if you turn that on. Job folders are deleted after 30 days by default, and the records stay until you delete the service's data folder. The relay the phone app uses passes each request, including the API key in it, to a fixed list of usage and status endpoints. Its code stores and logs none of it, though Cloudflare, which runs it, keeps its own request logs. Sync data on the relay is encrypted on your computer with a key only your paired phone has, so the relay holds ciphertext it cannot read, and it expires after 14 days. See SECURITY.md for what is stored where and how to report a problem.
 
 ## License
 

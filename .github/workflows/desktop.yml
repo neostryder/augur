@@ -59,6 +59,8 @@ jobs:
           lipo -create "node-$v-darwin-arm64/bin/node" "node-$v-darwin-x64/bin/node" -output augur-node
           codesign --force --sign - augur-node
           echo "AUGUR_NODE=$RUNNER_TEMP/augur-node" >> "$GITHUB_ENV"
+      # The service carries the web app, so the app is built before the service copies it.
+      - run: pnpm --filter @augur/ui build
       - run: pnpm build:service
       - if: github.ref_type == 'tag'
         shell: bash
@@ -104,6 +106,7 @@ jobs:
           node-version: 26
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @augur/ui build
       - name: Build and pack
         shell: bash
         run: |
