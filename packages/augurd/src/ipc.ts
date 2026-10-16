@@ -1,8 +1,10 @@
 // The service's control endpoint: a named pipe (a socket file elsewhere), one JSON line per request, every request carrying the token.
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { userInfo } from 'node:os';
 import net from 'node:net';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { PROTOCOL_VERSION, planRouteAdd } from '@augur/dispatch-protocol';
 import type { EngineEvent, JobRequest, MethodName, RateCard, RouteAddAnswer, RouteConfig, RpcRequest, RpcResponse, ViewHello, ViewReply } from '@augur/dispatch-protocol';
 import { DEFAULT_APPROVAL, RULES_ONLY_PROVIDERS, allPlugins, callEngine, type EngineApi, type EngineKey, type EngineState, type ProviderAddition } from '@augur/core';
@@ -17,14 +19,24 @@ export interface EngineLink { api: EngineApi; views: ViewHub }
 const MAX_LINE = 16 * 1024 * 1024;
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
+/** Limits a file or folder to its owner. POSIX gets a mode; Windows has its access list rewritten to the current user alone, since a mode means nothing there. */
+export function ownerOnly(path: string, mode: number): void {
+  try { chmodSync(path, mode); } catch { /* a filesystem with no modes */ }
+  if (process.platform !== 'win32') return;
+  try {
+    const domain = process.env.USERDOMAIN, who = (domain ? domain + '\\' : '') + userInfo().username;
+    execFileSync('icacls', [path, '/inheritance:r', '/grant:r', `${who}:(F)`], { stdio: 'ignore', windowsHide: true, timeout: 10000 });
+  } catch { /* the profile folder's access list still applies */ }
+}
+
 /** The token sits in the service's data folder, which is inside the user's profile. Callers read it from there. */
 export function ensureToken(dir: string): string {
   mkdirSync(dir, { recursive: true });
   const path = join(dir, 'token');
-  if (existsSync(path)) { const t = readFileSync(path, 'utf8').trim(); if (t.length >= 32) return t; }
+  if (existsSync(path)) { const t = readFileSync(path, 'utf8').trim(); if (t.length >= 32) { ownerOnly(path, 0o600); return t; } }
   const token = randomBytes(32).toString('hex');
   writeFileSync(path, token, { mode: 0o600 });
-  try { chmodSync(path, 0o600); } catch { /* Windows uses the profile folder's ACL */ }
+  ownerOnly(path, 0o600);
   return token;
 }
 
@@ -179,6 +191,7 @@ export class IpcServer {
 
   start(pipe: string): Promise<void> {
     return new Promise((resolve, reject) => {
+      const oldMask = process.platform === 'win32' ? null : process.umask(0o077);
       const server = net.createServer(sock => {
         let watching: { view: ViewLink; stop: () => void } | null = null;
         this.sockets.add(sock); sock.on('close', () => { this.sockets.delete(sock); watching?.stop(); watching = null; });
@@ -221,8 +234,13 @@ export class IpcServer {
           }
         });
       });
-      server.once('error', reject);
-      server.listen(pipe, () => { server.off('error', reject); this.server = server; resolve(); });
+      server.once('error', e => { if (oldMask !== null) process.umask(oldMask); reject(e); });
+      // A socket file is created with no access for anyone but its owner. A Windows pipe is owner-only by default, and the token is checked on every request besides.
+      if (process.platform !== 'win32') { try { mkdirSync(dirname(pipe), { recursive: true, mode: 0o700 }); } catch { /* the folder exists */ } }
+      server.listen(pipe, () => {
+        if (oldMask !== null) { process.umask(oldMask); try { chmodSync(pipe, 0o600); } catch { /* gone already */ } }
+        server.off('error', reject); this.server = server; resolve();
+      });
     });
   }
 
