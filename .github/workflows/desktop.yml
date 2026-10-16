@@ -187,6 +187,8 @@ jobs:
     if: github.ref_type == 'tag'
     needs: [build, terminal]
     runs-on: ubuntu-24.04
+    # This job signs the checksum list with the updater key, which is kept in the release environment.
+    environment: release
     permissions:
       contents: write
     steps:
