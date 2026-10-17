@@ -14,7 +14,7 @@ describe('token file access', () => {
       if (process.platform === 'win32') {
         const acl = execFileSync('icacls', [path], { encoding: 'utf8', windowsHide: true });
         const entries = acl.split(/\r?\n/).filter(l => /:\(/.test(l));
-        expect(entries.length).toBe(1);
+        expect(entries.length, JSON.stringify({ acl, domain: process.env.USERDOMAIN, user: userInfo().username, path })).toBe(1);
         expect(entries[0]!.toLowerCase()).toContain(userInfo().username.toLowerCase());
       } else {
         expect(statSync(path).mode & 0o077).toBe(0);
