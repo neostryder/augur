@@ -46,7 +46,59 @@ The web token carries the owner's reach. Whoever holds it can do anything the wi
 
 ## Plain http and https
 
-Without `web.tlsCert` and `web.tlsKey` the web app uses plain http. That is fine on `127.0.0.1`. On a network address the token crosses the network unencrypted, and anyone who can watch that traffic can read it. The service writes a warning to its log when it starts that way, and `augur web` prints the same warning. Set both TLS settings, reach the page through a VPN or a tunnel that encrypts the traffic, or keep to a network you trust.
+Without `web.tlsCert` and `web.tlsKey` the web app uses plain http. That is fine on `127.0.0.1`. On a network address the token crosses the network unencrypted, and anyone who can watch that traffic can read it. The service writes a warning to its log when it starts that way, and `augur web` prints the same warning. The recommended way to get https is a [reverse proxy](#serving-it-over-https-with-a-reverse-proxy) in front of the service; otherwise, set both TLS settings, reach the page through a VPN or a tunnel that encrypts the traffic, or keep to a network you trust.
+
+## Serving it over https with a reverse proxy
+
+The recommended way to get https is to put a reverse proxy that holds the certificate in front of the service. The service keeps listening on `127.0.0.1:7420` over plain http, which is fine on loopback, and only the proxy faces the network. Augur does not install or manage the proxy, and it does not depend on one.
+
+The proxy needs three things from its configuration:
+
+- Its public name goes in `web.allowedHosts`. Otherwise the service refuses the request with 421.
+- It passes the original `Host` header through. The service refuses a request whose `Origin` does not match its `Host`.
+- It does not buffer the response of `/api/watch`, and its read timeout is longer than 20 seconds. That path streams updates and sends a keepalive line every 20 seconds.
+
+Every request reaches the service from the proxy's address. The lockout after 10 wrong tokens in a minute therefore applies to everyone behind the proxy at once.
+
+With Caddy, a public DNS name gets a certificate automatically. A name that only your local network resolves needs Caddy's DNS challenge or its internal CA, which Caddy's documentation covers.
+
+```
+augur.example.net {
+    reverse_proxy 127.0.0.1:7420 {
+        flush_interval -1
+    }
+}
+```
+
+With nginx, replace the two certificate paths with your own.
+
+```
+server {
+    listen 443 ssl;
+    server_name augur.example.net;
+    ssl_certificate /path/to/fullchain.pem;
+    ssl_certificate_key /path/to/privkey.pem;
+    location / {
+        proxy_pass http://127.0.0.1:7420;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_buffering off;
+        proxy_read_timeout 1h;
+    }
+}
+```
+
+Once the proxy is running, add its name and restart the service:
+
+```bash
+augur config set web.allowedHosts augur.example.net
+augur service stop
+augur service start
+```
+
+Then open `https://augur.example.net/#token=...` with the token from `augur web`. The links `augur web` prints use the service's own address, so replace the address part with the proxy's name.
+
+These examples are starting points, because proxies differ. Tailscale's `tailscale serve` is another route that needs no certificate handling.
 
 ## What the service checks
 
