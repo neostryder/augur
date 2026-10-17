@@ -76,7 +76,7 @@ export async function startService(opts: ServiceOptions = {}) {
   const override = process.env.AUGURD_ENGINE === '0' ? false : process.env.AUGURD_ENGINE === '1' ? true : undefined;
   engine = (opts.engine ?? override ?? config.engine) ? await startEngine(server, log) : null;
   try { await server.start(opts.pipe ?? pipeName(dir)); }
-  catch (e) { engine?.stop(); store.close(); throw e; }
+  catch (e) { engine?.stop(); await engine?.flush(); store.close(); throw e; }
   // The web app listens only when the owner turned it on. A port that is taken is logged and leaves the rest of the service running.
   let web: WebServer | null = null;
   if (config.web.enabled) {
@@ -103,7 +103,7 @@ export async function startService(opts: ServiceOptions = {}) {
   return {
     supervisor, store, config,
     engine, web,
-    async stop() { await web?.close(); engine?.stop(); clearInterval(timer); clearInterval(daily); clearInterval(hourly); await server.close(); store.close(); log('stopped'); },
+    async stop() { await web?.close(); engine?.stop(); clearInterval(timer); clearInterval(daily); clearInterval(hourly); await server.close(); await engine?.flush(); store.close(); log('stopped'); },
   };
 }
 

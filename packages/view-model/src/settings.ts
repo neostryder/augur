@@ -5,6 +5,7 @@ export const KIND_LABELS: Record<AlertKind, string> = {
   percent: 'Usage reaches a threshold',
   pace: 'Pace warning',
   reset: 'Limit spent with a reset in hand',
+  idle: 'Provider is idle',
   balance: 'Balance is low',
   refresh: 'Refresh failed',
   models: 'New models to review',
@@ -27,6 +28,8 @@ export const ALERT_TEXT = {
   session: 'Session',
   weekly: 'Weekly',
   other: 'Other',
+  idlePct: 'Idle usage threshold (%)',
+  idleHours: 'Hours below the idle threshold',
   balances: 'Notify when a balance drops below',
 };
 

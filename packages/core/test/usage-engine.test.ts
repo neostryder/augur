@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import { callEngine, defaultConfig, fieldPath, migrateConfig, setField, UsageEngine } from '../src/index.js';
-import type { AppConfig, EngineKey, EngineShell, ProposedRule, Snapshot } from '../src/index.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { callEngine, defaultConfig, detectResets, fieldPath, migrateConfig, setField, UsageEngine } from '../src/index.js';
+import type { AppConfig, EngineKey, EngineShell, ProposedRule, ResetEvent, Snapshot } from '../src/index.js';
 
 function fakeShell(saved: AppConfig | null) {
   const files = new Map<string, string>(), secrets = new Map<string, string>(), exported = new Map<string, string>();
@@ -22,6 +22,7 @@ function fakeShell(saved: AppConfig | null) {
     saveSnapshot: async (s) => { snapshot = s; },
     loadHistory: async () => [],
     saveHistory: async () => undefined,
+    loadResets: async () => [], appendResets: async () => undefined,
     loadAlertState: async () => ({}),
     saveAlertState: async () => undefined,
     loadAlertFeed: async () => null,
@@ -39,7 +40,7 @@ const base = (): AppConfig => {
 };
 
 let engine: UsageEngine | null = null;
-afterEach(() => { engine?.stop(); engine = null; });
+afterEach(() => { engine?.stop(); engine = null; vi.useRealTimers(); });
 
 describe('the usage engine', () => {
   it('waits on first run until setup finishes, then saves and refreshes', async () => {
@@ -151,5 +152,229 @@ describe('unpairing', () => {
     await engine.unpair();
     expect([...f.secrets.keys()]).toEqual([]);
     expect(f.saved()?.sync?.channel).toBe('');
+  });
+});
+
+const reading = (usedPct: number, hour: number, credits = 2): Snapshot => {
+  const fetchedAt = new Date(Date.UTC(2026, 9, 3, hour)).toISOString();
+  return { schema: 1, generatedAt: fetchedAt, providers: {
+    ledger: { id: 'ledger', name: 'Ledger', ok: true, stale: false, fetchedAt, error: null, money: [], notes: { resets_available: credits },
+      meters: [{ id: 'weekly', label: 'Weekly', usedPct, windowKind: 'weekly', windowSeconds: 604800 }] },
+  } };
+};
+const record = (api: UsageEngine, snapshot: Snapshot) => {
+  (api as unknown as { recordResets(snapshot: Snapshot): void }).recordResets(snapshot);
+  api.state.snapshot = snapshot;
+};
+
+describe('the reset ledger in the usage engine', () => {
+  it('retries a failed batch with the next refresh in order, without repeating a successful batch', async () => {
+    const f = fakeShell(null), persisted: ResetEvent[] = [];
+    const append = vi.fn(async (events: ResetEvent[]) => { persisted.push(...events); });
+    append.mockRejectedValueOnce(new Error('write failed'));
+    f.shell.appendResets = append;
+    let hour = 23, used = 40;
+    f.shell.host.now = () => new Date(Date.UTC(2026, 9, 3, hour));
+    f.shell.host.http = async () => ({ status: 200, headers: {}, body: JSON.stringify({ used }) });
+    engine = new UsageEngine(f.shell, { hosted: 'https://augur.example.com' });
+    await engine.start();
+    const config = base();
+    config.custom = [{ id: 'ledger', name: 'Ledger', auth: { type: 'none' }, requests: { usage: { url: 'https://usage.example/reading' } },
+      meters: [{ id: 'weekly', label: 'Weekly', usedPct: 'usage:$.used', windowKind: 'weekly', windowSeconds: 604800 }] }];
+    config.providers.push({ id: 'ledger', enabled: true, settings: {} });
+    engine.state.config = config;
+    engine.state.snapshot = reading(83, 22);
+    await engine.refresh(true);
+    expect(persisted).toEqual([]);
+    hour = 24; used = 0;
+    await engine.refresh(true);
+    expect(append.mock.calls.map(([events]) => events.length)).toEqual([1, 2]);
+    expect(persisted.map(event => event.usedBefore)).toEqual([83, 40]);
+    expect(new Set(persisted.map(event => event.id)).size).toBe(2);
+    await engine.refresh(true);
+    await engine.flush();
+    expect(append).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['reset', 'credits'] as const)('does not repeat a loaded %s when the saved snapshot is behind the ledger', async kind => {
+    const f = fakeShell(null), before = reading(83, 22), after = reading(kind === 'reset' ? 0 : 83, 23, 1);
+    const prior = detectResets(before, after)[0]!;
+    if (kind === 'credits') { prior.meter = 'secondary'; prior.id = `${prior.provider}.${prior.meter}.${prior.at}`; }
+    f.shell.loadSnapshot = async () => before;
+    f.shell.loadResets = async () => [prior];
+    f.shell.appendResets = vi.fn(async () => undefined);
+    engine = new UsageEngine(f.shell, { hosted: 'https://augur.example.com' });
+    await engine.start();
+    record(engine, reading(kind === 'reset' ? 0 : 83, 24, 1));
+    await engine.flush();
+    expect(engine.state.resets).toEqual([prior]);
+    expect(f.shell.appendResets).not.toHaveBeenCalled();
+  });
+
+  it('drops the oldest pending events at the queue limit and logs the loss', async () => {
+    const f = fakeShell(null), logs: string[] = [], persisted: ResetEvent[] = [];
+    f.shell.host.log = message => { logs.push(message); };
+    f.shell.appendResets = async events => { persisted.push(...events); };
+    engine = new UsageEngine(f.shell, { hosted: 'https://augur.example.com' });
+    await engine.start();
+    for (let i = 0; i < 1002; i++) {
+      engine.state.snapshot = reading(83, i * 2);
+      record(engine, reading(0, i * 2 + 1));
+    }
+    await engine.flush();
+    expect(persisted).toHaveLength(1000);
+    expect(persisted[0]!.at).toBe(reading(0, 5).generatedAt);
+    expect(persisted.at(-1)!.at).toBe(reading(0, 2003).generatedAt);
+    expect(logs).toEqual(Array(2).fill('Reset ledger retry queue exceeded 1000 events; the oldest events were dropped.'));
+  });
+
+  it('waits for an active append before flushing the queued batch', async () => {
+    const f = fakeShell(null), persisted: ResetEvent[] = [];
+    let release!: () => void;
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    f.shell.appendResets = vi.fn(async events => { await blocked; persisted.push(...events); });
+    engine = new UsageEngine(f.shell, { hosted: 'https://augur.example.com' });
+    await engine.start();
+    engine.state.snapshot = reading(83, 22);
+    record(engine, reading(40, 23));
+    await Promise.resolve();
+    record(engine, reading(0, 24));
+    let flushed = false;
+    const flush = engine.flush().then(() => { flushed = true; });
+    await Promise.resolve();
+    expect(flushed).toBe(false);
+    expect(f.shell.appendResets).toHaveBeenCalledTimes(1);
+    release();
+    await flush;
+    expect(persisted.map(event => event.usedBefore)).toEqual([83, 40]);
+  });
+
+  it('makes one flush retry after an append rejects and resolves even if the retry rejects', async () => {
+    const f = fakeShell(null);
+    f.shell.appendResets = vi.fn(async () => { throw new Error('write failed'); });
+    engine = new UsageEngine(f.shell, { hosted: 'https://augur.example.com' });
+    await engine.start();
+    engine.state.snapshot = reading(83, 22);
+    record(engine, reading(0, 23));
+    await expect(engine.flush()).resolves.toBeUndefined();
+    expect(f.shell.appendResets).toHaveBeenCalledTimes(2);
+    expect(engine.state.resets).toHaveLength(1);
+  });
+
+  it('bounds a flush of an append that never settles to 3 seconds', async () => {
+    vi.useFakeTimers();
+    const f = fakeShell(null);
+    f.shell.appendResets = () => new Promise(() => undefined);
+    engine = new UsageEngine(f.shell, { hosted: 'https://augur.example.com' });
+    await engine.start();
+    engine.state.snapshot = reading(83, 22);
+    record(engine, reading(0, 23));
+    let flushed = false;
+    const flush = engine.flush().then(() => { flushed = true; });
+    await vi.advanceTimersByTimeAsync(2999);
+    expect(flushed).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(flush).resolves.toBeUndefined();
+  });
+
+  it('starts after 5 seconds when the ledger read never settles and still appends new events', async () => {
+    vi.useFakeTimers();
+    const f = fakeShell(null), logs: string[] = [];
+    f.shell.loadResets = () => new Promise(() => undefined);
+    f.shell.host.log = message => { logs.push(message); };
+    f.shell.appendResets = vi.fn(async () => undefined);
+    engine = new UsageEngine(f.shell, { hosted: 'https://augur.example.com' });
+    let started = false;
+    const start = engine.start().then(() => { started = true; });
+    await vi.advanceTimersByTimeAsync(4999);
+    expect(started).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await start;
+    expect(engine.state.resets).toEqual([]);
+    engine.state.snapshot = reading(83, 22);
+    record(engine, reading(0, 23));
+    await engine.flush();
+    expect(f.shell.appendResets).toHaveBeenCalledWith(engine.state.resets);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(logs).toEqual(['Reset ledger read timed out after 5 seconds; startup will continue.']);
+  });
+
+  it('merges a late ledger read by id with events recorded after the timeout', async () => {
+    vi.useFakeTimers();
+    const f = fakeShell(null);
+    let release!: (events: ResetEvent[]) => void;
+    f.shell.loadResets = () => new Promise(resolve => { release = resolve; });
+    engine = new UsageEngine(f.shell, { hosted: 'https://augur.example.com' });
+    const start = engine.start();
+    await vi.advanceTimersByTimeAsync(5000);
+    await start;
+    engine.state.snapshot = reading(83, 22);
+    record(engine, reading(0, 23));
+    await engine.flush();
+    const fresh = engine.state.resets[0]!, older = detectResets(reading(83, 20), reading(0, 21))[0]!;
+    const changed: EngineKey[] = [];
+    engine.onChange(keys => changed.push(...keys));
+    release([older, fresh]);
+    await Promise.resolve();
+    expect(engine.state.resets).toEqual([older, fresh]);
+    expect(changed).toContain('resets');
+  });
+
+  it('loads prior events, records a fresh reset, exports its note, and does not wait for an append', async () => {
+    const f = fakeShell(null);
+    let at = new Date('2026-10-03T22:00:00.000Z'), used = 83;
+    const appended: import('../src/index.js').ResetEvent[] = [];
+    f.shell.host.now = () => at;
+    f.shell.host.http = async () => ({ status: 200, headers: {}, body: JSON.stringify({ used }) });
+    f.shell.appendResets = events => { appended.push(...events); return new Promise(() => undefined); };
+    engine = new UsageEngine(f.shell, { hosted: 'https://augur.example.com' });
+    await engine.start();
+    const config = base();
+    config.exportPath = '.augur/usage.json';
+    config.custom = [{ id: 'ledger', name: 'Ledger', auth: { type: 'none' }, requests: { usage: { url: 'https://usage.example/reading' } },
+      meters: [{ id: 'weekly', label: 'Weekly', usedPct: 'usage:$.used', windowKind: 'weekly', windowSeconds: 604800 }] }];
+    config.providers.push({ id: 'ledger', enabled: true, settings: {} });
+    engine.state.config = config;
+    await engine.refresh(true);
+    expect(appended).toEqual([]);
+    at = new Date('2026-10-03T23:00:00.000Z');
+    used = 0;
+    await engine.refresh(true);
+    expect(appended).toHaveLength(1);
+    expect(engine.state.resets).toEqual(appended);
+    const pattern = { count: 1, early: 1, atLimit: 0, medianGapHours: null, lastAt: at.toISOString(), sample: 'small' };
+    expect(engine.state.snapshot?.providers.ledger?.notes?.reset_pattern).toEqual(pattern);
+    expect(JSON.parse(f.exported.get('.augur/usage.json')!).providers.ledger.notes.reset_pattern).toEqual(pattern);
+    await engine.refresh();
+    expect(appended).toHaveLength(1);
+    engine.stop();
+    f.shell.loadResets = async () => appended;
+    engine = new UsageEngine(f.shell, { hosted: 'https://augur.example.com' });
+    await engine.start();
+    expect(engine.state.resets).toEqual(appended);
+  });
+
+  it('logs ledger load and append failures and completes refreshes', async () => {
+    const f = fakeShell(null), logs: string[] = [];
+    f.shell.host.log = message => { logs.push(message); };
+    f.shell.loadResets = async () => { throw new Error('read failed'); };
+    f.shell.appendResets = async () => { throw new Error('write failed'); };
+    engine = new UsageEngine(f.shell, { hosted: 'https://augur.example.com' });
+    await engine.start();
+    expect(engine.state.resets).toEqual([]);
+    expect(logs).toHaveLength(1);
+    const make = (usedPct: number, fetchedAt: string): Snapshot => ({ schema: 1, generatedAt: fetchedAt, providers: {
+      ledger: { id: 'ledger', name: 'Ledger', ok: true, stale: false, fetchedAt, error: null, money: [],
+        meters: [{ id: 'weekly', label: 'Weekly', usedPct, windowKind: 'weekly', windowSeconds: 604800 }] },
+    } });
+    engine.state.snapshot = make(83, '2026-10-03T22:00:00.000Z');
+    const after = make(0, '2026-10-03T23:00:00.000Z');
+    (engine as unknown as { recordResets(snapshot: Snapshot): void }).recordResets(after);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(logs).toHaveLength(2);
+    expect(engine.state.resets).toHaveLength(1);
+    await engine.refresh(true);
+    expect(engine.state.busy).toBe(false);
   });
 });

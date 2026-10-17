@@ -207,6 +207,13 @@ export class SettingsPage implements Page {
           await this.save(ctx, (c) => { c.alerts.paceRatio[k] = v ? n : null; }, SETTINGS_TEXT.saved);
         } });
     }
+    for (const [k, label, max] of [['idlePct', ALERT_TEXT.idlePct, 100], ['idleHours', ALERT_TEXT.idleHours, 168]] as const) {
+      out.push({ kind: 'text', id: k, label, value: String(a[k]), save: async (v) => {
+        const n = Number(v);
+        if (!v || !Number.isFinite(n) || n < 0 || n > max) { ctx.flash(SETTINGS_TEXT.numberBad, true); return; }
+        await this.save(ctx, (c) => { c.alerts[k] = n; }, SETTINGS_TEXT.saved);
+      } });
+    }
     const balances = Object.values(ctx.state.snapshot?.providers ?? {}).flatMap((p) => p.money.filter((x) => x.id === 'balance' || x.id === 'prepaid').map((x) => ({ key: `${p.id}.${x.id}`, label: `${p.name}, ${x.label.toLowerCase()}` })));
     if (balances.length) {
       out.push({ kind: 'note', text: ALERT_TEXT.balances, style: 'bold' });

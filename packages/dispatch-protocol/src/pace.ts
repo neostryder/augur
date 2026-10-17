@@ -1,5 +1,5 @@
 // Live usage weighed as pace: how fast each provider is burning its windows, and how scarce usage is across providers. Pure.
-import type { FleetReading, PolicyFile, ResolvedModel } from '@augur/core';
+import type { FleetReading, PolicyFile, ResolvedModel, ResetPattern } from '@augur/core';
 
 /** The part of usage.json the rules read. */
 export interface UsageMeter {
@@ -19,7 +19,7 @@ export interface UsageProvider {
   /** How often the provider is read, in seconds. A provider read less often than `PACE.ignoreMin` keeps its figures longer. */
   refreshSeconds?: number | null;
   /** Limit resets in hand are read from `resets_available`, the count a provider such as Codex reports. */
-  notes?: { resets_available?: number | null; /** The Cogitator provider's reading of its machines and roles. */ fleet?: FleetReading };
+  notes?: { reset_pattern?: ResetPattern; resets_available?: number | null; /** The Cogitator provider's reading of its machines and roles. */ fleet?: FleetReading };
   /** The error of the last read that failed. Figures from before it are kept and marked stale. */
   error?: string | null;
   /** The provider's public status page. */

@@ -109,10 +109,21 @@ Augur can notify you when:
 - a limit is burning too fast, meaning the usage left divided by the time left in its window drops below a ratio you set. Session and weekly limits each get their own ratio. At 1.0 you run out right at the reset, and 0.8 warns earlier.
 - a credit balance drops below an amount you set.
 - a plan is spent and a limit reset is in hand, for providers that report resets such as Codex, so you can use the reset to keep working.
+- a provider that Augur spends in full sits idle, with its weekly limits all under 5% for at least 6 hours. Both numbers are settings.
 
-A percentage, reset or balance alert fires once per window and waits for the next reset before it can fire again. A burn-rate alert repeats at most once a day while the limit keeps burning too fast.
+A percentage, reset or balance alert fires once per window and waits for the next reset before it can fire again. A burn-rate alert repeats at most once a day while the limit keeps burning too fast. An idle alert does the same while the provider stays idle.
 
 An alert stays under the bell at the top of the panel until you dismiss it or it stops applying, for example when the window resets. The grid under Alerts in settings picks where each kind of alert goes: your computer's notifications, the bell, Claude Code, and a paired phone. Updates and failed refreshes go to the bell only, unless you change that. A paired phone shows the same alerts under its own bell, and with Push notifications turned on in the phone app it gets them even while Augur is closed there. Dismissing an alert in one place clears it in the others.
+
+## Early resets
+
+Some providers reset a usage window earlier than the time they report, and Codex weekly limits have done it repeatedly. Augur notices each reset as it refreshes and adds a line to `resets.jsonl` in the app's settings folder, beside `history.jsonl`, with the provider and meter, usage before and after, the reported reset times, how early the reset came, and the reset credits in hand. The file holds no keys or tokens, and Augur never trims it, so it can show a pattern over weeks.
+
+`augur resets` needs the service running. It prints a summary for each provider and meter in your local time, then a table of recent events, and with fewer than 10 resets it says the sample is too small to show a pattern. `--provider` picks one provider, `--limit` sets how many events to list (200 by default, at most 1000), and `--json` prints the service's JSON. `/api/resets` on the web service and the `augur_resets` MCP tool return the same data.
+
+```bash
+augur resets --provider codex --limit 20
+```
 
 ## Claude
 
@@ -133,6 +144,7 @@ augur status               # Claude's session and week, anything running hot, an
 augur status --waybar      # the same as the JSON a Waybar custom module reads
 augur refresh              # read every provider now
 augur alerts               # list the alerts; add dismiss <id>, or --all, to clear them
+augur resets               # recorded limit resets and their pattern; add --provider <id> or --json
 augur claude install code  # or desktop; status and remove work too
 ```
 

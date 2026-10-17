@@ -83,6 +83,15 @@ export function buildServer(tools: Tools, version: string): McpServer {
     inputSchema: { days: z.number().int().min(1).max(90).optional().describe('How many days of picks to summarize. Defaults to 7.') },
   }, async (a) => out(await tools.balance(a)));
 
+  server.registerTool('augur_resets', {
+    title: 'Reset ledger', annotations: readOnly,
+    description: 'Returns recent reset events and a summary of the whole ledger, optionally for one provider. It never changes anything.',
+    inputSchema: {
+      provider: z.string().min(1).optional().describe('The provider id. Defaults to all providers.'),
+      limit: z.number().int().min(1).optional().describe('The most recent events to return. Defaults to 200, capped at 1000.'),
+    },
+  }, async (a) => out(await tools.resets(a)));
+
   server.registerTool('augur_pressure', {
     title: 'Plan usage pressure', annotations: readOnly,
     description: 'Shows how much room each model has under its provider\'s plan right now. A low factor means its provider is close to a limit.',

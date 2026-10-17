@@ -12,7 +12,7 @@ export const DEFAULT_HOTKEY = 'Ctrl+Super+U';
 export function defaultConfig(): AppConfig {
   return { schema: 1, providers: builtinProviders.map(provider => ({ id: provider.id, enabled: true, settings: {} })), custom: [],
     layout: { theme: 'system', columns: 'auto', hiddenMeters: {}, collapsed: [] },
-    alerts: { enabled: false, pctThresholds: [50, 75, 90], paceRatio: { session: 0.8, weekly: 0.8, other: null }, balanceBelow: {}, outlets: defaultOutlets() }, exportPath: null,
+    alerts: { enabled: false, pctThresholds: [50, 75, 90], paceRatio: { session: 0.8, weekly: 0.8, other: null }, balanceBelow: {}, idlePct: 5, idleHours: 6, outlets: defaultOutlets() }, exportPath: null,
     // A new install starts on the neutral balance. An install that already has a config never passes through here, so it keeps whatever it names, or the classic rules when it names none.
     policy: { ...emptyPolicy(), balance: { profile: 'neutral' } }, agentApproval: DEFAULT_APPROVAL };
 }
@@ -42,6 +42,8 @@ export function migrateConfig(value: unknown): AppConfig {
     alerts: { enabled: alerts.enabled === true, pctThresholds: Array.isArray(alerts.pctThresholds) ? alerts.pctThresholds.filter((n: unknown) => typeof n === 'number' && n >= 0 && n <= 100) : defaults.alerts.pctThresholds,
       paceRatio: { session: ratio(pace.session, defaults.alerts.paceRatio.session), weekly: ratio(pace.weekly, defaults.alerts.paceRatio.weekly), other: ratio(pace.other, defaults.alerts.paceRatio.other) },
       balanceBelow: Object.fromEntries(Object.entries(obj(alerts.balanceBelow)).filter(([, n]) => typeof n === 'number' && Number.isFinite(n))),
+      idlePct: typeof alerts.idlePct === 'number' && Number.isFinite(alerts.idlePct) && alerts.idlePct >= 0 && alerts.idlePct <= 100 ? alerts.idlePct : defaults.alerts.idlePct,
+      idleHours: typeof alerts.idleHours === 'number' && Number.isFinite(alerts.idleHours) && alerts.idleHours >= 0 && alerts.idleHours <= 168 ? alerts.idleHours : defaults.alerts.idleHours,
       outlets: migrateOutlets(alerts.outlets) },
     exportPath: typeof source.exportPath === 'string' ? source.exportPath : null,
     hotkey: source.hotkey === null || source.hotkey === '' ? null : typeof source.hotkey === 'string' ? source.hotkey : DEFAULT_HOTKEY,

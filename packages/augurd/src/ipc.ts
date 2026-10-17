@@ -5,7 +5,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'n
 import { userInfo } from 'node:os';
 import net from 'node:net';
 import { dirname, join } from 'node:path';
-import { PROTOCOL_VERSION, planRouteAdd } from '@augur/dispatch-protocol';
+import { PROTOCOL_VERSION, planRouteAdd, resetLedger } from '@augur/dispatch-protocol';
 import type { EngineEvent, JobRequest, MethodName, RateCard, RouteAddAnswer, RouteConfig, RpcRequest, RpcResponse, ViewHello, ViewReply } from '@augur/dispatch-protocol';
 import { DEFAULT_APPROVAL, RULES_ONLY_PROVIDERS, allPlugins, callEngine, type EngineApi, type EngineKey, type EngineState, type ProviderAddition } from '@augur/core';
 import { buildAccounting } from './accounting.js';
@@ -58,7 +58,7 @@ export function rotateWebToken(dir: string): string {
 export type Role = 'owner' | 'agent';
 
 /** What an agent token may call. Everything else, including every request that records a person's word (a prompt, a pick answer, a grade label) and the engine's settings, is the owner's. */
-export const AGENT_METHODS: ReadonlySet<string> = new Set(['ping', 'submit', 'status', 'list', 'events', 'logs', 'result', 'cancel', 'pick', 'pressure', 'balance', 'routes', 'route_add']);
+export const AGENT_METHODS: ReadonlySet<string> = new Set(['ping', 'submit', 'status', 'list', 'events', 'logs', 'result', 'cancel', 'pick', 'pressure', 'balance', 'resets', 'routes', 'route_add']);
 
 /** A job request as an agent may make it: it cannot say a person is at the terminal or named the model, and it cannot waive the pick or quota checks. */
 export function attestAgentRequest(req: JobRequest): JobRequest {
@@ -122,6 +122,7 @@ export class IpcServer {
       case 'pick': return this.sup.pick(params as never);
       case 'human_prompt': return this.sup.humanPrompt(String(p.session ?? ''), String(p.text ?? ''));
       case 'pressure': return this.sup.pressure();
+      case 'resets': return resetLedger(this.needEngine().api.state.resets, p);
       case 'pick_answer': return this.sup.pickAnswer(String(p.id ?? ''), String(p.model ?? ''), typeof p.why === 'string' ? p.why : undefined);
       case 'label': return this.sup.label(String(p.id ?? ''), String(p.result ?? ''), typeof p.note === 'string' ? p.note : undefined);
       case 'grade': return this.sup.grade(params as never);

@@ -192,6 +192,8 @@ export interface AlertConfig {
   paceRatio: { session: number | null; weekly: number | null; other: number | null };
   /** Notify when a balance, keyed `<providerId>.<moneyId>`, drops below the amount. */
   balanceBelow: Record<string, number>;
+  idlePct: number;
+  idleHours: number;
   /** Where each kind of alert goes: the computer's notifications, the bell, the Claude Code mod and the paired phone. */
   outlets: OutletConfig;
 }

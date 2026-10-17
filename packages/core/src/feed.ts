@@ -6,18 +6,19 @@ import type { Alert } from './alerts.js';
  * alerts.json beside the export file, where the Claude Code mod reads it, and sends it to the paired phone inside the encrypted sync.
  * Dismissals come back as acks: lines in alerts-acks.jsonl from the mod, and a list on the phone's own relay channel.
  */
-export type AlertKind = 'percent' | 'pace' | 'reset' | 'balance' | 'refresh' | 'models' | 'rules' | 'update';
+export type AlertKind = 'percent' | 'pace' | 'reset' | 'idle' | 'balance' | 'refresh' | 'models' | 'rules' | 'update';
 /** system is the computer's own notification, augur the bell, claude the Claude Code mod, phone a push to the paired phone. */
 export type Outlet = 'system' | 'augur' | 'claude' | 'phone';
 export type OutletConfig = Record<AlertKind, Record<Outlet, boolean>>;
 
-export const ALERT_KINDS: AlertKind[] = ['percent', 'pace', 'reset', 'balance', 'refresh', 'models', 'rules', 'update'];
+export const ALERT_KINDS: AlertKind[] = ['percent', 'pace', 'reset', 'idle', 'balance', 'refresh', 'models', 'rules', 'update'];
 export const OUTLETS: Outlet[] = ['system', 'augur', 'claude', 'phone'];
 
 const DEFAULT_OUTLETS: Record<AlertKind, [boolean, boolean, boolean, boolean]> = {
   percent: [true, true, true, true],
   pace: [true, true, true, true],
   reset: [true, true, true, true],
+  idle: [false, true, true, false],
   balance: [true, true, false, true],
   refresh: [false, true, true, false],
   models: [true, true, false, false],
@@ -52,6 +53,7 @@ export function outletsFor(config: OutletConfig, kind: AlertKind): Outlet[] {
 export type ClearRule =
   /** The meter's window has ended: its reset time has passed or the provider now reports another one. */
   | { when: 'window'; providerId: string; meterId: string; resetsAt: string | null }
+  | { when: 'idle'; providerId: string; meterId: string; resetsAt: string | null; below: number }
   | { when: 'balance'; providerId: string; moneyId: string; below: number }
   | { when: 'refreshed'; providerId: string }
   | { when: 'flag'; flag: FeedFlag }
@@ -87,7 +89,9 @@ export function emptyFeed(now = new Date()): AlertFeed {
 
 /** The feed entry for a usage alert from evaluateAlerts. */
 export function feedFromUsage(a: Alert, title: string, at: Date, outlets: Outlet[]): FeedAlert {
-  const clears: ClearRule = a.kind === 'balance'
+  const clears: ClearRule = a.kind === 'idle'
+    ? { when: 'idle', providerId: a.providerId, meterId: a.meterId, resetsAt: a.resetsAt ?? null, below: a.threshold ?? 5 }
+    : a.kind === 'balance'
     ? { when: 'balance', providerId: a.providerId, moneyId: a.meterId, below: a.threshold ?? 0 }
     : { when: 'window', providerId: a.providerId, meterId: a.meterId, resetsAt: a.resetsAt ?? null };
   const severity = a.kind === 'percent' && (a.threshold ?? 0) >= 90 ? 'crit' : 'warn';
@@ -122,6 +126,13 @@ export function clearResolved(feed: AlertFeed, snapshot: Snapshot | null, flags:
         if (rule.resetsAt && Date.parse(rule.resetsAt) <= now.getTime()) return true;
         const meter = snapshot?.providers[rule.providerId]?.meters.find((m) => m.id === rule.meterId);
         return !!meter && !!meter.resetsAt && !!rule.resetsAt && Math.abs(Date.parse(meter.resetsAt) - Date.parse(rule.resetsAt)) > 5000;
+      }
+      case 'idle': {
+        if (rule.resetsAt && Date.parse(rule.resetsAt) <= now.getTime()) return true;
+        const p = snapshot?.providers[rule.providerId], meter = p?.meters.find(m => m.id === rule.meterId);
+        return !!snapshot && (!p || !p.ok || p.stale || (p.status?.indicator != null && p.status.indicator !== 'none')
+          || !meter || meter.usedPct === null || meter.usedPct >= rule.below || !meter.resetsAt || !rule.resetsAt
+          || Math.abs(Date.parse(meter.resetsAt) - Date.parse(rule.resetsAt)) > 5000);
       }
       case 'balance': {
         const money = snapshot?.providers[rule.providerId]?.money.find((m) => m.id === rule.moneyId);

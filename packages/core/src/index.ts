@@ -5,6 +5,7 @@ export * from './engine.js';
 export * from './status.js';
 export * from './pace.js';
 export * from './history.js';
+export * from './resets.js';
 export * from './alerts.js';
 export * from './config.js';
 export * from './providers/index.js';

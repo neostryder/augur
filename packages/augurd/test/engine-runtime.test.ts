@@ -2,12 +2,12 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync }
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import type { EngineApi, EngineKey } from '@augur/core';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { EngineApi, EngineKey, ResetEvent } from '@augur/core';
 import { addPluginDir, claudeInstall, claudeRemove, claudeStatus, hasPluginDir, readJson, removeMcp, removePluginDir, setMcp, type ClaudePaths } from '../src/claude-install.js';
 import { call } from '../src/client.js';
 import { watchEngine } from '../src/client.js';
-import { desktopNotice, httpsRequest, isPushService } from '../src/engine-shell.js';
+import { createEngineShell, desktopNotice, httpsRequest, isPushService } from '../src/engine-shell.js';
 import { allowedPaths, homeRelative, resolveHomePath } from '../src/home-files.js';
 import { IpcServer } from '../src/ipc.js';
 import { checkSecretName, createKeyStore, fileStore, runHelper } from '../src/keystore.js';
@@ -102,6 +102,26 @@ describe('home files', () => {
   it('knows the push services a phone hands out and nothing else', () => {
     for (const ok of ['fcm.googleapis.com', 'web.push.apple.com', 'api.push.apple.com', 'updates.push.services.mozilla.com', 'wns2-by3p.notify.windows.com']) expect(isPushService(ok)).toBe(true);
     for (const bad of ['example.com', 'fcm.googleapis.com.evil.net', 'push.apple.com.evil.net']) expect(isPushService(bad)).toBe(false);
+  });
+});
+
+describe('the reset ledger', () => {
+  it('appends in order, preserves earlier bytes, and isolates an interrupted last line', async () => {
+    const dir = temp(), data = join(dir, 'data');
+    const shell = createEngineShell({ views: new ViewHub(), dirs: { config: dir, data } });
+    expect(await shell.loadResets()).toEqual([]);
+    const at = '2026-10-03T23:00:00.000Z';
+    const first: ResetEvent = { v: 1, id: 'codex.weekly.' + at, kind: 'reset', provider: 'codex', meter: 'weekly', label: 'Weekly',
+      at, since: '2026-10-03T22:00:00.000Z', usedBefore: 83, usedAfter: 0, resetsAtBefore: null, resetsAtAfter: null,
+      windowSeconds: 604800, scheduled: false, earlySeconds: 0, atLimit: false, creditsBefore: null, creditsAfter: null, status: null, plan: null };
+    await shell.appendResets([first]);
+    const path = join(data, 'resets.jsonl'), prefix = readFileSync(path, 'utf8') + '{"v":';
+    writeFileSync(path, prefix);
+    const second = { ...first, id: first.id.replace('03T', '04T'), at: at.replace('03T', '04T') };
+    const third = { ...first, id: first.id.replace('03T', '05T'), at: at.replace('03T', '05T') };
+    await Promise.all([shell.appendResets([second]), shell.appendResets([third])]);
+    expect(readFileSync(path, 'utf8').startsWith(prefix)).toBe(true);
+    expect(await shell.loadResets()).toEqual([first, second, third]);
   });
 });
 
@@ -294,6 +314,18 @@ describe('the service with the engine switched on', () => {
     expect((await call('engine_state', { keys: ['secrets'] }, o)).state.secrets).toContain('minimax.apiKey');
     const { request } = await import('./harness.js');
     expect(await call('submit', request({ text: 'SLEEP 0' }), o)).toMatchObject({ rejected: { code: 'jobs_off' } });
+    let release!: () => void, stopped = false;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const flush = vi.spyOn(svc.engine!, 'flush').mockImplementation(() => pending);
+    const stopping = svc.stop().then(() => { stopped = true; });
+    try {
+      await vi.waitFor(() => expect(flush).toHaveBeenCalledTimes(1));
+      expect(stopped).toBe(false);
+    } finally {
+      release();
+      await stopping;
+      flush.mockRestore();
+    }
   }, 30_000);
 });
 

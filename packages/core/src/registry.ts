@@ -4,7 +4,7 @@ import { genericProvider } from './generic.js';
 import { collect, dueProviders } from './engine.js';
 import { appendHistory } from './history.js';
 import { evaluateAlerts, type Alert } from './alerts.js';
-import { RULES_ONLY_PROVIDERS, resolveThresholds } from './policy.js';
+import { RULES_ONLY_PROVIDERS, resolveModel, resolveThresholds } from './policy.js';
 import type { HistoryRow } from './history.js';
 import type { AppConfig, Host, ProviderPlugin, Snapshot } from './types.js';
 
@@ -66,7 +66,14 @@ export interface UsageAlert { key: string; title: string; body: string; usage: A
 /** Usage alerts for a snapshot, with a provider's spent point taken from its rules. */
 export function usageAlerts(snap: Snapshot, rows: HistoryRow[], config: AppConfig, state: Record<string, unknown>): { alerts: UsageAlert[]; firedState: Record<string, unknown> } {
   const spentAt = Object.fromEntries(Object.entries(config.policy?.providers ?? {}).map(([id, p]) => [id, resolveThresholds(p).denyPct]));
-  const r = evaluateAlerts(snap, rows, config.alerts, state as Record<string, boolean | number>, { spentAt });
+  const providers = config.policy?.providers ?? {}, owners = new Map<string, string>(), drain = new Set<string>();
+  for (const [id, p] of Object.entries(providers)) for (const label of Object.keys(p.models)) owners.set(label, id);
+  for (const [id, p] of Object.entries(providers)) for (const entry of Object.values(p.models)) {
+    const model = resolveModel(id, p.defaults, entry);
+    if (model.status !== 'confirmed') continue;
+    for (const label of model.useAfter ?? []) { const owner = owners.get(label); if (owner) drain.add(owner); }
+  }
+  const r = evaluateAlerts(snap, rows, config.alerts, state as Record<string, boolean | number>, { spentAt, drain });
   return {
     alerts: r.alerts.map((a) => ({ key: a.key, title: snap.providers[a.providerId]?.name ?? 'Augur', body: a.message, usage: a })),
     firedState: r.firedState,

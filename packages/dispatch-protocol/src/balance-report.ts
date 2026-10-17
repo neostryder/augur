@@ -82,8 +82,9 @@ export function balanceReport(policy: PolicyFile, usage: UsageSnapshot | null, n
   const providers: ProviderLine[] = Object.entries(policy.providers).filter(([, p]) => Object.keys(p.models).length).map(([id, p]) => {
     const free = Object.values(p.models).every(m => m.cost === 'free');
     const stance: Stance = rules.fallback.providers.includes(id) ? 'backup' : drain.has(id) ? 'drain' : free ? 'free' : 'paced';
-    const h = press[id];
-    return { id, name: p.name, stance, headroom: h ? h.headroom : null, why: h?.why ?? 'no Augur data', spent: !!h?.spent };
+    const h = press[id], pattern = usage?.providers[id]?.notes?.reset_pattern;
+    const why = (h?.why ?? 'no Augur data') + (pattern ? `. ${pattern.early} early ${pattern.early === 1 ? 'reset' : 'resets'} recorded.` : '');
+    return { id, name: p.name, stance, headroom: h ? h.headroom : null, why, spent: !!h?.spent };
   });
   const mix: MixLine[] = ACTIVITIES.map(activity => {
     const r = rank(policy, usage, { activity, dataTier: tier, proseSwitched }, now);

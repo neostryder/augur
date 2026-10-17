@@ -42,6 +42,21 @@ describe('models', () => {
   });
 });
 
+describe('resets', () => {
+  it('passes the provider and limit to the service and returns its body', async () => {
+    const calls: Calls[] = [], body = { events: [], summary: { rows: 3, meters: [{ provider: 'sample', meter: 'weekly', label: 'Weekly', lines: ['3 resets recorded.'] }] } };
+    const r = await createTools(deps({ resets: body }, calls)).resets({ provider: 'sample', limit: 2 });
+    expect(calls).toEqual([{ method: 'resets', params: { provider: 'sample', limit: 2 } }]);
+    expect(r.data).toEqual(body);
+    expect(r.text).toContain('3 resets recorded.');
+  });
+
+  it('reports a service failure', async () => {
+    const r = await createTools(deps({ resets: new Error('The service is not running.') })).resets({});
+    expect(r).toMatchObject({ isError: true, text: 'The service is not running.' });
+  });
+});
+
 describe('pick', () => {
   it('needs a task or both an activity and a data tier', async () => {
     const t = createTools(deps({}));
@@ -160,13 +175,21 @@ describe('job, jobs, cancel, pressure, routes', () => {
 });
 
 describe('the server', () => {
-  it('offers thirteen tools with the rules in its instructions, and runs one through a client', async () => {
+  it('offers fourteen tools with the rules in its instructions, and runs one through a client', async () => {
     const [a, b] = InMemoryTransport.createLinkedPair();
-    const server = buildServer(createTools(deps({ routes: ROUTES })), 'test');
+    const server = buildServer(createTools(deps({ routes: ROUTES, resets: { events: [], summary: { rows: 0, meters: [] } } })), 'test');
     const client = new Client({ name: 'test', version: '1' });
     await Promise.all([server.connect(a), client.connect(b)]);
     const { tools } = await client.listTools();
-    expect(tools.map(t => t.name).sort()).toEqual(['augur_balance', 'augur_cancel', 'augur_job', 'augur_jobs', 'augur_models', 'augur_pick', 'augur_pick_preview', 'augur_policy', 'augur_policy_edit', 'augur_pressure', 'augur_route_add', 'augur_routes', 'augur_run']);
+    expect(tools.map(t => t.name).sort()).toEqual(['augur_balance', 'augur_cancel', 'augur_job', 'augur_jobs', 'augur_models', 'augur_pick', 'augur_pick_preview', 'augur_policy', 'augur_policy_edit', 'augur_pressure', 'augur_resets', 'augur_route_add', 'augur_routes', 'augur_run']);
+    const resets = tools.find(t => t.name === 'augur_resets')!;
+    expect(resets.annotations).toMatchObject({ readOnlyHint: true, openWorldHint: false });
+    expect(resets.description).toContain('never changes anything');
+    expect(resets.inputSchema.properties).toHaveProperty('provider');
+    expect(resets.inputSchema.properties).toHaveProperty('limit');
+    const ledger = await client.callTool({ name: 'augur_resets', arguments: { provider: 'sample', limit: 5 } });
+    expect(ledger.structuredContent).toEqual({ events: [], summary: { rows: 0, meters: [] } });
+    expect(JSON.stringify(ledger.content)).toContain('No reset events.');
     expect(client.getInstructions()).toContain('data tier is never assumed');
     expect(client.getInstructions()).toContain('augur_route_add');
     const add = tools.find(t => t.name === 'augur_route_add')!;

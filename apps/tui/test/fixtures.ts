@@ -20,7 +20,7 @@ export function state(): EngineState {
   const feed = emptyFeed();
   feed.alerts = [alert('a1', 'Claude at 75%', '2026-10-04T11:00:00Z'), alert('a2', 'Codex at 90%', '2026-10-04T11:30:00Z'), alert('a3', 'Phone only', '2026-10-04T11:40:00Z', ['claude'])];
   return {
-    config, feed, catalog: {}, listing: [], editState: emptyEditState(), editLoaded: true, policyError: null, busy: false, secrets: [], claude: null, claudeError: '',
+    config, feed, resets: [], catalog: {}, listing: [], editState: emptyEditState(), editLoaded: true, policyError: null, busy: false, secrets: [], claude: null, claudeError: '',
     update: { version: null, status: 'idle', available: null, changes: null }, firstRun: false,
     history: [{ t: '2026-10-04T08:00:00Z', claude: { session: 10 } }, { t: '2026-10-04T11:00:00Z', claude: { session: 40 } }],
     snapshot: { schema: 1, generatedAt: '2026-10-04T11:57:00Z', providers: {

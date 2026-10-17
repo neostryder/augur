@@ -1916,6 +1916,7 @@ export class App {
     if (d.alert) {
       const a = this.config.alerts;
       if (d.alert === 'pct') a.pctThresholds = parsePercents(t.value);
+      else if (d.alert === 'idlePct' || d.alert === 'idleHours') { const n = Number(t.value), max = d.alert === 'idlePct' ? 100 : 168; if (t.value !== '' && Number.isFinite(n) && n >= 0 && n <= max) a[d.alert] = n; }
       else if (d.alert.startsWith('ratio:')) { const k = d.alert.slice(6) as 'session' | 'weekly' | 'other'; a.paceRatio[k] = t.value === '' ? null : Number(t.value); }
       else if (d.alert.startsWith('bal:')) { const k = d.alert.slice(4); if (t.value === '') delete a.balanceBelow[k]; else a.balanceBelow[k] = Number(t.value); }
       await this.saveConfig(); return;

@@ -14,6 +14,7 @@ import { isIP } from 'node:net';
 import { dirname, extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { callEngine, type EngineKey } from '@augur/core';
+import { resetLedger } from '@augur/dispatch-protocol';
 import type { TlsAuto, WebSettings } from './config.js';
 import type { EngineLink } from './ipc.js';
 
@@ -138,6 +139,19 @@ export class WebServer {
     if (!originAllowed(req.headers.origin, req.headers.host) || req.headers['sec-fetch-site'] === 'cross-site') { this.send(res, 403, 'Cross-origin requests are refused.'); return; }
     const url = new URL(req.url ?? '/', 'http://x'), path = url.pathname;
     if (path === '/api/watch') { if (req.method !== 'GET') { this.send(res, 405, 'Use GET.'); return; } if (this.authorize(req, res)) this.watch(req, res); return; }
+    if (path === '/api/resets') {
+      if (req.method !== 'GET') { this.send(res, 405, 'Use GET.'); return; }
+      if (!this.authorize(req, res)) return;
+      const engine = this.deps.engine();
+      if (!engine) { this.json(res, 503, { error: 'The usage engine is not running in this service.' }); return; }
+      try {
+        this.json(res, 200, resetLedger(engine.api.state.resets, {
+          ...(url.searchParams.has('provider') ? { provider: url.searchParams.get('provider')! } : {}),
+          ...(url.searchParams.has('limit') ? { limit: Number(url.searchParams.get('limit')) } : {}),
+        }));
+      } catch (e) { this.json(res, 400, { error: (e as Error).message }); }
+      return;
+    }
     if (path === '/api/call') {
       if (req.method !== 'POST') { this.send(res, 405, 'Use POST.'); return; }
       // A form or a cross-origin script cannot send this type without a preflight, which this server never grants.

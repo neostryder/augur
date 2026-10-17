@@ -16,6 +16,7 @@ import { summaryLine } from './summary.js';
 import {
   allPlugins, appendHistoryRows, collectFor, detectProvider, dueFor, pendingCount, policyProviders, requiredSecrets, secretNames, syncProviderList, usageAlerts,
 } from './registry.js';
+import { detectResets, resetPattern, type ResetEvent } from './resets.js';
 import type { HistoryRow } from './history.js';
 import type { ClaudeStatus, ClaudeTarget, Shell, UpdateInfo } from './shell.js';
 import type { AppConfig, ProviderAdded, ProviderAddition, ProviderPlugin, Snapshot } from './types.js';
@@ -47,7 +48,7 @@ export interface UpdateState {
 
 /** What the engine needs from the machine it runs on. The window app's shell has all of it, and augurd builds the same from Node. */
 export type EngineShell = KeeperShell & Pick<Shell, 'loadConfig' | 'saveConfig' | 'deleteSecret' | 'hasSecret' | 'loadSnapshot' | 'saveSnapshot' | 'loadHistory'
-  | 'saveHistory' | 'loadAlertState' | 'saveAlertState' | 'loadModelCatalog' | 'saveModelCatalog' | 'exportSnapshot' | 'claudeStatus' | 'claudeInstall'
+  | 'saveHistory' | 'loadResets' | 'appendResets' | 'loadAlertState' | 'saveAlertState' | 'loadModelCatalog' | 'saveModelCatalog' | 'exportSnapshot' | 'claudeStatus' | 'claudeInstall'
   | 'claudeRemove' | 'checkUpdate' | 'appVersion'>;
 
 export interface EngineOptions {
@@ -61,6 +62,7 @@ export interface EngineState {
   config: AppConfig;
   snapshot: Snapshot | null;
   history: HistoryRow[];
+  resets: ResetEvent[];
   feed: AlertFeed;
   catalog: ModelCatalog;
   /** Providers whose model list is being read right now. */
@@ -158,11 +160,14 @@ export class UsageEngine implements EngineApi {
   private checkingEdits = false;
   private readonly device: string;
   private logins = new Map<string, PendingLogin>();
+  private loadedResets: ResetEvent[] = [];
+  private pendingResets: ResetEvent[] = [];
+  private resetAppend: Promise<void> = Promise.resolve();
 
   constructor(private shell: EngineShell, private options: EngineOptions) {
     this.device = options.device ?? 'desktop';
     this.state = {
-      config: defaultConfig(), snapshot: null, history: [], feed: { schema: 1, generatedAt: new Date(0).toISOString(), alerts: [] }, catalog: {}, listing: [],
+      config: defaultConfig(), snapshot: null, history: [], resets: [], feed: { schema: 1, generatedAt: new Date(0).toISOString(), alerts: [] }, catalog: {}, listing: [],
       editState: emptyEditState(), editLoaded: false, policyError: null, busy: false, secrets: [], claude: null, claudeError: '',
       update: { version: null, status: 'idle', available: null, changes: null }, firstRun: false,
     };
@@ -192,6 +197,7 @@ export class UsageEngine implements EngineApi {
     const [snapshot, history, alertState] = await Promise.all([this.shell.loadSnapshot(), this.shell.loadHistory() as Promise<HistoryRow[]>, this.shell.loadAlertState()]);
     this.state.snapshot = snapshot;
     this.state.history = history;
+    await this.loadResets();
     this.alertState = alertState;
     this.state.catalog = (await this.shell.loadModelCatalog?.().catch(() => null)) ?? {};
     this.keeper = new FeedKeeper(this.shell, () => this.config, () => new URL(this.pwaUrl()).origin);
@@ -201,7 +207,7 @@ export class UsageEngine implements EngineApi {
     await this.loadClaude(true);
     if (this.state.firstRun) await this.preselectDetected();
     this.state.update.version = (await this.shell.appVersion?.().catch(() => null)) ?? null;
-    this.emit('config', 'snapshot', 'history', 'feed', 'catalog', 'secrets', 'claude', 'update', 'firstRun');
+    this.emit('config', 'snapshot', 'history', 'resets', 'feed', 'catalog', 'secrets', 'claude', 'update', 'firstRun');
     if (this.shell.checkUpdate) {
       this.timers.push(setTimeout(() => void this.checkUpdate(), UPDATE_FIRST_CHECK_MS));
       this.timers.push(setInterval(() => void this.checkUpdate(), UPDATE_INTERVAL_MS));
@@ -221,6 +227,14 @@ export class UsageEngine implements EngineApi {
     this.timers = [];
     clearTimeout(this.pushRetry);
     clearTimeout(this.rulesTimer);
+  }
+
+  async flush(): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([this.appendResets(), new Promise<void>(resolve => { timer = setTimeout(resolve, 3000); })]);
+    } catch { this.logResetFailure(); }
+    finally { clearTimeout(timer); }
   }
 
   private schedule(): void {
@@ -265,6 +279,7 @@ export class UsageEngine implements EngineApi {
       const run = only ? { ...full, providers: full.providers.map((p) => ({ ...p, enabled: p.enabled && only.includes(p.id) })) } : full;
       const got = await collectFor(this.shell.host, run, this.state.snapshot, force);
       const snapshot = only ? { ...got, providers: { ...this.state.snapshot?.providers, ...got.providers } } : got;
+      this.recordResets(snapshot);
       this.state.snapshot = snapshot;
       this.state.history = appendHistoryRows(this.state.history, snapshot);
       const { alerts, firedState } = usageAlerts(snapshot, this.state.history, this.config, this.alertState);
@@ -283,8 +298,70 @@ export class UsageEngine implements EngineApi {
       await this.exportUsage();
     } finally {
       this.state.busy = false;
-      this.emit('snapshot', 'history', 'busy');
+      this.emit('snapshot', 'history', 'resets', 'busy');
     }
+  }
+
+  private logResetFailure(message = 'Reset ledger could not be read or appended.'): void {
+    try { this.shell.host.log?.(message); } catch { /* Logging must not interrupt a reading. */ }
+  }
+
+  private async loadResets(): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined, timedOut = false;
+    const load = (async () => {
+      try {
+        const events = await this.shell.loadResets();
+        this.loadedResets = events;
+        const rows = new Map([...events, ...this.state.resets].map(event => [event.id, event]));
+        this.state.resets = [...rows.values()].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+        this.emit('resets');
+      } catch { if (!timedOut) this.logResetFailure(); }
+    })();
+    await Promise.race([load, new Promise<void>(resolve => {
+      timer = setTimeout(() => {
+        timedOut = true;
+        this.logResetFailure('Reset ledger read timed out after 5 seconds; startup will continue.');
+        resolve();
+      }, 5000);
+    })]);
+    clearTimeout(timer);
+  }
+
+  private capPendingResets(): void {
+    if (this.pendingResets.length <= 1000) return;
+    this.pendingResets.splice(0, this.pendingResets.length - 1000);
+    this.logResetFailure('Reset ledger retry queue exceeded 1000 events; the oldest events were dropped.');
+  }
+
+  private appendResets(): Promise<void> {
+    this.resetAppend = this.resetAppend.then(async () => {
+      const events = this.pendingResets.splice(0);
+      if (!events.length) return;
+      try { await this.shell.appendResets(events); }
+      catch {
+        this.pendingResets.unshift(...events);
+        this.capPendingResets();
+        this.logResetFailure();
+      }
+    });
+    return this.resetAppend;
+  }
+
+  private recordResets(snapshot: Snapshot): void {
+    try {
+      // Only the loaded ledger can be ahead of the snapshot; live events can end where the next reading starts.
+      const events = detectResets(this.state.snapshot, snapshot).filter(event => !this.loadedResets.some(prior =>
+        prior.kind === event.kind && prior.provider === event.provider && (event.kind === 'credits' || prior.meter === event.meter)
+        && Date.parse(prior.at) >= Date.parse(event.since)));
+      this.state.resets.push(...events);
+      this.pendingResets.push(...events);
+      this.capPendingResets();
+      void this.appendResets();
+      for (const provider of Object.values(snapshot.providers)) {
+        const pattern = resetPattern(this.state.resets.filter(event => event.provider === provider.id), new Date(snapshot.generatedAt));
+        if (pattern) provider.notes = { ...provider.notes, reset_pattern: pattern };
+      }
+    } catch { this.logResetFailure(); }
   }
 
   async refreshSignIns(): Promise<void> {

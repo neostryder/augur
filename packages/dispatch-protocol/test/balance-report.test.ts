@@ -36,6 +36,17 @@ describe('the balance report', () => {
     expect(r.excluded).toEqual(['fable', 'astra']);
   });
 
+  it('adds the reset pattern once beside provider headroom and skips missing ledgers', () => {
+    const withPattern = { providers: { ...usage.providers, codex: { fetchedAt: now.toISOString(), meters: [week], notes: {
+      reset_pattern: { count: 7, early: 7, atLimit: 0, medianGapHours: 48, lastAt: now.toISOString(), sample: 'small' as const },
+    } } } };
+    const text = renderReport(balanceReport(policy(), withPattern, now)).join('\n');
+    expect(text.match(/7 early resets recorded\./g)).toHaveLength(1);
+    expect(renderReport(r).join('\n')).not.toContain('early resets recorded.');
+    const one = { providers: { ...withPattern.providers, codex: { ...withPattern.providers.codex, notes: { reset_pattern: { count: 1, early: 1, atLimit: 0, medianGapHours: null, lastAt: now.toISOString(), sample: 'small' as const } } } } };
+    expect(renderReport(balanceReport(policy(), one, now)).join('\n')).toContain('1 early reset recorded.');
+  });
+
   it('counts the picks that went to Copilot beside its spend', () => {
     const withCopilot = balanceReport(policy(), usage, now, { days: 7, picks: 4, jobs: 0, overrides: 0, byActivity: { write_code: { 'claude/live': 2, 'copilot/gpt-5': 2 } } });
     expect(renderReport(withCopilot).join(' ')).toContain('2 of those went to Copilot, which stands at $160.00 for the month.');

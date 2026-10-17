@@ -2,10 +2,11 @@
 // window app keeps them, so moving the engine into the service carries every setting, reading and alert over unchanged.
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { appendFile, mkdir } from 'node:fs/promises';
 import { homedir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { compareVersions, keyMayGoTo } from '@augur/core';
+import { compareVersions, keyMayGoTo, parseResetLog, serializeResets } from '@augur/core';
 import type { AlertFeed, AppConfig, EngineShell, Host, HttpRequest, HttpResponse, ModelCatalog, Platform, Snapshot, UpdateInfo } from '@augur/core';
 import { claudeInstall, claudeRemove, claudeStatus, defaultClaudePaths, type ClaudePaths } from './claude-install.js';
 import { atomicWrite, isCredentialFile, readText, resolveHomePath } from './home-files.js';
@@ -79,6 +80,7 @@ export function createEngineShell(opts: EngineShellOptions): NodeEngineShell {
   const exportPath = async () => ((await loadJson<AppConfig>('config.json'))?.exportPath ?? null);
   const platform: Platform = process.platform === 'darwin' ? 'macos' : process.platform === 'win32' ? 'windows' : 'linux';
 
+  let resetWrite = Promise.resolve();
   let bwsCache: { at: number; project: string; values: Record<string, string> } | null = null;
   const bwsSecret = async (name: string): Promise<string | null> => {
     const source = (await loadJson<AppConfig>('config.json'))?.secretSources?.bws, key = source?.map[name];
@@ -156,6 +158,18 @@ export function createEngineShell(opts: EngineShellOptions): NodeEngineShell {
       return text?.split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line) as Record<string, unknown>) ?? [];
     },
     async saveHistory(rows) { atomicWrite(join(dirs.data, 'history.jsonl'), rows.map(r => JSON.stringify(r)).join('\n') + (rows.length ? '\n' : '')); },
+    loadResets: async () => parseResetLog(readText(join(dirs.data, 'resets.jsonl')) ?? ''),
+    appendResets(events) {
+      if (!events.length) return Promise.resolve();
+      const text = '\n' + serializeResets(events);
+      const write = resetWrite.then(async () => {
+        await mkdir(dirs.data, { recursive: true });
+        // A separator isolates a partial last line left by an interrupted append.
+        await appendFile(join(dirs.data, 'resets.jsonl'), text, 'utf8');
+      });
+      resetWrite = write.catch(() => undefined);
+      return write;
+    },
     loadAlertState: async () => (await loadJson<Record<string, unknown>>('alert-state.json')) ?? {},
     saveAlertState: state => saveJson('alert-state.json', state),
     loadModelCatalog: () => loadJson<ModelCatalog>('model-catalog.json'),

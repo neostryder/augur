@@ -7,7 +7,7 @@ export interface Alert {
   key: string;
   providerId: string;
   meterId: string;
-  kind: 'percent' | 'pace' | 'balance' | 'reset';
+  kind: 'percent' | 'pace' | 'balance' | 'reset' | 'idle';
   message: string;
   /** The percent or balance the alert crossed. */
   threshold?: number;
@@ -40,6 +40,7 @@ function lastFired(state: FiredState, key: string): number | undefined {
 export interface AlertOptions {
   /** The percent at which each provider's plan counts as spent, by provider id. The default is 98. */
   spentAt?: Record<string, number>;
+  drain?: ReadonlySet<string>;
 }
 
 export function evaluateAlerts(snapshot: Snapshot, history: HistoryRow[], config: AlertConfig, firedState: FiredState, options: AlertOptions = {}): { alerts: Alert[]; firedState: FiredState } {
@@ -59,11 +60,29 @@ export function evaluateAlerts(snapshot: Snapshot, history: HistoryRow[], config
   };
   for (const [providerId, provider] of Object.entries(snapshot.providers)) {
     if (!provider.ok || provider.stale) continue;
+    const weekly = provider.meters.filter(meter => meter.windowKind === 'weekly' && !meter.id.includes('scoped'));
+    const idleMeter = weekly.every(meter => meter.usedPct !== null && Number.isFinite(meter.usedPct) && meter.usedPct < config.idlePct) ? weekly[0] : undefined;
     for (const meter of provider.meters) {
       if (meter.usedPct === null) continue;
       const window = meter.resetsAt ?? 'none';
       const start = meter.resetsAt && meter.windowSeconds ? Date.parse(meter.resetsAt) - meter.windowSeconds * 1000 : -Infinity;
       const series = meterSeries(history, providerId, meter.id).filter(point => Date.parse(point.t) >= start && Date.parse(point.t) < now);
+      if (options.drain?.has(providerId) && meter === idleMeter && meter.resetsAt && meter.windowSeconds
+        && Number.isFinite(meter.usedPct) && meter.usedPct < config.idlePct && (provider.status?.indicator == null || provider.status.indicator === 'none')) {
+        const end = Date.parse(meter.resetsAt);
+        // A window that has not started reports a reset time that moves with the clock, so idle time is read from the whole history
+        // rather than from the reported window, and the alert is keyed by the meter and repeats daily while the provider stays idle.
+        const run = meterSeries(history, providerId, meter.id).filter(point => Date.parse(point.t) < now);
+        let since = now;
+        for (let i = run.length - 1; i >= 0; i--) {
+          const point = run[i]!;
+          if (point.value >= config.idlePct) break;
+          since = Date.parse(point.t);
+        }
+        const hours = (now - since) / 3600000;
+        if (end > now && hours >= config.idleHours) fire(`${providerId}.${meter.id}.idle`, providerId, meter.id, 'idle',
+          `${provider.name} is idle: ${meter.usedPct}% of ${meter.label} used, idle for ${hours.toFixed(1)} hours, with ${((end - now) / 3600000).toFixed(1)} hours until reset.`, PACE_REPEAT_MS, { threshold: config.idlePct, resetsAt: meter.resetsAt });
+      }
       const prior = series.at(-1)?.value ?? 0;
       for (const threshold of config.pctThresholds) {
         if (prior < threshold && meter.usedPct >= threshold) fire(`${providerId}.${meter.id}.percent.${threshold}.${window}`, providerId, meter.id, 'percent',

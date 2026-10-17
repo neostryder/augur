@@ -119,6 +119,7 @@ function fakeShell() {
     saveConfig: async (c) => { config = structuredClone(c); },
     setSecret: async () => undefined, deleteSecret: async () => undefined, hasSecret: async () => false,
     loadSnapshot: async () => null, saveSnapshot: async () => undefined, loadHistory: async () => [], saveHistory: async () => undefined,
+    loadResets: async () => [], appendResets: async () => undefined,
     loadAlertState: async () => ({}), saveAlertState: async () => undefined, loadAlertFeed: async () => null, saveAlertFeed: async () => undefined,
     exportSnapshot: async () => undefined, notify: async () => undefined,
   };

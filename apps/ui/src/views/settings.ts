@@ -238,6 +238,8 @@ export function renderSettings(m: SettingsModel): string {
         <label>${ALERT_TEXT.session} <input type="number" step="0.05" min="0" max="2" data-alert="ratio:session" value="${ratio('session')}"></label>
         <label>${ALERT_TEXT.weekly} <input type="number" step="0.05" min="0" max="2" data-alert="ratio:weekly" value="${ratio('weekly')}"></label>
         <label>${ALERT_TEXT.other} <input type="number" step="0.05" min="0" max="2" data-alert="ratio:other" value="${ratio('other')}"></label></div></div>
+    <div class="field"><label>${ALERT_TEXT.idlePct} <input type="number" min="0" max="100" data-alert="idlePct" value="${a.idlePct}"></label></div>
+    <div class="field"><label>${ALERT_TEXT.idleHours} <input type="number" min="0" max="168" data-alert="idleHours" value="${a.idleHours}"></label></div>
     ${balances.length ? `<div class="field"><label>${ALERT_TEXT.balances}</label>${balances.map((b) =>
       `<div class="row" style="border:0;padding:2px 0"><label class="name">${esc(b.label)}</label>$ <input type="number" step="1" min="0" data-alert="bal:${esc(b.key)}" value="${a.balanceBelow[b.key] ?? ''}"></div>`).join('')}</div>` : ''}
   </div>`;

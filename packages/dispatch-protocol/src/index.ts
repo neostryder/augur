@@ -11,6 +11,7 @@ export * from './seats.js';
 export * from './balance-report.js';
 export * from './balance-edit.js';
 export * from './ipc.js';
+export * from './resets.js';
 export * from './adapter-info.js';
 export * from './config-reference.js';
 export * from './accounting.js';

@@ -50,6 +50,15 @@ function settingsModel(firstRun: boolean): SettingsModel {
   };
 }
 
+it('shows the idle alert grid row and bounded settings in the desktop settings view', () => {
+  const html = renderSettings(settingsModel(false));
+  expect(html).toContain('Provider is idle');
+  expect(html).toContain('Idle usage threshold (%)');
+  expect(html).toContain('Hours below the idle threshold');
+  expect(html).toContain('min="0" max="100" data-alert="idlePct" value="5"');
+  expect(html).toContain('min="0" max="168" data-alert="idleHours" value="6"');
+});
+
 const changes = (n: number): string => `${n} change${n === 1 ? '' : 's'}`;
 const applyButton = (html: string): string => html.match(/<button[^>]*data-setup-apply[^>]*>[^<]*/)?.[0] ?? '';
 

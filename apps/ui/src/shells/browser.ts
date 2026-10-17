@@ -2,7 +2,7 @@
 // encrypted with a non-extractable AES key that never leaves IndexedDB. Provider calls go
 // through a stateless relay when one is configured, because most usage APIs do not allow
 // cross-origin browser requests.
-import { unb64url } from '@augur/core';
+import { parseResetLog, unb64url } from '@augur/core';
 import type { AlertFeed, AppConfig, HttpRequest, HttpResponse, ModelCatalog, PushStatus, PushSubscriptionInfo, Shell, Snapshot } from '@augur/core';
 
 const LS = { config: 'augur.config', snapshot: 'augur.snapshot', history: 'augur.history', alerts: 'augur.alerts', relay: 'augur.relay', models: 'augur.models', feed: 'augur.feed' };
@@ -114,6 +114,18 @@ export function createBrowserShell(): Shell {
     async saveSnapshot(s) { writeLS(LS.snapshot, s); },
     async loadHistory() { return readLS<Record<string, unknown>[]>(LS.history) ?? []; },
     async saveHistory(rows) { writeLS(LS.history, rows); },
+    async loadResets() {
+      const rows: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key?.startsWith('augur.resets.')) rows.push(localStorage.getItem(key) ?? '');
+      }
+      return parseResetLog(rows.join('\n'));
+    },
+    async appendResets(events) {
+      // Separate entries keep earlier readings intact if storage fills during an append.
+      for (const event of events) localStorage.setItem('augur.resets.' + event.id, JSON.stringify(event));
+    },
     async loadAlertState() { return readLS<Record<string, unknown>>(LS.alerts) ?? {}; },
     async saveAlertState(s) { writeLS(LS.alerts, s); },
     async loadModelCatalog() { return readLS<ModelCatalog>(LS.models); },

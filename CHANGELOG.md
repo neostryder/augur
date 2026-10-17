@@ -7,10 +7,14 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 ### Added
 
 - [Visible] [Platform] [Security] **The web app serves https with a certificate the service makes itself, with nothing to install or manage.** The new `web.tlsAuto` setting chooses when. At the default, `auto`, the service uses its certificate whenever `web.host` is a network address, `on` uses it on `127.0.0.1` too, and `off` never makes one. The service keeps the certificate for this computer's names and addresses in its data folder and makes a new one before it expires or when a name is missing. Each browser warns about it once, and `augur web` and the service log show its SHA-256 fingerprint to compare with the warning. `web.tlsCert` and `web.tlsKey` take precedence when both are set; see [docs/web.md](docs/web.md#self-signed-https-with-webtlsauto).
+- [Visible] [Providers] **A reset ledger began recording early resets, when a provider resets a usage window before the time it reported.** Codex weekly limits have done this repeatedly. Each reset, and each change in reset credits with no reset, goes on one line of `resets.jsonl` in the app's settings folder, which keeps growing so a pattern can show over weeks and holds no keys or tokens. `usage.json` gains a short `reset_pattern` note for each provider with resets on record.
+- [Visible] [Providers] **`augur resets` shows the reset ledger, with a summary for each provider and meter and a table of recent events.** `--provider` and `--limit` narrow it, `--json` prints the service's JSON, and with fewer than 10 resets the summary says the sample is too small to show a pattern. The web service has the same data at `/api/resets`, and the read-only `augur_resets` MCP tool returns it to agents.
+- [Visible] [Alerts] **A new idle alert says when a provider that Augur spends in full has gone unused.** It fires when every weekly limit of that provider has stayed under `alerts.idlePct` (5% by default) for `alerts.idleHours` (6 hours by default), repeats at most once a day, and goes to the bell and Claude Code unless you change the grid. Both settings appear under Alerts in Settings.
 
 ### Changed
 
 - [Visible] [Platform] [Security] **A service that listens on a network address now serves the web app over https.** Old `http://` links and bookmarks stop working, so run `augur web` for the new links, and each browser warns once about the self-signed certificate. Set `web.tlsAuto` to `off` to keep plain http. The plain-http warning in `augur web` and the service log now appears only in that case.
+- [Visible] [Providers] **The balance report notes early resets beside a provider's headroom.** A provider with early resets in the ledger gets a sentence such as "2 early resets recorded." after its headroom line.
 
 ## [1.11.0] - 2026-10-16
 

@@ -5,7 +5,7 @@ import { call as serviceCall } from '@augur/augurd/client';
 import type { ClientOptions } from '@augur/augurd/client';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES, balanceField, balanceSegments, checkEdit, editKind, isBalanceField, parseEditState, parseInbox, previewEdits } from '@augur/core';
 import type { ActivityId, DataTier, OutputMode, PolicyEdit, PolicyFile } from '@augur/core';
-import { TOOL_TIERS, checkBalanceSetting, isTerminal, rank, renderReport, routeAddShapeProblems, seatLines } from '@augur/dispatch-protocol';
+import { TOOL_TIERS, checkBalanceSetting, isTerminal, rank, renderReport, renderResets, routeAddShapeProblems, seatLines } from '@augur/dispatch-protocol';
 import type { JobRecord, JobRequest, ToolTier, UsageSnapshot } from '@augur/dispatch-protocol';
 
 export interface ToolResult { text: string; isError?: boolean; data?: Record<string, unknown> }
@@ -174,6 +174,10 @@ export function createTools(d: McpDeps) {
     return guarded(() => d.call('balance', typeof a.days === 'number' ? { days: a.days } : undefined, d.opts), r => 'error' in r ? fail(r.error) : { text: renderReport(r).join('\n'), data: r as unknown as Record<string, unknown> });
   }
 
+  async function resets(a: { provider?: string; limit?: number }): Promise<ToolResult> {
+    return guarded(() => d.call('resets', a, d.opts), r => ({ text: renderResets(r).join('\n'), data: { events: r.events, summary: r.summary } }));
+  }
+
   async function pressure(): Promise<ToolResult> {
     return guarded(() => d.call('pressure', undefined, d.opts), r => r
       ? { text: `Scarcity ${r.scarcity}.\n${Object.entries(r.factors).map(([m, f]) => `${m.padEnd(24)} usage factor ${f.toFixed(2)}`).join('\n')}`, data: r as unknown as Record<string, unknown> }
@@ -310,7 +314,7 @@ export function createTools(d: McpDeps) {
     return { text, data: { activity, dataTier, now: before, withEdits: after, applied: preview.applied, problems } };
   }
 
-  return { models, pick, run, job, jobs, cancel, pressure, balance, routes, routeAdd, policy, editPolicy, pickPreview };
+  return { models, pick, run, job, jobs, cancel, pressure, balance, resets, routes, routeAdd, policy, editPolicy, pickPreview };
 }
 
 export type Tools = ReturnType<typeof createTools>;

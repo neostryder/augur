@@ -47,6 +47,8 @@ export function createTauriShell(): Shell {
     saveSnapshot: serviceOnly,
     loadHistory: serviceOnly,
     saveHistory: serviceOnly,
+    loadResets: serviceOnly,
+    appendResets: serviceOnly,
     loadAlertState: serviceOnly,
     saveAlertState: serviceOnly,
     notify: async (title: string, body: string) => {

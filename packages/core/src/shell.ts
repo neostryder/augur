@@ -2,6 +2,7 @@
 // each implement this; the UI never talks to Tauri or the browser directly.
 
 import type { AppConfig, Host, Snapshot } from './types.js';
+import type { ResetEvent } from './resets.js';
 import type { ModelCatalog } from './models.js';
 import type { AlertFeed } from './feed.js';
 import type { PushSubscriptionInfo } from './webpush.js';
@@ -48,6 +49,8 @@ export interface Shell {
   /** History rows as plain JSON objects, oldest first. */
   loadHistory(): Promise<Record<string, unknown>[]>;
   saveHistory(rows: Record<string, unknown>[]): Promise<void>;
+  loadResets(): Promise<ResetEvent[]>;
+  appendResets(events: ResetEvent[]): Promise<void>;
   loadAlertState(): Promise<Record<string, unknown>>;
   saveAlertState(state: Record<string, unknown>): Promise<void>;
   /** The last model list read from each provider. */

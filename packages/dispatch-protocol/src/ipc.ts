@@ -3,6 +3,7 @@ import type { Accounted, BudgetStatus, RouteCalibration, Totals } from './accoun
 import type { RouteAddAnswer, RouteAddParams } from './route-add.js';
 import type { Headroom } from './pace.js';
 import type { BalanceReport } from './balance-report.js';
+import type { ResetLedger, ResetQuery } from './resets.js';
 import type { ActivityId, DataTier, EngineKey, EngineState } from '@augur/core';
 import type { PickRequest, PickResult } from './pick.js';
 import type { Proposal } from './pick-training.js';
@@ -40,6 +41,7 @@ export interface RpcRequest { id: number; token: string; method: keyof Methods; 
 export type RpcResponse<T = unknown> = { id: number; result: T } | { id: number; error: { code: string; message: string } };
 
 export interface Methods {
+  resets: { params: ResetQuery | undefined; result: ResetLedger };
   ping: { params: undefined; result: { pid: number; version: number; startedAt: number } };
   submit: { params: JobRequest; result: { id: string; warnings: string[] } | { rejected: Rejection } };
   status: { params: { id: string }; result: JobRecord | null };

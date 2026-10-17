@@ -4,7 +4,7 @@ import http from 'node:http';
 import https from 'node:https';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { EngineApi, EngineKey } from '@augur/core';
+import type { EngineApi, EngineKey, ResetEvent } from '@augur/core';
 import { ViewHub } from '../src/views.js';
 import { WebServer, hostAllowed, hostOf, originAllowed, webAddresses } from '../src/web.js';
 import { DEFAULT_CONFIG, loadConfig } from '../src/config.js';
@@ -16,7 +16,7 @@ afterEach(async () => { for (const s of open.splice(0)) await s.close(); });
 
 function fakeEngine() {
   const listeners = new Set<(keys: EngineKey[]) => void>(), calls: unknown[][] = [];
-  const state = { config: { n: 1 }, secrets: [] as string[] };
+  const state = { config: { n: 1 }, secrets: [] as string[], resets: [] as ResetEvent[] };
   const api = {
     state, onChange: (l: (keys: EngineKey[]) => void) => { listeners.add(l); return () => { listeners.delete(l); }; },
     dismiss: async (...args: unknown[]) => { calls.push(args); return 'dismissed'; },
@@ -60,6 +60,42 @@ describe('who may ask', () => {
     expect(originAllowed('http://localhost:7420', 'localhost:7420')).toBe(true);
     expect(originAllowed('http://evil.example', 'localhost:7420')).toBe(false);
     expect(originAllowed('null', 'localhost:7420')).toBe(false);
+  });
+});
+
+describe('the reset ledger endpoint', () => {
+  it('requires auth and returns an empty loaded ledger', async () => {
+    const { base } = await serve();
+    expect((await fetch(`${base}/api/resets`)).status).toBe(401);
+    expect((await fetch(`${base}/api/resets`, { headers: { Authorization: 'Bearer wrong' } })).status).toBe(401);
+    expect(await (await fetch(`${base}/api/resets`, { headers: auth })).json()).toEqual({ events: [], summary: { rows: 0, meters: [] } });
+    expect((await fetch(`${base}/api/resets`, { method: 'POST', headers: auth })).status).toBe(405);
+  });
+
+  it('filters before limiting, summarizes the whole ledger, and caps recent events', async () => {
+    const { base, eng } = await serve();
+    eng.state.resets = Array.from({ length: 1005 }, (_, i): ResetEvent => {
+      const at = new Date(Date.parse('2026-10-01T00:00:00Z') + i * 1000).toISOString(), provider = i % 2 ? 'other' : 'sample';
+      return { v: 1, id: `${provider}.weekly.${at}`, kind: 'reset', provider, meter: 'weekly', label: 'Weekly', at, since: '2026-09-30T23:00:00Z',
+        usedBefore: 80, usedAfter: 0, resetsAtBefore: null, resetsAtAfter: null, windowSeconds: 604800, scheduled: false, earlySeconds: 3600,
+        atLimit: false, creditsBefore: 2, creditsAfter: 1, status: null, plan: null };
+    });
+    const get = async (query: string) => (await fetch(`${base}/api/resets${query}`, { headers: auth })).json() as Promise<{ events: ResetEvent[]; summary: { rows: number } }>;
+    const all = await get('');
+    expect(all.events).toHaveLength(200);
+    expect(all.events[0]!.at).toBe(eng.state.resets.at(-1)!.at);
+    expect(all.summary.rows).toBe(1005);
+    const filtered = await get('?provider=sample&limit=2');
+    expect(filtered.events.map(e => e.provider)).toEqual(['sample', 'sample']);
+    expect(filtered.summary.rows).toBe(503);
+    expect((await get('?limit=5000')).events).toHaveLength(1000);
+    expect(await get('?provider=missing')).toEqual({ events: [], summary: { rows: 0, meters: [] } });
+    for (const query of ['?limit=0', '?limit=-1', '?limit=1.5', '?limit=oops', '?provider=']) {
+      const bad = await fetch(`${base}/api/resets${query}`, { headers: auth });
+      expect(bad.status).toBe(400);
+      expect(await bad.json()).toHaveProperty('error');
+    }
+    expect(eng.state.resets).toHaveLength(1005);
   });
 });
 

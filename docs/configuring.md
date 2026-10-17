@@ -11,8 +11,15 @@ The app covers most of this. The Rules page says what each model may do, the Rou
 | Routes | `dispatch/routes.json` in `~/.augur` | The Routes page, `augur provider add`, the `augur_route_add` tool for a new route, or by hand |
 | Service settings | Listed by `augur config` | The Service page |
 | Standing instructions for jobs, the charter | The `charter` folder in `~/.augur`, or the folder `runner.charterDir` names | By hand. [Standing instructions for every job](#standing-instructions-for-every-job) has the layout |
+| Usage resets Augur has seen, early or on schedule, and changes in reset credits | `resets.jsonl` in the app's settings folder, beside `history.jsonl`. It only grows. | Not meant to be edited. Read it with `augur resets` |
 
 The settings folder is `%APPDATA%\com.neostryder.augur` on Windows, `~/Library/Application Support/com.neostryder.augur` on macOS and `~/.config/com.neostryder.augur` on Linux. `AUGUR_APP_DIR` moves it and `AUGUR_HOME` moves `~/.augur`. Both the app and the service write `config.json`, so close the app and run `augur service stop` before you edit it. A hand edit to `policy.json` is overwritten the next time a rule is saved.
+
+### Idle alert settings
+
+The idle alert fires for a provider that Augur spends in full when all of its weekly limits have stayed under `alerts.idlePct` percent for at least `alerts.idleHours` hours. `alerts.idlePct` runs from 0 to 100 and defaults to 5, and `alerts.idleHours` runs from 0 to 168 and defaults to 6. A value outside its range falls back to the default. Both sit in `config.json` with the other alert settings, and Settings shows them under Alerts.
+
+Idle time counts back through usage history to the last reading at or above the percent, so a window that has not started counts as idle. The alert waits while the provider's last read failed, its figures are stale, or its status page reports a problem. It names the provider, its usage, the hours idle, and the hours until the reset, repeats at most once a day, and clears when usage climbs past the percent, the window ends, or the provider stops reading ok. Out of the box it goes to the bell and Claude Code, and not to your computer's notifications or a phone's push.
 
 ## Models and route labels
 
@@ -254,7 +261,7 @@ To set the balance by hand, put the object in `config.json` under `policy`, with
 }
 ```
 
-`augur balance` shows what the settings are doing. `augur_pick_preview` and `augur pick-preview` rank a task against them and show each route's odds without drawing or recording a pick, and `augur_pick_preview` can also apply edits that have not been made yet.
+`augur balance` shows what the settings are doing. `augur_pick_preview` and `augur pick-preview` rank a task against them and show each route's odds without drawing or recording a pick, and `augur_pick_preview` can also apply edits that have not been made yet. When the reset ledger holds early resets for a provider, the report adds a sentence such as `2 early resets recorded.` after that provider's headroom line.
 
 ### Task weight, caps, and training mode
 

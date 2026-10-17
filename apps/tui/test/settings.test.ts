@@ -90,6 +90,29 @@ describe('settings page', () => {
     expect(saved()[0]!.alerts.outlets.pace.augur).toBe(!before);
   });
 
+  it('shows the idle alert and saves bounded idle settings', async () => {
+    const { app, page, saved, draw } = settings();
+    const text = draw(120, 200);
+    expect(text).toContain('Provider is idle');
+    expect(text).toContain('Idle usage threshold (%)');
+    expect(text).toContain('Hours below the idle threshold');
+    for (const [id, value] of [['idlePct', '8'], ['idleHours', '12']]) {
+      page.form.focus = id!;
+      await app.key(k('enter'));
+      await app.key(k('u', { ctrl: true }));
+      for (const c of value!) await app.key(ch(c));
+      await app.key(k('enter'));
+    }
+    expect(saved()[0]!.alerts.idlePct).toBe(8);
+    expect(saved()[1]!.alerts.idleHours).toBe(12);
+    page.form.focus = 'idlePct';
+    await app.key(k('enter'));
+    await app.key(k('u', { ctrl: true }));
+    for (const c of '101') await app.key(ch(c));
+    await app.key(k('enter'));
+    expect(saved()).toHaveLength(2);
+  });
+
   it('reads the percentage list the way the window app does', async () => {
     const { app, page, saved } = settings();
     page.form.focus = 'pct';

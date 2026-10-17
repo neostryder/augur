@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { ResetEvent } from '@augur/core';
+import { createBrowserShell } from '../src/shells/browser';
 import { createServedShell } from '../src/shells/served';
 
 const TOKEN = 'f'.repeat(64);
@@ -10,7 +12,7 @@ function page(hash = '', saved = '') {
   const replaced: string[] = [];
   vi.stubGlobal('location', { hash, pathname: '/', search: '' });
   vi.stubGlobal('history', { replaceState: (_s: unknown, _t: string, url: string) => { replaced.push(url); } });
-  vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); }, removeItem: (k: string) => { store.delete(k); } });
+  vi.stubGlobal('localStorage', { get length() { return store.size; }, key: (i: number) => [...store.keys()][i] ?? null, getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); }, removeItem: (k: string) => { store.delete(k); } });
   vi.stubGlobal('document', { addEventListener: () => undefined });
   return { store, replaced };
 }
@@ -22,6 +24,23 @@ function stream() {
   const enc = new TextEncoder();
   return { body, push: (m: unknown) => controller.enqueue(enc.encode(JSON.stringify(m) + '\n')), end: () => controller.close(), fail: () => controller.error(new Error('aborted')) };
 }
+
+describe('the browser reset ledger', () => {
+  it('keeps earlier entries when a later append runs out of storage', async () => {
+    const { store } = page(), shell = createBrowserShell();
+    const at = '2026-10-03T23:00:00.000Z';
+    const first: ResetEvent = { v: 1, id: 'codex.weekly.' + at, kind: 'reset', provider: 'codex', meter: 'weekly', label: 'Weekly',
+      at, since: '2026-10-03T22:00:00.000Z', usedBefore: 83, usedAfter: 0, resetsAtBefore: null, resetsAtAfter: null,
+      windowSeconds: 604800, scheduled: false, earlySeconds: 0, atLimit: false, creditsBefore: null, creditsAfter: null, status: null, plan: null };
+    await shell.appendResets([first]);
+    const second = { ...first, id: first.id.replace('03T', '04T'), at: at.replace('03T', '04T') };
+    const third = { ...first, id: first.id.replace('03T', '05T'), at: at.replace('03T', '05T') };
+    localStorage.setItem = (key: string, value: string) => { if (key.endsWith(third.id)) throw new Error('Storage full'); store.set(key, value); };
+    await expect(shell.appendResets([second, third])).rejects.toThrow('Storage full');
+    store.set('augur.resets.bad', '{');
+    expect(await shell.loadResets()).toEqual([first, second]);
+  });
+});
 
 describe('the served shell', () => {
   it('keeps the token from the link, removes it from the address, and sends it only as a header', async () => {

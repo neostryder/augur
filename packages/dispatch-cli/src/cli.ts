@@ -6,7 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES, feedFor } from '@augur/core';
 import type { ActivityId, DataTier, EngineState, OutputMode, ProviderAdded } from '@augur/core';
-import { EXIT_CODES, TOOL_TIERS, describeFigure, exitCodeForState, isTerminal, renderReport, seatLines } from '@augur/dispatch-protocol';
+import { EXIT_CODES, TOOL_TIERS, describeFigure, exitCodeForState, isTerminal, renderReport, renderResets, seatLines } from '@augur/dispatch-protocol';
 import type { Conversation, Depth, JobRecord, JobRequest, ToolTier } from '@augur/dispatch-protocol';
 import { STATUS_TEXT, duration, servedText, statusLine } from '@augur/view-model';
 import { bridge, stdioBridge } from './bridge.js';
@@ -52,6 +52,7 @@ augur pick (--task <description> | --activity <a> --data <tier>) [--depth routin
 augur pick-preview (--task <description> | --activity <a> --data <tier>) [--depth routine|everyday|deep|core] [--named <model>] [--fit <model>=<0-1>,...] [--snippet]   every route's score and odds; no draw is made and nothing is recorded
 augur pick-answer <pick id> --model <route> [--why <text>]     records the route a person chose for a proposed pick and clears that route for jobs
 augur pressure
+augur resets [--provider <id>] [--limit <n>]   reset events and summary
 augur balance [--days <n>]            where each kind of work goes now, each provider's pace and boost, Copilot's spend and the last days' picks
 augur label <pick or job id> --brief met|partly|missed [--note <text>]     record how a job's report met its brief, beside the pick in the decision log
 augur label <grade id> --grade agree|high|low [--note <text>]     record whether a grade was right, too high or too low
@@ -178,6 +179,12 @@ export async function main(argv: string[], io: Io): Promise<number> {
       }
       case 'pick': return await pickCmd(io, opts, say, opt, n => p.flags.has(n));
       case 'pick-preview': return await pickCmd(io, opts, say, opt, n => p.flags.has(n), true);
+      case 'resets': {
+        const limit = opt('limit') === undefined ? undefined : Number(opt('limit'));
+        if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 1)) throw new ServiceError('usage', 'Limit must be a positive integer.');
+        const r = await call('resets', { ...(opt('provider') !== undefined ? { provider: opt('provider') } : {}), ...(limit !== undefined ? { limit } : {}) }, opts);
+        say(renderResets(r).join('\n'), r); return 0;
+      }
       case 'balance': {
         const r = await call('balance', opt('days') ? { days: Number(opt('days')) } : undefined, opts);
         if ('error' in r) { io.err(r.error + String.fromCharCode(10)); return EXIT_CODES.failed; }
