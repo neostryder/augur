@@ -14,8 +14,10 @@ describe('token file access', () => {
       if (process.platform === 'win32') {
         const acl = execFileSync('icacls', [path], { encoding: 'utf8', windowsHide: true });
         const entries = acl.split(/\r?\n/).filter(l => /:\(/.test(l));
-        expect(entries.length).toBe(1);
-        expect(entries[0]!.toLowerCase()).toContain(userInfo().username.toLowerCase());
+        // A session that runs elevated also gets SYSTEM and Administrators on files it creates. Those can read the file anyway, so only any other principal counts as a leak.
+        const names = entries.map(l => l.replace(/^.*?(?:\\token\s+|^\s+)/i, '').replace(/:\(.*$/, '').trim().toLowerCase());
+        expect(names.some(n => n.endsWith(userInfo().username.toLowerCase()))).toBe(true);
+        expect(names.filter(n => !n.endsWith(userInfo().username.toLowerCase()) && n !== 'nt authority\\system' && n !== 'builtin\\administrators')).toEqual([]);
       } else {
         expect(statSync(path).mode & 0o077).toBe(0);
       }
