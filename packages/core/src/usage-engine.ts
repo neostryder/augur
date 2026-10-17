@@ -6,7 +6,7 @@ import { createPairing, pairingUrl, pullPhoneState, pullRules, pushRules, pushSn
 import { feedFor, feedFromUsage, type AlertFeed } from './feed.js';
 import { RULES_ONLY_PROVIDERS, addModels, emptyPolicy, mergePolicy, policyDigest, policyFromFile, policyPathFor, buildPolicyFile } from './policy.js';
 import { genericProvider } from './generic.js';
-import { beginLogin, completeLogin, forgetAccess, isSignInProvider, ownSession, sessionSecretName, SIGN_IN_PROVIDERS, type LoginStart, type PendingLogin } from './signin.js';
+import { beginLogin, completeLogin, forgetAccess, isSignInProvider, ownSession, sessionSecretName, signInProviders, type LoginStart, type PendingLogin } from './signin.js';
 import { importPolicy } from './policy-import.js';
 import { DEFAULT_APPROVAL, emptyEditState, parseEditState, parseInbox, processInbox, resolveHeld, upgradeStoredBalance, INBOX_FILE, RESULTS_FILE, type EditState } from './policy-edits.js';
 import { listDue, syncModelList, type ModelCatalog } from './models.js';
@@ -117,7 +117,7 @@ export interface EngineCommands {
   checkUpdate(): Promise<void>;
   /** Marks the update as installing, or back to available when the install failed. */
   setInstalling(on: boolean): Promise<void>;
-  /** Starts Augur's own sign-in to Claude or Codex and returns the link to open on any device, and for Codex the code to enter there. */
+  /** Starts Augur's own sign-in to a provider that has one and returns the link to open on any device, and for Codex the code to enter there. */
   signInBegin(provider: string): Promise<LoginStart>;
   /** Finishes the sign-in `signInBegin` started. Claude takes the pasted code; Codex takes none and answers `done: false` until the code was approved. */
   signInComplete(id: string, input?: string): Promise<{ done: boolean }>;
@@ -701,7 +701,7 @@ export class UsageEngine implements EngineApi {
     try { result = await completeLogin(this.shell.host, pending, input); }
     catch (error) {
       // A code that was refused can be fixed and pasted again until the sign-in expires; anything else ends it.
-      if (!(error instanceof Error) || !/^Sign in again: (paste|that code|Claude did not accept)/.test(error.message)) this.logins.delete(pending.id);
+      if (!(error instanceof Error) || (error as { retry?: unknown }).retry !== true) this.logins.delete(pending.id);
       throw error;
     }
     if (!result.done) return result;
@@ -720,7 +720,7 @@ export class UsageEngine implements EngineApi {
 
   async signInStatus(): Promise<Record<string, 'own' | 'cli' | null>> {
     const out: Record<string, 'own' | 'cli' | null> = {};
-    for (const id of SIGN_IN_PROVIDERS) {
+    for (const id of signInProviders()) {
       if (await ownSession(this.shell.host, id)) { out[id] = 'own'; continue; }
       const plugin = this.pluginMap().get(id);
       out[id] = plugin && await detectProvider(plugin, this.shell.host).catch(() => false) ? 'cli' : null;

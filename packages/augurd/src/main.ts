@@ -18,6 +18,7 @@ import { policySource, routeSource, usageSource } from './sources.js';
 import { Store } from './store.js';
 import { Supervisor } from './supervisor.js';
 import { ViewHub } from './views.js';
+import { loadLocalSignIn } from './local-signin.js';
 
 registerBalanceSave(upgradeBalance);
 
@@ -58,6 +59,9 @@ export async function startService(opts: ServiceOptions = {}) {
   const routes = routeSource(routesPath);
   const local = await loadLocalAdapters();
   if (local.error) log(`local adapters were not loaded: ${local.error}`);
+  const signIns = await loadLocalSignIn(home);
+  if (signIns.added.length) log(`local sign-in flows loaded: ${signIns.added.join(', ')}`);
+  if (signIns.error) log(`local sign-in flows had a problem: ${signIns.error}`);
   const decision = buildDecision(config, dir), decisions = new DecisionLog(dir, config.learn);
   const ratesPath = join(home, 'dispatch', 'rates.json'), rates = () => parseRates(existsSync(ratesPath) ? readFileSync(ratesPath, 'utf8') : null);
   // With the engine here, the app's mode switch decides whether jobs run; without it, a running service runs them.

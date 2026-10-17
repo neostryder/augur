@@ -1,6 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import type { Host, HttpRequest, HttpResponse } from '../src/types.js';
-import { beginLogin, completeLogin, ownAccessToken, ownSession, sessionSecretName } from '../src/signin.js';
+import { beginLogin, completeLogin, isSignInProvider, ownAccessToken, ownSession, registerSignInFlow, sessionSecretName, signInProviders, type SignInFlow } from '../src/signin.js';
 import { claude } from '../src/providers/index.js';
 import { codex } from '../src/providers/index.js';
 
@@ -19,26 +19,58 @@ function fake(routes: (req: HttpRequest, n: number) => HttpResponse | Promise<Ht
   return { host, secrets, calls };
 }
 
-describe('signing in to Claude', () => {
-  it('builds an authorize link with PKCE and the scopes usage needs, and nothing that creates keys', async () => {
+/** A pasted-code flow that talks to a made-up provider, standing in for any flow a local file might register. */
+function pasteFlow(): SignInFlow {
+  const post = async (host: Host, body: unknown) => {
+    const res = await host.http({ url: 'https://idp.example/token', method: 'POST', body: JSON.stringify(body) });
+    if (res.status < 200 || res.status >= 300) throw Object.assign(new Error(`HTTP ${res.status}`), { status: res.status });
+    return JSON.parse(res.body) as Record<string, any>;
+  };
+  return {
+    async begin() { return { mode: 'paste', url: 'https://idp.example/authorize?state=s1', data: { state: 's1' } }; },
+    async complete(host, data, input) {
+      const [code, state] = String(input ?? '').split('#');
+      if (!code) throw Object.assign(new Error('Sign in again: paste the code.'), { retry: true });
+      if (state && state !== data.state) throw Object.assign(new Error('Sign in again: wrong sign-in.'), { retry: true });
+      const t = await post(host, { grant_type: 'authorization_code', code });
+      return { done: true, session: { refreshToken: t.refresh_token, plan: null }, access: { token: t.access_token, expiresInS: t.expires_in } };
+    },
+    async renew(host, session) {
+      const t = await post(host, { grant_type: 'refresh_token', refresh_token: session.refreshToken });
+      return { access: { token: t.access_token, expiresInS: t.expires_in }, ...(t.refresh_token ? { refreshToken: t.refresh_token } : {}) };
+    },
+  };
+}
+
+describe('a provider with no flow registered', () => {
+  it('is not signed in to, has no own session, and is left to its CLI login', async () => {
+    registerSignInFlow('claude', null);
+    const { host, secrets } = fake(() => reply(500));
+    secrets.set(sessionSecretName('claude'), JSON.stringify({ refreshToken: 'left-over', savedAt: '2026-10-01T00:00:00Z' }));
+    expect(signInProviders()).toEqual(['codex']);
+    expect(isSignInProvider('claude')).toBe(false);
+    expect(await ownSession(host, 'claude')).toBeNull();
+    await expect(beginLogin(host, 'claude')).rejects.toThrow(/not available/);
+  });
+});
+
+describe('a registered flow', () => {
+  beforeEach(() => registerSignInFlow('claude', pasteFlow()));
+  afterEach(() => registerSignInFlow('claude', null));
+
+  it('lists the provider, and starts a sign-in with the link and a login id', async () => {
     const { host } = fake(() => reply(500));
+    expect(signInProviders()).toEqual(['claude', 'codex']);
     const { start, pending } = await beginLogin(host, 'claude');
-    const url = new URL(start.url);
-    expect(url.origin + url.pathname).toBe('https://claude.com/cai/oauth/authorize');
-    expect(url.searchParams.get('response_type')).toBe('code');
-    expect(url.searchParams.get('code_challenge_method')).toBe('S256');
-    expect(url.searchParams.get('scope')).toBe('user:profile user:inference');
-    expect(url.searchParams.get('state')).toBe(pending.state);
-    expect(start.url).not.toContain(pending.verifier!);
-    expect(start.mode).toBe('paste');
+    expect(start).toMatchObject({ provider: 'claude', mode: 'paste', url: 'https://idp.example/authorize?state=s1', expiresInS: 900 });
+    expect(pending.data).toEqual({ state: 's1' });
   });
 
   it('exchanges the pasted code, keeps only the refresh token, and keeps the access token in memory', async () => {
-    const { host, secrets, calls } = fake(() => reply(200, { access_token: 'access-1', refresh_token: 'refresh-1', expires_in: 3600, scope: 'user:profile user:inference' }));
+    const { host, secrets, calls } = fake(() => reply(200, { access_token: 'access-1', refresh_token: 'refresh-1', expires_in: 3600 }));
     const { pending } = await beginLogin(host, 'claude');
-    expect(await completeLogin(host, pending, `the-code#${pending.state}`)).toEqual({ done: true });
-    const sent = JSON.parse(calls[0]!.body!);
-    expect(sent).toMatchObject({ grant_type: 'authorization_code', code: 'the-code', state: pending.state, code_verifier: pending.verifier });
+    expect(await completeLogin(host, pending, 'the-code#s1')).toEqual({ done: true });
+    expect(JSON.parse(calls[0]!.body!)).toMatchObject({ grant_type: 'authorization_code', code: 'the-code' });
     const stored = JSON.parse(secrets.get(sessionSecretName('claude'))!);
     expect(stored.refreshToken).toBe('refresh-1');
     expect(JSON.stringify(stored)).not.toContain('access-1');
@@ -46,16 +78,11 @@ describe('signing in to Claude', () => {
     expect(calls).toHaveLength(1);
   });
 
-  it('refuses a code from another sign-in, and a grant that cannot read usage, without saving anything', async () => {
-    const wrong = fake(() => reply(200, {}));
-    const a = await beginLogin(wrong.host, 'claude');
-    await expect(completeLogin(wrong.host, a.pending, 'code#some-other-state')).rejects.toThrow(/different sign-in/);
-    expect(wrong.calls).toHaveLength(0);
-
-    const narrow = fake(() => reply(200, { access_token: 'a', refresh_token: 'r', scope: 'user:inference' }));
-    const b = await beginLogin(narrow.host, 'claude');
-    await expect(completeLogin(narrow.host, b.pending, 'code')).rejects.toThrow(/cannot read usage/);
-    expect(narrow.secrets.size).toBe(0);
+  it('saves nothing when the flow refuses the code', async () => {
+    const { host, secrets } = fake(() => reply(200, {}));
+    const { pending } = await beginLogin(host, 'claude');
+    await expect(completeLogin(host, pending, 'code#other')).rejects.toMatchObject({ retry: true });
+    expect(secrets.size).toBe(0);
   });
 
   it('refuses a sign-in that has expired', async () => {
@@ -97,6 +124,8 @@ describe('signing in to Codex with a device code', () => {
 
 describe('renewing an own session', () => {
   const session = (provider: string, token: string) => JSON.stringify({ refreshToken: token, savedAt: '2026-10-01T00:00:00Z', ...(provider === 'codex' ? { accountId: 'acct-1' } : {}) });
+  beforeEach(() => registerSignInFlow('claude', pasteFlow()));
+  afterEach(() => registerSignInFlow('claude', null));
 
   it('saves the rotated refresh token before handing back the access token', async () => {
     const order: string[] = [];
@@ -125,20 +154,37 @@ describe('renewing an own session', () => {
 });
 
 describe('providers read the own session first', () => {
-  it('Claude reads usage with Augur\'s own token and never touches the CLI file', async () => {
+  it('Claude reads usage with Augur\'s own token when a flow is registered, and never touches the CLI file', async () => {
+    registerSignInFlow('claude', pasteFlow());
+    try {
+      const reads: string[] = [];
+      const f = fake(req => {
+        if (req.url === 'https://idp.example/token') return reply(200, { access_token: 'own-access', refresh_token: 'own-refresh-2', expires_in: 3600 });
+        expect(req.headers!.Authorization).toBe('Bearer own-access');
+        return reply(200, { limits: [{ kind: 'session', group: 'session', percent: 12, resets_at: '2026-10-16T15:00:00Z', is_active: true }] });
+      });
+      f.secrets.set(sessionSecretName('claude'), JSON.stringify({ refreshToken: 'own-refresh', savedAt: '2026-10-01T00:00:00Z' }));
+      f.host.readHomeFile = async path => { reads.push(path); return JSON.stringify({ claudeAiOauth: { accessToken: 'cli', refreshToken: 'cli-refresh', expiresAt: 0 } }); };
+      f.host.writeHomeFileAtomic = async () => { throw new Error('the CLI file must not be written'); };
+      const r = await claude.fetch(f.host, {});
+      expect(r.meters[0]!.usedPct).toBe(12);
+      expect(reads).toEqual([]);
+      expect(await claude.detect!(f.host)).toBe(true);
+    } finally { registerSignInFlow('claude', null); }
+  });
+
+  it('Claude ignores a stored session when no flow is registered, and reads the CLI file instead', async () => {
+    registerSignInFlow('claude', null);
     const reads: string[] = [];
     const f = fake(req => {
-      if (req.url.includes('/v1/oauth/token')) return reply(200, { access_token: 'own-access', refresh_token: 'own-refresh-2', expires_in: 3600 });
-      expect(req.headers!.Authorization).toBe('Bearer own-access');
-      return reply(200, { limits: [{ kind: 'session', group: 'session', percent: 12, resets_at: '2026-10-16T15:00:00Z', is_active: true }] });
+      expect(req.headers!.Authorization).toBe('Bearer cli-access');
+      return reply(200, { limits: [{ kind: 'session', group: 'session', percent: 7, resets_at: '2026-10-16T15:00:00Z', is_active: true }] });
     });
-    f.secrets.set(sessionSecretName('claude'), JSON.stringify({ refreshToken: 'own-refresh', savedAt: '2026-10-01T00:00:00Z' }));
-    f.host.readHomeFile = async path => { reads.push(path); return JSON.stringify({ claudeAiOauth: { accessToken: 'cli', refreshToken: 'cli-refresh', expiresAt: 0 } }); };
-    f.host.writeHomeFileAtomic = async () => { throw new Error('the CLI file must not be written'); };
+    f.secrets.set(sessionSecretName('claude'), JSON.stringify({ refreshToken: 'left-over', savedAt: '2026-10-01T00:00:00Z' }));
+    f.host.readHomeFile = async path => { reads.push(path); return JSON.stringify({ claudeAiOauth: { accessToken: 'cli-access', refreshToken: 'cli-refresh', expiresAt: 4102444800000 } }); };
     const r = await claude.fetch(f.host, {});
-    expect(r.meters[0]!.usedPct).toBe(12);
-    expect(reads).toEqual([]);
-    expect(await claude.detect!(f.host)).toBe(true);
+    expect(r.meters[0]!.usedPct).toBe(7);
+    expect(reads.length).toBeGreaterThan(0);
   });
 
   it('Codex reads usage with Augur\'s own token and account', async () => {

@@ -42,7 +42,7 @@ export const CLAUDE_TEXT = {
 
 export const STARTER_RULES_TEXT = 'Each provider starts with cautious rules that its models inherit: public data only, text output only, and named before use. A model cannot be used until you confirm it on the model rules page and allow the activities it needs.';
 
-/** Augur's own sign-in to Claude and Codex, used where the command-line app is not signed in or the computer has no browser. */
+/** Augur's own sign-in to a provider that has one, used where the command-line app is not signed in or the computer has no browser. */
 export const LOGIN_TEXT = {
   heading: 'Sign-in',
   own: (name: string) => `Signed in through Augur. Augur keeps its own session and does not read the ${name} command-line login.`,

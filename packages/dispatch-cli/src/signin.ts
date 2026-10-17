@@ -1,11 +1,12 @@
-// `augur login`: Augur's own sign-in to Claude and Codex, for a computer where the provider's CLI is not signed in, or has no browser to sign in with.
-// The link opens in any browser on any device. Claude then shows a code to paste back here; Codex shows a code to type there, and this command waits.
+// `augur login`: Augur's own sign-in to a provider, for a computer where the provider's CLI is not signed in, or has no browser to sign in with.
+// The link opens in any browser on any device. A paste flow shows a code to paste back here; a device flow shows a code to type there, and this command waits.
+// Codex is built in. Any other provider only has a sign-in when a local extension file registers one (see packages/augurd/src/local-signin.ts).
 import type { LoginStart } from '@augur/core';
 import { EXIT_CODES } from '@augur/dispatch-protocol';
 
-export const LOGIN_HELP = `augur login <claude|codex> [--stdin]    sign Augur in to a provider with a session of its own; open the link on any device. Claude: paste the code the page gives you (typing is hidden, or use --stdin). Codex: enter the code shown here on the page, and this command waits
+export const LOGIN_HELP = `augur login <provider> [--stdin]        sign Augur in to a provider with a session of its own; open the link on any device. Codex: enter the code shown here on the page, and this command waits. A provider that asks for a pasted code: paste it at the prompt (typing is hidden, or use --stdin)
 augur login status                      which login Augur uses for each provider: its own, the provider CLI's, or none
-augur logout <claude|codex>             remove the session Augur holds; the provider CLI's login is left alone`;
+augur logout <provider>                 remove the session Augur holds; the provider CLI's login is left alone`;
 
 export interface LoginIo {
   err(text: string): void;
@@ -22,26 +23,27 @@ export interface LoginDeps {
 
 const PROVIDERS = ['claude', 'codex'];
 const NAME: Record<string, string> = { claude: 'Claude', codex: 'Codex' };
+const nameOf = (provider: string): string => NAME[provider] ?? provider;
 const SOURCE: Record<string, string> = { own: 'signed in through Augur', cli: "using the provider CLI's login" };
 
 export async function loginCmd(rest: string[], flags: { stdin: boolean }, io: LoginIo, say: (human: string, data: unknown) => void, deps: LoginDeps, logout = false): Promise<number> {
   const [first] = rest;
   if (!logout && first === 'status') {
     const status = await deps.call('signInStatus', []) as Record<string, 'own' | 'cli' | null>;
-    say(PROVIDERS.map(p => `${NAME[p]}: ${status[p] ? SOURCE[status[p] as string] : 'not signed in'}`).join('\n'), status);
+    say(Object.keys(status).map(p => `${nameOf(p)}: ${status[p] ? SOURCE[status[p] as string] : 'not signed in'}`).join('\n'), status);
     return EXIT_CODES.completed;
   }
   if (!first || !PROVIDERS.includes(first)) { io.err(`${LOGIN_HELP}\n`); return EXIT_CODES.usage; }
   if (logout) {
     await deps.call('signOut', [first]);
-    say(`${NAME[first]}: Augur removed its own session. The provider CLI's login is unchanged.`, { provider: first, signedIn: false });
+    say(`${nameOf(first)}: Augur removed its own session. The provider CLI's login is unchanged.`, { provider: first, signedIn: false });
     return EXIT_CODES.completed;
   }
   const start = await deps.call('signInBegin', [first]) as LoginStart;
   const minutes = Math.round(start.expiresInS / 60);
   if (start.mode === 'paste') {
     // The link goes to the error stream so a pipe can still carry the code in on standard input.
-    io.err(`Open this link in a browser on any device and sign in to ${NAME[first]}. The link works for ${minutes} minutes:\n\n${start.url}\n\n`);
+    io.err(`Open this link in a browser on any device and sign in to ${nameOf(first)}. The link works for ${minutes} minutes:\n\n${start.url}\n\n`);
     let code: string;
     if (flags.stdin) code = io.stdin().trim();
     else if (io.interactive && io.readSecret) code = (await io.readSecret('Paste the code the page shows (typing is hidden): ')).trim();
@@ -56,6 +58,6 @@ export async function loginCmd(rest: string[], flags: { stdin: boolean }, io: Lo
       await deps.sleep(5000);
     }
   }
-  say(`${NAME[first]}: Augur is signed in with its own session and no longer reads the provider CLI's login.`, { provider: first, signedIn: true });
+  say(`${nameOf(first)}: Augur is signed in with its own session and no longer reads the provider CLI's login.`, { provider: first, signedIn: true });
   return EXIT_CODES.completed;
 }

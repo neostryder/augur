@@ -56,6 +56,8 @@ describe('augur login', () => {
     const s = await run(['status'], { signInStatus: [{ claude: 'own', codex: null }] });
     expect(s.out).toContain('Claude: signed in through Augur');
     expect(s.out).toContain('Codex: not signed in');
+    const only = await run(['status'], { signInStatus: [{ codex: 'cli' }] });
+    expect(only.out.trim()).toBe("Codex: using the provider CLI's login");
     const o = await run(['claude'], { signOut: [undefined] }, { logout: true });
     expect(o.calls).toEqual([['signOut', ['claude']]]);
   });

@@ -4,14 +4,6 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
-### Added
-
-- [Visible] [Providers] [Security] **Augur's Jev classifier can ask a Jev gateway instead of calling TypeSafe with your own key.** Set `decision.gateway` to the gateway's address, such as `http://127.0.0.1:8020`, and the gateway's key answers `augur pick --task`, with a token from `JEV_GATEWAY_TOKEN` when the gateway requires one. Sensitive and regulated task text still goes only to Laya.
-
-### Fixed
-
-- [Visible] [Providers] **The Jev gateway now notices when you break its settings while it runs.** If an edit leaves the settings file broken or sets a bad value, the gateway writes it to its log when it rereads the file, instead of saying nothing until the next restart.
-
 ## [1.11.0] - 2026-10-16
 
 ### Added
@@ -22,9 +14,11 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 - [Visible] [Providers] **Training mode asks you before a pick goes to a strong model.** With `training.enabled` on, a pick on a strong route becomes a proposal, and no job runs on it until you answer with `augur pick-answer <pick id> --model <route>`. Once at least 10 of your answers for a kind of work exist and 90% of the last 20 agreed with the proposal, that kind of work stops asking, apart from core work and one pick in ten as a spot check. Your choices also lean later picks for that kind of work a little. Training mode is off by default.
 - [Visible] [UI] [Platform] **The service can serve the Augur app to a browser on any device that can reach this computer.** The page shows the service's own usage engine, the way the terminal app does, and reads no provider itself. The browser connects to your computer directly, with no relay in between, so the computer has to be on and reachable over your network, a VPN, or a tunnel you set up. It is off until `augur config set web.enabled true` and a service restart, and it listens on `127.0.0.1:7420` until `web.host` and `web.port` say otherwise. `web.allowedHosts` adds host names, and `web.tlsCert` and `web.tlsKey` turn on https; see [docs/web.md](docs/web.md).
 - [Visible] [Platform] [Security] **`augur web` prints the links that open the web app, and `augur web rotate` replaces its token.** Each link ends in `#token=`, and the page keeps the token in that browser and clears it from the address bar. The web token has its own file, apart from the owner and agent tokens, and anyone with it can do everything the panel does. A rotated token cuts off open pages within about 20 seconds.
-- [Visible] [Providers] **Augur can sign in to Claude and Codex on its own.** You open the sign-in link in a browser on any device, so Augur can meter a computer where the CLI is not signed in or there is no browser, or where Claude Code was signed in with `claude setup-token`, whose token cannot read usage. Augur saves just the refresh token, in the operating system's key store, and leaves the CLI's login alone while it has its own, so the two stop signing each other out. The Claude and Codex cards in Settings have a Sign-in block for it.
-- [Visible] [Providers] **`augur login claude`, `augur login codex`, `augur login status`, and `augur logout <provider>` handle that sign-in from a terminal.** Claude prints a link and asks for the code the page shows, with the typing hidden or through `--stdin`. Codex prints a link and a short code and waits until you approve it, which needs device-code sign-in turned on in the ChatGPT account's security settings, or by the workspace admin on a workspace account. `augur logout` forgets only Augur's own session, and an agent's token cannot sign in or out.
+- [Visible] [Providers] **Augur can sign in to Codex itself.** You open the sign-in link on any device, so a computer where the Codex CLI isn't signed in, or that has no browser, can still be metered. Augur saves only the refresh token in your operating system's key store and leaves the CLI's login alone while it has its own, so the two stop signing each other out. The Codex card in Settings has a Sign-in block for it.
+- [Visible] [Providers] **`augur login codex`, `augur login status`, and `augur logout <provider>` do that sign-in from a terminal.** `augur login codex` prints a link and a short code and waits for you to approve it. Your ChatGPT account has to allow device-code sign-in in its security settings, and on a workspace account only the workspace admin can turn that on. `augur login status` lists every provider that has a sign-in, `augur logout` forgets only Augur's own session, and an agent's token can't sign in or out.
+- [Visible] [Providers] [Platform] **You can add a sign-in for a provider on one computer with a `local-signin.mjs` file in the Augur folder.** The file exports `signInFlows`, which maps a provider id to a flow with `begin`, `complete`, and `renew` functions. Augur downloads never include it and updates never replace it, and the service logs at start which providers it added or why it couldn't load the file.
 - [Visible] [Platform] [Security] **The macOS install script and `augur update` check a signature on the release's checksum list.** Each release carries `SHA256SUMS.txt.sig`, signed with the key the window app's updater trusts, and a list whose signature does not verify is refused.
+- [Visible] [Providers] [Security] **Augur's Jev classifier can ask a Jev gateway instead of calling TypeSafe with your own key.** Set `decision.gateway` to the gateway's address, such as `http://127.0.0.1:8020`, and the gateway's key answers `augur pick --task`, with a token from `JEV_GATEWAY_TOKEN` when the gateway requires one. Sensitive and regulated task text still goes only to Laya.
 
 ### Changed
 
@@ -62,6 +56,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 - [Visible] [Security] **The phone and browser app opens provider links only when they use http or https.** Links with any other scheme do nothing.
 - [Visible] [Security] **Desktop commands that read or write files, run the dispatch CLI, set the hotkey, or talk to the service now answer only the app's own popup window.** A provider page open in a sign-in window cannot call them.
 - [Visible] [Providers] **Codex, Copilot, and API jobs no longer count their reasoning tokens twice.** Those harnesses already include reasoning in the output count, so their output totals, characters-per-token calibration, and derived costs drop to the true figure. Costs a provider reports itself stay the same.
+- [Visible] [Providers] **The Jev gateway now notices when you break its settings while it runs.** If an edit leaves the settings file broken or sets a bad value, the gateway writes it to its log when it rereads the file, instead of saying nothing until the next restart.
 
 ## [1.10.1] - 2026-10-13
 

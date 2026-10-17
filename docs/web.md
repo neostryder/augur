@@ -40,7 +40,7 @@ The service checks the host name in every request. On the default `127.0.0.1` it
 
 The token is in a file named `web-token` in the service's data folder (`%LOCALAPPDATA%\Augur\dispatch` on Windows, `~/.local/share/augur/dispatch` on macOS and Linux), readable by your account only. It is separate from the owner token the terminal app uses and the agent token the MCP server uses, so it can be changed without touching either.
 
-The web token carries the owner's reach. Whoever holds it can do anything the window app's panel does: change settings and rules, save or remove provider keys, pair or unpair a phone, and sign Augur in to Claude or Codex. Treat it like a password.
+The web token carries the owner's reach. Whoever holds it can do anything the window app's panel does: change settings and rules, save or remove provider keys, pair or unpair a phone, and sign Augur in to Codex. Treat it like a password.
 
 `augur web rotate` makes a new token and prints new links. Every browser that saved the old token is asked for the new one, and a page left open stops getting updates within about 20 seconds.
 
@@ -113,7 +113,7 @@ These examples are starting points, because proxies differ. Tailscale's `tailsca
 
 ## What the page cannot do
 
-Signing in to claude.ai for limit resets and to the TypeSafe console for the Jev balance needs the window app, as it does in the terminal app. Augur's own sign-in to Claude and Codex works from the page, so a computer with no browser can be signed in from a phone. See [Signing in to Claude and Codex](../README.md#signing-in-to-claude-and-codex).
+Signing in to claude.ai for limit resets and to the TypeSafe console for the Jev balance needs the window app, as it does in the terminal app. Augur's own sign-in to Codex works from the page, so a computer with no browser can be signed in from a phone. See [Signing in to Codex](../README.md#signing-in-to-codex).
 
 ## Building it in
 
