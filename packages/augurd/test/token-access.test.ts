@@ -13,8 +13,9 @@ describe('token file access', () => {
       expect(token).toHaveLength(64);
       if (process.platform === 'win32') {
         const acl = execFileSync('icacls', [path], { encoding: 'utf8', windowsHide: true });
+        let probe = ''; try { const dom = process.env.USERDOMAIN, who = (dom ? dom + '\' : '') + userInfo().username; probe = execFileSync('icacls', [path, '/inheritance:r', '/grant:r', `${who}:(F)`], { encoding: 'utf8', windowsHide: true, timeout: 10000 }) + execFileSync('icacls', [path], { encoding: 'utf8', windowsHide: true }); } catch (e) { probe = 'ERR ' + String((e as { stderr?: unknown; message?: string }).stderr ?? '') + (e as Error).message; }
         const entries = acl.split(/\r?\n/).filter(l => /:\(/.test(l));
-        expect(entries.length, JSON.stringify({ acl, domain: process.env.USERDOMAIN, user: userInfo().username, path })).toBe(1);
+        expect(entries.length, JSON.stringify({ probe, acl, domain: process.env.USERDOMAIN, user: userInfo().username, path })).toBe(1);
         expect(entries[0]!.toLowerCase()).toContain(userInfo().username.toLowerCase());
       } else {
         expect(statSync(path).mode & 0o077).toBe(0);
