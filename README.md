@@ -183,6 +183,8 @@ A route is local when its model is listed under the cogitator provider in the ru
 
 `augur pick --task "..."` can work out the activity and data tier from a description. The setup screen and the Service page ask who does that.
 
+Augur's Jev classifier can also go through a [Jev gateway](docs/jev-gateway.md#using-it-for-augurs-own-classifier), which holds the TypeSafe key so Augur needs none of its own. Set `decision.gateway` to the gateway's address, with `augur config set` or on the Service page.
+
 ### How a pick balances models
 
 A pick also leans toward models that suit how much the task weighs. Routine work, such as renames, plumbing, and boilerplate, leans hard toward the lighter models (Sonnet, Luna, DeepSeek, MiniMax). Reviews, research, summaries, and bulk work are everyday work and lean the same way more gently. Coding and hard reasoning are deep work and go to the strong models (Opus, Sol, Grok) first, and core work, such as an engine, core logic, or security-critical code, leans toward them hardest. That keeps the strong models' usage for the tasks that need them. Prose goes to Opus at any depth. Each route also gets a lift on the activities it is known for, such as MiniMax on long context and ChatGPT on research. Fable and Astra are never picked unless a caller names one. `--depth routine`, `everyday`, `deep`, or `core` sets the weight for one task. Without it, the decision backend judges the task description, and the activity's default applies when it cannot.

@@ -110,6 +110,18 @@ With `requireToken` off, the `Host` header must be `localhost`, `127.x.x.x`, or 
 
 Callers get 15 seconds to send headers and 120 seconds to finish the request.
 
+## Using it for Augur's own classifier
+
+Augur's Jev classifier, the one behind `augur pick --task`, can send its questions to this gateway instead of calling TypeSafe with your own `TYPESAFE_API_KEY` or `JEV_API_KEY`. Set `decision.gateway` to the gateway's address and restart the service, since Augur reads the setting only when it starts. The Service page has the same setting.
+
+```bash
+augur config set decision.gateway http://127.0.0.1:8020
+augur service stop
+augur service start
+```
+
+Augur then asks `<address>/v1/systemone`, and the gateway's key answers, so Augur needs no TypeSafe key. The address has to begin with `http://` or `https://`. A gateway on this computer with `requireToken` off needs no token. If yours requires one, make it with `node jev-gateway.mjs token <name>` and set `JEV_GATEWAY_TOKEN` in the Augur service's environment. Augur still counts the classifier as hosted, so sensitive and regulated task text goes only to Laya. Leave `decision.gateway` empty, the default, to keep using your own key.
+
 ## Falling back to TypeSafe
 
 If the gateway can't be reached, or answers 502 or 503 without `x-augur-refused`, a client can call TypeSafe directly with its own key. A 503 of that kind means the gateway has no key. A 502 means TypeSafe didn't respond after the retries. A direct call bypasses the tier check, so the client must apply it itself and fall back only for `public` and `internal` requests. Sensitive and regulated requests never go to TypeSafe from the client, whether or not the gateway is running.
@@ -140,7 +152,7 @@ Each request to `/v1/systemone` appends one JSON line to `usageLog`, for example
 
 `route` can also be `laya` or `refused`. `tierSource` is `declared`, `default`, or `content` when the request named no tier and its state contained one of the student terms described under Data tiers. Callers that handle student data should declare the tier rather than rely on that check. Laya requests add `server`, the Laya server that answered, and refused or failed ones add `reason`, which never quotes the request. If the log can't be written, the request still succeeds.
 
-`~/.augur/jev-gateway.log` gets the address and model at startup, settings problems found at startup, listener errors, the signal that stopped the gateway, and the stack trace of any crash. Problems introduced by a later edit are not logged there; run `check` after editing.
+The gateway's own log, `~/.augur/jev-gateway.log`, records its address and model when it starts, listener errors, the signal that stopped it, and the stack trace if it crashes. It also records settings problems whenever you change the settings file, even while the gateway is running. If an edit breaks the file or sets a bad value, the log says so, and the gateway uses the default for that value. Each change gets its own set of lines. You can still run `check` to see the same problems at any time.
 
 ## Errors and refusals
 

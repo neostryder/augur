@@ -104,11 +104,11 @@ export function parseConfig(raw: unknown, env: NodeJS.ProcessEnv = process.env):
   return { config: c, problems };
 }
 
-/** The settings file, re-read when its modified time changes. A missing file yields the defaults, and a broken one keeps the last good settings. */
+/** The settings file, re-read when its modified time changes. A missing file yields the defaults, and a broken one keeps the last good settings. `onProblems` hears each re-read that found any, so an edit that breaks the file after startup is not silent. */
 export class ConfigFile {
   private seen = -1;
   private cached: { config: GatewayConfig; problems: string[] };
-  constructor(private path: string = configPath(), private env: NodeJS.ProcessEnv = process.env) { this.cached = parseConfig({}, env); }
+  constructor(private path: string = configPath(), private env: NodeJS.ProcessEnv = process.env, private onProblems?: (problems: string[]) => void) { this.cached = parseConfig({}, env); }
   get(): { config: GatewayConfig; problems: string[] } {
     let m = 0;
     try { m = existsSync(this.path) ? statSync(this.path).mtimeMs : 0; } catch { return this.cached; }
@@ -117,6 +117,7 @@ export class ConfigFile {
     if (!m) { this.cached = parseConfig({}, this.env); return this.cached; }
     try { this.cached = parseConfig(JSON.parse(readFileSync(this.path, 'utf8')), this.env); }
     catch (e) { this.cached = { config: this.cached.config, problems: [`the settings file is not valid JSON (${(e as Error).message}); the last good settings stay in use`] }; }
+    if (this.cached.problems.length) { try { this.onProblems?.(this.cached.problems); } catch { /* a logging failure must not stop a request */ } }
     return this.cached;
   }
 }

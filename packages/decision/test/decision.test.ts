@@ -82,6 +82,16 @@ describe('choosing a backend', () => {
     await new JevBackend('secret-key', fetcher).ask('s', {});
     expect(seen.authorization).toBe('Bearer secret-key');
   });
+  it('asks a gateway instead of TypeSafe when one is set, with a token only if there is one', async () => {
+    const calls: Array<{ url: string; headers: Record<string, string> }> = [];
+    const fetcher: Fetch = async (url, init) => { calls.push({ url, headers: init?.headers ?? {} }); return { ok: true, status: 200, json: async () => ({ answers: {} }) }; };
+    const cfg = { backend: 'jev' as const, gateway: 'http://127.0.0.1:8020/' };
+    await createBackend('jev', cfg, { TYPESAFE_API_KEY: 'own-key' }, fetcher).ask('s', {});
+    await createBackend('jev', cfg, { JEV_GATEWAY_TOKEN: 'consumer-token' }, fetcher).ask('s', {});
+    expect(calls.map(c => c.url)).toEqual(['http://127.0.0.1:8020/v1/systemone', 'http://127.0.0.1:8020/v1/systemone']);
+    expect(calls[0]!.headers.authorization).toBeUndefined();
+    expect(calls[1]!.headers.authorization).toBe('Bearer consumer-token');
+  });
 });
 
 const scripted = (answers: (q: Record<string, Question>, model?: string) => SystemOneResponse, local: boolean, id = local ? 'laya' : 'jev'): DecisionBackend & { asked: string[] } => {

@@ -4,6 +4,14 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+### Added
+
+- [Visible] [Providers] [Security] **Augur's Jev classifier can ask a Jev gateway instead of calling TypeSafe with your own key.** Set `decision.gateway` to the gateway's address, such as `http://127.0.0.1:8020`, and the gateway's key answers `augur pick --task`, with a token from `JEV_GATEWAY_TOKEN` when the gateway requires one. Sensitive and regulated task text still goes only to Laya.
+
+### Fixed
+
+- [Visible] [Providers] **The Jev gateway now notices when you break its settings while it runs.** If an edit leaves the settings file broken or sets a bad value, the gateway writes it to its log when it rereads the file, instead of saying nothing until the next restart.
+
 ## [1.11.0] - 2026-10-16
 
 ### Added

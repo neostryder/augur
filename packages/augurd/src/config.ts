@@ -10,6 +10,8 @@ export interface DecisionSettings {
   servers?: Array<{ name: string; url: string }>;
   /** A second backend asked the same questions and only compared with the first. */
   shadow?: 'laya' | 'jev' | null;
+  /** Address of a Jev gateway for the Jev backend to ask in place of TypeSafe. Empty means ask TypeSafe with the person's own key. */
+  gateway?: string;
 }
 
 export interface RunnerSettings {
@@ -87,11 +89,17 @@ function runnerSettings(v: unknown): RunnerSettings {
   };
 }
 
+/** A gateway address is an http or https URL with a host. The loader and the settings editor share this. */
+export function gatewayAddress(v: string): boolean {
+  try { const u = new URL(v); return (u.protocol === 'http:' || u.protocol === 'https:') && !!u.hostname; } catch { return false; }
+}
+
 function decisionSettings(v: unknown): DecisionSettings {
   const d = (typeof v === 'object' && v !== null ? v : {}) as Record<string, unknown>;
   const kind = (x: unknown) => (x === 'laya' || x === 'jev' ? x : null);
   const servers = Array.isArray(d.servers) ? d.servers.filter((s): s is { name: string; url: string } => typeof s?.name === 'string' && typeof s?.url === 'string') : undefined;
-  return { backend: kind(d.backend) ?? 'none', ...(servers?.length ? { servers } : {}), shadow: kind(d.shadow) };
+  const gateway = typeof d.gateway === 'string' ? d.gateway.trim() : '';
+  return { backend: kind(d.backend) ?? 'none', ...(servers?.length ? { servers } : {}), shadow: kind(d.shadow), ...(gatewayAddress(gateway) ? { gateway } : {}) };
 }
 
 /** A bind address: an IP literal, or a plain host name. The loader and the settings editor share this, so a typo is refused instead of silently replaced. */

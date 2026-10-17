@@ -3,7 +3,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ALL_ADAPTERS } from './adapters/index.js';
-import { DEFAULT_CONFIG, loadConfig, plainHost } from './config.js';
+import { DEFAULT_CONFIG, loadConfig, plainHost, gatewayAddress } from './config.js';
 import type { ServiceConfig } from './config.js';
 
 export interface ConfigKey {
@@ -31,6 +31,8 @@ export const CONFIG_KEYS: readonly ConfigKey[] = [
   { key: 'maxDescendants', label: 'Jobs one job can start', help: 'The most that one job, and the jobs it starts, can add up to. 16 by default.', kind: 'number', min: 0, max: 256 },
   { key: 'decision.backend', label: 'Task classifier', help: 'Answers the questions behind augur pick --task. Laya runs on your own machines, Jev is a hosted service that uses your key, and none turns it off.', kind: 'choice', choices: ['none', 'laya', 'jev'] },
   { key: 'decision.shadow', label: 'Compare with', help: 'Asks a second classifier the same questions and logs how it differs. Its answers are never used.', kind: 'choice', choices: ['none', 'laya', 'jev'] },
+  { key: 'decision.gateway', label: 'Jev gateway address', help: 'When this is set, the Jev classifier asks this gateway instead of TypeSafe, so Augur needs no TypeSafe key of its own. Leave it empty to use your own key, and restart the service after you change it.', kind: 'text',
+    check: t => (!t || gatewayAddress(t) ? null : 'decision.gateway is an http or https address, such as http://127.0.0.1:8020.') },
   { key: 'learn.recordTasks', label: 'Keep task text', help: 'Saves the text of each pick request, when its data tier allows, for training a classifier. Off by default.', kind: 'bool' },
   { key: 'adapters', label: 'Adapters', help: 'The adapters a route may use, separated by commas. codex-exec by default. The exec adapter runs any command a route names.', kind: 'list', choices: ALL_ADAPTERS.map(a => a.id) },
   { key: 'requirePick', label: 'Require a pick', help: 'Refuses a job unless its model was picked for the caller in the last hour. On by default.', kind: 'bool', weakens: true },
@@ -56,6 +58,7 @@ function valueOf(config: ServiceConfig, key: string): string {
   switch (key) {
     case 'decision.backend': return config.decision.backend;
     case 'decision.shadow': return config.decision.shadow ?? 'none';
+    case 'decision.gateway': return config.decision.gateway ?? '';
     case 'learn.recordTasks': return String(config.learn.recordTasks);
     case 'runner.charterDir': return config.runner.charterDir;
     case 'runner.ambient': return config.runner.ambient;

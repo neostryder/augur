@@ -34,6 +34,15 @@ describe('config editing', () => {
     expect(loadConfig(dir).decision.shadow).toBeNull();
   });
 
+  it('stores a Jev gateway address, refuses one that is not http or https, and clears it when emptied', () => {
+    const dir = fresh();
+    expect(setConfigValue(dir, 'decision.gateway', 'http://127.0.0.1:8020')).toEqual({ ok: true, value: 'http://127.0.0.1:8020' });
+    expect(loadConfig(dir).decision.gateway).toBe('http://127.0.0.1:8020');
+    for (const bad of ['127.0.0.1:8020', 'ftp://host', 'not a url']) expect(setConfigValue(dir, 'decision.gateway', bad), bad).toMatchObject({ ok: false });
+    expect(setConfigValue(dir, 'decision.gateway', '')).toMatchObject({ ok: true });
+    expect(loadConfig(dir).decision.gateway).toBeUndefined();
+  });
+
   it('refuses a value the loader would quietly replace with its default', () => {
     const dir = fresh();
     for (const [key, value] of [['maxConcurrent', '0'], ['maxConcurrent', '65'], ['maxConcurrent', 'many'], ['retentionDays', '1.5'], ['persistPrompts', 'yes'], ['verifyNamed', 'sometimes'], ['adapters', 'codex-exec,nope'], ['adapters', ''], ['nothing', '1']] as const) {

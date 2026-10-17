@@ -77,10 +77,12 @@ export class LayaBackend implements DecisionBackend {
 export class JevBackend implements DecisionBackend {
   readonly id = 'jev';
   readonly local = false;
+  /** An empty key sends no Authorization header, which is what the gateway expects from a caller on its own computer. */
   constructor(private key: string, private fetcher: Fetch = fetch as unknown as Fetch, private endpoint = 'https://api.typesafe.ai/v1/systemone', private model = 'jev-preview') {}
   async ask(state: unknown, questions: Record<string, Question>): Promise<SystemOneResponse> {
     try {
-      const r = await this.fetcher(this.endpoint, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${this.key}` }, body: JSON.stringify({ model: this.model, state, questions }) });
+      const headers: Record<string, string> = { 'content-type': 'application/json', ...(this.key ? { authorization: `Bearer ${this.key}` } : {}) };
+      const r = await this.fetcher(this.endpoint, { method: 'POST', headers, body: JSON.stringify({ model: this.model, state, questions }) });
       return r.ok ? await r.json() as SystemOneResponse : { error: `Jev answered ${r.status}` };
     } catch (e) { return { error: (e as Error).message }; }
   }
@@ -100,11 +102,16 @@ export interface DecisionConfig {
   servers?: Server[];
   /** A second backend that is asked the same questions and only compared, never used. */
   shadow?: 'laya' | 'jev' | null;
+  /** Address of a Jev gateway. When set, the Jev backend asks it instead of TypeSafe, and the gateway holds the hosted key. */
+  gateway?: string;
 }
+
+export const GATEWAY_PATH = '/v1/systemone';
 
 export function createBackend(kind: DecisionConfig['backend'], config: DecisionConfig, env: NodeJS.ProcessEnv = process.env, fetcher?: Fetch): DecisionBackend {
   if (kind === 'laya') return new LayaBackend(new ServerPool(config.servers?.length ? config.servers : DEFAULT_SERVERS, fetcher));
   if (kind === 'jev') {
+    if (config.gateway) return new JevBackend(env.JEV_GATEWAY_TOKEN ?? '', fetcher, config.gateway.replace(/\/+$/, '') + GATEWAY_PATH);
     const key = env.TYPESAFE_API_KEY ?? env.JEV_API_KEY;
     return key ? new JevBackend(key, fetcher) : new NoBackend();
   }

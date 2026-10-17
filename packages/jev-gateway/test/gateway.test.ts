@@ -85,6 +85,24 @@ describe('config', () => {
   });
 });
 
+describe('settings problems', () => {
+  it('are reported once per change to the file, including a break after startup, and never for a clean file', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'jgw-')), path = join(dir, 'g.json'), heard: string[][] = [];
+    try {
+      writeFileSync(path, JSON.stringify({ model: 'jev-1.14.0' }));
+      const f = new ConfigFile(path, {}, p => heard.push(p));
+      f.get(); f.get();
+      expect(heard).toEqual([]);
+      writeFileSync(path, '{ not json'); const t = new Date(Date.now() + 5000); utimesSync(path, t, t);
+      f.get(); f.get();
+      expect(heard).toHaveLength(1);
+      expect(heard[0]![0]).toMatch(/not valid JSON/);
+      const throws = new ConfigFile(path, {}, () => { throw new Error('log failed'); });
+      expect(() => throws.get()).not.toThrow();
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
 describe('key', () => {
   it('reads the environment, then a file, and never throws', () => {
     const dir = mkdtempSync(join(tmpdir(), 'jgw-'));
