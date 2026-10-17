@@ -10,7 +10,7 @@ import { EXIT_CODES, TOOL_TIERS, describeFigure, exitCodeForState, isTerminal, r
 import type { Conversation, Depth, JobRecord, JobRequest, ToolTier } from '@augur/dispatch-protocol';
 import { STATUS_TEXT, duration, servedText, statusLine } from '@augur/view-model';
 import { bridge, stdioBridge } from './bridge.js';
-import { SERVICE_VERSION, ServiceError, call, configLines, dataDir, disableLogin, enableLogin, ensureToken, loadConfig, loginState, rotateWebToken, setConfigValue, startViaLogin, webAddresses } from '@augur/augurd';
+import { SERVICE_VERSION, ServiceError, call, configLines, dataDir, disableLogin, enableLogin, ensureToken, loadConfig, loginState, rotateWebToken, setConfigValue, startViaLogin, webAddresses, webCertFingerprint } from '@augur/augurd';
 import { subagentHook } from './claude-hook.js';
 import { KEY_HELP, keyCmd } from './key.js';
 import { LOGIN_HELP, loginCmd } from './signin.js';
@@ -227,7 +227,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
       case 'login': case 'logout': return await loginCmd(rest, { stdin: p.flags.has('stdin') }, io, say, { call: (m, a) => engineCall(m, a, io, opts), sleep, now: () => Date.now() }, cmd === 'logout');
       case 'web': {
         const settings = loadConfig(opts.dir).web;
-        return webCmd(rest, say, { settings, token: () => ensureToken(opts.dir, 'web-token'), rotate: () => rotateWebToken(opts.dir), addresses: () => webAddresses(settings) }, io.err);
+        return webCmd(rest, say, { settings, token: () => ensureToken(opts.dir, 'web-token'), rotate: () => rotateWebToken(opts.dir), addresses: () => webAddresses(settings), fingerprint: () => webCertFingerprint(opts.dir) }, io.err);
       }
       case 'claude': return await claudeCmd(rest, io, opts, say);
       case 'routes': { const r = await call('routes', undefined, opts); say(r.map(x => `${x.name.padEnd(14)} ${x.model.padEnd(16)} ${x.adapter}${x.problem ? `   cannot run: ${x.problem}` : ''}`).join('\n') || 'No routes.', r); return 0; }

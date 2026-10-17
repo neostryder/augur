@@ -44,6 +44,7 @@ export const CONFIG_KEYS: readonly ConfigKey[] = [
   { key: 'web.allowedHosts', label: 'Web app host names', help: 'Names besides this computer that requests may use, separated by commas, such as a DNS name or tunnel address that points here. Requests with any other host name are refused.', kind: 'text', weakens: true,
     check: t => (t.split(',').map(s => s.trim()).filter(Boolean).every(plainHost) ? null : 'web.allowedHosts is a comma-separated list of host names.') },
   { key: 'web.tlsCert', label: 'Web app certificate', help: 'Path of a PEM certificate chain. With web.tlsKey, the web app is served over HTTPS.', kind: 'text' },
+  { key: 'web.tlsAuto', label: 'Web app self-signed certificate', help: 'Serves the web app over HTTPS with a self-signed certificate the service makes and keeps, unless web.tlsCert and web.tlsKey are set. Each browser warns once about it, and augur web prints the fingerprint to check against the warning.', kind: 'bool' },
   { key: 'web.tlsKey', label: 'Web app key', help: 'Path of the PEM private key for web.tlsCert.', kind: 'text' },
 ];
 
@@ -70,6 +71,7 @@ function valueOf(config: ServiceConfig, key: string): string {
     case 'web.allowedHosts': return config.web.allowedHosts.join(',');
     case 'web.tlsCert': return config.web.tlsCert;
     case 'web.tlsKey': return config.web.tlsKey;
+    case 'web.tlsAuto': return String(config.web.tlsAuto);
     default: return String((config as unknown as Record<string, unknown>)[key]);
   }
 }

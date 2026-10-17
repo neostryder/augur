@@ -34,6 +34,8 @@ export interface WebSettings {
   /** A certificate and key (PEM files) to serve HTTPS with. Without them the web app is plain HTTP. */
   tlsCert: string;
   tlsKey: string;
+  /** Make and keep a self-signed certificate in the service's data folder and serve HTTPS with it. Ignored when tlsCert and tlsKey are set. */
+  tlsAuto: boolean;
 }
 
 export interface ServiceConfig {
@@ -67,7 +69,7 @@ export interface ServiceConfig {
 
 export const DEFAULT_CONFIG: ServiceConfig = { retentionDays: 30, persistPrompts: false, maxConcurrent: 8, maxDepth: 2, maxDescendants: 16,
   jobhostPath: null, adapters: ['codex-exec'], requirePick: true, promptRoots: [], verifyNamed: 'enforce', decision: { backend: 'none' }, learn: { recordTasks: false }, runnerStaleS: 20, engine: true,
-  web: { enabled: false, host: '127.0.0.1', port: 7420, allowedHosts: [], tlsCert: '', tlsKey: '' },
+  web: { enabled: false, host: '127.0.0.1', port: 7420, allowedHosts: [], tlsCert: '', tlsKey: '', tlsAuto: false },
   runner: { charterDir: '', ambient: 'keep', failover: 'off' } };
 
 /** The launcher built by `pnpm build:jobhost` sits beside the package's sources, and a packaged install places it next to the service. */
@@ -117,6 +119,7 @@ function webSettings(v: unknown): WebSettings {
     allowedHosts: names(d.allowedHosts),
     tlsCert: typeof d.tlsCert === 'string' ? d.tlsCert.trim() : '',
     tlsKey: typeof d.tlsKey === 'string' ? d.tlsKey.trim() : '',
+    tlsAuto: d.tlsAuto === true,
   };
 }
 

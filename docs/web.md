@@ -32,7 +32,8 @@ Each setting can be changed with `augur config set <setting> <value>` or on the 
 | `web.port` | `7420` | The port to listen on. |
 | `web.allowedHosts` | none | Extra host names the page may be opened by, separated by commas, such as a DNS name or a tunnel address that points here. |
 | `web.tlsCert` | none | Path of a PEM certificate chain. |
-| `web.tlsKey` | none | Path of the PEM private key for `web.tlsCert`. With both set, the web app uses https. |
+| `web.tlsKey` | none | Path of the PEM private key for `web.tlsCert`. With both set, the web app uses https with your certificate, and `web.tlsAuto` is ignored. |
+| `web.tlsAuto` | `false` | Serves the web app over https with a self-signed certificate the service makes and keeps. Ignored when `web.tlsCert` and `web.tlsKey` are both set. See [Self-signed https with web.tlsAuto](#self-signed-https-with-webtlsauto). |
 
 The service checks the host name in every request. On the default `127.0.0.1` it answers only `localhost`, a loopback address, and the names in `web.allowedHosts`. On a network address it also answers any numeric IP address, this computer's own host name, that name with `.local` added, and the value of `web.host`. A request that names any other host is refused, so add the name of a tunnel or a reverse proxy to `web.allowedHosts` before you open the page through it.
 
@@ -46,7 +47,36 @@ The web token carries the owner's reach. Whoever holds it can do anything the wi
 
 ## Plain http and https
 
-Without `web.tlsCert` and `web.tlsKey` the web app uses plain http. That is fine on `127.0.0.1`. On a network address the token crosses the network unencrypted, and anyone who can watch that traffic can read it. The service writes a warning to its log when it starts that way, and `augur web` prints the same warning. The recommended way to get https is a [reverse proxy](#serving-it-over-https-with-a-reverse-proxy) in front of the service; otherwise, set both TLS settings, reach the page through a VPN or a tunnel that encrypts the traffic, or keep to a network you trust.
+The web app uses https when `web.tlsAuto` is on or when `web.tlsCert` and `web.tlsKey` are both set, and plain http otherwise. Plain http is fine on `127.0.0.1`. On a network address the token crosses the network unencrypted, and anyone who can watch that traffic can read it. The service writes a warning to its log when it starts that way, and `augur web` prints the same warning.
+
+Turning on `web.tlsAuto` is the quickest way to encrypt the link, since the service makes its own certificate and needs no files or other tools. Each browser warns about that certificate the first time it opens the page, as [Self-signed https with web.tlsAuto](#self-signed-https-with-webtlsauto) describes. A [reverse proxy](#serving-it-over-https-with-a-reverse-proxy) holding a certificate from a real authority avoids the warning and remains the recommended way to open the page to a network. Otherwise, point `web.tlsCert` and `web.tlsKey` at your own certificate, reach the page through a VPN or a tunnel that encrypts the traffic, or keep to a network you trust.
+
+## Self-signed https with web.tlsAuto
+
+With `web.tlsAuto` on, the service makes its own certificate the first time it starts and serves the web app over https with it. Nothing else needs installing, and there are no certificate files to manage.
+
+```bash
+augur config set web.tlsAuto true
+augur service stop
+augur service start
+augur web
+```
+
+The links `augur web` prints then start with `https://`. Until the service has started once with the setting on, `augur web` says the certificate is made at the next start. The setting is ignored when `web.tlsCert` and `web.tlsKey` are both set.
+
+The certificate covers these names and addresses:
+
+- `localhost`, `127.0.0.1`, and `::1`
+- this computer's host name, and that name with `.local` added
+- the `web.host` address, when it names a single address
+- every IPv4 address this computer has on its networks, when `web.host` is `0.0.0.0` or `::`
+- every name in `web.allowedHosts`
+
+The certificate and its key are in a `web-cert` folder in the service's data folder, as `cert.pem` and `key.pem`, and only your account can read the key. It is an ECDSA P-256 certificate valid for two years. When the service starts, it makes a new one if the current one has less than 30 days left, if the key no longer matches it, or if a name it needs is missing. A new network address or a new `web.allowedHosts` entry is therefore covered after the next restart. Every new certificate brings the browser warning back.
+
+No certificate authority signed this certificate, so each browser on each device warns about it the first time it opens the page. The service writes the certificate's SHA-256 fingerprint to its log when it starts, and `augur web` prints it. Before you continue past the warning, open the certificate details the browser offers and check that the SHA-256 fingerprint there matches. Once the page is open over https, the token is encrypted on its way across the network.
+
+That encryption keeps the token from anyone who can only watch the traffic. It does not stop someone who can intercept the very first connection and present a certificate of their own, unless you compare the fingerprint before you continue. A certificate from a real authority, set in `web.tlsCert` and `web.tlsKey` or held by a [reverse proxy](#serving-it-over-https-with-a-reverse-proxy), shows no warning and needs no fingerprint check.
 
 ## Serving it over https with a reverse proxy
 

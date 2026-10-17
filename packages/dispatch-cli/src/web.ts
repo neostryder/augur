@@ -6,11 +6,13 @@ export const WEB_HELP = `augur web                               show whether th
 augur web rotate                        make a new web token; browsers that used the old one ask for the new one`;
 
 export interface WebDeps {
-  settings: Pick<WebSettings, 'enabled' | 'host' | 'port' | 'tlsCert' | 'tlsKey'>;
+  settings: Pick<WebSettings, 'enabled' | 'host' | 'port' | 'tlsCert' | 'tlsKey' | 'tlsAuto'>;
   /** The web token, made on first use. */
   token(): string;
   rotate(): string;
   addresses(): string[];
+  /** SHA-256 fingerprint of the self-signed certificate the service made, or null before its first https start. */
+  fingerprint?(): string | null;
 }
 
 export function webCmd(rest: string[], say: (human: string, data: unknown) => void, deps: WebDeps, err: (text: string) => void): number {
@@ -27,11 +29,17 @@ export function webCmd(rest: string[], say: (human: string, data: unknown) => vo
     return 0;
   }
   const token = deps.token(), links = linksOf(deps.addresses(), token);
-  const secure = !!(settings.tlsCert && settings.tlsKey);
+  const own = !!(settings.tlsCert && settings.tlsKey), auto = !own && settings.tlsAuto, secure = own || auto;
   const note = !isLoopbackHost(settings.host) && !secure
-    ? '\nThis address is open to the network over plain http, so anyone who can watch the traffic can read the token. Set web.tlsCert and web.tlsKey to serve https, or use it only on a network you trust.'
+    ? '\nThis address is open to the network over plain http, so anyone who can watch the traffic can read the token. Set web.tlsAuto to true for https with a certificate the service makes, set web.tlsCert and web.tlsKey to use your own certificate, or open it only through a tunnel or network you trust. Restart the service after changing a setting.'
     : '';
-  say(`The web app is on at ${settings.host}:${settings.port}. Open one of these links in a browser:\n${links.join('\n')}${note}`, { enabled: true, host: settings.host, port: settings.port, tls: secure, links });
+  const print = auto ? deps.fingerprint?.() ?? null : null;
+  const trust = auto
+    ? print
+      ? `\nThe certificate is self-signed, so each browser warns about it once. Before you continue past the warning, check that the SHA-256 fingerprint it shows matches this one:\n${print}`
+      : '\nThe service makes the certificate the next time it starts. Restart it with augur service stop and augur service start, then run augur web again to see the fingerprint to check.'
+    : '';
+  say(`The web app is on at ${settings.host}:${settings.port}. Open one of these links in a browser:\n${links.join('\n')}${note}${trust}`, { enabled: true, host: settings.host, port: settings.port, tls: secure, links, ...(print ? { fingerprint: print } : {}) });
   return 0;
 }
 

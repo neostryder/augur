@@ -7,6 +7,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
+import { ensureWebCert, webCertFingerprint, webCertNames } from './web-cert.js';
 import { timingSafeEqual } from 'node:crypto';
 import { hostname, networkInterfaces } from 'node:os';
 import { isIP } from 'node:net';
@@ -69,6 +70,8 @@ export interface WebDeps {
   /** Folder of the built web app, or null when this build has none. */
   staticDir: string | null;
   log(message: string): void;
+  /** The service's data folder, where web.tlsAuto keeps its certificate. */
+  dir?: string;
 }
 
 const safeEqual = (a: string, b: string): boolean => { const x = Buffer.from(a), y = Buffer.from(b); return x.length === y.length && timingSafeEqual(x, y); };
@@ -78,7 +81,7 @@ export class WebServer {
   private streams = new Set<http.ServerResponse>();
   private fails = new Map<string, { n: number; until: number }>();
   /** The address once listening. */
-  bound: { host: string; port: number; tls: boolean } | null = null;
+  bound: { host: string; port: number; tls: boolean; fingerprint?: string } | null = null;
 
   constructor(private deps: WebDeps) {}
 
@@ -201,13 +204,22 @@ export class WebServer {
     });
   }
 
-  start(): Promise<{ host: string; port: number; tls: boolean }> {
+  start(): Promise<{ host: string; port: number; tls: boolean; fingerprint?: string }> {
     const s = this.deps.settings;
     let server: http.Server | https.Server;
-    const tls = !!(s.tlsCert && s.tlsKey);
-    if (tls) {
+    const own = !!(s.tlsCert && s.tlsKey), auto = !own && s.tlsAuto && !!this.deps.dir;
+    const tls = own || auto;
+    let fingerprint: string | undefined;
+    if (own) {
       try { server = https.createServer({ cert: readFileSync(s.tlsCert), key: readFileSync(s.tlsKey) }, this.handle); }
       catch (e) { return Promise.reject(new Error(`The web app's certificate or key could not be read (${(e as Error).message}).`)); }
+    } else if (auto) {
+      try {
+        const had = webCertFingerprint(this.deps.dir!) !== null, made = ensureWebCert(this.deps.dir!, webCertNames(s));
+        fingerprint = made.fingerprint;
+        if (made.created) this.deps.log(had ? 'web app made a new self-signed certificate, and browsers that trusted the old one will warn again' : 'web app made a new self-signed certificate');
+        server = https.createServer({ cert: made.cert, key: made.key }, this.handle);
+      } catch (e) { return Promise.reject(new Error(`The web app could not make its certificate (${(e as Error).message}).`)); }
     } else server = http.createServer(this.handle);
     server.headersTimeout = 15_000; server.requestTimeout = 120_000; server.keepAliveTimeout = 10_000;
     return new Promise((resolveStart, reject) => {
@@ -216,7 +228,7 @@ export class WebServer {
         server.off('error', reject);
         server.on('error', e => this.deps.log(`web server error: ${e.message}`));
         this.server = server;
-        this.bound = { host: s.host, port: s.port, tls };
+        this.bound = { host: s.host, port: s.port, tls, ...(fingerprint ? { fingerprint } : {}) };
         resolveStart(this.bound);
       });
     });
@@ -242,8 +254,8 @@ export function webDir(env: NodeJS.ProcessEnv = process.env): string | null {
 }
 
 /** The addresses a person can open the web app at: this computer for a loopback bind, every IPv4 address of this computer for a wildcard bind, or the address itself. */
-export function webAddresses(settings: Pick<WebSettings, 'host' | 'port' | 'tlsCert' | 'tlsKey'>, interfaces: ReturnType<typeof networkInterfaces> = networkInterfaces()): string[] {
-  const scheme = settings.tlsCert && settings.tlsKey ? 'https' : 'http', host = settings.host;
+export function webAddresses(settings: Pick<WebSettings, 'host' | 'port' | 'tlsCert' | 'tlsKey'> & { tlsAuto?: boolean }, interfaces: ReturnType<typeof networkInterfaces> = networkInterfaces()): string[] {
+  const scheme = (settings.tlsCert && settings.tlsKey) || settings.tlsAuto ? 'https' : 'http', host = settings.host;
   const wildcard = host === '0.0.0.0' || host === '::';
   const hosts = wildcard
     ? ['localhost', ...Object.values(interfaces).flatMap(list => (list ?? []).filter(i => i.family === 'IPv4' && !i.internal).map(i => i.address))]

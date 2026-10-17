@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
+import https from 'node:https';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { EngineApi, EngineKey } from '@augur/core';
@@ -187,5 +188,46 @@ describe('the settings', () => {
     const ifs = { eth0: [{ family: 'IPv4', internal: false, address: '192.168.1.5' }, { family: 'IPv6', internal: false, address: 'fe80::1' }], lo: [{ family: 'IPv4', internal: true, address: '127.0.0.1' }] } as never;
     expect(webAddresses({ host: '127.0.0.1', port: 7420, tlsCert: '', tlsKey: '' }, ifs)).toEqual(['http://127.0.0.1:7420/']);
     expect(webAddresses({ host: '0.0.0.0', port: 7420, tlsCert: 'c', tlsKey: 'k' }, ifs)).toEqual(['https://localhost:7420/', 'https://192.168.1.5:7420/']);
+  });
+
+  it('lists https addresses when the service makes its own certificate', () => {
+    const ifs = { lo: [{ family: 'IPv4', internal: true, address: '127.0.0.1' }] } as never;
+    expect(webAddresses({ host: '127.0.0.1', port: 7420, tlsCert: '', tlsKey: '', tlsAuto: true }, ifs)).toEqual(['https://127.0.0.1:7420/']);
+  });
+
+  it('reads web.tlsAuto from the config file and from config set, off by default', () => {
+    expect(DEFAULT_CONFIG.web.tlsAuto).toBe(false);
+    const dir = mkdtempSync(join(tmpdir(), 'augur-cfg-'));
+    try {
+      writeFileSync(join(dir, 'config.json'), JSON.stringify({ web: { tlsAuto: true } }));
+      expect(loadConfig(dir).web.tlsAuto).toBe(true);
+      writeFileSync(join(dir, 'config.json'), JSON.stringify({ web: { tlsAuto: 'yes' } }));
+      expect(loadConfig(dir).web.tlsAuto).toBe(false);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+    const key = CONFIG_KEYS.find(k => k.key === 'web.tlsAuto')!;
+    expect(parseValue(key, 'true').ok).toBe(true);
+    expect(parseValue(key, 'maybe').ok).toBe(false);
+  });
+
+  it('serves https with a certificate it makes, keeps it between starts, and shows the fingerprint', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'augur-tls-')), logs: string[] = [];
+    try {
+      const eng = fakeEngine(), settings = { ...DEFAULT_CONFIG.web, port: 0, tlsAuto: true };
+      const mk = () => new WebServer({ settings, engine: () => eng.link, token: () => TOKEN, staticDir: null, log: m => logs.push(m), dir });
+      const first = mk(); open.push(first);
+      const at = await first.start();
+      expect(at.tls).toBe(true);
+      expect(at.fingerprint).toMatch(/^([0-9A-F]{2}:){31}[0-9A-F]{2}$/);
+      const port = (first as unknown as { server: { address(): { port: number } } }).server.address().port;
+      const cert = readFileSync(join(dir, 'web-cert', 'cert.pem'));
+      const body = await new Promise<string>((resolve, reject) => {
+        https.get({ host: '127.0.0.1', port, ca: cert, servername: 'localhost', path: '/api/health', headers: { ...auth, Host: `127.0.0.1:${port}` } }, r => { let d = ''; r.on('data', c => { d += c; }); r.on('end', () => resolve(`${r.statusCode}`)); }).on('error', reject);
+      });
+      expect(body).toBe('404'); // the handshake verified the certificate and the request reached the router
+      await first.close();
+      const second = mk(); open.push(second);
+      expect((await second.start()).fingerprint).toBe(at.fingerprint);
+      expect(logs.filter(l => l.includes('made a new self-signed certificate'))).toHaveLength(1);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });

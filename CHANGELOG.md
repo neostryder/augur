@@ -4,6 +4,14 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+### Added
+
+- [Visible] [Platform] [Security] **The web app can serve https with a certificate the service makes itself, with nothing to install or manage.** Turn on `web.tlsAuto` and restart the service, and it keeps a self-signed certificate for this computer's names and addresses in its data folder, making a new one before it expires or when a name is missing. Each browser warns about the certificate once, and `augur web` and the service log show its SHA-256 fingerprint to compare with the warning. `web.tlsCert` and `web.tlsKey` take precedence when both are set; see [docs/web.md](docs/web.md#self-signed-https-with-webtlsauto).
+
+### Changed
+
+- [Visible] [Platform] [Security] **The plain-http warning in `augur web` and the service log names `web.tlsAuto` as the quickest fix.** It still offers `web.tlsCert` and `web.tlsKey`, or a tunnel or network you trust.
+
 ## [1.11.0] - 2026-10-16
 
 ### Added
