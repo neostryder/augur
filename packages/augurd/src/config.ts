@@ -23,6 +23,9 @@ export interface RunnerSettings {
   failover: 'off' | 'on';
 }
 
+/** auto makes the self-signed certificate on a network bind only, on always makes it, off never does. */
+export type TlsAuto = 'auto' | 'on' | 'off';
+
 export interface WebSettings {
   /** Serve the web app from the service. Off by default: nothing listens on the network until the owner turns it on. */
   enabled: boolean;
@@ -35,7 +38,7 @@ export interface WebSettings {
   tlsCert: string;
   tlsKey: string;
   /** Make and keep a self-signed certificate in the service's data folder and serve HTTPS with it. Ignored when tlsCert and tlsKey are set. */
-  tlsAuto: boolean;
+  tlsAuto: TlsAuto;
 }
 
 export interface ServiceConfig {
@@ -69,7 +72,7 @@ export interface ServiceConfig {
 
 export const DEFAULT_CONFIG: ServiceConfig = { retentionDays: 30, persistPrompts: false, maxConcurrent: 8, maxDepth: 2, maxDescendants: 16,
   jobhostPath: null, adapters: ['codex-exec'], requirePick: true, promptRoots: [], verifyNamed: 'enforce', decision: { backend: 'none' }, learn: { recordTasks: false }, runnerStaleS: 20, engine: true,
-  web: { enabled: false, host: '127.0.0.1', port: 7420, allowedHosts: [], tlsCert: '', tlsKey: '', tlsAuto: false },
+  web: { enabled: false, host: '127.0.0.1', port: 7420, allowedHosts: [], tlsCert: '', tlsKey: '', tlsAuto: 'auto' },
   runner: { charterDir: '', ambient: 'keep', failover: 'off' } };
 
 /** The launcher built by `pnpm build:jobhost` sits beside the package's sources, and a packaged install places it next to the service. */
@@ -119,7 +122,7 @@ function webSettings(v: unknown): WebSettings {
     allowedHosts: names(d.allowedHosts),
     tlsCert: typeof d.tlsCert === 'string' ? d.tlsCert.trim() : '',
     tlsKey: typeof d.tlsKey === 'string' ? d.tlsKey.trim() : '',
-    tlsAuto: d.tlsAuto === true,
+    tlsAuto: d.tlsAuto === 'on' || d.tlsAuto === true ? 'on' : d.tlsAuto === 'off' || d.tlsAuto === false ? 'off' : 'auto',
   };
 }
 

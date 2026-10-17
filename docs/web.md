@@ -32,8 +32,8 @@ Each setting can be changed with `augur config set <setting> <value>` or on the 
 | `web.port` | `7420` | The port to listen on. |
 | `web.allowedHosts` | none | Extra host names the page may be opened by, separated by commas, such as a DNS name or a tunnel address that points here. |
 | `web.tlsCert` | none | Path of a PEM certificate chain. |
-| `web.tlsKey` | none | Path of the PEM private key for `web.tlsCert`. With both set, the web app uses https with your certificate, and `web.tlsAuto` is ignored. |
-| `web.tlsAuto` | `false` | Serves the web app over https with a self-signed certificate the service makes and keeps. Ignored when `web.tlsCert` and `web.tlsKey` are both set. See [Self-signed https with web.tlsAuto](#self-signed-https-with-webtlsauto). |
+| `web.tlsKey` | none | Path of the PEM private key for `web.tlsCert`. With both set, the web app uses https with your certificate, whatever `web.tlsAuto` says. |
+| `web.tlsAuto` | `auto` | When to serve https with a self-signed certificate the service makes and keeps: `auto` on a network address only, `on` on every address, `off` never. Ignored when `web.tlsCert` and `web.tlsKey` are both set. See [Self-signed https with web.tlsAuto](#self-signed-https-with-webtlsauto). |
 
 The service checks the host name in every request. On the default `127.0.0.1` it answers only `localhost`, a loopback address, and the names in `web.allowedHosts`. On a network address it also answers any numeric IP address, this computer's own host name, that name with `.local` added, and the value of `web.host`. A request that names any other host is refused, so add the name of a tunnel or a reverse proxy to `web.allowedHosts` before you open the page through it.
 
@@ -47,22 +47,26 @@ The web token carries the owner's reach. Whoever holds it can do anything the wi
 
 ## Plain http and https
 
-The web app uses https when `web.tlsAuto` is on or when `web.tlsCert` and `web.tlsKey` are both set, and plain http otherwise. Plain http is fine on `127.0.0.1`. On a network address the token crosses the network unencrypted, and anyone who can watch that traffic can read it. The service writes a warning to its log when it starts that way, and `augur web` prints the same warning.
+The web app uses https whenever `web.tlsCert` and `web.tlsKey` are both set. Without them, `web.tlsAuto` decides. At its default, `auto`, the service serves https with a self-signed certificate it makes when `web.host` is a network address, and plain http on `127.0.0.1`, `::1`, and `localhost`, where the traffic never leaves this computer. `on` serves https on those addresses too, and `off` keeps plain http everywhere.
 
-Turning on `web.tlsAuto` is the quickest way to encrypt the link, since the service makes its own certificate and needs no files or other tools. Each browser warns about that certificate the first time it opens the page, as [Self-signed https with web.tlsAuto](#self-signed-https-with-webtlsauto) describes. A [reverse proxy](#serving-it-over-https-with-a-reverse-proxy) holding a certificate from a real authority avoids the warning and remains the recommended way to open the page to a network. Otherwise, point `web.tlsCert` and `web.tlsKey` at your own certificate, reach the page through a VPN or a tunnel that encrypts the traffic, or keep to a network you trust.
+With `web.tlsAuto` set to `off` on a network address, the token crosses the network unencrypted, and anyone who can watch that traffic can read it. The service writes a warning to its log when it starts that way, and `augur web` prints the same warning.
+
+The self-signed certificate needs no files or other tools, and each browser warns about it the first time it opens the page, as [Self-signed https with web.tlsAuto](#self-signed-https-with-webtlsauto) describes. A certificate from a real authority shows no warning. A [reverse proxy](#serving-it-over-https-with-a-reverse-proxy) that holds one is the recommended way to open the page to a network, and `web.tlsCert` and `web.tlsKey` can point at one without a proxy.
 
 ## Self-signed https with web.tlsAuto
 
-With `web.tlsAuto` on, the service makes its own certificate the first time it starts and serves the web app over https with it. Nothing else needs installing, and there are no certificate files to manage.
+With `web.tlsAuto` at its default, `auto`, the service makes its own certificate the first time it starts on a network address and serves the web app over https with it. Nothing else needs installing, and there are no certificate files to manage, so opening the app to your network takes only the address:
 
 ```bash
-augur config set web.tlsAuto true
+augur config set web.host 0.0.0.0
 augur service stop
 augur service start
 augur web
 ```
 
-The links `augur web` prints then start with `https://`. Until the service has started once with the setting on, `augur web` says the certificate is made at the next start. The setting is ignored when `web.tlsCert` and `web.tlsKey` are both set.
+The links `augur web` prints then start with `https://`. Set `web.tlsAuto` to `on` to use the certificate on `127.0.0.1` as well. Until the service has started once with https on, `augur web` says the certificate is made at the next start. The setting is ignored when `web.tlsCert` and `web.tlsKey` are both set.
+
+A service that already listened on a network address over plain http switches to https when it is updated from an earlier version. Its old `http://` links and bookmarks stop working, so run `augur web` for the new ones. Set `web.tlsAuto` to `off` to keep plain http.
 
 The certificate covers these names and addresses:
 

@@ -1,6 +1,6 @@
 // `augur web`: where the web app is served and the links that open it. The web app is the same view of the engine the desktop panel is, shown in a
 // browser on any device that can reach this computer. It is off until web.enabled is set.
-import { isLoopbackHost, type WebSettings } from '@augur/augurd';
+import { isLoopbackHost, webTlsMode, type WebSettings } from '@augur/augurd';
 
 export const WEB_HELP = `augur web                               show whether the web app is on, with a link for each address (each link carries the web token)
 augur web rotate                        make a new web token; browsers that used the old one ask for the new one`;
@@ -29,9 +29,9 @@ export function webCmd(rest: string[], say: (human: string, data: unknown) => vo
     return 0;
   }
   const token = deps.token(), links = linksOf(deps.addresses(), token);
-  const own = !!(settings.tlsCert && settings.tlsKey), auto = !own && settings.tlsAuto, secure = own || auto;
+  const mode = webTlsMode(settings), auto = mode === 'auto', secure = mode !== 'none';
   const note = !isLoopbackHost(settings.host) && !secure
-    ? '\nThis address is open to the network over plain http, so anyone who can watch the traffic can read the token. Set web.tlsAuto to true for https with a certificate the service makes, set web.tlsCert and web.tlsKey to use your own certificate, or open it only through a tunnel or network you trust. Restart the service after changing a setting.'
+    ? '\nThe web app is open to the network over plain http because web.tlsAuto is off, so anyone who can watch the traffic can read the token. Set web.tlsAuto to auto or on to serve https, or set web.tlsCert and web.tlsKey to your own certificate, then restart the service.'
     : '';
   const print = auto ? deps.fingerprint?.() ?? null : null;
   const trust = auto

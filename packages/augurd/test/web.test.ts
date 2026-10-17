@@ -191,28 +191,35 @@ describe('the settings', () => {
   });
 
   it('lists https addresses when the service makes its own certificate', () => {
-    const ifs = { lo: [{ family: 'IPv4', internal: true, address: '127.0.0.1' }] } as never;
-    expect(webAddresses({ host: '127.0.0.1', port: 7420, tlsCert: '', tlsKey: '', tlsAuto: true }, ifs)).toEqual(['https://127.0.0.1:7420/']);
+    const ifs = { eth0: [{ family: 'IPv4', internal: false, address: '192.168.1.5' }], lo: [{ family: 'IPv4', internal: true, address: '127.0.0.1' }] } as never;
+    expect(webAddresses({ host: '127.0.0.1', port: 7420, tlsCert: '', tlsKey: '', tlsAuto: 'on' }, ifs)).toEqual(['https://127.0.0.1:7420/']);
+    expect(webAddresses({ host: '127.0.0.1', port: 7420, tlsCert: '', tlsKey: '', tlsAuto: 'auto' }, ifs)).toEqual(['http://127.0.0.1:7420/']);
+    expect(webAddresses({ host: '0.0.0.0', port: 7420, tlsCert: '', tlsKey: '', tlsAuto: 'auto' }, ifs)).toEqual(['https://localhost:7420/', 'https://192.168.1.5:7420/']);
+    expect(webAddresses({ host: '0.0.0.0', port: 7420, tlsCert: '', tlsKey: '', tlsAuto: 'off' }, ifs)).toEqual(['http://localhost:7420/', 'http://192.168.1.5:7420/']);
   });
 
-  it('reads web.tlsAuto from the config file and from config set, off by default', () => {
-    expect(DEFAULT_CONFIG.web.tlsAuto).toBe(false);
+  it('reads web.tlsAuto from the config file and from config set, automatic by default', () => {
+    expect(DEFAULT_CONFIG.web.tlsAuto).toBe('auto');
     const dir = mkdtempSync(join(tmpdir(), 'augur-cfg-'));
     try {
-      writeFileSync(join(dir, 'config.json'), JSON.stringify({ web: { tlsAuto: true } }));
-      expect(loadConfig(dir).web.tlsAuto).toBe(true);
+      writeFileSync(join(dir, 'config.json'), JSON.stringify({ web: { tlsAuto: 'on' } }));
+      expect(loadConfig(dir).web.tlsAuto).toBe('on');
+      writeFileSync(join(dir, 'config.json'), JSON.stringify({ web: { tlsAuto: 'off' } }));
+      expect(loadConfig(dir).web.tlsAuto).toBe('off');
       writeFileSync(join(dir, 'config.json'), JSON.stringify({ web: { tlsAuto: 'yes' } }));
-      expect(loadConfig(dir).web.tlsAuto).toBe(false);
+      expect(loadConfig(dir).web.tlsAuto).toBe('auto');
     } finally { rmSync(dir, { recursive: true, force: true }); }
     const key = CONFIG_KEYS.find(k => k.key === 'web.tlsAuto')!;
-    expect(parseValue(key, 'true').ok).toBe(true);
+    expect(parseValue(key, 'on').ok).toBe(true);
+    expect(parseValue(key, 'off').ok).toBe(true);
+    expect(parseValue(key, 'auto').ok).toBe(true);
     expect(parseValue(key, 'maybe').ok).toBe(false);
   });
 
   it('serves https with a certificate it makes, keeps it between starts, and shows the fingerprint', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'augur-tls-')), logs: string[] = [];
     try {
-      const eng = fakeEngine(), settings = { ...DEFAULT_CONFIG.web, port: 0, tlsAuto: true };
+      const eng = fakeEngine(), settings = { ...DEFAULT_CONFIG.web, port: 0, tlsAuto: 'on' as const };
       const mk = () => new WebServer({ settings, engine: () => eng.link, token: () => TOKEN, staticDir: null, log: m => logs.push(m), dir });
       const first = mk(); open.push(first);
       const at = await first.start();

@@ -14,7 +14,7 @@ import { isIP } from 'node:net';
 import { dirname, extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { callEngine, type EngineKey } from '@augur/core';
-import type { WebSettings } from './config.js';
+import type { TlsAuto, WebSettings } from './config.js';
 import type { EngineLink } from './ipc.js';
 
 const MAX_BODY = 8 * 1024 * 1024;
@@ -33,6 +33,13 @@ const TYPES: Record<string, string> = {
 export const SERVED_MARKER = '<meta name="augur-served" content="1">';
 
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '::1']);
+/** How the web app is served: with the certificate the person set (own), with the one the service makes (auto), or over plain http (none). The service makes its own on a network bind by default and on loopback only when web.tlsAuto is on. */
+export function webTlsMode(s: Pick<WebSettings, 'host' | 'tlsCert' | 'tlsKey'> & { tlsAuto?: TlsAuto }): 'own' | 'auto' | 'none' {
+  if (s.tlsCert && s.tlsKey) return 'own';
+  const mode = s.tlsAuto ?? 'auto';
+  return mode === 'on' || (mode === 'auto' && !isLoopbackHost(s.host)) ? 'auto' : 'none';
+}
+
 export const isLoopbackHost = (host: string): boolean => LOOPBACK.has(host.toLowerCase()) || (isIP(host) === 4 && host.startsWith('127.'));
 
 /** The host part of a Host header, lower case, without a port or brackets. */
@@ -207,7 +214,7 @@ export class WebServer {
   start(): Promise<{ host: string; port: number; tls: boolean; fingerprint?: string }> {
     const s = this.deps.settings;
     let server: http.Server | https.Server;
-    const own = !!(s.tlsCert && s.tlsKey), auto = !own && s.tlsAuto && !!this.deps.dir;
+    const mode = webTlsMode(s), own = mode === 'own', auto = mode === 'auto' && !!this.deps.dir;
     const tls = own || auto;
     let fingerprint: string | undefined;
     if (own) {
@@ -254,8 +261,8 @@ export function webDir(env: NodeJS.ProcessEnv = process.env): string | null {
 }
 
 /** The addresses a person can open the web app at: this computer for a loopback bind, every IPv4 address of this computer for a wildcard bind, or the address itself. */
-export function webAddresses(settings: Pick<WebSettings, 'host' | 'port' | 'tlsCert' | 'tlsKey'> & { tlsAuto?: boolean }, interfaces: ReturnType<typeof networkInterfaces> = networkInterfaces()): string[] {
-  const scheme = (settings.tlsCert && settings.tlsKey) || settings.tlsAuto ? 'https' : 'http', host = settings.host;
+export function webAddresses(settings: Pick<WebSettings, 'host' | 'port' | 'tlsCert' | 'tlsKey'> & { tlsAuto?: TlsAuto }, interfaces: ReturnType<typeof networkInterfaces> = networkInterfaces()): string[] {
+  const scheme = webTlsMode(settings) === 'none' ? 'http' : 'https', host = settings.host;
   const wildcard = host === '0.0.0.0' || host === '::';
   const hosts = wildcard
     ? ['localhost', ...Object.values(interfaces).flatMap(list => (list ?? []).filter(i => i.family === 'IPv4' && !i.internal).map(i => i.address))]

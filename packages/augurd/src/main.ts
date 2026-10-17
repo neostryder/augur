@@ -86,7 +86,7 @@ export async function startService(opts: ServiceOptions = {}) {
       const at = await web.start();
       log(`web app listening on ${at.tls ? 'https' : 'http'}://${at.host}:${at.port}`);
       if (at.fingerprint) log(`web app certificate fingerprint (SHA-256): ${at.fingerprint}`);
-      if (!at.tls && !['127.0.0.1', '::1', 'localhost'].includes(at.host)) log('warning: the web app is served over plain HTTP on the network, so anyone on the path can read its token. Turn on web.tlsAuto, set web.tlsCert and web.tlsKey, or keep it behind a tunnel or network you trust.');
+      if (!at.tls && !['127.0.0.1', '::1', 'localhost'].includes(at.host)) log('warning: web.tlsAuto is off, so the web app is served over plain HTTP on the network and anyone on the path can read its token. Set web.tlsAuto to auto or on, or set web.tlsCert and web.tlsKey.');
       if (!webDir()) log('warning: this build has no web app to serve, so the address answers 404.');
     } catch (e) { log(`web app did not start: ${(e as Error).message}`); web = null; }
   }
