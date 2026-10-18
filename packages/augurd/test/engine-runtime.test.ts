@@ -343,4 +343,25 @@ describe('the provider request helper', () => {
     await expect(httpsRequest({ url: 'http://8.8.8.8/hosts' })).rejects.toThrow('HTTPS is required');
     await expect(httpsRequest({ url: `${base}/away` })).rejects.toThrow('HTTPS is required');
   });
+
+  it('leaves the credentials and body behind when a redirect changes origin', async () => {
+    const seen: Array<{ auth: string | null; type: string | null; method: string | undefined; body: string }> = [];
+    const target = createServer((req, res) => {
+      let body = '';
+      req.on('data', c => { body += c; });
+      req.on('end', () => {
+        seen.push({ auth: req.headers.authorization ?? null, type: req.headers['content-type'] ?? null, method: req.method, body });
+        res.writeHead(200); res.end('ok');
+      });
+    });
+    await new Promise<void>(r => target.listen(0, '127.0.0.1', () => r()));
+    cleanup.push(() => new Promise<void>(r => target.close(() => r())));
+    const there = `http://127.0.0.1:${(target.address() as { port: number }).port}/landing`;
+    const origin = createServer((req, res) => { req.resume(); res.writeHead(307, { location: there }); res.end(); });
+    await new Promise<void>(r => origin.listen(0, '127.0.0.1', () => r()));
+    cleanup.push(() => new Promise<void>(r => origin.close(() => r())));
+    const start = `http://127.0.0.1:${(origin.address() as { port: number }).port}/start`;
+    await httpsRequest({ url: start, method: 'POST', headers: { Authorization: 'Bearer secret', 'Content-Type': 'application/json' }, body: '{"k":1}' });
+    expect(seen).toEqual([{ auth: null, type: 'application/json', method: 'POST', body: '' }]);
+  });
 });

@@ -28,17 +28,26 @@ export function isPushService(host: string): boolean {
     || host === 'updates.push.services.mozilla.com' || host.endsWith('.push.services.mozilla.com') || host.endsWith('.notify.windows.com');
 }
 
-/** HTTPS, or plain HTTP to this computer or a machine on the home network (a local model gateway). A redirect is followed only to an address that passes the same rule. */
+/** HTTPS, or plain HTTP to this computer or a machine on the home network (a local model gateway). A redirect is followed only to an address that passes the same rule, and one to another origin leaves the request's credentials and body behind. */
 export async function httpsRequest(req: HttpRequest, defaultTimeoutMs = 30000): Promise<HttpResponse> {
-  let url = new URL(req.url);
+  let url = new URL(req.url), method = req.method ?? 'GET', headers = req.headers, body = req.body;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.min(Math.max(req.timeoutMs ?? defaultTimeoutMs, 1), 300000));
   try {
     for (let hop = 0; ; hop++) {
       if (url.protocol !== 'https:' && !(url.protocol === 'http:' && keyMayGoTo(url.href))) throw new Error('HTTPS is required');
-      const res = await fetch(url, { method: req.method ?? 'GET', headers: req.headers, body: req.body, redirect: 'manual', signal: controller.signal });
+      const res = await fetch(url, { method, headers, body, redirect: 'manual', signal: controller.signal });
       const location = res.headers.get('location');
-      if (res.status >= 300 && res.status < 400 && location && hop < 10) { url = new URL(location, url); continue; }
+      if (res.status >= 300 && res.status < 400 && location && hop < 10) {
+        const next = new URL(location, url);
+        if (next.origin !== url.origin) {
+          headers = headers && Object.fromEntries(Object.entries(headers).filter(([name]) => ['accept', 'content-type'].includes(name.toLowerCase())));
+          body = undefined;
+        }
+        if (res.status === 303 || ((res.status === 301 || res.status === 302) && method !== 'GET')) { method = 'GET'; body = undefined; }
+        url = next;
+        continue;
+      }
       return { status: res.status, headers: Object.fromEntries(res.headers.entries()), body: await res.text() };
     }
   } catch (e) {
