@@ -4,6 +4,8 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-10-17
+
 ### Added
 
 - [Visible] [Platform] [Security] **The web app serves https with a certificate the service makes itself, with nothing to install or manage.** The new `web.tlsAuto` setting chooses when. At the default, `auto`, the service uses its certificate whenever `web.host` is a network address, `on` uses it on `127.0.0.1` too, and `off` never makes one. The service keeps the certificate for this computer's names and addresses in its data folder and makes a new one before it expires or when a name is missing. Each browser warns about it once, and `augur web` and the service log show its SHA-256 fingerprint to compare with the warning. `web.tlsCert` and `web.tlsKey` take precedence when both are set; see [docs/web.md](docs/web.md#self-signed-https-with-webtlsauto).
@@ -15,6 +17,10 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 - [Visible] [Platform] [Security] **A service that listens on a network address now serves the web app over https.** Old `http://` links and bookmarks stop working, so run `augur web` for the new links, and each browser warns once about the self-signed certificate. Set `web.tlsAuto` to `off` to keep plain http. The plain-http warning in `augur web` and the service log now appears only in that case.
 - [Visible] [Providers] **The balance report notes early resets beside a provider's headroom.** A provider with early resets in the ledger gets a sentence such as "2 early resets recorded." after its headroom line.
+
+### Fixed
+
+- [Visible] [Security] [Providers] **Redirects to another origin no longer carry the provider key.** The service's HTTP helper, which handles provider reads and the Cogitator gateway, resent the original headers and body on every redirect hop, so a provider or proxy that redirected to a different host received the key in the Authorization header. When a redirect changes the scheme, host, or port, only the Accept and Content-Type headers are kept and the body is dropped. A 303, or a 301 or 302 on a non-GET request, is now followed as a GET. Redirects still go only to https or home-network addresses.
 
 ## [1.11.0] - 2026-10-16
 
