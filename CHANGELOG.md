@@ -4,6 +4,14 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+### Added
+
+- [Internal] [Providers] **The Laya trainer can check a finished adapter for collapse.** After training it checks whether the adapter's logits and loss barely moved, and `promote` and `set` refuse an adapter it flags. Upstream's label-tag positive control and an annealed `rlcd` loss are available as trainer options, and the old loss and the fit floor stay reachable through `--legacy-temp` and `--calib-min`.
+
+### Fixed
+
+- [Internal] [Providers] **The Laya server now uses the temperature fitted for each question type.** It had stored the fit in the adapter's manifest and never applied it, so confidence scores came from the base checkpoint's temperature. The server reads `temperature_by_type`, restores the base values after each prediction, and reports them in its routing answer. The trainer also stops dividing logits by the base temperature, so the next adapters train on raw logits, and it refuses to fit a temperature from fewer than 50 items per type.
+
 ## [1.12.0] - 2026-10-17
 
 ### Added

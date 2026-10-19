@@ -41,7 +41,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 import laya.serve as S  # noqa: E402
+from laya.common import QTYPES  # noqa: E402
 
+import calib  # noqa: E402
 import lora  # noqa: E402
 import browser_guard  # noqa: E402
 from ctxutil import LONG_CONTEXT  # noqa: E402
@@ -82,6 +84,9 @@ class Adapters:
         self.loaded = set()
         self.base_rotary = agent.model.encoder.rotary_emb
         self.long_rotary = {}
+        self.base_temperature = list(agent.temperature)
+        self.base_by_options = dict(agent.temperature_by_options)
+        self.temperatures = {}   # adapter name -> the temperatures its manifest was fitted with
 
     def _refresh(self):
         try:
@@ -114,6 +119,19 @@ class Adapters:
             lora.load_adapter(self.agent.model, name, browser_guard.adapter_dir(ADAPTERS, name))
             self.loaded.add(name)
         lora.set_active(self.agent.model, name)
+        self.apply_temperatures(name)
+
+    def adapter_temperatures(self, name):
+        if name not in self.temperatures:
+            man = json.load(open(os.path.join(browser_guard.adapter_dir(ADAPTERS, name), "manifest.json"), encoding="utf-8"))
+            self.temperatures[name] = calib.manifest_temperatures(man)
+        return self.temperatures[name]
+
+    def apply_temperatures(self, name):
+        """The adapter's fitted temperatures replace the checkpoint's for its question types; no adapter restores them."""
+        fitted = self.adapter_temperatures(name) if name else {}
+        self.agent.temperature, self.agent.temperature_by_options = calib.apply_temperatures(
+            self.base_temperature, self.base_by_options, fitted, QTYPES)
 
     def set_rope(self, max_len):
         enc = self.agent.model.encoder
@@ -287,10 +305,12 @@ def main():
                     result = stock_predict(state, questions, model="english", max_len=max_len, **kw)
             finally:
                 lora.set_active(english.model, None)
+                adapters.apply_temperatures(None)
                 english.model.encoder.rotary_emb = adapters.base_rotary
             result.setdefault("routing", {})
             result["routing"].update({"pilot_spec": model[5:], "adapter": name or "base",
-                                      "max_len": max_len or english.cfg.get("max_len"), "rope_yarn_factor": rope})
+                                      "max_len": max_len or english.cfg.get("max_len"), "rope_yarn_factor": rope,
+                                      "temperature_by_type": adapters.adapter_temperatures(name) if name else {}})
             cache.put(k, result)
             return result
 

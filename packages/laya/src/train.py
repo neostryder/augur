@@ -4,7 +4,8 @@
                           [--rank 8] [--alpha 16] [--lr 3e-4] [--epochs 6] [--max-len 1024]
                           [--accum 8] [--teacher-weight 0.5] [--no-scorer] [--seed 7] [--amp]
                           [--recipe ce|rlcd] [--base english|typed-decisions] [--exclude-provenance P ...]
-                          [--calib-frac 0.1] [--calib-cap 400] [--no-calib]
+                          [--calib-frac 0.1] [--calib-cap 400] [--calib-min 50] [--no-calib]
+                          [--sigma-start 0.4] [--sigma-end 0.1] [--legacy-temp] [--label-tag]
     python train.py eval  --data data/<file>.jsonl [--adapter <name>|base|live] [--max-len N]
     python train.py status
     python train.py promote <adapter> --pilot <pilot> [--force]
@@ -31,7 +32,13 @@ rule and used as a policy-gradient signal, plus a full-weight soft cross-entropy
 updates every weight; here it drives the LoRA weights only. --recipe ce is the plain soft cross-entropy
 with a ranked-probability term that earlier adapters used. Both fit one temperature per question type on a
 slice held out of the training rows (up to --calib-cap items or --calib-frac of them, fixed seed), stored
-in the manifest.
+in the manifest. A type with fewer than --calib-min (50) calibration items is not fitted and keeps the base
+checkpoint's temperature. The loss trains on raw logits (the temperature is fitted after the last epoch and applied
+at evaluation and by the server, clamped to 0.5-5.0); --legacy-temp divides by the base temperature as earlier
+adapters did. rlcd noise anneals from --sigma-start to --sigma-end. After training, a collapse check (near-constant
+logits, or cross-entropy at ln K) warns on stderr and lands in the manifest with the optimizer update count.
+--label-tag trains a positive control (each state spells its answers; the name must end in -ctrl, and it is never
+promoted): if it learns while the real run does not, the task is hard and the run is fine.
 
 An adapter is promoted only when it beats the pilot's live adapter (or the base model) on that
 pilot's human test rows: higher exact accuracy, ties broken by lower negative log-likelihood.
@@ -51,6 +58,7 @@ import torch
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+import calib  # noqa: E402
 import lora  # noqa: E402
 from ctxutil import load_base, load_english  # noqa: E402
 
@@ -155,44 +163,48 @@ def split_calibration(examples_by_row, frac, cap):
     """Hold out whole rows for calibration: lowest hash buckets first, up to cap items or frac of all items."""
     total = sum(len(v) for v in examples_by_row.values())
     budget = min(cap, int(total * frac))
-    calib, train, used = [], [], 0
+    held_out, train, used = [], [], 0
     for rid in sorted(examples_by_row, key=_bucket):
         if used < budget:
-            calib += examples_by_row[rid]
+            held_out += examples_by_row[rid]
             used += len(examples_by_row[rid])
         else:
             train += examples_by_row[rid]
-    return train, calib
+    return train, held_out
 
 
 @torch.no_grad()
-def raw_logits(agent, calib):
+def raw_logits(agent, held_out):
     agent.model.eval()
-    return [(qt, forward_logits(agent, item).float().cpu(), tgt) for item, qt, keys, tgt, _w in calib]
+    return [(qt, forward_logits(agent, item).float().cpu(), tgt) for item, qt, keys, tgt, _w in held_out]
 
 
-def fit_temperatures(rows):
-    """One temperature per question type, by LBFGS on log-temperature against the soft targets. 1.0 under 10 items."""
+def fit_temperatures(rows, min_items=calib.MIN_FIT_ITEMS):
+    """One temperature per question type, by LBFGS on log-temperature against the soft targets.
+
+    Returns (temperatures, counts). A type with fewer than min_items calibration items gets no entry, so it
+    keeps the base checkpoint's temperature instead of a scale fitted on noise. Fitted values stay in
+    [calib.TEMP_MIN, calib.TEMP_MAX], the range Laya's own loader enforces.
+    """
     by_type = {}
     for qt, z, tgt in rows:
         by_type.setdefault(qt, []).append((z, torch.tensor(tgt)))
-    out = {}
+    out, counts = {}, {qt: len(items) for qt, items in by_type.items()}
     for qt, items in by_type.items():
-        if len(items) < 10:
-            out[qt] = 1.0
+        if len(items) < min_items:
             continue
         logt = torch.zeros(1, requires_grad=True)
         opt = torch.optim.LBFGS([logt], lr=0.5, max_iter=50)
 
         def closure():
             opt.zero_grad()
-            t = logt.exp().clamp(0.1, 10.0)
+            t = logt.exp().clamp(calib.TEMP_MIN, calib.TEMP_MAX)
             loss = sum(-(y * torch.log_softmax(z / t, -1)).sum() for z, y in items) / len(items)
             loss.backward()
             return loss
         opt.step(closure)
-        out[qt] = round(float(logt.exp().clamp(0.1, 10.0)), 4)
-    return out
+        out[qt] = round(float(logt.exp().clamp(calib.TEMP_MIN, calib.TEMP_MAX)), 4)
+    return out, counts
 
 
 def rlcd_loss(z, t, qtype, group=4, sigma=0.25, w_sph=0.75, w_rps=1.0):
@@ -258,12 +270,17 @@ def _ece(conf, ok, bins=10):
 
 
 def activate(agent, name):
-    """name: None/'base' for the base model, else an adapter directory name under adapters/."""
+    """name: None/'base' for the base model, else an adapter directory name under adapters/.
+
+    Evaluation then uses the temperatures that adapter was fitted with, the same ones the server applies."""
+    TEMP_OVERRIDE.clear()
     if name in (None, "base", "none"):
         lora.set_active(agent.model, None)
         return None
     lora.load_adapter(agent.model, name, os.path.join(ADAPTERS, name))
     lora.set_active(agent.model, name)
+    manifest = json.load(open(os.path.join(ADAPTERS, name, "manifest.json"), encoding="utf-8"))
+    TEMP_OVERRIDE.update(calib.manifest_temperatures(manifest))
     return name
 
 
@@ -288,8 +305,14 @@ def cmd_train(args):
     exclude = {args[i + 1] for i, a in enumerate(args) if a == "--exclude-provenance"}
     calib_frac, calib_cap = _opt(args, "--calib-frac", 0.1, float), _opt(args, "--calib-cap", 400, int)
     do_calib = "--no-calib" not in args
+    calib_min = _opt(args, "--calib-min", calib.MIN_FIT_ITEMS, int)
+    legacy_temp = "--legacy-temp" in args   # train on logits divided by the base temperature, as adapters before 2026-10-19 did
+    sigma_start, sigma_end = _opt(args, "--sigma-start", calib.SIGMA_START, float), _opt(args, "--sigma-end", calib.SIGMA_END, float)
+    tag_control = "--label-tag" in args     # positive control: every row's state spells its answers; never promoted
     if recipe not in ("ce", "rlcd"):
         sys.exit("--recipe is ce or rlcd")
+    if tag_control and not name.endswith("-ctrl"):
+        sys.exit("a --label-tag run is a diagnostic: end its --name with -ctrl")
     amp = "--amp" in args   # bf16 autocast: faster at long max_len, fp32 is the safe default
     out_dir = os.path.join(ADAPTERS, name)
     if os.path.exists(out_dir):
@@ -300,6 +323,8 @@ def cmd_train(args):
     rows = read_rows(data)
     dropped = sum(1 for r in rows if provenance(r) in exclude)
     rows = [r for r in rows if provenance(r) not in exclude]
+    if tag_control:
+        rows = [dict(r, state=calib.tag_state(r)) for r in rows]
     train_rows = [r for r in rows if r["split"] == "train"]
     test_rows = [r for r in rows if r["split"] == "test"]
     mix = {}
@@ -329,14 +354,14 @@ def cmd_train(args):
             w = 1.0 if provenance(r) != "jev_teacher" else teacher_w
             by_row.setdefault(r["id"], []).append((item, qtype, keys, target_vector(qtype, keys, r, qname), w))
     if do_calib:
-        examples, calib = split_calibration(by_row, calib_frac, calib_cap)
+        examples, calib_examples = split_calibration(by_row, calib_frac, calib_cap)
     else:
-        examples, calib = [e for v in by_row.values() for e in v], []
+        examples, calib_examples = [e for v in by_row.values() for e in v], []
     total_steps = max(1, math.ceil(len(examples) * epochs / accum))
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: min(1.0, (s + 1) / max(1, total_steps // 10))
                                               * max(0.0, 1 - s / total_steps))
     print(json.dumps({"adapter": name, "train_examples": len(examples), "test_rows": len(test_rows),
-                      "calibration_examples": len(calib), "trainable_params": n_params, "pilots": pilots,
+                      "calibration_examples": len(calib_examples), "trainable_params": n_params, "pilots": pilots,
                       "recipe": recipe, "base": base_name, "provenance": mix, "excluded_rows": dropped}), flush=True)
 
     t0 = time.time()
@@ -352,12 +377,14 @@ def cmd_train(args):
                     z = forward_logits(agent, item)
             else:
                 z = forward_logits(agent, item)
-            z = z.float() / temperature(agent, qtype, len(keys))
+            z = z.float()
+            if legacy_temp:
+                z = z / temperature(agent, qtype, len(keys))
             logp = torch.log_softmax(z, -1)
             t = torch.tensor(tgt, device=z.device)
             loss = -(t * logp).sum()
             if recipe == "rlcd":
-                loss = rlcd_loss(z, t, qtype)
+                loss = rlcd_loss(z, t, qtype, sigma=calib.sigma_at(step, total_steps, sigma_start, sigma_end))
             elif qtype == "score":   # ranked probability score keeps the ordinal structure
                 cdf_p, cdf_t = torch.cumsum(logp.exp(), -1), torch.cumsum(t, -1)
                 loss = loss + ((cdf_p - cdf_t) ** 2).sum() / max(1, len(keys) - 1)
@@ -372,7 +399,16 @@ def cmd_train(args):
         print(json.dumps({"epoch": ep + 1, "loss": round(running / max(1, len(examples)), 4),
                           "minutes": round((time.time() - t0) / 60, 1)}), flush=True)
 
-    temps = fit_temperatures(raw_logits(agent, calib)) if calib else {}
+    calib_logits = raw_logits(agent, calib_examples) if calib_examples else []
+    temps, calib_counts = fit_temperatures(calib_logits, calib_min) if calib_logits else ({}, {})
+    skipped = {qt: n for qt, n in calib_counts.items() if qt not in temps}
+    if skipped:
+        print(json.dumps({"temperature_not_fitted": skipped, "needs": calib_min}), flush=True)
+    # Collapse check on held-out calibration rows when there are any, else on a slice of the training rows.
+    probe = calib_logits or raw_logits(agent, examples[:200])
+    collapse = calib.collapse_message(calib.collapse_stats([(qt, z.tolist(), tgt) for qt, z, tgt in probe]))
+    if collapse:
+        print("WARNING: " + collapse, file=sys.stderr, flush=True)
     TEMP_OVERRIDE.update(temps)
     metrics = evaluate(agent, test_rows, max_len)
     TEMP_OVERRIDE.clear()
@@ -381,7 +417,10 @@ def cmd_train(args):
     manifest = {
         "name": name, "created": time.strftime("%Y-%m-%dT%H:%M:%S"), "base": f"convaiinnovations/laya:{base_name}",
         "recipe": recipe, "provenance": mix, "excluded_provenance": sorted(exclude), "temperature_by_type": temps,
-        "n_calibration_examples": len(calib),
+        "n_calibration_examples": len(calib_examples), "calibration_counts": calib_counts, "calibration_min": calib_min,
+        "loss_temperature": "base" if legacy_temp else "raw", "optimizer_updates": step,
+        "rlcd_sigma": [sigma_start, sigma_end] if recipe == "rlcd" else None,
+        "collapse_warning": collapse, "diagnostic": "label-tag" if tag_control else None,
         "base_fingerprint": fingerprint, "rank": rank, "alpha": alpha, "include_scorer": include_scorer,
         "lr": lr, "epochs": epochs, "accum": accum, "max_len": max_len, "teacher_weight": teacher_w, "seed": seed,
         "pilots": pilots, "data": [{"file": os.path.basename(d), "sha256": _sha(d)} for d in data],
@@ -441,6 +480,8 @@ def cmd_promote(args):
     if not pilot:
         sys.exit("promote needs --pilot")
     m = json.load(open(os.path.join(ADAPTERS, name, "manifest.json"), encoding="utf-8"))
+    if m.get("diagnostic"):
+        sys.exit(f"{name} is a {m['diagnostic']} diagnostic run and is never promoted")
     reg = load_registry()
     cfg = pilot_cfg(reg, pilot)
     if "--force" not in args:
@@ -507,6 +548,10 @@ def cmd_set(args):
             sys.exit(f"--max-len {cfg['max_len']} is over the server cap {cap}; raise it with: set --hard-max-len N")
     if "--adapter" in args:
         a = _opt(args, "--adapter", None)
+        if a not in ("none", "base"):
+            man = json.load(open(os.path.join(ADAPTERS, a, "manifest.json"), encoding="utf-8"))
+            if man.get("diagnostic"):
+                sys.exit(f"{a} is a {man['diagnostic']} diagnostic run and is never made live")
         cfg["adapter"] = None if a in ("none", "base") else a
     reg["history"].append({"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "pilot": pilot, "action": "set",
                            "from": before, "to": dict(cfg)})
