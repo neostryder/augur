@@ -113,7 +113,38 @@ Augur can notify you when:
 
 A percentage, reset or balance alert fires once per window and waits for the next reset before it can fire again. A burn-rate alert repeats at most once a day while the limit keeps burning too fast. An idle alert does the same while the provider stays idle.
 
-An alert stays under the bell at the top of the panel until you dismiss it or it stops applying, for example when the window resets. The grid under Alerts in settings picks where each kind of alert goes: your computer's notifications, the bell, Claude Code, and a paired phone. Updates and failed refreshes go to the bell only, unless you change that. A paired phone shows the same alerts under its own bell, and with Push notifications turned on in the phone app it gets them even while Augur is closed there. Dismissing an alert in one place clears it in the others.
+An alert stays under the bell at the top of the panel until you dismiss it or it stops applying, for example when the window resets. The grid under Alerts in settings picks where each kind of alert goes: your computer's notifications, the bell, Claude Code, and a paired phone. By default an update goes to the bell only, a failed refresh to the bell and Claude Code, a new model to review to the bell and your computer's notifications, and a rule change to accept to all four, unless you change that. A paired phone shows the same alerts under its own bell, and with Push notifications turned on in the phone app it gets them even while Augur is closed there. Dismissing an alert in one place clears it in the others.
+
+```mermaid
+flowchart LR
+  subgraph usage["Checked after each refresh"]
+    t1["Percent past a threshold<br/>once per window"]
+    t2["Burn rate too fast<br/>daily at most"]
+    t3["Balance below an amount<br/>once per window"]
+    t4["Spent plan, reset in hand<br/>once per window"]
+    t5["Idle: weekly limits under 5% for 6 hours<br/>daily at most"]
+  end
+  subgraph own["Raised by Augur itself"]
+    o1["Provider did not refresh"]
+    o2["New model to review"]
+    o3["Rule change to accept"]
+    o4["Update ready"]
+  end
+  feed["Alert feed<br/>one entry per alert"]
+  grid{"Alerts grid in settings<br/>one row per kind"}
+  t1 & t2 & t3 & t4 & t5 --> feed
+  o1 & o2 & o3 & o4 --> feed
+  feed --> grid
+  grid --> sys["Computer notification"]
+  grid --> bell["Bell in the panel"]
+  grid --> cc["Claude Code"]
+  grid --> ph["Paired phone"]
+  bell --> done["Dismissed in one place,<br/>cleared on every outlet"]
+  cc --> done
+  ph --> done
+```
+
+Nine kinds of alert feed one list: five checks in `packages/core/src/alerts.ts` run after each refresh, and Augur raises four more on its own, such as a failed refresh or a new update. From `packages/core/src/feed.ts` each kind passes through its row in the Alerts grid to the computer notification, the bell, Claude Code, and the paired phone, though the outlets a kind starts with differ (an update goes only to the bell by default) and the grid can change them.
 
 ## Early resets
 
@@ -136,6 +167,39 @@ Claude Desktop chat lets your chats in Claude Desktop pick and run models throug
 ## In a terminal
 
 Run `augur` in a terminal and it opens a full-screen version of the panel. Tabs across the top hold Usage, Alerts, Rules, Dispatch, Balance, Local, Settings, and Setup. Press 1 to 8 or Tab to move between them, and ? for the keys on the page you are on. The first run opens on Setup. On that page, 1 to 5 and Tab move between its steps instead. The terminal app starts the Augur service if it is not running, and the window app and the terminal app are two views of that one service, so a change in either shows in the other. Providers, alerts, rules, routes, jobs, phone pairing, and the Claude Code and Claude Desktop switches are all there. The sign-ins that need a browser window, such as the Claude resets and the TypeSafe balance, still need the window app, and `augur login` signs Augur in to Codex from the terminal. Pairing draws its QR code in the terminal when the terminal is tall enough, and shows the link with a key to copy it when it is not.
+
+```mermaid
+flowchart LR
+  subgraph views["Views you open"]
+    win["Window app<br/>apps/desktop, Tauri"]
+    tui["Terminal app<br/>apps/tui"]
+    web["Web app<br/>apps/ui on 127.0.0.1:7420<br/>off until web.enabled"]
+  end
+  subgraph callers["Callers that pick and run"]
+    cli["augur command"]
+    mcp["augur-mcp<br/>Claude Code, Claude Desktop"]
+  end
+  plugin["Claude Code plugin<br/>apps/claude-mod"]
+  svc(["augurd<br/>one service, one UsageEngine"])
+  files[("~/.augur<br/>usage.json, alerts.json, policy.json")]
+  providers["Providers read by packages/core<br/>Claude, Codex, Grok, MiniMax, OpenRouter,<br/>fal, Jev, Cogitator, custom JSON"]
+  classify["Task classifiers<br/>packages/decision, packages/laya"]
+  gate["Jev gateway<br/>packages/jev-gateway<br/>127.0.0.1:8020, holds the TypeSafe key"]
+  adapters["Adapters in packages/augurd/src/adapters<br/>Codex, Grok, Copilot CLIs, OpenAI and Anthropic APIs,<br/>fal, Cogitator /v1"]
+  win -->|"shows and changes"| svc
+  tui -->|"shows and changes"| svc
+  web -->|"shows and changes, with a web token"| svc
+  cli -->|"asks for a pick, runs a job"| svc
+  mcp -->|"asks for a pick, runs a job"| svc
+  svc -->|"reads usage"| providers
+  svc -->|"classifies a task"| classify
+  classify -->|"Jev backend"| gate
+  svc -->|"runs a job"| adapters
+  svc -->|"writes"| files
+  plugin -->|"reads usage and alerts"| files
+```
+
+Whether you open the window app, the terminal app, or the browser app, you are looking at the same augurd service, which starts in `packages/augurd/src/main.ts` and writes its state through `packages/augurd/src/home-files.ts`. The Claude Code plugin in `apps/claude-mod` is the odd one out: it never talks to the service and only reads the usage and alert files that augurd leaves behind.
 
 The same command answers short questions that suit a status bar or a script:
 
@@ -248,6 +312,32 @@ The Jev gateway is a System One server on `127.0.0.1:8020` that holds the TypeSa
 The web app works in any modern mobile browser. Open [augur.rpgm.tools](https://augur.rpgm.tools) on the phone and add it to your home screen: on iPhone, tap Share in Safari (on newer iPhones it is in the menu at the bottom) and then Add to Home Screen; on Android, use the install prompt. On its own it can track the providers that use API keys: the keys are encrypted on the phone and requests go through a relay that forwards them without storing anything.
 
 To use it with your desktop, choose Pair a phone in the desktop app's settings. Then open Augur on the phone. A phone with nothing saved opens on a Pair with your desktop screen, where Scan pairing code scans the code and Set up without a desktop skips pairing; a paired or set-up phone has the same button in settings. On an iPhone, scan from inside the home-screen app rather than with the Camera app: the camera opens links in Safari, which keeps its storage apart from the home-screen app. A pairing link that opens in the phone's browser first asks you to confirm the relay it names, and a code scanned in the app asks only when it would replace a pairing that already works. A relay has to use https, or sit on your home network. The phone then shows everything the desktop tracks, set up the way you have it there, and receives the desktop's API keys, so there is nothing to type. It refreshes key-based providers itself. Claude, Codex, Grok and Jev's balance come from the desktop, which sends new numbers every 10 minutes. Tapping refresh on the phone asks the desktop to read them again, and the new numbers arrive within about two minutes while the desktop app is running. Turn on alerts in the phone's own settings if you want them there too. Augur asks the browser to keep its saved data, so a phone that runs short on space should not clear the pairing, although the browser can turn the request down. If the home-screen app on an iPhone still opens on setup, remove it from the home screen, add it again from Safari, and scan the code inside the new app.
+
+```mermaid
+flowchart TB
+  subgraph pc["Your computer"]
+    desk["Desktop app and augurd<br/>Claude, Codex, Grok and Jev balance"]
+    ui["apps/ui<br/>served by augur web"]
+  end
+  subgraph cf["Cloudflare, apps/relay"]
+    pwa["Web app at augur.rpgm.tools"]
+    kv[("Encrypted snapshots<br/>kept 14 days")]
+    fwd["Forwarder<br/>allowlisted usage and status endpoints"]
+  end
+  phone["Phone web app<br/>holds the same key as the desktop"]
+  apis["Provider usage APIs<br/>OpenRouter, fal, MiniMax, status pages"]
+  other["Any browser that can reach your computer"]
+  desk -->|"encrypts with the pairing key, uploads about every 10 minutes"| kv
+  kv -->|"ciphertext, applied only when newer"| phone
+  phone -->|"refresh button and dismissals"| kv
+  kv -.->|"desktop checks every minute"| desk
+  pwa -->|"loads the app"| phone
+  phone -->|"key-based providers"| fwd --> apis
+  other -->|"web token, no relay"| ui
+  ui --- desk
+```
+
+Your phone never reaches Claude, Codex, Grok, or the Jev balance on its own, because the desktop code in `packages/core/src/sync.ts` encrypts a snapshot with a key only the two paired devices hold and uploads it about every 10 minutes to the Worker in `apps/relay/src/index.ts`, which keeps that ciphertext for 14 days. A tap on the phone's refresh button just leaves a request that the desktop checks for once a minute, so new numbers take about two minutes to show up and never arrive while the desktop app is closed.
 
 The desktop encrypts each update, keys included, with a key only it and your phone hold, and the relay stores only that ciphertext. Each update is tied to its pairing, and the phone applies one only when it is newer than the last update it applied, so the relay cannot hand it another pairing's data or an older copy. A desktop whose clock moves backwards sends updates the phone ignores until the clock passes the time of the last one. To keep your API keys on the desktop, turn off Send API keys to the phone in the desktop's settings.
 

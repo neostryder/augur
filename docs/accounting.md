@@ -10,6 +10,39 @@
 
 An imputed figure is never mixed into a reported one, and a reported figure is never replaced by an estimate.
 
+```mermaid
+sequenceDiagram
+  participant C as Caller
+  participant S as augurd
+  participant P as Rules and usage
+  participant A as Route adapter
+  participant F as Fallback route
+  C->>S: augur pick, activity and data tier
+  S->>P: apply gates, read pace
+  S-->>C: route and pick record
+  C->>S: augur run, same activity and data tier
+  S->>P: budget, pause, data tier, pick made within an hour
+  alt a rule is broken or no recent pick
+    S-->>C: refused with the reason
+  else allowed
+    S->>S: prefix the charter folder to the prompt
+    S->>A: start the job
+    A-->>S: answer and token counts
+  end
+  alt limit, harness or timeout failure and Retry on failure is on
+    S->>P: check the fallback against every rule
+    S->>F: run again, at most 3 routes in a chain
+    F-->>S: answer
+  end
+  S-->>C: job record
+  Note over S,C: Record holds route, model, state<br/>and tokens labelled reported, derived or imputed.<br/>Cogitator jobs add machine and chain link
+  C->>S: augur cancel
+  Note over S: Windows ends the job object<br/>Linux ends the systemd scope
+```
+
+Once a pick exists, `packages/augurd/src/supervisor.ts` checks the run against your rules, adds the charter folder to the prompt, starts an adapter from `packages/augurd/src/adapters`, and records the job with its tokens marked as reported, derived, or imputed. If the route hits a limit or its harness will not start, `packages/augurd/src/failover.ts` can retry on a fallback route, but a named conversation never moves off the route it started on.
+
+
 ## Cost
 
 Augur ships no prices, because a plan-billed model has no per-token price and published prices change. To get a derived cost for a model, list its rate in `dispatch/rates.json` inside the Augur folder (`%USERPROFILE%\.augur` by default), in dollars per million tokens:

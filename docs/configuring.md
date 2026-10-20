@@ -311,6 +311,33 @@ To use the example, point `args` at your own server, put the instructions in `pa
 
 The balance leans each pick toward the models that suit the work, keeps each provider that reports a usage window near its pace, boosts the providers with allowance left to spend, and holds backup routes in reserve. The README's [section on it](../README.md#how-a-pick-balances-models) describes how. Its settings are the `balance` object of the rules. Each setting has a shipped default, a value of the wrong type is ignored, and `null` removes a shipped entry from a map.
 
+```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 420, "nodeSpacing": 30, "rankSpacing": 30}}}%%
+flowchart TD
+  start["Caller runs augur pick with --activity and --data,<br/>or --task and a classifier (None, Jev or Laya) names them"]
+  gates["Gates, one model at a time: unreviewed, paused, ask first,<br/>activity not permitted, data tier too low"]
+  shape["Then use-only-after hold-back, depth tilt and prose rule,<br/>caps per day or session, local machine down or short of memory"]
+  pace["Pace and score: each provider hot, on pace, behind or at its reserve<br/>score = fit x weight x usage x tilt x boost"]
+  start --> gates --> shape --> pace
+  named{"Caller named a model<br/>or passed --best?"}
+  pace --> named
+  top["Named model, or the top score"]
+  draw["Draw by odds, routes under a quarter<br/>of the top score left out"]
+  named -->|"yes"| top
+  named -->|"no"| draw
+  train{"Training mode on<br/>and a strong model won?"}
+  top --> train
+  draw --> train
+  hold["Proposal: no job can run until<br/>augur pick-answer records a route"]
+  out["Pick: route id, reason line, and seats<br/>(second opinion, web-route brief, local shadow)"]
+  train -->|"yes"| hold --> out
+  train -->|"no"| out
+  rec[("Pick record: a later augur run<br/>must match it within an hour")]
+  out --> rec
+```
+
+Each pick runs through the steps in the order `packages/dispatch-protocol/src/pick.ts` applies them, from per-model gates and caps down to the pace and score in `packages/dispatch-protocol/src/pace.ts` and a weighted draw that leaves out any route under a quarter of the top score. The training-mode branch, which can hold a strong-model pick as a proposal until you answer it, stays dormant unless you switch it on, because training mode ships turned off.
+
 Pace settings sit in one block per provider, `pace.<provider>`, with `band`, `reserve`, `hot.strong`, `hot.light`, `behind.strong`, `behind.light` and `boost`. A provider with no block of its own gets the built-in values: a band of 10 points, a reserve of 90%, hot multipliers of 0.8 for strong routes and 1.25 for light ones, behind multipliers of 1.25 and 0.85, and a boost of 1.5. Claude's built-in band is 5. The older `claude.*` settings still work as another spelling of `pace.claude.*`. The first time Augur saves the rules, it moves those numbers into `pace.<provider>` and marks the section `"schema": 2`, keeping any value already set under `pace`, and a file that has not been saved since is read the same way.
 
 The `profile` setting chooses the base rules the other settings build on. `classic` is the original rule set, with tiers, preferences and seats for one particular stack, and an install that names no profile uses it. A new install starts on `neutral`, where weights, pauses and data tiers apply as always and only Claude's own models have a tier, so the pace lean moves work toward Sonnet when Claude runs ahead and toward Opus when it runs behind. Neutral has no preferences, excluded names or seats, so you add the ones you want. The unused-allowance boost and the draw work the same under both profiles.
