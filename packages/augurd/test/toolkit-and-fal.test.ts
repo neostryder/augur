@@ -1,16 +1,18 @@
 import { spawn } from 'node:child_process';
 import http from 'node:http';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { JobRequest, RouteConfig, Toolkit } from '@augur/dispatch-protocol';
+import type { Adapter } from '@augur/dispatch-protocol';
 import { codexExec, copilotExec, falApi, grokExec } from '../src/adapters/index.js';
 import { codexToolkitArgs } from '../src/adapters/codex-exec.js';
 import { copilotToolkitArgs } from '../src/adapters/copilot-exec.js';
 import { loadToolkits } from '../src/toolkits.js';
-import { request } from './harness.js';
+import { makeEnv, request, submitOk, terminal } from './harness.js';
+import type { Env } from './harness.js';
 
 const dirs: string[] = [];
 const servers: http.Server[] = [];
@@ -234,4 +236,45 @@ describe('fal-call', () => {
     expect(r.err).not.toContain('secret-fal-key');
   }, 30000);
 
+});
+
+describe('the supervisor and toolkits', () => {
+  const envs: Env[] = [];
+  afterEach(() => { while (envs.length) envs.pop()!.dispose(); });
+  const seen: Array<{ id: string; prompt: string; toolkit: Toolkit | undefined }> = [];
+  const probe = (id: string, toolkit?: 'inject'): Adapter => ({
+    id, charterEngine: 'codex', transport: 'exec', ...(toolkit ? { toolkit } : {}),
+    capabilities: { permissionRequests: false, sessions: false, reportsUsage: false, sandboxed: false, isolatesWorkspace: false, enforcesReadOnly: false },
+    envAllow: [], validate: () => null,
+    plan(req, _route, ctx) { seen.push({ id, prompt: ctx.prompt, toolkit: ctx.toolkit }); return { command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: req.cwd, env: {}, stdin: null }; },
+    extract: () => ({ answer: 'ok', usage: null }),
+  });
+
+  it('adds the pack and hands the servers to an adapter that can carry them, and warns for one that cannot', async () => {
+    const charter = temp();
+    mkdirSync(join(charter, 'packs'), { recursive: true });
+    writeFileSync(join(charter, 'core.md'), 'Core.'); writeFileSync(join(charter, 'packs', 'rea.md'), 'REA rules.');
+    const e = makeEnv({ adapters: ['can', 'cannot'], runner: { charterDir: charter, ambient: 'keep', failover: 'off' } } as never, process.env, { extra: [probe('can', 'inject'), probe('cannot')] });
+    envs.push(e);
+    e.writeRoutes({ can: { model: 'test/fake', adapter: 'can', options: {} }, cannot: { model: 'test/fake', adapter: 'cannot', options: {} } });
+    writeFileSync(join(e.home, 'toolkits.json'), JSON.stringify({ reverse_engineering: kit }));
+    seen.length = 0;
+    const ok = e.sup.submit(request({ route: 'can', activity: 'reverse_engineering', cwd: e.root, text: 'look at it' }));
+    if ('rejected' in ok) throw new Error(ok.rejected.reason);
+    expect(ok.warnings.join(' ')).not.toMatch(/cannot carry/);
+    expect(seen[0]?.toolkit).toEqual(kit);
+    expect(seen[0]?.prompt).toContain('REA rules.');
+    expect(e.store.get(ok.id)?.charter).toContain('rea');
+    await terminal(e.sup, e.store, ok.id);
+    const no = e.sup.submit(request({ route: 'cannot', activity: 'reverse_engineering', cwd: e.root, text: 'look at it' }));
+    if ('rejected' in no) throw new Error(no.rejected.reason);
+    expect(no.warnings.join(' ')).toContain('Route cannot cannot carry the tools for reverse_engineering, so the job runs without them.');
+    expect(seen[1]?.toolkit).toBeUndefined();
+    expect(seen[1]?.prompt).toContain('REA rules.');
+    await terminal(e.sup, e.store, no.id);
+    const other = submitOk(e.sup, request({ route: 'can', activity: 'write_code', cwd: e.root, text: 'x' }));
+    expect(seen[2]?.toolkit).toBeUndefined();
+    expect(seen[2]?.prompt).not.toContain('REA rules.');
+    await terminal(e.sup, e.store, other);
+  }, 90000);
 });

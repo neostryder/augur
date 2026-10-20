@@ -20,7 +20,7 @@ export const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 const now = new Date('2026-09-28T12:00:00Z');
 const RULES = { providers: { test: { defaults: { dataTier: 'internal', output: 'write_files', askFirst: false }, models: {
-  'test/fake': { id: 'fake-1', rule: { activities: { write_code: 'preferred', research: 'normal' } } },
+  'test/fake': { id: 'fake-1', rule: { activities: { write_code: 'preferred', research: 'normal', reverse_engineering: 'normal' } } },
   'test/ask': { id: 'ask-1', rule: { askFirst: true, activities: { write_code: 'normal' } } },
   'test/text': { id: 'text-1', rule: { output: 'text_only', activities: { research: 'normal', embed: 'normal', transcribe: 'normal' } } },
   'test/sandboxed': { id: 'sbx-1', rule: { sandbox: true, activities: { write_code: 'normal' } } },
