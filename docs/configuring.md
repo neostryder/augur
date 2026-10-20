@@ -273,24 +273,24 @@ Codex and the Copilot CLI add context of their own to every job. Codex turns on 
 
 ## Tools and instructions for an activity
 
-A toolkit gives the jobs of one activity a charter pack and MCP servers of their own. Toolkits live in `toolkits.json` in `~/.augur`, keyed by activity id. This one sets up REA, the reverse-engineering MCP server in `rea-agents` with 207 tools, for `reverse_engineering` jobs:
+A toolkit gives the jobs of one activity a charter pack and MCP servers of their own. Toolkits live in `toolkits.json` in `~/.augur`, keyed by activity id. This one gives `reverse_engineering` jobs a pack and an MCP server:
 
 ```json
 {
   "reverse_engineering": {
-    "pack": "rea",
+    "pack": "reverse-engineering",
     "mcp": {
-      "rea": {
+      "disassembler": {
         "command": "node",
-        "args": ["/path/to/rea-agents/scripts/rea.mjs", "mcp"],
-        "denyTools": ["start_frida_session", "instrument_with_frida"]
+        "args": ["/path/to/disassembler-server.mjs"],
+        "denyTools": ["run_target"]
       }
     }
   }
 }
 ```
 
-`pack` names a file in the charter's `packs` folder, `packs/rea.md` here, and Augur adds it to the job's charter packs. Each server under `mcp` needs a `command`. `args`, `env` (an object of variable names and values), and `denyTools` (tools of that server the job must not use) are optional. Pack and server names are 1 to 64 letters, digits, underscores, or hyphens.
+`pack` names a file in the charter's `packs` folder, `packs/reverse-engineering.md` here, and Augur adds it to the job's charter packs. Each server under `mcp` needs a `command`. `args`, `env` (an object of variable names and values), and `denyTools` (tools of that server the job must not use) are optional, and an entry may hold a pack, servers, or both. Pack and server names are 1 to 64 letters, digits, underscores, or hyphens.
 
 Augur reads the file when each job starts, so an edit applies to the next job, and with no file there are no toolkits. A pack missing from the charter folder is skipped with a note. An entry Augur cannot use, such as one with a bad name, no `command`, `args` that are not a list of text, or an unknown activity, is skipped, and the job records a warning naming it.
 
@@ -305,7 +305,7 @@ Each adapter carries the servers its own way:
 
 On Codex and Copilot the servers load for no other job. A job on a route that cannot carry its toolkit runs without the tools and records the warning "Route <route> cannot carry the tools for <activity>, so the job runs without them." The pack still goes to any adapter that gets a charter.
 
-To use the REA example, point `args` at your copy of `rea-agents`, put the instructions for REA in `packs/rea.md`, and register the `rea` server with `grok mcp add` if Grok routes take reverse-engineering work. The two denied tools are examples of REA's Frida runtime tools, which stay off by default. Removing a name from `denyTools` lets jobs use that tool.
+To use the example, point `args` at your own server, put the instructions in `packs/reverse-engineering.md`, and register the server with `grok mcp add` if Grok routes take reverse-engineering work. The denied tool is an example of a tool that runs the target program, which a job can be kept from using. Removing a name from `denyTools` lets jobs use that tool.
 
 ## Tuning the balance
 
