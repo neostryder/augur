@@ -9,6 +9,7 @@
     "opencode-sbx": { "harness": "OpenCode in Docker Sandboxes", "transport": "exec", "tested": "opencode 1.18.32 on sbx v0.45.1", "conformance": "verified", "model": "openrouter/deepseek/deepseek-v4.1-flash", "reportsUsage": true, "readTier": "prompt only", "sandboxed": true, "notes": "Runs on a copy of the workspace and returns a patch. Prompts over 8000 characters go through a task file in the copy." },
     "openai-api": { "harness": "OpenAI-style chat completions", "transport": "api", "tested": "OpenRouter, deepseek/deepseek-v4.1-flash", "conformance": "verified", "reportsUsage": true, "readTier": "no tools", "notes": "Text only. The key is read from the environment variable the route names." },
     "anthropic-api": { "harness": "Anthropic-style messages", "transport": "api", "tested": "mock server", "conformance": "unit-only", "reportsUsage": true, "readTier": "no tools", "notes": "Text only. Cache tokens are added to input." },
+    "fal-api": { "harness": "fal video queue", "transport": "api", "tested": "mock queue server", "conformance": "unit-only", "reportsUsage": true, "readTier": "no tools", "notes": "One video per job, saved in the job folder. The cost is the route's price per second times the length, checked before the job is sent." },
     "exec": { "harness": "Any command", "transport": "exec", "tested": "test harness", "conformance": "unit-only", "reportsUsage": false, "notes": "Off unless the service config lists it." }
   }
 }

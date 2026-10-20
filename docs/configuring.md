@@ -197,6 +197,24 @@ Sends one prompt to a messages endpoint and returns the text. No tools. Text fil
 | `maxImageMb` | number | The largest image attachment in megabytes. Defaults to 10. |
 | `maxAudioMb` | number | The largest audio attachment in megabytes. Defaults to 25. |
 
+#### `fal-api`: fal video
+
+Sends a prompt, and optionally a first frame, a last frame, and an audio track, to a fal video endpoint and saves the finished video in the job folder. The cost is checked against the route limit before anything is sent.
+
+| Option | Value | What it does |
+| --- | --- | --- |
+| `endpoint` (required) | text | The fal endpoint id. |
+| `usdPerSecondJson` (required) | json | A JSON object with the price in US dollars for one second of video at each resolution. Augur multiplies it by the length to check the cost before sending a job, and reports it as the job cost. |
+| `keySource` | store, env | store, the default, reads the key from this computer's key store, saved with `augur key set <route>`. env reads it from an environment variable you name. |
+| `apiKeyEnv` | text | The name of the environment variable that holds the key, when Key kept in is set to env. The key itself is never stored in a route. |
+| `resolution` | 480P, 768P, 1080P | Defaults to 768P. |
+| `duration` | number | Defaults to 5. |
+| `promptExpansion` | disabled, balanced, quality | How much fal rewrites the prompt before it makes the video. Defaults to balanced. |
+| `maxUsd` | number | A job whose estimated cost passes this is refused before it is sent. Defaults to 0.50. |
+| `timeoutS` | number | Defaults to 900. A job still waiting then is cancelled. |
+| `maxImageMb` | number | The largest image attachment in megabytes. Defaults to 10. |
+| `maxAudioMb` | number | The largest audio attachment in megabytes. Defaults to 25. |
+
 #### `exec`: Any command
 
 Runs any command the route names, with no checks on what it does. It is off unless the service settings list it.
@@ -208,6 +226,26 @@ Runs any command the route names, with no checks on what it does. It is off unle
 | `stdin` | prompt, none | Whether the command reads the prompt on standard input. |
 
 <!-- adapter-reference:end -->
+
+### Video from fal
+
+To make a video, send a `generate_video` job to a `fal-api` route with a description of the video as the prompt. The prompt goes to fal as written, with no charter in front of it. An attached image becomes the first frame and a second image the last frame, and one audio file can go along as the target audio. Text files are refused.
+
+Set the route up on the Routes page or with `augur_route_add`, then run `augur key set <route>` for the fal key and confirm the new model in Model rules. With these options the route makes 5-second clips at 768P:
+
+```json
+"options": {
+  "endpoint": "minimax/h3-max-turbo/image-to-video",
+  "usdPerSecondJson": "{\"768P\": 0.1, \"1080P\": 0.2}",
+  "resolution": "768P",
+  "duration": 5,
+  "maxUsd": 0.5
+}
+```
+
+Each job is priced before anything goes to fal, at the per-second price for its resolution times `duration`. Here that comes to $0.50, which is within `maxUsd`. Changing `resolution` to 1080P makes it $1.00, over the limit, so Augur refuses the job and sends nothing. A resolution missing from `usdPerSecondJson` is refused the same way, and the estimate is the cost the job reports.
+
+The finished video lands in the job folder as `video.mp4`, or under the file type fal reports, and the answer gives its path and the estimated cost.
 
 ## Standing instructions for every job
 
@@ -232,6 +270,42 @@ A caller adds packs with `augur run --pack code,review` or the `packs` argument 
 A rule adds its pack when every condition it sets holds. `tools` lists the tool tiers it applies to, and `cwdContains` is text the job's working folder must contain. Without `charter.json`, or with one that has no `auto` list, the only rule is the first one above, so write and full jobs get the `code` pack. An `auto` list replaces that rule, and an empty list turns the automatic packs off. A pack that is named but missing is skipped, and the job records a note saying so. The job record lists the parts that were sent and their length, and the prompt length it keeps counts only the caller's text. In a named conversation only the first turn carries the charter, because the harness still holds it on later turns.
 
 Codex and the Copilot CLI add context of their own to every job. Codex turns on features such as plugins, apps, browser use and image generation, and Copilot reads custom instruction files and loads the schemas of its built-in MCP servers. Setting `runner.ambient` to `trim` turns these off, so a one-shot job spends fewer input tokens before it starts. The default, `keep`, leaves them on. A route's `ambient` option, `keep` or `trim`, overrides the setting for that route, and the other harnesses ignore both. Each job records which one applied.
+
+## Tools and instructions for an activity
+
+A toolkit gives the jobs of one activity a charter pack and MCP servers of their own. Toolkits live in `toolkits.json` in `~/.augur`, keyed by activity id. This one sets up REA, the reverse-engineering MCP server in `rea-agents` with 207 tools, for `reverse_engineering` jobs:
+
+```json
+{
+  "reverse_engineering": {
+    "pack": "rea",
+    "mcp": {
+      "rea": {
+        "command": "node",
+        "args": ["/path/to/rea-agents/scripts/rea.mjs", "mcp"],
+        "denyTools": ["start_frida_session", "instrument_with_frida"]
+      }
+    }
+  }
+}
+```
+
+`pack` names a file in the charter's `packs` folder, `packs/rea.md` here, and Augur adds it to the job's charter packs. Each server under `mcp` needs a `command`. `args`, `env` (an object of variable names and values), and `denyTools` (tools of that server the job must not use) are optional. Pack and server names are 1 to 64 letters, digits, underscores, or hyphens.
+
+Augur reads the file when each job starts, so an edit applies to the next job, and with no file there are no toolkits. A pack missing from the charter folder is skipped with a note. An entry Augur cannot use, such as one with a bad name, no `command`, `args` that are not a list of text, or an unknown activity, is skipped, and the job records a warning naming it.
+
+Each adapter carries the servers its own way:
+
+| Adapter | How the job gets the servers |
+| --- | --- |
+| `codex-exec` | Added for that job through `-c mcp_servers.<name>...` overrides, with `denyTools` passed as `disabled_tools`. |
+| `copilot-exec` | Added for that job through `--additional-mcp-config`, with one `--deny-tool` for each denied tool. |
+| `grok-exec` | The Grok CLI has no per-run option for servers, so register each server once with `grok mcp add`. Every Grok job still passes the denied tools with `--deny`. |
+| Any other | The API adapters, `exec`, Hermes, and the sandboxed adapters cannot carry the servers. |
+
+On Codex and Copilot the servers load for no other job. A job on a route that cannot carry its toolkit runs without the tools and records the warning "Route <route> cannot carry the tools for <activity>, so the job runs without them." The pack still goes to any adapter that gets a charter.
+
+To use the REA example, point `args` at your copy of `rea-agents`, put the instructions for REA in `packs/rea.md`, and register the `rea` server with `grok mcp add` if Grok routes take reverse-engineering work. The two denied tools are examples of REA's Frida runtime tools, which stay off by default. Removing a name from `denyTools` lets jobs use that tool.
 
 ## Tuning the balance
 

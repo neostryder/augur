@@ -29,6 +29,7 @@ export const ACTIVITY_TEXT: Record<ActivityId, string> = {
   embed: 'Turning text into embedding vectors for search or comparison.',
   transcribe: 'Turning a recording of speech into text.',
   translate: 'Translating text from one language to another.',
+  reverse_engineering: 'Taking apart a shipped program, package or web app, such as a binary, an APK, an Electron app or a website bundle, to learn what it does and how, with decompilers and runtime capture.',
 };
 
 export const DATA_TEXT: Record<DataTier, string> = {

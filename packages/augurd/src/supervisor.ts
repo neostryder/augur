@@ -16,6 +16,7 @@ import { buildEnv } from './env.js';
 import type { Store } from './store.js';
 import type { DecisionLog } from './decisions.js';
 import { buildCharter, resolveAmbient, resolveCharterDir } from './charter.js';
+import { loadToolkits } from './toolkits.js';
 import { MAX_HOPS, classifyFailure } from './failover.js';
 import { augurHome, scriptPath } from './paths.js';
 import { hasStoredKey } from './secrets.js';
@@ -194,13 +195,17 @@ export class Supervisor {
     const ambient = resolveAmbient(route.options?.ambient, this.d.config.runner.ambient);
     // A resumed conversation already carries the charter from its first turn.
     const skipCharter = req.noCharter === true || adapter.charterEngine === null || conv.resume?.fresh === false;
+    // The activity's toolkit adds its pack to the charter and its MCP servers to a harness that can carry them for one job.
+    const toolkits = loadToolkits(this.d.home ?? augurHome(this.d.env)), kit = toolkits.kits[req.activity];
+    for (const note of toolkits.notes) warnings.push(note);
+    if (kit && Object.keys(kit.mcp).length && !adapter.toolkit) warnings.push(`Route ${req.route} cannot carry the tools for ${req.activity}, so the job runs without them.`);
     const charter = skipCharter ? null : buildCharter({
       dir: resolveCharterDir(this.d.config.runner.charterDir, this.d.home ?? augurHome(this.d.env)),
-      engine: adapter.charterEngine, tools: req.tools, cwd: req.cwd, packs: req.packs,
+      engine: adapter.charterEngine, tools: req.tools, cwd: req.cwd, packs: [...(req.packs ?? []), ...(kit?.pack ? [kit.pack] : [])],
     });
     const sent = charter?.text ? charter.text + prompt : prompt;
     let plan: LaunchPlan;
-    try { plan = adapter.plan(req, route, { jobDir: dir, prompt: sent, workspace, ambient: this.d.config.runner.ambient, ...(conv.resume ? { resume: conv.resume } : {}), ...(attached.items.length ? { attachments: attached.items } : {}) }); } catch (e) { return reject('bad_request', `Route ${req.route}: ${(e as Error).message}`); }
+    try { plan = adapter.plan(req, route, { jobDir: dir, prompt: sent, workspace, ambient: this.d.config.runner.ambient, ...(conv.resume ? { resume: conv.resume } : {}), ...(attached.items.length ? { attachments: attached.items } : {}), ...(kit && adapter.toolkit ? { toolkit: kit } : {}) }); } catch (e) { return reject('bad_request', `Route ${req.route}: ${(e as Error).message}`); }
     if (process.platform === 'win32') {
       const len = plan.command.length + 1 + plan.args.reduce((n, a) => n + a.length + 3, 0);
       if (len > MAX_COMMAND_LINE) return reject('prompt_too_large', `The command for ${adapter.id} would be ${len} characters, over the Windows limit of about 32767. This harness takes its prompt as an argument.`);

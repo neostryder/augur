@@ -22,7 +22,8 @@
     "speech": "everyday",
     "embed": "everyday",
     "transcribe": "everyday",
-    "translate": "everyday"
+    "translate": "everyday",
+    "reverse_engineering": "deep"
   },
   "tiers": {
     "claude/live": "strong",

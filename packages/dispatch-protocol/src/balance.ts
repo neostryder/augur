@@ -131,7 +131,7 @@ export const DEFAULT_TRAINING: TrainingRules = { enabled: false, agree: 0.9, win
 /** Picks of a route that count against it: `perDay` over the last 24 hours, `perSession` within one caller session. 0 turns that limit off. */
 export interface RouteCap { perDay: number; perSession: number }
 
-const DEEP: ActivityId[] = ['write_code', 'reason_critique'];
+const DEEP: ActivityId[] = ['write_code', 'reason_critique', 'reverse_engineering'];
 
 export const DEFAULT_BALANCE: BalanceRules = {
   profile: 'classic',

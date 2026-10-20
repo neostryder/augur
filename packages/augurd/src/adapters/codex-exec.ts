@@ -5,6 +5,7 @@ import { tierNote } from '@augur/dispatch-protocol';
 import type { Adapter, ExtractInput, Extraction, JobRequest, LaunchPlan, PlanContext, RouteConfig, UsageReport } from '@augur/dispatch-protocol';
 import { resolveAmbient } from '../charter.js';
 import { readTextIfExists, resolveExecutable } from './util.js';
+import type { Toolkit } from '@augur/dispatch-protocol';
 
 /** The OpenAI-managed install keeps itself current and ships the host binary next to codex.exe. Prefer it over whatever is on PATH. */
 export function findMaintainedCodex(env: NodeJS.ProcessEnv = process.env): string | null {
@@ -20,6 +21,17 @@ const SANDBOXES = ['read-only', 'workspace-write', 'danger-full-access'];
 const CODEX_AMBIENT_OFF = ['plugins', 'apps', 'multi_agent', 'skill_search', 'browser_use', 'computer_use', 'in_app_browser', 'image_generation', 'goals', 'tool_suggest'];
 const versions = new Map<string, string | null>();
 
+/** `-c` overrides that start Codex with a toolkit's MCP servers for this job, and with the denied tools turned off. JSON text is valid TOML for strings and lists. */
+export function codexToolkitArgs(kit: Toolkit | undefined): string[] {
+  const out: string[] = [];
+  for (const [name, s] of Object.entries(kit?.mcp ?? {})) {
+    out.push('-c', `mcp_servers.${name}.command=${JSON.stringify(s.command)}`, '-c', `mcp_servers.${name}.args=${JSON.stringify(s.args)}`);
+    if (s.env) out.push('-c', `mcp_servers.${name}.env={${Object.entries(s.env).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(', ')}}`);
+    if (s.denyTools?.length) out.push('-c', `mcp_servers.${name}.disabled_tools=${JSON.stringify(s.denyTools)}`);
+  }
+  return out;
+}
+
 interface TurnUsage { input_tokens?: number; cached_input_tokens?: number; cache_write_input_tokens?: number; output_tokens?: number; reasoning_output_tokens?: number }
 
 /**
@@ -28,7 +40,7 @@ interface TurnUsage { input_tokens?: number; cached_input_tokens?: number; cache
  * Route options: `model`, `effort`, `command`, `prefixArgsJson` (arguments placed before `exec`, for wrappers), `sandbox`.
  */
 export const codexExec: Adapter = {
-  id: 'codex-exec', charterEngine: 'codex', transport: 'exec',
+  id: 'codex-exec', charterEngine: 'codex', transport: 'exec', toolkit: 'inject',
   capabilities: { permissionRequests: false, sessions: true, reportsUsage: true, sandboxed: false, isolatesWorkspace: false, enforcesReadOnly: false },
   envAllow: ['CODEX_HOME', 'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY', 'SSL_CERT_FILE'],
   validate(route: RouteConfig) {
@@ -46,6 +58,7 @@ export const codexExec: Adapter = {
       if (!ctx.resume.id) throw new Error(`conversation ${ctx.resume.name} has no session id to resume`);
       const resumeArgs = [...prefix, 'exec', 'resume', '--skip-git-repo-check', '--json', '-o', join(ctx.jobDir, 'last-message.txt'), ctx.resume.id];
       if (typeof o.effort === 'string') resumeArgs.push('-c', `model_reasoning_effort=${o.effort}`);
+      resumeArgs.push(...codexToolkitArgs(ctx.toolkit));
       // `-` reads the prompt from standard input, so a long one stays under the command-line limit.
       resumeArgs.push('-');
       return { command, args: resumeArgs, cwd: request.cwd, env: {}, stdin: tierNote(request.tools, ctx.prompt) };
@@ -55,6 +68,7 @@ export const codexExec: Adapter = {
     if (resolveAmbient(o.ambient, ctx.ambient) === 'trim') for (const feature of CODEX_AMBIENT_OFF) args.push('--disable', feature);
     if (typeof o.model === 'string') args.push('-m', o.model);
     if (typeof o.effort === 'string') args.push('-c', `model_reasoning_effort=${o.effort}`);
+    args.push(...codexToolkitArgs(ctx.toolkit));
     args.push('-');
     return { command, args, cwd: request.cwd, env: {}, stdin: tierNote(request.tools, ctx.prompt) };
   },

@@ -39,6 +39,12 @@ export type BudgetPeriod = typeof BUDGET_PERIODS[number];
 /** Dollars and jobs are each optional; at least one is set. Dollars count only jobs whose cost is known. */
 export interface RouteBudget { per: BudgetPeriod; usd?: number; jobs?: number }
 
+/** An MCP server a job's harness is started with. `env` values are written to the job's plan, so they are never secrets. `denyTools` are tool names the harness must not call. */
+export interface McpServer { command: string; args: string[]; env?: Record<string, string>; denyTools?: string[] }
+
+/** What goes with an activity: a charter pack of instructions, and the MCP servers the job needs. */
+export interface Toolkit { pack?: string; mcp: Record<string, McpServer> }
+
 export interface PlanContext {
   jobDir: string;
   /** The prompt for this job. A charter, when one was built, is already prefixed. Adapters add framing their harness needs, such as `tierNote`. */
@@ -51,6 +57,8 @@ export interface PlanContext {
   resume?: { id: string | null; fresh: boolean; name: string };
   /** The request's attachments, checked and resolved. Empty when there are none. */
   attachments?: ResolvedAttachment[];
+  /** The toolkit for the job's activity, when one is set. */
+  toolkit?: Toolkit;
 }
 
 export interface LaunchPlan {
@@ -102,6 +110,8 @@ export interface Adapter {
   envAllow: string[];
   /** Fail fast when the harness is missing or a route option is invalid. */
   validate(route: RouteConfig): string | null;
+  /** How the adapter carries a toolkit's MCP servers. `inject` starts the harness with them for this job. `registered` cannot, so the server must already be registered with the harness, and only the denied tools are applied. Absent means the toolkit's servers are not used. */
+  toolkit?: 'inject' | 'registered';
   /** The kinds of file this route takes with a prompt. Absent means none. */
   attachmentKinds?(route: RouteConfig): AttachmentKind[];
   plan(request: JobRequest, route: RouteConfig, ctx: PlanContext): LaunchPlan;

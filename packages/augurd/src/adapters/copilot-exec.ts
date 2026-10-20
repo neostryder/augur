@@ -3,6 +3,7 @@ import { tierNote } from '@augur/dispatch-protocol';
 import type { Adapter, ExtractInput, Extraction, JobRequest, LaunchPlan, PlanContext, RouteConfig, UsageReport } from '@augur/dispatch-protocol';
 import { resolveAmbient } from '../charter.js';
 import { optStr, resolveExecutable } from './util.js';
+import type { Toolkit } from '@augur/dispatch-protocol';
 
 /** The CLI prints its cost in AI credits. One credit is billed at a hundredth of a dollar. */
 const USD_PER_CREDIT = 0.01;
@@ -20,12 +21,20 @@ export function parseCount(text: string): number {
   return Math.round(n * (unit === 'k' ? 1e3 : unit === 'm' ? 1e6 : 1));
 }
 
+/** Flags that add a toolkit's MCP servers to this one run and deny its listed tools. The server entry is the CLI's own mcp-config shape. */
+export function copilotToolkitArgs(kit: Toolkit | undefined): string[] {
+  const servers = Object.entries(kit?.mcp ?? {});
+  if (!servers.length) return [];
+  const config = { mcpServers: Object.fromEntries(servers.map(([name, s]) => [name, { type: 'local', command: s.command, args: s.args, ...(s.env ? { env: s.env } : {}), tools: ['*'] }])) };
+  return ['--additional-mcp-config', JSON.stringify(config), ...servers.flatMap(([name, s]) => (s.denyTools ?? []).map(t => `--deny-tool=${name}(${t})`))];
+}
+
 /**
  * GitHub Copilot CLI in prompt mode. The CLI has no read-only tier here, so it always runs with all tools allowed and the tier is stated in the prompt.
  * Route options: `model`, `command`, `effort`, `envAllow`.
  */
 export const copilotExec: Adapter = {
-  id: 'copilot-exec', charterEngine: 'copilot', transport: 'exec',
+  id: 'copilot-exec', charterEngine: 'copilot', transport: 'exec', toolkit: 'inject',
   capabilities: { permissionRequests: false, sessions: false, reportsUsage: true, sandboxed: false, isolatesWorkspace: false, enforcesReadOnly: false },
   envAllow: ['COPILOT_HOME', 'GH_TOKEN', 'GITHUB_TOKEN', 'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY', 'SSL_CERT_FILE'],
   validate(route: RouteConfig) {
@@ -39,6 +48,7 @@ export const copilotExec: Adapter = {
     if (resolveAmbient(route.options?.ambient, ctx.ambient) === 'trim') args.push('--no-custom-instructions', '--disable-builtin-mcps');
     const effort = optStr(route.options, 'effort');
     if (effort) args.push('--reasoning-effort', effort);
+    args.push(...copilotToolkitArgs(ctx.toolkit));
     return { command: exe.command, args, cwd: request.cwd, env: {}, stdin: null, promptArgs: [exe.prefix.length + 1] };
   },
   extract(input: ExtractInput): Extraction {
