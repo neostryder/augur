@@ -16,6 +16,8 @@ export interface AdapterInfo {
   label: string;
   /** One or two sentences: what runs, and what it cannot be held to. */
   summary: string;
+  /** Text the generated reference shows after the options table, for behavior that no single option controls. */
+  notes?: string;
   options: OptionSpec[];
 }
 
@@ -53,6 +55,7 @@ export const ADAPTER_INFO: readonly AdapterInfo[] = [
   { id: 'opencode-sbx', label: 'OpenCode in a Docker sandbox', summary: 'Runs OpenCode inside a Docker sandbox on a copy of the job folder, and returns changes as a patch.',
     options: [sandbox, workRoot, model('The provider/model id OpenCode uses.', 'openrouter/deepseek-v4.1-flash'), effort, sbx, sbxPrefixJson, envAllow] },
   { id: 'openai-api', label: 'OpenAI-style API', summary: 'Sends one prompt to a chat completions, embeddings, or transcription endpoint and returns the text. No tools. Text files and images can go with the prompt.',
+    notes: "A local gateway such as Cogitator answers HTTP 503 with the error code `preempted` when it hands its model to a person's request. The API call then waits for the number of seconds in the `Retry-After` header (20 if the header is missing, 120 at most) and sends the request again, for up to three tries in all while the job's `timeoutS` still has time left. If every try comes back preempted, the call fails with an error message starting `preempted:`. Augur treats that error like a provider limit and moves the job to the route's fallback whatever its tool tier, since none of the job ran.",
     options: [{ key: 'baseUrl', label: 'Base URL', kind: 'text', required: true, help: 'The API address up to and including /v1. It must start with https://, or http:// for this computer or a machine on the home network.', placeholder: 'https://api.openai.com/v1' },
       model('The model id the endpoint expects.'),
       { key: 'keySource', label: 'Key kept in', kind: 'choice', choices: ['env', 'store'], help: "Pick env to read the key from an environment variable you name, or store to keep it in this computer's key store. A stored key is saved on the Routes page or with `augur key set <route>`." },

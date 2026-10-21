@@ -103,6 +103,7 @@ export function renderAdapterReference(): string {
       out.push(`| \`${o.key}\`${o.required ? ' (required)' : ''} | ${cell(kind)} | ${cell(o.help)} |`);
     }
     out.push('');
+    if (a.notes) out.push(a.notes, '');
   }
   return out.join('\n').trimEnd();
 }
