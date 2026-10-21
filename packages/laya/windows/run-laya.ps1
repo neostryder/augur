@@ -4,7 +4,7 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $defaults = @{
   LAYA_HOME = $root; HF_HOME = (Join-Path $root 'hf'); HF_HUB_OFFLINE = '1'; LAYA_REVISION = 'reviewed'
-  LAYA_HOST = '127.0.0.1'; LAYA_PORT = '8010'; LAYA_PRELOAD = '1'; PYTHONIOENCODING = 'utf-8'
+  LAYA_HOST = '127.0.0.1'; LAYA_PORT = '8010'; PYTHONIOENCODING = 'utf-8'
 }
 foreach ($k in $defaults.Keys) { Set-Item -Path "Env:$k" -Value $defaults[$k] }
 $file = Join-Path $root 'server.env'
