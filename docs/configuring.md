@@ -179,6 +179,8 @@ Sends one prompt to a chat completions, embeddings, or transcription endpoint an
 | `maxImageMb` | number | The largest image attachment in megabytes. Defaults to 10. |
 | `maxAudioMb` | number | The largest audio attachment in megabytes. Defaults to 25. |
 
+A local gateway such as Cogitator answers HTTP 503 with the error code `preempted` when it hands its model to a person's request. The API call then waits for the number of seconds in the `Retry-After` header (20 if the header is missing, 120 at most) and sends the request again, for up to three tries in all while the job's `timeoutS` still has time left. If every try comes back preempted, the call fails with an error message starting `preempted:`. Augur treats that error like a provider limit and moves the job to the route's fallback whatever its tool tier, since none of the job ran.
+
 #### `anthropic-api`: Anthropic-style API
 
 Sends one prompt to a messages endpoint and returns the text. No tools. Text files and images can go with the prompt.

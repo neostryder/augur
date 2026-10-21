@@ -88,12 +88,23 @@ if (mode === 'embeddings') {
 
 const abort = new AbortController();
 const timer = setTimeout(() => abort.abort(), timeoutS * 1000);
-let res: Response;
-// A redirect is never followed: the key rides in a header that a cross-origin redirect would carry to the new host.
-try { res = await fetch(endpoint, { method: 'POST', headers, body, signal: abort.signal, redirect: 'manual' }); }
-catch (e) { console.error(`request failed: ${(e as Error).message}`); process.exit(66); }
+const deadline = Date.now() + timeoutS * 1000;
+// Cogitator answers 503 `preempted` when a person's request needed the room, and the model it was using is not reloaded until the next request.
+// That is not a failure of the route: wait the Retry-After seconds (20 when it names none) and ask again, a few times, within the job's time limit.
+const PREEMPT_TRIES = 3, PREEMPT_WAIT_S = 20, PREEMPT_WAIT_MAX_S = 120;
+const preempted = (r: Response, t: string): boolean => r.status === 503 && (r.headers.get('x-cogitator-retry') === 'elsewhere' || /"preempted"/.test(t));
+const waitS = (r: Response): number => { const v = Number(r.headers.get('retry-after')); return Number.isFinite(v) && v > 0 ? Math.min(v, PREEMPT_WAIT_MAX_S) : PREEMPT_WAIT_S; };
+let res!: Response, text = '';
+for (let attempt = 1; ; attempt++) {
+  // A redirect is never followed: the key rides in a header that a cross-origin redirect would carry to the new host.
+  try { res = await fetch(endpoint, { method: 'POST', headers, body, signal: abort.signal, redirect: 'manual' }); text = await res.text(); }
+  catch (e) { console.error(`request failed: ${(e as Error).message}`); process.exit(66); }
+  if (!preempted(res, text)) break;
+  const wait = waitS(res);
+  if (attempt >= PREEMPT_TRIES || Date.now() + wait * 1000 >= deadline) { console.error(`preempted: the gateway gave the model to another request and asked for a retry elsewhere. ${text.slice(0, 200)}`); process.exit(69); }
+  await new Promise(done => setTimeout(done, wait * 1000));
+}
 clearTimeout(timer);
-const text = await res.text();
 if (res.status >= 300 && res.status < 400) { console.error(`HTTP ${res.status}: the endpoint redirected the request, and Augur does not follow a redirect with a key attached. Set the route's base URL to the address the redirect points to.`); process.exit(2); }
 if (!res.ok) { console.error(`HTTP ${res.status}: ${text.slice(0, 300)}`); process.exit(2); }
 

@@ -36,3 +36,29 @@ describe('api-call', () => {
     expect(elsewhere).toBe(0);
   }, 30000);
 });
+
+describe('api-call when the gateway preempts the request', () => {
+  const preempt = (res: http.ServerResponse) => { res.writeHead(503, { 'x-cogitator-retry': 'elsewhere', 'retry-after': '1', 'content-type': 'application/json' }); res.end('{"error":{"code":"preempted"}}'); };
+
+  it('waits the Retry-After seconds and asks again, then returns the answer', async () => {
+    let calls = 0;
+    const port = await listen((_req, res) => {
+      calls++;
+      if (calls === 1) return preempt(res);
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ choices: [{ message: { content: 'done' } }], usage: { prompt_tokens: 1, completion_tokens: 1 } }));
+    });
+    const r = await runCall(port, 'openai');
+    expect(r.code).toBe(0);
+    expect(calls).toBe(2);
+  }, 30000);
+
+  it('gives up after three tries with a preempted message the failover can read', async () => {
+    let calls = 0;
+    const port = await listen((_req, res) => { calls++; preempt(res); });
+    const r = await runCall(port, 'openai');
+    expect(r.code).toBe(69);
+    expect(r.err).toMatch(/^preempted:/);
+    expect(calls).toBe(3);
+  }, 30000);
+});
