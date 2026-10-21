@@ -278,6 +278,20 @@ function seatPolicy(balance?: Record<string, unknown>): PolicyFile {
 const seat = (activity: 'write_code' | 'research' | 'typed_decisions' | 'generate_images', tier: 'public' | 'internal' = 'internal', balance?: Record<string, unknown>) =>
   rank(seatPolicy(balance), null, { activity, dataTier: tier }, now);
 
+describe('the shipped rules for MiniMax', () => {
+  // The live model sync swapped MiniMax-M3 for MiniMax-M3.1-Flash, so the rules have to keep matching under either label.
+  it.each([['minimax/m3', 'MiniMax-M3'], ['minimax/MiniMax-M3', 'MiniMax-M3'], ['minimax/MiniMax-M3.1-Flash', 'MiniMax-M3.1-Flash']])('reach the model labelled %s', (label, id) => {
+    const rules = { providers: { ...SEATS.providers, minimax: { ...SEATS.providers.minimax, models: { [label]: { id, rule: { activities: all } } } } } };
+    const p = emptyPolicy(); importPolicy(p, openRules(rules), now);
+    for (const [pid, provider] of Object.entries(p.providers)) for (const l of Object.keys(provider.models)) setField(p, fieldPath(pid, l, 'status'), 'confirmed', 'test', now);
+    p.balance = {};
+    const file = buildPolicyFile(p, Object.keys(p.providers).map(pid => ({ id: pid, name: pid, metered: true })), now);
+    const research = rank(file, null, { activity: 'research', dataTier: 'internal' }, now);
+    expect(research.ranking.find(x => x.model === label)?.tilt).toBe(1.15);
+    expect(rank(file, null, { activity: 'write_code', dataTier: 'internal' }, now).seats.second).toMatchObject({ model: label });
+  });
+});
+
 describe('the seats beside a pick', () => {
   it('add a second opinion from MiniMax on a task that is not small', () => {
     const r = seat('write_code');

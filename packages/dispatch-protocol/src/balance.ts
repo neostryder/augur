@@ -142,7 +142,7 @@ export const DEFAULT_BALANCE: BalanceRules = {
   tiers: {
     'claude/live': 'strong', 'claude/opus': 'strong', 'codex/sol': 'strong', 'xai/grok': 'strong',
     'copilot/claude-opus-5.5': 'strong', 'copilot/gpt-6.1-sol': 'strong', 'copilot/grok-4.7': 'strong',
-    'claude/claude-sonnet-5-5': 'light', 'claude/sonnet': 'light', 'codex/luna': 'light', 'minimax/m3': 'light', 'deepseek/v4.1-flash': 'light',
+    'claude/claude-sonnet-5-5': 'light', 'claude/sonnet': 'light', 'codex/luna': 'light', 'minimax/*m3*': 'light', 'deepseek/v4.1-flash': 'light',
     'copilot/claude-sonnet-5.5': 'light', 'copilot/gpt-6-luna': 'light', 'copilot/gemini-3.8-flash': 'light',
   },
   exclude: ['fable', 'astra'],
@@ -154,7 +154,7 @@ export const DEFAULT_BALANCE: BalanceRules = {
   claude: { provider: 'claude', band: CLAUDE_PACE.band, reserve: CLAUDE_PACE.reserve, hot: CLAUDE_PACE.hot, behind: CLAUDE_PACE.behind },
   fallback: { providers: ['copilot'], routes: { 'deepseek/v4.1-flash': ['write_code'] }, anthropic: ['copilot/claude-opus-5.5', 'copilot/claude-sonnet-5.5'], aim: 150, cap: 250, margin: 5 },
   prefer: {
-    'minimax/m3': { long_context: 1.6, summarize_extract: 1.4 },
+    'minimax/*m3*': { long_context: 1.6, summarize_extract: 1.4 },
     'codex/luna': { review_code: 1.2, research: 1.2 },
     'claude/claude-sonnet-5-5': { review_code: 1.2, research: 1.2 },
     'claude/sonnet': { review_code: 1.2, research: 1.2 },
@@ -163,7 +163,7 @@ export const DEFAULT_BALANCE: BalanceRules = {
     'xai/grok': { write_code: 1.1, review_code: 1.1, research: 1.1 },
   },
   seats: {
-    second: { models: ['minimax/m3'], skip: ['bulk_tagging', 'typed_decisions', 'speech', 'generate_images', 'generate_video', 'read_images'] },
+    second: { models: ['minimax/*m3*'], skip: ['bulk_tagging', 'typed_decisions', 'speech', 'generate_images', 'generate_video', 'read_images'] },
     web: { research: ['chatgpt/web', 'gemini/web'], generate_images: ['chatgpt/web', 'gemini/web'], read_images: ['gemini/web', 'chatgpt/web'], long_context: ['gemini/web'] },
     shadow: 'laya/laya',
     jev: { route: 'jev/jev-latest', activities: ['typed_decisions', 'bulk_tagging'], tilt: 3 },

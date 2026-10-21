@@ -526,7 +526,7 @@ export function answersFromProfile(file: string, current: SetupCurrent): { answe
   const labels = new Set<string>();
   for (const key of Object.keys(rules.tiers)) if (!key.includes('*') && key.includes('/')) labels.add(key);
   for (const m of rules.prose.models) if (m.includes('/')) labels.add(m);
-  for (const m of rules.seats.second.models) if (m.includes('/')) labels.add(m);
+  for (const m of rules.seats.second.models) if (m.includes('/') && !m.includes('*')) labels.add(m);
   for (const entry of Object.values(data.routes ?? {})) if (typeof entry?.model === 'string' && entry.model.includes('/')) labels.add(entry.model);
   const providers: Record<string, { models: Record<string, { id: string; status: string; rule: Record<string, unknown> }> }> = {};
   for (const label of labels) {
