@@ -77,7 +77,7 @@ describe('toolkit flags per harness', () => {
     expect(codex.args.at(-1)).toBe('-');
     const copilot = copilotExec.plan(req(), { model: 'm', adapter: 'copilot-exec', options: { command: 'copilot' } }, ctx);
     expect(copilot.args).toContain('--additional-mcp-config');
-    const grok = grokExec.plan(req(), { model: 'g', adapter: 'grok-exec', options: {} }, ctx);
+    const grok = grokExec.plan(req(), { model: 'g', adapter: 'grok-exec', options: { command: 'grok' } }, ctx);
     expect(grok.args).toContain('MCPTool(rea__start_frida_session)');
     expect(grokExec.toolkit).toBe('registered');
     expect(codexExec.toolkit).toBe('inject');
