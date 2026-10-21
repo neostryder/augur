@@ -13,6 +13,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Fixed
 
+- [Visible] [TUI] **Setup onboarding no longer clips its choice explanations or step labels.** Long copy wraps within its column at wide and narrow terminal sizes, and the duplicated keyboard instructions have been removed from the screen body.
 - [Internal] [Providers] **The Laya server loads its checkpoints on the first request instead of at start.** A restart no longer holds about 4.9 GB of video memory until a request, the busy, game, and idle unloads work as before, and the server ignores `LAYA_PRELOAD` and no longer sets it.
 - [Internal] [Providers] **The Laya server now uses the temperature fitted for each question type.** It had stored the fit in the adapter's manifest and never applied it, so confidence scores came from the base checkpoint's temperature. The server reads `temperature_by_type`, restores the base values after each prediction, and reports them in its routing answer. The trainer also stops dividing logits by the base temperature, so the next adapters train on raw logits, and it refuses to fit a temperature from fewer than 50 items per type.
 
