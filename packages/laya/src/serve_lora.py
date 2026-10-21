@@ -226,15 +226,14 @@ class BrowserAccess:
 
 
 class Serving:
-    """The English checkpoint with its adapters, which can leave video memory and come back."""
+    """The English checkpoint with its adapters, which load on the first request and can leave video memory and come back."""
 
     def __init__(self, router):
         self.router = router
         self.lock = threading.RLock()
-        self.unloaded = False
+        self.unloaded = True
         self.english = None
         self.adapters = None
-        self._attach()
 
     def _attach(self):
         self.english = self.router.load("english")
@@ -243,6 +242,8 @@ class Serving:
 
     def unload(self):
         with self.lock:
+            if self.unloaded:
+                return
             self.router.unload()
             self.english = self.adapters = None
             self.unloaded = True
@@ -263,6 +264,9 @@ def main():
     from env import device as pick_device
     from loadgate import LoadGate, LoadWatch
 
+    # The stock server builds every checkpoint at start unless told not to. Nothing here holds video memory
+    # before a request needs it, so this is not left to the environment.
+    os.environ["LAYA_PRELOAD"] = "0"
     router = S.build_router()
     serving = Serving(router)
     stock_predict = router.predict
@@ -317,6 +321,8 @@ def main():
     router.predict = predict
     app = S.create_app(router)
     watch = LoadWatch(pick_device(), on_unload=serving.unload, on_reload=serving.ensure)
+    # Nothing is in memory yet. Reporting it as an idle unload keeps the server ready and leaves the first request to load.
+    watch.unloaded, watch.unload_reason = True, "idle"
 
     @app.get("/adapters")
     def list_adapters():

@@ -13,7 +13,8 @@ Survival Ascended programs), and the checkpoints leave video memory LAYA_GAME_UN
 Neither the game ending nor an idle unload brings them back on its own: the next request loads them again.
 
 After LAYA_IDLE_UNLOAD_S (600) seconds with no request the checkpoints also leave video memory, so an idle server
-holds none (0 turns this off). The first request after that loads them again before it answers.
+holds none (0 turns this off). The first request after that loads them again before it answers. A server that has just
+started holds none either: the first request loads them.
 
 GET /load reports the same state for a client that wants to choose a server before it asks.
 """
