@@ -61,6 +61,7 @@ export const ADAPTER_INFO: readonly AdapterInfo[] = [
       { key: 'keySource', label: 'Key kept in', kind: 'choice', choices: ['env', 'store'], help: "Pick env to read the key from an environment variable you name, or store to keep it in this computer's key store. A stored key is saved on the Routes page or with `augur key set <route>`." },
       { key: 'apiKeyEnv', label: 'Key variable', kind: 'text', required: true, help: 'The name of the environment variable that holds the API key, when Key kept in is set to env. The key itself is never stored in a route.' },
       { key: 'mode', label: 'Request type', kind: 'choice', choices: ['chat', 'embeddings', 'transcribe'], help: 'chat, the default, sends the prompt as a chat. embeddings sends the prompt and any text files to the embeddings endpoint and saves the vectors in the job folder. transcribe sends an audio file to the transcription endpoint.' },
+      { key: 'dimensions', label: 'Vector length', kind: 'number', help: 'For an embeddings route, the number of values in each vector. Callers read it from the route so they can tell when stored vectors no longer match.' },
       { key: 'maxTokens', label: 'Token limit', kind: 'number', help: 'Most tokens the answer may use. Defaults to 4096.' },
       { key: 'timeoutS', label: 'Timeout in seconds', kind: 'number', help: 'Defaults to 900.' }, ...apiExtras] },
   { id: 'anthropic-api', label: 'Anthropic-style API', summary: 'Sends one prompt to a messages endpoint and returns the text. No tools. Text files and images can go with the prompt.',

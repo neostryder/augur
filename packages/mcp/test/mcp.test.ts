@@ -24,7 +24,8 @@ function deps(answers: Record<string, unknown | (() => unknown)>, calls: Calls[]
     opts: {}, policyText: () => policy, session: 'mcp-test', cwd: '/work', sleep: async () => {},
   };
 }
-const ROUTES = [{ name: 'luna', model: 'codex/luna', adapter: 'codex-exec', problem: null }, { name: 'grok', model: 'xai/grok', adapter: 'exec', problem: 'no program' }];
+const TEXT_ONLY = { attachments: [], vision: false, embed: false, transcribe: false };
+const ROUTES = [{ name: 'luna', model: 'codex/luna', adapter: 'codex-exec', problem: null, capabilities: TEXT_ONLY }, { name: 'grok', model: 'xai/grok', adapter: 'exec', problem: 'no program', capabilities: TEXT_ONLY }];
 
 describe('models', () => {
   it('lists every model with its routes, and counts the ones that can take jobs', async () => {
@@ -32,7 +33,7 @@ describe('models', () => {
     expect(r.isError).toBeUndefined();
     expect(r.text).toContain('1 of 3 models can take jobs now.');
     const rows = (r.data as { models: Array<Record<string, unknown>> }).models;
-    expect(rows.find(m => m.model === 'codex/luna')?.routes).toEqual([{ name: 'luna', canRun: true, problem: null }]);
+    expect(rows.find(m => m.model === 'codex/luna')?.routes).toEqual([{ name: 'luna', canRun: true, problem: null, capabilities: TEXT_ONLY }]);
     expect(rows.find(m => m.model === 'codex/sol')?.paused).toMatchObject({ until: '2999-01-01T00:00:00Z' });
   });
   it('says so when policy.json is missing', async () => {

@@ -68,12 +68,21 @@ export function attestAgentRequest(req: JobRequest): JobRequest {
   return { ...rest, caller };
 }
 
+/** The calls the web server's dispatch endpoint passes on. They are the agent methods that run and read jobs, and nothing that edits routes or rules. */
+export const HTTP_DISPATCH_METHODS: ReadonlySet<string> = new Set(['submit', 'status', 'list', 'events', 'logs', 'result', 'cancel', 'pick', 'routes']);
+
 export class IpcServer {
   private server: net.Server | null = null;
   private sockets = new Set<net.Socket>();
   private readonly startedAt = Date.now();
   private engine: EngineLink | null = null;
   constructor(private sup: Supervisor, private store: Store, private token: string, private routes: () => Record<string, RouteConfig> | null, private rates: () => RateCard = () => ({}), private routeFile: { read(): string | null; write(text: string): void } | null = null, private agentToken: string | null = null) {}
+
+  /** A dispatch call from the web server. It runs as an agent, so the request cannot name a model or waive the pick, and only the methods in HTTP_DISPATCH_METHODS are served. */
+  async dispatch(method: string, params: unknown): Promise<unknown> {
+    if (!HTTP_DISPATCH_METHODS.has(method)) throw new Error(`No dispatch call named ${method}.`);
+    return this.handle(method as MethodName, params, 'agent');
+  }
 
   /** Serves the usage engine's methods from now on. Before this they are refused. */
   attachEngine(engine: EngineLink | null): void { this.engine = engine; }
@@ -129,7 +138,7 @@ export class IpcServer {
       case 'grade_label': return this.sup.gradeLabel(String(p.id ?? ''), String(p.label ?? ''), typeof p.note === 'string' ? p.note : undefined);
       case 'grade_report': return this.sup.gradeReport(typeof p.rubric === 'string' ? p.rubric : undefined);
       case 'balance': return this.sup.balance(typeof p.days === 'number' ? p.days : 7);
-      case 'routes': return Object.entries(this.routes() ?? {}).map(([name, r]) => ({ name, model: r.model, adapter: r.adapter, problem: this.sup.routeProblem(r as RouteConfig, name) }));
+      case 'routes': return Object.entries(this.routes() ?? {}).map(([name, r]) => ({ name, model: r.model, adapter: r.adapter, problem: this.sup.routeProblem(r as RouteConfig, name), capabilities: this.sup.routeCapabilities(r as RouteConfig) }));
       case 'route_add': return this.routeAdd(params);
       case 'engine_state': { const e = this.needEngine(); return { state: this.stateOf(p.keys as EngineKey[] | undefined), views: e.views.info() }; }
       case 'engine_call': return callEngine(this.needEngine().api, String(p.method ?? ''), Array.isArray(p.args) ? p.args : []);

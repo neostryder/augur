@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { call, readToken, ServiceError } from '../src/client.js';
 import { startService } from '../src/main.js';
-import { AGENT_METHODS, attestAgentRequest } from '../src/ipc.js';
+import { AGENT_METHODS, HTTP_DISPATCH_METHODS, attestAgentRequest } from '../src/ipc.js';
 import { JOBHOST, makeEnv, request, sleep } from './harness.js';
 import type { Env } from './harness.js';
 
@@ -29,6 +29,13 @@ async function finished(o: { dir: string; pipe: string }, id: string) {
   }
   throw new Error('job did not finish');
 }
+
+describe('the dispatch calls the web server may pass on', () => {
+  it('are agent calls that run and read jobs, and never edit routes or rules', () => {
+    for (const m of HTTP_DISPATCH_METHODS) expect(AGENT_METHODS.has(m), m).toBe(true);
+    for (const m of ['route_add', 'balance', 'pick_answer', 'human_prompt', 'engine_call']) expect(HTTP_DISPATCH_METHODS.has(m), m).toBe(false);
+  });
+});
 
 describe('the control endpoint', () => {
   it('turns away JSON that is not an object without stopping the service', async () => {
@@ -115,7 +122,7 @@ describe('the control endpoint', () => {
     const rej = await call('submit', request({ route: 'ask' }, e.root), o);
     expect(rej).toMatchObject({ rejected: { code: 'ask_first' } });
     const routes = await call('routes', undefined, o);
-    expect(routes.find(r => r.name === 'fake')).toEqual({ name: 'fake', model: 'test/fake', adapter: 'codex-exec', problem: null });
+    expect(routes.find(r => r.name === 'fake')).toEqual({ name: 'fake', model: 'test/fake', adapter: 'codex-exec', problem: null, capabilities: { attachments: [], vision: false, embed: false, transcribe: false } });
     expect(JSON.stringify(routes)).not.toContain('prefixArgs');
   });
 

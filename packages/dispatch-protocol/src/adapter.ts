@@ -34,6 +34,31 @@ export interface RouteConfig {
   fallback?: string[];
 }
 
+/** What a route can take, read from its adapter and options before a call, so a caller can skip a route that lacks what the job needs. */
+export interface RouteCapabilities {
+  /** The attachment kinds the route takes. Empty when it takes none. */
+  attachments: AttachmentKind[];
+  /** The route takes image attachments. */
+  vision: boolean;
+  /** The route turns text into vectors. */
+  embed: boolean;
+  /** The route turns an audio attachment into text. */
+  transcribe: boolean;
+  /** Largest image or audio attachment in megabytes, set only when the route takes that kind. */
+  maxImageMb?: number;
+  maxAudioMb?: number;
+  /** Most characters of prompt, with text attachments, the route takes. Absent means no limit. */
+  maxInput?: number;
+  /** Set on an embeddings route: the model and, when the route says so, the vector length. */
+  embedding?: { model: string; dimensions?: number };
+}
+
+/** A short phrase for a route's capabilities, such as `sees images, embeds` or `text prompts only`. */
+export function describeCapabilities(c: RouteCapabilities): string {
+  const parts = [c.vision && 'sees images', c.transcribe && 'transcribes audio', c.embed && 'embeds text'].filter(Boolean);
+  return parts.length ? parts.join(', ') : 'text prompts only';
+}
+
 export const BUDGET_PERIODS = ['day', 'week', 'month'] as const;
 export type BudgetPeriod = typeof BUDGET_PERIODS[number];
 /** Dollars and jobs are each optional; at least one is set. Dollars count only jobs whose cost is known. */

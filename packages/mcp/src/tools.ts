@@ -5,7 +5,7 @@ import { call as serviceCall } from '@augur/augurd/client';
 import type { ClientOptions } from '@augur/augurd/client';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES, balanceField, balanceSegments, checkEdit, editKind, isBalanceField, parseEditState, parseInbox, previewEdits } from '@augur/core';
 import type { ActivityId, DataTier, OutputMode, PolicyEdit, PolicyFile } from '@augur/core';
-import { TOOL_TIERS, checkBalanceSetting, isTerminal, rank, renderReport, renderResets, routeAddShapeProblems, seatLines } from '@augur/dispatch-protocol';
+import { TOOL_TIERS, checkBalanceSetting, describeCapabilities, isTerminal, rank, renderReport, renderResets, routeAddShapeProblems, seatLines } from '@augur/dispatch-protocol';
 import type { JobRecord, JobRequest, ToolTier, UsageSnapshot } from '@augur/dispatch-protocol';
 
 export interface ToolResult { text: string; isError?: boolean; data?: Record<string, unknown> }
@@ -78,7 +78,7 @@ export function createTools(d: McpDeps) {
         const pause = isObj(m.pause) && typeof m.pause.until === 'string' && Date.parse(m.pause.until) > Date.now() ? m.pause : null;
         rows.push({ model: label, provider: pid, status: m.status, cost: m.cost, dataTier: m.dataTier, askFirst: m.askFirst === true, output: m.output, sandbox: m.sandbox === true,
           activities: m.activities, paused: pause ? { until: pause.until, weightsChanged: isObj(pause.weights) } : null,
-          routes: (routes ?? []).filter(r => r.model === label).map(r => ({ name: r.name, canRun: r.problem === null, problem: r.problem })) });
+          routes: (routes ?? []).filter(r => r.model === label).map(r => ({ name: r.name, canRun: r.problem === null, problem: r.problem, capabilities: r.capabilities })) });
       }
     }
     const usable = rows.filter(r => r.status === 'confirmed' && !(isObj(r.paused) && r.paused.weightsChanged !== true));
@@ -185,7 +185,7 @@ export function createTools(d: McpDeps) {
   }
 
   async function routes(): Promise<ToolResult> {
-    return guarded(() => d.call('routes', undefined, d.opts), r => ({ text: r.map(x => `${x.name.padEnd(14)} ${x.model.padEnd(20)} ${x.adapter}${x.problem ? `   cannot run: ${x.problem}` : ''}`).join('\n') || 'No routes.', data: { routes: r } }));
+    return guarded(() => d.call('routes', undefined, d.opts), r => ({ text: r.map(x => `${x.name.padEnd(14)} ${x.model.padEnd(20)} ${x.adapter}   ${describeCapabilities(x.capabilities)}${x.problem ? `   cannot run: ${x.problem}` : ''}`).join('\n') || 'No routes.', data: { routes: r } }));
   }
 
   /** Adds one route. A key or a bad shape is refused here, so it never reaches the service. The service checks the rest and writes. */

@@ -6,7 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES, feedFor } from '@augur/core';
 import type { ActivityId, DataTier, EngineState, OutputMode, ProviderAdded } from '@augur/core';
-import { EXIT_CODES, TOOL_TIERS, describeFigure, exitCodeForState, isTerminal, renderReport, renderResets, seatLines } from '@augur/dispatch-protocol';
+import { EXIT_CODES, TOOL_TIERS, describeCapabilities, describeFigure, exitCodeForState, isTerminal, renderReport, renderResets, seatLines } from '@augur/dispatch-protocol';
 import type { Conversation, Depth, JobRecord, JobRequest, ToolTier } from '@augur/dispatch-protocol';
 import { STATUS_TEXT, duration, servedText, statusLine } from '@augur/view-model';
 import { bridge, stdioBridge } from './bridge.js';
@@ -237,7 +237,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
         return webCmd(rest, say, { settings, token: () => ensureToken(opts.dir, 'web-token'), rotate: () => rotateWebToken(opts.dir), addresses: () => webAddresses(settings), fingerprint: () => webCertFingerprint(opts.dir) }, io.err);
       }
       case 'claude': return await claudeCmd(rest, io, opts, say);
-      case 'routes': { const r = await call('routes', undefined, opts); say(r.map(x => `${x.name.padEnd(14)} ${x.model.padEnd(16)} ${x.adapter}${x.problem ? `   cannot run: ${x.problem}` : ''}`).join('\n') || 'No routes.', r); return 0; }
+      case 'routes': { const r = await call('routes', undefined, opts); say(r.map(x => `${x.name.padEnd(14)} ${x.model.padEnd(16)} ${x.adapter}   ${describeCapabilities(x.capabilities)}${x.problem ? `   cannot run: ${x.problem}` : ''}`).join('\n') || 'No routes.', r); return 0; }
       case 'test': return await testCmd(need(rest[0], 'route'), p, io, opts, say, json);
       case 'config': {
         if (rest[0] === 'set') {

@@ -78,10 +78,13 @@ export interface WebDeps {
   /** Folder of the built web app, or null when this build has none. */
   staticDir: string | null;
   log(message: string): void;
+  /** Runs one dispatch call for POST /api/dispatch. Absent when the service has no dispatch to offer. */
+  dispatch?(method: string, params: unknown): Promise<unknown>;
   /** The service's data folder, where web.tlsAuto keeps its certificate. */
   dir?: string;
 }
 
+const isLoopback = (addr: string | undefined): boolean => addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
 const safeEqual = (a: string, b: string): boolean => { const x = Buffer.from(a), y = Buffer.from(b); return x.length === y.length && timingSafeEqual(x, y); };
 
 export class WebServer {
@@ -159,6 +162,16 @@ export class WebServer {
       if (this.authorize(req, res)) this.call(req, res);
       return;
     }
+    if (path === '/api/dispatch') {
+      if (req.method !== 'POST') { this.send(res, 405, 'Use POST.'); return; }
+      if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) { this.send(res, 415, 'Send application/json.'); return; }
+      // A job can run tools on this computer, so only a program on this computer may start one, even with the right token.
+      // A reverse proxy on this computer connects from loopback on behalf of a remote client, and it says so in a forwarding header.
+      const proxied = ['x-forwarded-for', 'forwarded', 'x-real-ip'].some(h => req.headers[h] !== undefined);
+      if (proxied || !isLoopback(req.socket.remoteAddress)) { this.send(res, 403, 'Dispatch answers only to programs on this computer.'); return; }
+      if (this.authorize(req, res)) this.dispatchCall(req, res);
+      return;
+    }
     if (path.startsWith('/api/')) { this.send(res, 404, 'No such call.'); return; }
     if (req.method !== 'GET' && req.method !== 'HEAD') { this.send(res, 405, 'Use GET.'); return; }
     this.file(path, req.method === 'HEAD', res);
@@ -222,6 +235,23 @@ export class WebServer {
       if (typeof body !== 'object' || body === null || typeof body.method !== 'string') { this.json(res, 400, { error: 'The request needs a method.' }); return; }
       callEngine(engine.api, body.method, Array.isArray(body.args) ? body.args : [])
         .then(result => this.json(res, 200, { result: result ?? null }), (e: Error) => this.json(res, 400, { error: e.message || 'failed' }));
+    });
+  }
+
+  /** POST /api/dispatch with `{ method, params }`. The answer is `{ result }`, or `{ error }` with status 400. */
+  private dispatchCall(req: http.IncomingMessage, res: http.ServerResponse): void {
+    const chunks: Buffer[] = [];
+    let size = 0, tooBig = false;
+    req.on('data', (c: Buffer) => { size += c.length; if (size > MAX_BODY) { tooBig = true; return; } chunks.push(c); });
+    req.on('error', () => undefined);
+    req.on('end', () => {
+      if (tooBig) { this.send(res, 413, 'The request is too large.'); return; }
+      let body: { method?: unknown; params?: unknown };
+      try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as typeof body; } catch { this.json(res, 400, { error: 'The request is not JSON.' }); return; }
+      if (typeof body !== 'object' || body === null || typeof body.method !== 'string') { this.json(res, 400, { error: 'The request needs a method.' }); return; }
+      const run = this.deps.dispatch;
+      if (!run) { this.json(res, 503, { error: 'This service has no dispatch to offer.' }); return; }
+      run(body.method, body.params).then(result => this.json(res, 200, { result: result ?? null }), (e: Error) => this.json(res, 400, { error: e.message || 'failed' }));
     });
   }
 

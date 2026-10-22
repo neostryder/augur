@@ -81,7 +81,7 @@ export async function startService(opts: ServiceOptions = {}) {
   let web: WebServer | null = null;
   if (config.web.enabled) {
     ensureToken(dir, 'web-token');
-    web = new WebServer({ settings: config.web, engine: () => server.engineLink(), token: () => webToken(dir), staticDir: webDir(), log, dir });
+    web = new WebServer({ settings: config.web, engine: () => server.engineLink(), token: () => webToken(dir), staticDir: webDir(), log, dir, dispatch: (method, params) => server.dispatch(method, params) });
     try {
       const at = await web.start();
       log(`web app listening on ${at.tls ? 'https' : 'http'}://${at.host}:${at.port}`);

@@ -8,8 +8,8 @@ import type { PolicyFile } from '@augur/core';
 import { BRIEF_RESULTS, GRADE_LABELS, STUDENT_RE, classifyDepth, classifyTask, decide as decideGrade, fitScores, grade as gradeText, gradeStats, gradeTier } from '@augur/decision';
 import type { BriefResult, DecisionBackend, GradeVerdictLabel } from '@augur/decision';
 import { BUDGET_WINDOW_MS, NAMED_PROMPT_WINDOW, PICK_WINDOW_MIN, TOOL_TIERS, account, agreement, attachmentKind, balanceReport, budgetStatus, calibrateRoutes, copilotSpend, checkLineage, routeSecretName, checkNamed, checkPick, evaluate, isTerminal, learnedShares, learnedTilt, matchNamedModels, pressure, propose, rank, resolveBalance, trainingKey, usageFactors } from '@augur/dispatch-protocol';
-import type { Adapter, BalanceReport, BudgetStatus, Conversation, Depth, GradeAnswer, GradeParams, GradeReport, JobRecord, JobRequest, LaunchPlan, PickAnswer, PickParams, RateCard, Rejection, ResolvedAttachment, RouteConfig, UsageSnapshot } from '@augur/dispatch-protocol';
-import { MAX_COMMAND_LINE, optNum } from './adapters/util.js';
+import type { Adapter, BalanceReport, BudgetStatus, Conversation, Depth, GradeAnswer, GradeParams, GradeReport, JobRecord, JobRequest, LaunchPlan, PickAnswer, PickParams, RateCard, Rejection, ResolvedAttachment, RouteCapabilities, RouteConfig, UsageSnapshot } from '@augur/dispatch-protocol';
+import { MAX_COMMAND_LINE, optNum, optStr } from './adapters/util.js';
 import { realInside, realInsideAny, realOf } from './real-paths.js';
 import type { ServiceConfig } from './config.js';
 import { buildEnv } from './env.js';
@@ -97,6 +97,21 @@ export class Supervisor {
     const adapter = this.d.adapters.get(route.adapter);
     if (!adapter) return `Adapter ${route.adapter} is not enabled.`;
     return adapter.validate(route) ?? this.keyProblem(route, name);
+  }
+
+  /** What the route takes, from its adapter and options. A route whose adapter is not enabled takes nothing. */
+  routeCapabilities(route: RouteConfig): RouteCapabilities {
+    const attachments = this.d.adapters.get(route.adapter)?.attachmentKinds?.(route) ?? [];
+    const mode = optStr(route.options, 'mode');
+    const embed = mode === 'embeddings', maxInput = optNum(route.options, 'maxInput');
+    const dimensions = optNum(route.options, 'dimensions');
+    return {
+      attachments, vision: attachments.includes('image'), embed, transcribe: attachments.includes('audio'),
+      ...(attachments.includes('image') ? { maxImageMb: optMb(route, 'maxImageMb', 10) } : {}),
+      ...(attachments.includes('audio') ? { maxAudioMb: optMb(route, 'maxAudioMb', 25) } : {}),
+      ...(maxInput !== undefined ? { maxInput } : {}),
+      ...(embed ? { embedding: { model: optStr(route.options, 'model') ?? route.model, ...(dimensions !== undefined ? { dimensions } : {}) } } : {}),
+    };
   }
 
   private keyProblem(route: RouteConfig, name?: string): string | null {

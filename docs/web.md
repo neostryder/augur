@@ -134,6 +134,39 @@ Then open `https://augur.example.net/#token=...` with the token from `augur web`
 
 These examples are starting points, because proxies differ. Tailscale's `tailscale serve` is another route that needs no certificate handling.
 
+## Running jobs from another app
+
+Another program on this computer can pick models and run jobs by posting JSON to `/api/dispatch` at the web app's address. This is the same dispatch service the `augur` command and the MCP server reach through the service's pipe. It needs the web app turned on and the web token.
+
+```bash
+curl http://127.0.0.1:7420/api/dispatch \
+  -H "Authorization: Bearer <web token>" \
+  -H "Content-Type: application/json" \
+  -d '{"method": "pick", "params": {"activity": "summarize_extract", "dataTier": "internal", "session": "my-app"}}'
+```
+
+The body names a `method` and passes its `params`. Send it as `application/json`, since any other content type gets a 415. A call that runs comes back with status 200 and `{ "result": ... }`, and the result is `null` when there is nothing to return. Anything the service cannot run comes back with status 400 and `{ "error": "..." }`: a body that is not JSON, a missing method, a method outside the table below, or a call that fails. A missing or wrong token gets a 401, and after too many wrong tokens the address gets a 429 for the rest of the minute. Use POST, because every other HTTP method gets a 405. The body can be up to 8 MB, and a larger one gets a 413.
+
+Only this computer gets in. A connection from anywhere but a loopback address gets a 403. So does a request with a `Forwarded`, `X-Forwarded-For`, or `X-Real-IP` header, because a reverse proxy on this computer connects from loopback on a remote client's behalf. Loopback works with the default `web.host` of `127.0.0.1`, and with `0.0.0.0` or `::`. If `web.host` names one network address, there is no loopback address left to call.
+
+If the service serves https on loopback, use an `https://` address. That happens when `web.tlsAuto` is `on` or your own certificate is set. Give curl `--cacert` with the path of `cert.pem` in the `web-cert` folder and it trusts the service's own certificate.
+
+| Method | Params | Result |
+| --- | --- | --- |
+| `pick` | `activity` and `dataTier`, or `task`; `session` | The ranked models, their odds and routes, and the pick, recorded for that session. |
+| `submit` | A job request, described below | `{ id, warnings }` for a queued job, or `{ rejected: { code, reason } }` when the rules refuse it. |
+| `status` | `id` | The job's record, or `null` when there is no such job. |
+| `result` | `id` | `{ job, answer }`, with the answer `null` until the job has one. |
+| `events` | `id`; optional `since` | The job's events in order, each with a `seq` number. Only events after `since` are returned. |
+| `logs` | `id`; optional `stream` (`stdout` or `stderr`), `offset`, `limit` | `{ text, next, done }`, read from `offset`. |
+| `list` | optional `state`, `root`, `limit` | Recent job records. |
+| `cancel` | `id` | `{ ok, state }`, or `null` when there is no such job. |
+| `routes` | none | Each route with its model, adapter, any reason it cannot run, and what it can take. |
+
+`submit` takes the job request the `augur` command builds. It needs `route`, `activity`, `dataTier`, `tools` (`read`, `write` or `full`), `output` (`text_only`, `patch_only` or `write_files`), and `cwd`, which must be an existing absolute folder. The prompt goes in `prompt` as `{ "text": "..." }` or `{ "file": "..." }`. Give a `caller` as well, for example `{ "kind": "other", "label": "my-app", "session": "my-app" }`. The optional fields are `attach`, `timeoutS`, `packs`, `noCharter`, `conversation`, `urgent`, and `failover`. Attachments are file paths, never file contents. Each path has to sit inside `cwd` or a folder listed in `promptRoots`, just as on the command line, and the service reads the file itself.
+
+Calls here run with an agent's reach, the same as the MCP server's, even though the web token can do more elsewhere. The service drops `named`, `allow`, and the caller's `interactive` flag, so a job runs only on a model picked for the same session within the last hour. Pass the same string as `session` to `pick` and as `caller.session` to `submit`. Methods outside the table are refused, so nothing sent here can change the rules or add a route. Jobs also need "Also run jobs" turned on in Augur's settings. Until it is, `submit` comes back refused with `jobs_off`.
+
 ## What the service checks
 
 - The token travels in the Authorization header of each request and never in an address. The `#token=` part of a link stays in the browser and is not sent to the service.
@@ -141,7 +174,7 @@ These examples are starting points, because proxies differ. Tailscale's `tailsca
 - More than 10 wrong tokens from one address within a minute shut that address out until the minute is up.
 - A request whose Host header is not on the list above is refused, which stops a page on someone else's DNS name from reaching the service through your browser.
 - A request from a page on another origin is refused, and commands are accepted only as JSON.
-- The page can run only the commands the window app's panel uses. The job commands that agents use are not among them.
+- The page can run only the commands the window app's panel uses. The job commands that agents use are served only at `/api/dispatch`, which answers loopback connections alone.
 - A request body larger than 8 MB is refused.
 - Every answer carries a content security policy and headers that keep the page out of frames, and API answers are never cached.
 

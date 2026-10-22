@@ -1,6 +1,7 @@
 // Wire contract between the service and its callers. One JSON object per line over a named pipe, each request carrying the auth token.
 import type { Accounted, BudgetStatus, RouteCalibration, Totals } from './accounting.js';
 import type { RouteAddAnswer, RouteAddParams } from './route-add.js';
+import type { RouteCapabilities } from './adapter.js';
 import type { Headroom } from './pace.js';
 import type { BalanceReport } from './balance-report.js';
 import type { ResetLedger, ResetQuery } from './resets.js';
@@ -74,7 +75,7 @@ export interface Methods {
   grade_label: { params: { id: string; label: 'agree' | 'high' | 'low'; note?: string }; result: { ok: true; rubric: string; mode: 'shadow' | 'advise' | 'gate' } | { error: string } };
   /** Each rubric in the rubrics folder with its labelled grades, agreement, and the mode it has earned; `rubric` limits it to one. */
   grade_report: { params: { rubric?: string } | undefined; result: GradeReport | { error: string } };
-  routes: { params: undefined; result: Array<{ name: string; model: string; adapter: string; problem: string | null }> };
+  routes: { params: undefined; result: Array<{ name: string; model: string; adapter: string; problem: string | null; capabilities: RouteCapabilities }> };
   /** Adds one route and, optionally, its model. The model stays unreviewed. An existing route name is refused and nothing is written. */
   route_add: { params: RouteAddParams; result: RouteAddAnswer };
   /** Tokens and cost of recent jobs and totals per route, each figure labelled reported, derived or imputed. */
