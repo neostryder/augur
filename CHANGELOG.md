@@ -14,6 +14,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 - [Visible] [Providers] **An embeddings route on the `openai-api` adapter can state its vector length with the new `dimensions` option.** The value is reported beside the model in the route's capabilities.
 - [Visible] [Platform] **A local app can run jobs over HTTP with `POST /api/dispatch`.** Only connections from the same computer are accepted, and each call needs the web token. It runs as an agent, so it can submit and watch jobs and ask for a pick or the route list, but it cannot change rules.
 - [Visible] [Providers] **An embed job takes a batch and answers with the vectors.** A prompt that is a JSON array of strings becomes one input per string, with text files added after them, up to 256 inputs. The job's answer is now one JSON object with the model, the vector length, and the vectors in input order, so `augur run --wait` prints them on standard output. The copy in the job folder stays.
+- [Visible] [Providers] **A model limited to patch-only output can now run a text-only, read-only job on a plain API route.** The rule asked for an isolated workspace copy on every job for such a model, so MiniMax could not take an image job over its API. A job that asks for text only with the read tier, on an adapter that holds the read tier itself, no longer needs one. A write tier or a patch request still does.
 
 ### Fixed
 

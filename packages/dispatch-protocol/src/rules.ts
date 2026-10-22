@@ -91,7 +91,9 @@ export function evaluate(request: JobRequest, input: RuleInput): Decision {
   }
   if (request.tools === 'read' && !capabilities.enforcesReadOnly) warnings.push('This adapter asks the harness to stay read-only in the prompt and cannot enforce it. Treat the read tier as advisory.');
   if (model.output === 'patch_only' && request.output === 'write_files') return no('isolation_required', `${route.model} may return a patch only.`);
-  if ((model.output === 'patch_only' || request.output === 'patch_only') && !capabilities.isolatesWorkspace) {
+  // A text-only read job writes nothing, so a patch-only model may run it on an adapter that holds the read tier itself, such as a bare API call.
+  const readsOnly = request.output === 'text_only' && request.tools === 'read' && capabilities.enforcesReadOnly;
+  if ((model.output === 'patch_only' || request.output === 'patch_only') && !capabilities.isolatesWorkspace && !readsOnly) {
     return no('isolation_required', 'A patch-only job needs an adapter that works on a copy of the workspace.');
   }
   const overridden = !!request.allow?.includes('exhausted');
