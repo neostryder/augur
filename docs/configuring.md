@@ -170,7 +170,7 @@ Sends one prompt to a chat completions, embeddings, or transcription endpoint an
 | `model` (required) | text | The model id the endpoint expects. |
 | `keySource` | env, store | Pick env to read the key from an environment variable you name, or store to keep it in this computer's key store. A stored key is saved on the Routes page or with `augur key set <route>`. |
 | `apiKeyEnv` (required) | text | The name of the environment variable that holds the API key, when Key kept in is set to env. The key itself is never stored in a route. |
-| `mode` | chat, embeddings, transcribe | chat, the default, sends the prompt as a chat. embeddings sends the prompt and any text files to the embeddings endpoint and saves the vectors in the job folder. transcribe sends an audio file to the transcription endpoint. |
+| `mode` | chat, embeddings, transcribe | chat, the default, sends the prompt as a chat. embeddings sends the prompt and any text files to the embeddings endpoint, up to 256 inputs. A prompt that is a JSON array of strings counts as one input per string. The answer is a JSON object with the model, the vector length, and the vectors in input order, and the job folder keeps a copy. transcribe sends an audio file to the transcription endpoint. |
 | `dimensions` | number | For an embeddings route, the number of values in each vector. Callers read it from the route so they can tell when stored vectors no longer match. |
 | `maxTokens` | number | Most tokens the answer may use. Defaults to 4096. |
 | `timeoutS` | number | Defaults to 900. |

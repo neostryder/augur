@@ -343,7 +343,23 @@ describe('an API connector', () => {
       expect(m.seen[0]).toMatchObject({ url: '/embeddings', body: { model: 'x', input: ['a query', 'a document'] } });
       const file = join(e.dir, 'jobs', id, 'vectors.json');
       expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ model: 'embed-small', dimensions: 3, vectors: [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]] });
-      expect(e.sup.result(id)?.answer).toBe(`Embedded 2 inputs, 3 numbers each. The vectors are in ${file}.`);
+      expect(JSON.parse(e.sup.result(id)?.answer ?? '')).toEqual({ model: 'embed-small', dimensions: 3, vectors: [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]] });
+    });
+    it('embeds a JSON array of strings as one batch, in order, before the text files', async () => {
+      const m = await mock(() => ({ json: { model: 'embed-small', data: [{ embedding: [1] }, { embedding: [2] }, { embedding: [3] }] } }));
+      const e = env(); route(e, m.url, { mode: 'embeddings' });
+      writeFileSync(join(e.root, 'doc.txt'), 'a file');
+      const id = submitOk(e.sup, { ...textReq('chat', JSON.stringify(['one', 'two'])), activity: 'embed', cwd: e.root, attach: ['doc.txt'] });
+      await terminal(e.sup, e.store, id);
+      expect(m.seen[0]).toMatchObject({ body: { input: ['one', 'two', 'a file'] } });
+      expect(JSON.parse(e.sup.result(id)?.answer ?? '').vectors).toEqual([[1], [2], [3]]);
+    });
+    it('refuses an embed batch of more than 256 inputs', async () => {
+      const m = await mock(() => ({ json: { data: [{ embedding: [1] }] } }));
+      const e = env(); route(e, m.url, { mode: 'embeddings' });
+      const id = submitOk(e.sup, { ...textReq('chat', JSON.stringify(Array.from({ length: 257 }, (_, i) => `t${i}`))), activity: 'embed', cwd: e.root });
+      expect(await terminal(e.sup, e.store, id)).toMatchObject({ state: 'failed' });
+      expect(m.seen).toHaveLength(0);
     });
 
     it('sends one audio file to the transcription endpoint', async () => {

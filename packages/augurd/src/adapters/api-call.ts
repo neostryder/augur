@@ -1,8 +1,8 @@
 // One request to an OpenAI-style or Anthropic-style HTTP API, run as a job by the API adapters. Plain node, erasable TypeScript only.
 // The prompt arrives on standard input. The key is read from the environment variable named by --key-env, or from the key store when --key-name
 // names a secret (the Windows credential store, the macOS keychain, the Secret Service, or the user-only file named by --key-file), and is never printed.
-// --mode chat (the default) sends a chat request: text attachments are added to the prompt and images travel with it. --mode embeddings sends the prompt and the
-// text attachments as inputs and writes the vectors to --result-file. --mode transcribe sends the audio attachment to the transcription endpoint.
+// --mode chat (the default) sends a chat request: text attachments are added to the prompt and images travel with it. --mode embeddings sends the prompt (a JSON array of strings is
+// a batch) and the text attachments as inputs, answers with the vectors as one JSON object, and also writes it to --result-file. --mode transcribe sends the audio attachment to the transcription endpoint.
 // Standard output is one JSON object: { answer, usage, served }. A failure exits non-zero with a short message on standard error.
 
 import { execFileSync } from 'node:child_process';
@@ -66,8 +66,11 @@ const withTexts = promptText + texts.map(t => `\n\n--- ${t.name} ---\n${t.text}`
 
 let body: string | FormData;
 if (mode === 'embeddings') {
-  const inputs = [...(promptText.trim() ? [promptText.trim()] : []), ...texts.map(t => t.text)];
+  // A prompt that is a JSON array of strings is a batch, one input per string; any other prompt is one input.
+  const batch = (() => { try { const v: unknown = JSON.parse(promptText); return Array.isArray(v) && v.length && v.every(x => typeof x === 'string') ? v as string[] : null; } catch { return null; } })();
+  const inputs = [...(batch ?? (promptText.trim() ? [promptText.trim()] : [])), ...texts.map(t => t.text)];
   if (!inputs.length) { console.error('there is nothing to embed'); process.exit(64); }
+  if (inputs.length > 256) { console.error(`an embed job takes at most 256 inputs, and this one has ${inputs.length}`); process.exit(64); }
   body = JSON.stringify({ model, input: inputs });
 } else if (mode === 'transcribe') {
   const audio = attachments.find(a => a.kind === 'audio');
@@ -119,8 +122,9 @@ let usage: Json | null = null;
 if (mode === 'embeddings') {
   const rows = (Array.isArray(data.data) ? data.data as Json[] : []).map(r => Array.isArray(r.embedding) ? r.embedding as number[] : []);
   if (!rows.length || !rows[0]!.length) { console.error('the response held no embeddings'); process.exit(68); }
-  if (resultFile) writeFileSync(resultFile, JSON.stringify({ model: String(data.model ?? model), dimensions: rows[0]!.length, vectors: rows }));
-  answer = `Embedded ${rows.length} input${rows.length === 1 ? '' : 's'}, ${rows[0]!.length} numbers each.${resultFile ? ` The vectors are in ${resultFile}.` : ''}`;
+  const vectors = JSON.stringify({ model: String(data.model ?? model), dimensions: rows[0]!.length, vectors: rows });
+  if (resultFile) writeFileSync(resultFile, vectors);
+  answer = vectors;
   const u = obj(data.usage);
   usage = { inputTokens: num(u.prompt_tokens) || num(u.total_tokens), outputTokens: 0 };
 } else if (mode === 'transcribe') {
