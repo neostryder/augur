@@ -92,6 +92,10 @@ describe('command lines', () => {
     expect(small.args).toContain('--safe-mode');
     expect(small.promptArgs).toEqual([1]);
     expect(hermesExec.plan(req({ tools: 'full' }), r, ctx('hi')).args).toContain('--yolo');
+    const hosted = hermesExec.plan(req({ tools: 'read' }), route('hermes-exec', { model: 'z-ai/glm-5.3-flash', provider: 'openrouter', effort: 'medium', command: 'C:/h/hermes.exe' }), ctx('hi')).args;
+    expect(hosted.slice(0, 4)).toEqual(['-z', 'hi', '-m', 'z-ai/glm-5.3-flash']);
+    expect(hosted.join(' ')).toContain('--provider openrouter --reasoning medium');
+    expect(small.args).not.toContain('--provider');
     const big = hermesExec.plan(req(), r, ctx('x'.repeat(13000)));
     expect(big.files?.[0]?.name).toBe('task.md');
     expect(big.args[1]).toMatch(/^Read the file at .*task\.md in full/);
