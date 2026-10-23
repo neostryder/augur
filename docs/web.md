@@ -2,6 +2,8 @@
 
 The Augur service can serve the app the desktop panel shows to a browser on any device that can reach your computer, such as a laptop in another room or a phone on your home network. The page shows the service's usage engine the same way the terminal app does. It reads no provider itself and holds no provider login, and a change made on the page shows in the window app and the terminal app at once.
 
+The service also serves [Augur Chat](chat.md) at `/chat/`, a chat page for every chat model you have set up, and it opens with the same web token.
+
 ## How it differs from the phone relay
 
 The phone app at augur.rpgm.tools works through a relay. Your computer encrypts each update and pushes it to the relay, and the phone fetches it from there, so the phone works from anywhere and your computer only needs to come online now and then.
