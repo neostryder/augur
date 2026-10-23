@@ -4,6 +4,8 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+## [1.13.0] - 2026-10-22
+
 ### Added
 
 - [Visible] [Providers] **An API route waits out a gateway that preempts its request.** When a local gateway such as Cogitator answers 503 `preempted` because a person's request took the model, the call waits the `Retry-After` seconds and tries again up to three times, and a job that is still preempted goes to the route's fallback instead of ending as an ordinary failure.
