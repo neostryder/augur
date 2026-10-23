@@ -4,6 +4,14 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+### Added
+
+- [Visible] [Providers] **A Hermes route can name its provider and reasoning level.** The `hermes-exec` route options `provider` and `effort` are passed to Hermes as `--provider` and `--reasoning`, so a hosted model such as an OpenRouter one runs through Hermes with no sandbox.
+
+### Fixed
+
+- [Visible] [Providers] **A large or looping working directory no longer freezes the service when a sandboxed job starts.** The copy for a sandboxed job skips symlinks and junctions, and it stops with a reason that suggests a smaller `cwd` once the folder passes 20000 files or 512 MB.
+
 ## [1.13.0] - 2026-10-22
 
 ### Added
