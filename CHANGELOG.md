@@ -4,6 +4,8 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+## [1.13.1] - 2026-10-22
+
 ### Added
 
 - [Visible] [Providers] **A Hermes route can name its provider and reasoning level.** The `hermes-exec` route options `provider` and `effort` are passed to Hermes as `--provider` and `--reasoning`, so a hosted model such as an OpenRouter one runs through Hermes with no sandbox.
