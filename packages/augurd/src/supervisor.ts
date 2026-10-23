@@ -1,7 +1,7 @@
 // Accepts jobs, applies the rules, launches one runner per job and keeps the store true to what the runners leave on disk.
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { closeSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, readSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, cpSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES } from '@augur/core';
 import type { PolicyFile } from '@augur/core';
@@ -56,7 +56,25 @@ const reject = (code: Rejection['code'], reason: string): SubmitResult => ({ rej
 const COPY_EXCLUDE = new Set(['.git', 'node_modules', '.venv']);
 /** Files that usually hold secrets stay out of the copy a patch-only job works on. The copy limits what a job can change, and this keeps the obvious credentials out of its view too. */
 const SECRET_FILE = /^(\.env(\..*)?|id_(rsa|dsa|ecdsa|ed25519)|\.npmrc|\.pypirc|\.netrc|.*\.(pem|key|p12|pfx))$/i;
-const copyFilter = (src: string): boolean => { const name = basename(src); return !COPY_EXCLUDE.has(name) && !SECRET_FILE.test(name); };
+/** The most a job's working directory may hold when it is copied for a sandbox. The copy runs on the service's own thread, so a larger folder is refused up front rather than freezing every other request. */
+export const COPY_MAX_FILES = 20000;
+export const COPY_MAX_BYTES = 512 * 1024 * 1024;
+/** A filter for one copy: it leaves out secrets and build folders, skips links and junctions (a loop would never end), and stops the copy when it passes the caps. */
+export const copyFilterWithCaps = (maxFiles = COPY_MAX_FILES, maxBytes = COPY_MAX_BYTES): ((src: string) => boolean) => {
+  let files = 0, bytes = 0;
+  return (src: string): boolean => {
+    const name = basename(src);
+    if (COPY_EXCLUDE.has(name) || SECRET_FILE.test(name)) return false;
+    let st; try { st = lstatSync(src); } catch { return false; }
+    if (st.isSymbolicLink()) return false;
+    if (st.isFile()) {
+      files += 1; bytes += st.size;
+      if (files > maxFiles) throw new Error(`the working directory holds more than ${maxFiles} files; pass a smaller cwd with only what the job needs`);
+      if (bytes > maxBytes) throw new Error(`the working directory holds more than ${Math.round(maxBytes / 1024 / 1024)} MB; pass a smaller cwd with only what the job needs`);
+    }
+    return true;
+  };
+};
 const GIT = ['-c', 'core.autocrlf=false', '-c', 'core.safecrlf=false'];
 const CONVERSATION_NAME = /^[A-Za-z0-9._-]{1,64}$/;
 
@@ -553,7 +571,7 @@ export class Supervisor {
   private prepareWorkspace(rec: JobRecord, ws: string): string | null {
     try {
       mkdirSync(dirname(ws), { recursive: true });
-      cpSync(rec.cwd, ws, { recursive: true, filter: copyFilter });
+      cpSync(rec.cwd, ws, { recursive: true, filter: copyFilterWithCaps() });
     } catch (e) { return `copying the working directory failed: ${(e as Error).message}`; }
     if (!this.git(ws, ['init', '-q']).ok) return 'git could not record the starting tree';
     this.git(ws, ['add', '-A']);
