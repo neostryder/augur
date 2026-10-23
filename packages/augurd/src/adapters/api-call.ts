@@ -5,10 +5,9 @@
 // a batch) and the text attachments as inputs, answers with the vectors as one JSON object, and also writes it to --result-file. --mode transcribe sends the audio attachment to the transcription endpoint.
 // Standard output is one JSON object: { answer, usage, served }. A failure exits non-zero with a short message on standard error.
 
-import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { basename, dirname, extname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { basename, extname } from 'node:path';
+import { missingKeyMessage, resolveApiKey } from './api-key.ts';
 
 const args = process.argv.slice(2);
 const opt = (name: string): string | undefined => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
@@ -21,29 +20,8 @@ const attachments = JSON.parse(opt('--attachments-json') ?? '[]') as Attached[];
 const maxTokens = Number(opt('--max-tokens') ?? '4096'), timeoutS = Number(opt('--timeout-s') ?? '900');
 if (!shape || !url || !model || (!keyEnv && !keyName)) { console.error('missing --shape, --url, --model or --key-env'); process.exit(64); }
 
-const read = (command: string, argv: string[]): string | null => {
-  try { return execFileSync(command, argv, { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'], timeout: 15000 }); } catch { return null; }
-};
-
-function fromFile(name: string): string | null {
-  if (!keyFile || !existsSync(keyFile)) return null;
-  try { const v = (JSON.parse(readFileSync(keyFile, 'utf8')) as Record<string, unknown>)[name]; return typeof v === 'string' && v ? v : null; } catch { return null; }
-}
-
-/** The credential reader sits beside this file in an install, and in native/bin in the source tree. */
-function storedKey(name: string): string | null {
-  if (fileOnly) return fromFile(name);
-  if (process.platform === 'win32') {
-    const here = dirname(fileURLToPath(import.meta.url));
-    const helper = [join(here, 'credread.exe'), join(here, '..', '..', 'native', 'bin', 'credread.exe')].find(existsSync);
-    return helper ? read(helper, [`${name}.augur`]) : null;
-  }
-  if (process.platform === 'darwin') return read('security', ['find-generic-password', '-s', 'augur', '-a', name, '-w'])?.replace(/\n$/, '') || null;
-  return read('secret-tool', ['lookup', 'service', 'augur', 'username', name]) || fromFile(name);
-}
-
-const key = keyName ? storedKey(keyName) : process.env[keyEnv as string];
-if (!key) { console.error(keyName ? 'no key is stored for this route in the key store' : `environment variable ${keyEnv} is not set for this job`); process.exit(65); }
+const key = resolveApiKey({ ...(keyEnv ? { keyEnv } : {}), ...(keyName ? { keyName } : {}), ...(keyFile ? { keyFile } : {}), fileOnly });
+if (!key) { console.error(missingKeyMessage({ ...(keyEnv ? { keyEnv } : {}), ...(keyName ? { keyName } : {}) })); process.exit(65); }
 
 let promptText = '';
 process.stdin.setEncoding('utf8');

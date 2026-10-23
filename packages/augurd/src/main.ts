@@ -12,6 +12,7 @@ import { DecisionLog } from './decisions.js';
 import { createEngineShell } from './engine-shell.js';
 import { IpcServer, ensureToken, webToken } from './ipc.js';
 import { WebServer, webDir } from './web.js';
+import { ChatService } from './chat/service.js';
 import { writeDailyReport, writeLabels } from './balance-files.js';
 import { augurHome, dataDir, pipeName } from './paths.js';
 import { policySource, routeSource, usageSource } from './sources.js';
@@ -78,17 +79,18 @@ export async function startService(opts: ServiceOptions = {}) {
   try { await server.start(opts.pipe ?? pipeName(dir)); }
   catch (e) { engine?.stop(); await engine?.flush(); store.close(); throw e; }
   // The web app listens only when the owner turned it on. A port that is taken is logged and leaves the rest of the service running.
-  let web: WebServer | null = null;
+  let web: WebServer | null = null, chat: ChatService | null = null;
   if (config.web.enabled) {
     ensureToken(dir, 'web-token');
-    web = new WebServer({ settings: config.web, engine: () => server.engineLink(), token: () => webToken(dir), staticDir: webDir(), log, dir, dispatch: (method, params) => server.dispatch(method, params) });
+    chat = new ChatService({ dir, routes: () => routes.read(), adapters: new Set(enabledAdapters(config.adapters, local.adapters).keys()), policy: () => policy.read(), usage: () => usage.read(), log });
+    web = new WebServer({ settings: config.web, chat, engine: () => server.engineLink(), token: () => webToken(dir), staticDir: webDir(), log, dir, dispatch: (method, params) => server.dispatch(method, params) });
     try {
       const at = await web.start();
       log(`web app listening on ${at.tls ? 'https' : 'http'}://${at.host}:${at.port}`);
       if (at.fingerprint) log(`web app certificate fingerprint (SHA-256): ${at.fingerprint}`);
       if (!at.tls && !['127.0.0.1', '::1', 'localhost'].includes(at.host)) log('warning: web.tlsAuto is off, so the web app is served over plain HTTP on the network and anyone on the path can read its token. Set web.tlsAuto to auto or on, or set web.tlsCert and web.tlsKey.');
       if (!webDir()) log('warning: this build has no web app to serve, so the address answers 404.');
-    } catch (e) { log(`web app did not start: ${(e as Error).message}`); web = null; }
+    } catch (e) { log(`web app did not start: ${(e as Error).message}`); web = null; chat?.close(); chat = null; }
   }
   supervisor.reconcile();
   const timer = setInterval(() => { try { supervisor.tick(); } catch (e) { log(`tick failed: ${(e as Error).message}`); } }, 500);
@@ -103,7 +105,7 @@ export async function startService(opts: ServiceOptions = {}) {
   return {
     supervisor, store, config,
     engine, web,
-    async stop() { await web?.close(); engine?.stop(); clearInterval(timer); clearInterval(daily); clearInterval(hourly); await server.close(); await engine?.flush(); store.close(); log('stopped'); },
+    async stop() { await web?.close(); chat?.close(); engine?.stop(); clearInterval(timer); clearInterval(daily); clearInterval(hourly); await server.close(); await engine?.flush(); store.close(); log('stopped'); },
   };
 }
 

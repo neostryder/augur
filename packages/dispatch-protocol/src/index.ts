@@ -17,3 +17,4 @@ export * from './config-reference.js';
 export * from './accounting.js';
 export * from './secrets.js';
 export * from './route-add.js';
+export * from './chat.js';

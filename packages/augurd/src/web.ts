@@ -17,6 +17,9 @@ import { callEngine, type EngineKey } from '@augur/core';
 import { resetLedger } from '@augur/dispatch-protocol';
 import type { TlsAuto, WebSettings } from './config.js';
 import type { EngineLink } from './ipc.js';
+import type { ChatService } from './chat/service.js';
+import { CHAT_FILE_MAX_MB, type ChatSendParams } from '@augur/dispatch-protocol';
+import { DATA_TIERS, type DataTier } from '@augur/core';
 
 const MAX_BODY = 8 * 1024 * 1024;
 const KEEPALIVE_MS = 20_000;
@@ -82,6 +85,8 @@ export interface WebDeps {
   dispatch?(method: string, params: unknown): Promise<unknown>;
   /** The service's data folder, where web.tlsAuto keeps its certificate. */
   dir?: string;
+  /** The chat service behind /api/chat. Absent when this service has none. */
+  chat?: ChatService;
 }
 
 const isLoopback = (addr: string | undefined): boolean => addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
@@ -99,7 +104,7 @@ export class WebServer {
   private headers(extra: Record<string, string> = {}): Record<string, string> {
     return {
       'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY', 'Cross-Origin-Resource-Policy': 'same-origin',
-      'Content-Security-Policy': "default-src 'self'; connect-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      'Content-Security-Policy': "default-src 'self'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
       ...extra,
     };
   }
@@ -172,6 +177,7 @@ export class WebServer {
       if (this.authorize(req, res)) this.dispatchCall(req, res);
       return;
     }
+    if (path.startsWith('/api/chat/')) { if (this.authorize(req, res)) void this.chatRoute(req, res, url); return; }
     if (path.startsWith('/api/')) { this.send(res, 404, 'No such call.'); return; }
     if (req.method !== 'GET' && req.method !== 'HEAD') { this.send(res, 405, 'Use GET.'); return; }
     this.file(path, req.method === 'HEAD', res);
@@ -236,6 +242,107 @@ export class WebServer {
       callEngine(engine.api, body.method, Array.isArray(body.args) ? body.args : [])
         .then(result => this.json(res, 200, { result: result ?? null }), (e: Error) => this.json(res, 400, { error: e.message || 'failed' }));
     });
+  }
+
+  /** Reads a request body up to `limit` bytes. Resolves null, after answering 413, when it is larger. */
+  private readBody(req: http.IncomingMessage, res: http.ServerResponse, limit: number): Promise<Buffer | null> {
+    return new Promise(done => {
+      const chunks: Buffer[] = [];
+      let size = 0, over = false;
+      req.on('data', (c: Buffer) => { size += c.length; if (size > limit) { over = true; return; } chunks.push(c); });
+      req.on('error', () => done(null));
+      req.on('end', () => { if (over) { this.send(res, 413, 'The request is too large.'); done(null); } else done(Buffer.concat(chunks)); });
+    });
+  }
+
+  private async readJson(req: http.IncomingMessage, res: http.ServerResponse): Promise<Record<string, unknown> | null> {
+    if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) { this.send(res, 415, 'Send application/json.'); return null; }
+    const raw = await this.readBody(req, res, MAX_BODY);
+    if (!raw) return null;
+    try { const v = JSON.parse(raw.toString('utf8')) as unknown; if (typeof v === 'object' && v !== null && !Array.isArray(v)) return v as Record<string, unknown>; } catch { /* falls through */ }
+    this.json(res, 400, { error: 'The request is not a JSON object.' });
+    return null;
+  }
+
+  /** /api/chat/...: the model list, saved and temporary chats, files, and the streamed reply. Every call here has passed the token check. */
+  private async chatRoute(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    const chat = this.deps.chat;
+    if (!chat) { this.json(res, 503, { error: 'This service has no chat to offer.' }); return; }
+    const parts = url.pathname.slice('/api/chat/'.length).split('/').filter(Boolean).map(decodeURIComponent), method = req.method ?? 'GET';
+    const fail = (e: unknown) => { if (!res.headersSent) this.json(res, 400, { error: e instanceof Error ? e.message : String(e) }); else res.end(); };
+    const tier = (v: unknown): DataTier | undefined => (typeof v === 'string' && (DATA_TIERS as readonly string[]).includes(v) ? v as DataTier : undefined);
+    const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
+    const obj = (v: unknown): Record<string, unknown> | undefined => (typeof v === 'object' && v !== null && !Array.isArray(v) ? v as Record<string, unknown> : undefined);
+    try {
+      if (parts[0] === 'models' && method === 'GET') { this.json(res, 200, { models: await chat.models() }); return; }
+      if (parts[0] === 'chats') {
+        if (parts.length === 1 && method === 'GET') { this.json(res, 200, { chats: url.searchParams.has('q') ? chat.search(url.searchParams.get('q') ?? '') : chat.list() }); return; }
+        if (parts.length === 1 && method === 'POST') {
+          const b = await this.readJson(req, res);
+          if (!b) return;
+          const route = str(b.route);
+          if (!route) { this.json(res, 400, { error: 'A chat needs a route.' }); return; }
+          const settings = obj(b.settings);
+          this.json(res, 200, chat.create({ route, ...(tier(b.tier) ? { tier: tier(b.tier)! } : {}), temporary: b.temporary === true, ...(str(b.title) ? { title: str(b.title)! } : {}), ...(str(b.system) ? { system: str(b.system)! } : {}), ...(settings ? { settings } : {}) }));
+          return;
+        }
+        const id = parts[1];
+        if (id && parts.length === 2 && method === 'GET') { const c = chat.get(id); if (c) this.json(res, 200, c); else this.json(res, 404, { error: 'No such chat.' }); return; }
+        if (id && parts.length === 2 && method === 'PATCH') {
+          const b = await this.readJson(req, res);
+          if (!b) return;
+          const settings = obj(b.settings);
+          this.json(res, 200, chat.update(id, {
+            ...(str(b.title) !== undefined ? { title: str(b.title)! } : {}), ...(str(b.route) ? { route: str(b.route)! } : {}), ...(tier(b.tier) ? { tier: tier(b.tier)! } : {}),
+            ...(typeof b.pinned === 'boolean' ? { pinned: b.pinned } : {}), ...(str(b.system) !== undefined ? { system: str(b.system)! } : {}), ...(settings ? { settings } : {}),
+            ...(b.head === null || typeof b.head === 'string' ? { head: b.head as string | null } : {}),
+          }));
+          return;
+        }
+        if (id && parts.length === 2 && method === 'DELETE') { this.json(res, 200, { removed: chat.remove(id) }); return; }
+        if (id && parts[2] === 'stop' && method === 'POST') { this.json(res, 200, { stopped: chat.stop(id) }); return; }
+        if (id && parts[2] === 'files' && method === 'POST') {
+          const raw = await this.readBody(req, res, CHAT_FILE_MAX_MB * 1048576 + 1024);
+          if (!raw) return;
+          let name = 'file';
+          try { name = decodeURIComponent(String(req.headers['x-file-name'] ?? 'file')); } catch { /* keeps the plain name */ }
+          this.json(res, 200, chat.upload(id, name, String(req.headers['content-type'] ?? ''), raw));
+          return;
+        }
+      }
+      if (parts[0] === 'files' && parts[1] && method === 'GET') {
+        const f = chat.file(parts[1]);
+        if (!f) { this.send(res, 404, 'No such file.'); return; }
+        // Only images, audio and plain text play inline; anything else downloads, so an uploaded page can never run from this origin.
+        const svg = f.ref.mime === 'image/svg+xml', inline = !svg && (f.ref.kind === 'image' || f.ref.kind === 'audio' || f.ref.mime === 'text/plain');
+        res.writeHead(200, this.headers({ 'Content-Type': inline ? f.ref.mime : 'application/octet-stream', 'Cache-Control': 'private, max-age=3600', 'Content-Length': String(f.bytes.byteLength),
+          'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(f.ref.name)}` }));
+        res.end(Buffer.from(f.bytes));
+        return;
+      }
+      if (parts[0] === 'send' && method === 'POST') {
+        const b = await this.readJson(req, res);
+        if (!b) return;
+        const chatId = str(b.chat);
+        if (!chatId) { this.json(res, 400, { error: 'A send needs a chat.' }); return; }
+        const params: ChatSendParams = {
+          chat: chatId, text: str(b.text) ?? '', ...(Array.isArray(b.files) ? { files: b.files.filter((x): x is string => typeof x === 'string') } : {}),
+          ...(b.parent === null || typeof b.parent === 'string' ? { parent: b.parent as string | null } : {}), ...(str(b.retry) ? { retry: str(b.retry)! } : {}), ...(str(b.route) ? { route: str(b.route)! } : {}),
+        };
+        res.writeHead(200, this.headers({ 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' }));
+        this.streams.add(res);
+        // A browser that goes away ends the reply it was reading.
+        res.on('close', () => { this.streams.delete(res); chat.stop(chatId); });
+        for await (const ev of chat.send(params)) {
+          if (res.destroyed) break;
+          if (res.writableLength > MAX_STREAM_BACKLOG) { res.destroy(); break; }
+          res.write(JSON.stringify(ev) + '\n');
+        }
+        res.end();
+        return;
+      }
+      this.json(res, 404, { error: 'No such call.' });
+    } catch (e) { fail(e); }
   }
 
   /** POST /api/dispatch with `{ method, params }`. The answer is `{ result }`, or `{ error }` with status 400. */
