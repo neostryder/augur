@@ -27,6 +27,7 @@ function applySkin(): void {
 applySkin();
 
 const app = document.getElementById('chat')!;
+clear(app);
 const side = h('aside', { class: 'side', 'aria-label': 'Chats' });
 const main = h('main', { class: 'main' });
 const top = h('header', { class: 'top' });
@@ -95,7 +96,7 @@ async function boot(): Promise<void> {
   if (!hasToken()) { state.needsToken = true; drawGate(); }
   await start();
   const id = location.hash.slice(1);
-  if (id && id !== 'token') void openChat(id);
+  if (id) void openChat(id);
 }
 
 mountSidebar(side);
@@ -110,7 +111,11 @@ document.addEventListener('keydown', e => {
   else if (mod && e.shiftKey && e.key.toLowerCase() === 'o') { e.preventDefault(); newChat(); focusComposer(); }
   else if (mod && e.key === ',') { e.preventDefault(); openDrawer(); }
 });
-addEventListener('hashchange', () => { const id = location.hash.slice(1); if (id && id !== state.current?.id) void openChat(id); });
+addEventListener('hashchange', () => {
+  if (location.hash.startsWith('#token=')) { takeTokenFromAddress(); void boot(); return; }
+  const id = location.hash.slice(1);
+  if (id && id !== state.current?.id) void openChat(id);
+});
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => emit('prefs'));
 
 void boot().then(() => focusComposer());

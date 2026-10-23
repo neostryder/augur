@@ -14,7 +14,12 @@ let draftKey = '';
 
 const keyOf = (): string => state.current?.id ?? '';
 
-function grow(): void { area.style.height = 'auto'; area.style.height = `${Math.min(area.scrollHeight, innerHeight * 0.4)}px`; }
+function grow(): void {
+  const max = innerHeight * 0.4;
+  area.style.height = 'auto';
+  area.style.height = `${Math.min(area.scrollHeight, max)}px`;
+  area.style.overflowY = area.scrollHeight > max ? 'auto' : 'hidden';
+}
 
 function addFiles(list: Iterable<File>): void {
   const m = model(activeRoute());
@@ -76,7 +81,7 @@ export function renderComposer(): void {
   clear(bar);
   const modelChip = h('button', { class: 'chip', type: 'button', 'aria-haspopup': 'dialog', 'data-tip': 'Choose the model', on: { click: e => openModelPicker(e.currentTarget as HTMLElement, { current: activeRoute(), onPick: r => void setRoute(r), up: true }) } },
     h('span', { class: 'dot', style: { background: m ? hueOf(m.route) : 'var(--muted)' } }), h('span', { class: 'lab' }, m?.label ?? 'Choose a model'), m ? icon(m.local ? 'home' : 'cloud', 14) : null, icon('up', 14));
-  const tierChip = h('button', { class: `chip${m && !fits(m, tier) ? ' warn' : ''}`, type: 'button', 'aria-haspopup': 'menu', 'data-card-title': `Data level: ${TIER_COPY[tier].name}`, 'data-card': TIER_COPY[tier].blurb, on: { click: e => openTierMenu(e.currentTarget as HTMLElement, tier, locked, t => void setTier(t), true) } },
+  const tierChip = h('button', { class: `chip tier${m && !fits(m, tier) ? ' warn' : ''}`, type: 'button', 'aria-haspopup': 'menu', 'data-card-title': `Data level: ${TIER_COPY[tier].name}`, 'data-card': TIER_COPY[tier].blurb, on: { click: e => openTierMenu(e.currentTarget as HTMLElement, tier, locked, t => void setTier(t), true) } },
     icon('lock', 14), pips(tier), h('span', { class: 'lab' }, TIER_COPY[tier].name));
   const attach = h('button', { class: 'ib', type: 'button', 'aria-label': 'Attach files', 'data-tip': 'Attach files', on: { click: () => picker.click() } }, icon('clip'));
   bar.append(attach, modelChip, tierChip, h('span', { class: 'grow' }), sendBtn);

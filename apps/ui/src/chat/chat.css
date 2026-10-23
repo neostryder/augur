@@ -64,7 +64,8 @@ button { cursor: pointer; }
 button.chip:hover { border-color: color-mix(in srgb, var(--accent) 50%, var(--line)); color: var(--ink); }
 .chip.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, var(--line)); }
 .chip .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
-.chip .lab { overflow: hidden; text-overflow: ellipsis; }
+.chip .lab { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.chip { min-width: 0; flex: 0 1 auto; }
 .pips { display: inline-flex; gap: 2px; }
 .pips i { width: 4px; height: 12px; border-radius: 2px; background: var(--line); }
 .pips i.on { background: var(--accent); }
@@ -309,9 +310,11 @@ kbd { font: 0.9em var(--mono); background: var(--hover); border: 1px solid var(-
 /* narrow screens: the sidebar becomes a sheet */
 @media (max-width: 860px) {
   .chat-root, .chat-root.no-side { grid-template-columns: minmax(0, 1fr); }
-  .side { position: fixed; z-index: 45; top: 0; bottom: 0; left: 0; width: min(88vw, 340px); transform: translateX(-102%); transition: transform 200ms ease; box-shadow: 24px 0 60px -30px rgba(0, 0, 0, 0.6); visibility: visible; }
+  .side { position: fixed; z-index: 45; top: 0; bottom: 0; left: 0; width: min(88vw, 340px); transform: translateX(-102%); transition: transform 200ms ease, box-shadow 200ms ease; visibility: visible; }
   .chat-root.no-side .side { visibility: visible; border-right: 1px solid var(--line); }
-  .chat-root.side-open .side { transform: none; }
+  .chat-root.side-open .side { transform: none; box-shadow: 24px 0 60px -30px rgba(0, 0, 0, 0.6); }
+  .box .bar { flex-wrap: nowrap; }
+  .box .bar .chip.tier .lab { display: none; }
   .thread { padding: 12px 10px 20px; }
   .msg.assistant .body, .msg .meta, .msg .err, .think, .msg.assistant .files { padding-left: 0; margin-left: 0; }
   .think { margin-left: 0; }
