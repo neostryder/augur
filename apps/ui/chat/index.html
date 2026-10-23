@@ -13,10 +13,7 @@
   <link rel="icon" type="image/png" sizes="192x192" href="../icon-192.png">
   <link rel="apple-touch-icon" href="../apple-touch-icon.png">
   <title>Augur Chat</title>
-  <script>
-    // Before first paint, so a saved theme never flashes the other one.
-    try { var t = localStorage.getItem('augur.chat.theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (e) { /* blocked storage: follow the system */ }
-  </script>
+  <script src="../chat-theme.js"></script>
 </head>
 <body>
   <div id="chat" class="chat-root"><p class="chat-boot">Opening chat...</p></div>

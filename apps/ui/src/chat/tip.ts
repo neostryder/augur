@@ -9,6 +9,8 @@ function ensure(): HTMLElement {
 }
 
 function place(t: HTMLElement, at: DOMRect): void {
+  t.style.left = '0px';
+  t.style.top = '0px';
   const r = t.getBoundingClientRect(), pad = 8;
   let x = at.left + at.width / 2 - r.width / 2, y = at.bottom + 8;
   if (y + r.height > innerHeight - pad) y = at.top - r.height - 8;
@@ -40,5 +42,6 @@ export function installTips(): void {
   document.addEventListener('focusin', e => { const el = find(e); if (el && (e.target as HTMLElement).matches(':focus-visible')) show(el); });
   document.addEventListener('focusout', hide);
   document.addEventListener('pointerdown', hide);
+  document.addEventListener('keydown', hide, true);
   document.addEventListener('scroll', hide, true);
 }
