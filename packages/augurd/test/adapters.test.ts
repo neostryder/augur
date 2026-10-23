@@ -379,6 +379,16 @@ describe('an API connector', () => {
       expect(m.seen[0]!.raw).toContain('names: Eru');
     });
 
+    it('sends the prompt, text files and images to the moderations endpoint and returns the flags with the raw scores', async () => {
+      const m = await mock(() => ({ json: { model: 'omni-moderation-latest', results: [{ flagged: true, categories: { sexual: false, violence: true }, category_scores: { sexual: 0.21, violence: 0.93 }, category_applied_input_types: { sexual: ['image'], violence: ['text'] } }] } }));
+      const e = env(); route(e, m.url, { mode: 'moderation' });
+      writeFileSync(join(e.root, 'note.txt'), 'a note'); writeFileSync(join(e.root, 'shot.png'), png);
+      const id = submitOk(e.sup, { ...textReq('chat', 'a caption'), activity: 'moderate', cwd: e.root, attach: ['note.txt', 'shot.png'] });
+      expect((await terminal(e.sup, e.store, id)).state).toBe('completed');
+      expect(m.seen[0]).toMatchObject({ url: '/moderations', body: { model: 'x', input: [{ type: 'text', text: 'a caption' }, { type: 'text', text: 'a note' }, { type: 'image_url', image_url: { url: `data:image/png;base64,${png.toString('base64')}` } }] } });
+      expect(JSON.parse(e.sup.result(id)?.answer ?? '')).toEqual({ model: 'omni-moderation-latest', flagged: true, categories: { sexual: false, violence: true }, scores: { sexual: 0.21, violence: 0.93 }, appliedTo: { sexual: ['image'], violence: ['text'] } });
+    });
+
     it('refuses an attachment or prompt file that reaches outside the allowed folders through a link', async () => {
       const m = await mock(() => ({ json: { choices: [{ message: { content: 'x' } }] } }));
       const e = env(); route(e, m.url);
@@ -418,6 +428,10 @@ describe('an API connector', () => {
       expect(e.sup.submit({ ...textReq('chat'), activity: 'embed', cwd: e.root })).toMatchObject({ rejected: { reason: expect.stringContaining('mode is embeddings') } });
       route(e, 'http://127.0.0.1:9', { mode: 'transcribe' });
       expect(e.sup.submit({ ...textReq('chat'), activity: 'transcribe', cwd: e.root })).toMatchObject({ rejected: { reason: expect.stringContaining('exactly one audio file') } });
+      route(e, 'http://127.0.0.1:9');
+      expect(e.sup.submit({ ...textReq('chat'), activity: 'moderate', cwd: e.root })).toMatchObject({ rejected: { reason: expect.stringContaining('mode is moderation') } });
+      route(e, 'http://127.0.0.1:9', { mode: 'moderation' });
+      expect(e.sup.submit({ ...textReq('chat'), activity: 'research', cwd: e.root })).toMatchObject({ rejected: { reason: expect.stringContaining('only the moderate activity') } });
       expect(openaiApi.validate({ model: 'a/b', adapter: 'openai-api', options: { baseUrl: 'https://x/v1', model: 'm', apiKeyEnv: 'K', mode: 'speak' } })).toMatch(/mode must be/);
     });
   });

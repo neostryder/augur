@@ -33,6 +33,12 @@ describe('what a route reports it can take', () => {
     expect(describeCapabilities(c)).toBe('transcribes audio');
   });
 
+  it('reports a moderation route as one that sees images and moderates', () => {
+    const c = caps({ model: 'openai/omni-moderation-latest', adapter: 'openai-api', options: { baseUrl: 'https://api.openai.com/v1', model: 'omni-moderation-latest', mode: 'moderation' } });
+    expect(c).toMatchObject({ attachments: ['text', 'image'], vision: true, embed: false, moderate: true });
+    expect(describeCapabilities(c)).toBe('sees images, moderates content');
+  });
+
   it('says a harness route takes only a text prompt, and an unknown adapter takes nothing', () => {
     expect(caps({ model: 'codex/sol', adapter: 'codex-exec' })).toEqual({ attachments: [], vision: false, embed: false, transcribe: false });
     expect(caps({ model: 'a/b', adapter: 'not-enabled' }).attachments).toEqual([]);

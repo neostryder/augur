@@ -4,6 +4,10 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+### Added
+
+- [Visible] [Providers] **An OpenAI-style route can moderate text and images.** A route whose `mode` is `moderation` takes the new `moderate` activity and sends the prompt, text files, and images to the moderations endpoint. The answer is a JSON object with the overall `flagged` verdict, the per-category flags, and the raw per-category `scores`, so a caller can set its own threshold.
+
 ## [1.13.1] - 2026-10-22
 
 ### Added

@@ -44,6 +44,8 @@ export interface RouteCapabilities {
   embed: boolean;
   /** The route turns an audio attachment into text. */
   transcribe: boolean;
+  /** The route scores text or images for objectionable content and returns flags and raw scores. */
+  moderate?: boolean;
   /** Largest image or audio attachment in megabytes, set only when the route takes that kind. */
   maxImageMb?: number;
   maxAudioMb?: number;
@@ -55,7 +57,7 @@ export interface RouteCapabilities {
 
 /** A short phrase for a route's capabilities, such as `sees images, embeds` or `text prompts only`. */
 export function describeCapabilities(c: RouteCapabilities): string {
-  const parts = [c.vision && 'sees images', c.transcribe && 'transcribes audio', c.embed && 'embeds text'].filter(Boolean);
+  const parts = [c.vision && 'sees images', c.transcribe && 'transcribes audio', c.embed && 'embeds text', c.moderate && 'moderates content'].filter(Boolean);
   return parts.length ? parts.join(', ') : 'text prompts only';
 }
 

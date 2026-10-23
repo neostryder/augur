@@ -14,6 +14,7 @@
     "draft_prose": "everyday",
     "summarize_extract": "everyday",
     "long_context": "everyday",
+    "moderate": "everyday",
     "bulk_tagging": "everyday",
     "typed_decisions": "everyday",
     "read_images": "everyday",

@@ -22,7 +22,7 @@ const now = new Date('2026-09-28T12:00:00Z');
 const RULES = { providers: { test: { defaults: { dataTier: 'internal', output: 'write_files', askFirst: false }, models: {
   'test/fake': { id: 'fake-1', rule: { activities: { write_code: 'preferred', research: 'normal', reverse_engineering: 'normal' } } },
   'test/ask': { id: 'ask-1', rule: { askFirst: true, activities: { write_code: 'normal' } } },
-  'test/text': { id: 'text-1', rule: { output: 'text_only', activities: { research: 'normal', embed: 'normal', transcribe: 'normal' } } },
+  'test/text': { id: 'text-1', rule: { output: 'text_only', activities: { research: 'normal', embed: 'normal', transcribe: 'normal', moderate: 'normal' } } },
   'test/sandboxed': { id: 'sbx-1', rule: { sandbox: true, activities: { write_code: 'normal' } } },
   'test/public': { id: 'pub-1', rule: { dataTier: 'public', activities: { write_code: 'normal' } } },
   'test/patch': { id: 'patch-1', rule: { output: 'patch_only', sandbox: true, activities: { write_code: 'normal', research: 'normal' } } } } } } };

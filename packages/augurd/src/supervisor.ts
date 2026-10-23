@@ -124,7 +124,7 @@ export class Supervisor {
     const embed = mode === 'embeddings', maxInput = optNum(route.options, 'maxInput');
     const dimensions = optNum(route.options, 'dimensions');
     return {
-      attachments, vision: attachments.includes('image'), embed, transcribe: attachments.includes('audio'),
+      attachments, vision: attachments.includes('image'), embed, transcribe: attachments.includes('audio'), ...(mode === 'moderation' ? { moderate: true } : {}),
       ...(attachments.includes('image') ? { maxImageMb: optMb(route, 'maxImageMb', 10) } : {}),
       ...(attachments.includes('audio') ? { maxAudioMb: optMb(route, 'maxAudioMb', 25) } : {}),
       ...(maxInput !== undefined ? { maxInput } : {}),
