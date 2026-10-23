@@ -4,6 +4,14 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+### Added
+
+- [Visible] [UI] **Augur Chat is a chat page for every chat model you have set up.** The service serves it at `/chat/` beside the web app, it opens with the same web token, and a phone can add it to the home screen as an app. Models on your own network are listed first. Replies stream in as Markdown, a model's reasoning sits in a block that folds away, and each reply shows the tokens it used and its cost when known. A message can carry up to 8 attachments of 25 MB each. Saved chats are grouped by date, pinned chats stay on top, and search finds words in any message. They are stored unencrypted in the service's data folder, as [docs/chat.md](docs/chat.md) describes.
+- [Visible] [Security] **Each chat has a data level, and a chat can be temporary.** Every send is checked against the same rules as a job, and only models cleared for the chat's level (public, internal, sensitive, or regulated) can answer it. Once a chat has messages, its level can go up but not down, because its history goes to whichever model answers next. A temporary chat is kept in the service's memory only and is gone when it is deleted or the service restarts. The web token opens every saved chat.
+- [Visible] [UI] **Chats branch, and each chat keeps its own model settings.** Editing a message or writing a reply again, with the same model or another, starts a branch, and a `1/2` switcher steps between versions. The settings drawer holds a system prompt and the settings the model offers, each with a plain explanation and the model's default, and only the values you change are sent.
+- [Visible] [UI] **The chat has a command palette and keyboard shortcuts.** Ctrl+K (Cmd+K on a Mac) finds any command, recent chat, or model, and other keys stop a reply or reopen the last message for editing. Preferences cover the theme and text size along with a few display switches, and a JSON skin stored in the browser under `augur.chat.skin` re-themes every color.
+- [Internal] [Platform] **The service runs a chat service behind `/api/chat/`.** It lists the chat-capable routes with what the rules allow each, keeps saved chats in SQLite and temporary ones in memory, stores attachments, and streams each reply from a process of its own, so the provider key never enters the service process.
+
 ## [1.13.1] - 2026-10-22
 
 ### Added

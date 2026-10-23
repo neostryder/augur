@@ -347,6 +347,8 @@ The Augur service can also serve this app to a browser on any device that can re
 
 The web app is off by default. Turn it on with `augur config set web.enabled true`, restart the service with `augur service stop` and `augur service start`, then run `augur web` for the links that open it. Each link carries a web token that the page keeps in that browser, and `augur web rotate` replaces the token and signs every browser out. The service listens on `127.0.0.1:7420`, which only this computer can reach, until you change `web.host`. Whoever holds the web token can do anything the panel does, including changing settings and signing in to providers, so keep it like a password. Once `web.host` names a network address, the service serves https with a certificate it makes itself, and each browser asks you to trust it once. Set `web.tlsCert` and `web.tlsKey` to use a certificate of your own. [docs/web.md](docs/web.md) lists every setting and what the service checks.
 
+Augur Chat runs at the same address under `/chat/`. It talks to any OpenAI-style or Anthropic-style API route you have set up, and each chat goes only to models your rules clear for its data level. Saved chats are stored unencrypted in the service's data folder. [docs/chat.md](docs/chat.md) explains how to use it, including how to put it on a phone's home screen.
+
 ## Custom providers
 
 A custom provider is a short JSON definition in settings: the requests to make, how to send the key, and paths into each response for meters and balances. Paths look like `$.data.used`, can pick an array item by a field (`$.models[name=text].remaining`), and a value starting with `=` is arithmetic over paths:

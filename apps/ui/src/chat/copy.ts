@@ -2,29 +2,29 @@
 import type { DataTier } from '@augur/core';
 
 export const TIER_COPY: Record<DataTier, { name: string; blurb: string }> = {
-  public: { name: 'Public', blurb: 'Anything you would be fine posting openly. Every model that is switched on can take it.' },
-  internal: { name: 'Internal', blurb: 'Everyday personal or work text. Models you have cleared for internal use can take it.' },
-  sensitive: { name: 'Sensitive', blurb: 'Private details about people, accounts, or plans. Only models cleared for sensitive data can take it.' },
-  regulated: { name: 'Regulated', blurb: 'Records covered by rules or contracts, such as student or health data. Only models cleared for regulated data, usually ones that run here, can take it.' },
+  public: { name: 'Public', blurb: 'Anything you would be happy to post in public. Every model you have switched on can take it.' },
+  internal: { name: 'Internal', blurb: 'Ordinary work or personal text that is not secret, like drafts and notes. Your rules decide which models get it.' },
+  sensitive: { name: 'Sensitive', blurb: 'Names, accounts, money, or plans you would not want leaked. Only models your rules trust with sensitive data can take it.' },
+  regulated: { name: 'Regulated', blurb: 'Student, health, or other records that a law or a contract protects. Few models are allowed this level, usually ones that run on your own network.' },
 };
 
-export const TIER_LOCKED = 'A chat that already has messages cannot go to a lower level, because what it holds has already been sent to a model.';
+export const TIER_LOCKED = 'This chat already has messages, so its level cannot go lower. Its history goes to whichever model answers next.';
 
 export const EMPTY = {
-  title: 'What shall we work on?',
-  lead: 'Pick a model and start typing. Models that run on your own network are listed first, and a chat is only ever offered to models the rules allow for its data level.',
-  hints: 'Drop files or paste images to attach them. Press Ctrl+K for everything else.',
-  noModels: 'No chat models are set up yet. Add an OpenAI-style or Anthropic-style route in Augur and it will appear here.',
+  title: 'Start a new chat',
+  lead: 'Choose a model and a data level with the chips under the message box, then type. Models on your own network come first, and a model the rules have not cleared for this level cannot be picked.',
+  hints: 'Drop or paste files to attach them, and press Ctrl+K for every other command.',
+  noModels: 'No chat models are set up yet. Add an OpenAI-style or Anthropic-style API route in Augur, and it shows up here.',
 };
 
-export const TEMP_NOTE = 'Temporary chat: kept in memory only and gone when you close it or the service restarts.';
+export const TEMP_NOTE = 'Temporary chat: held in the service\'s memory and never saved. Deleting it or restarting the service ends it for good.';
 
-export const GATE = 'Paste the web token from Augur to open the chat. It stays in this browser only.';
+export const GATE = 'Paste the web token to open the chat. The augur web command prints it, and only this browser keeps it.';
 
 export const PREF_TIPS = {
-  motion: 'Slides, fades and the typing cursor. Turn them off if you prefer a still page.',
-  compact: 'Tighter spacing, so more of a long conversation fits on screen.',
-  thinking: 'Show a model\'s reasoning expanded as it arrives. It is always available behind a click.',
+  motion: 'Slide and fade effects, plus the typing cursor in a reply that is still arriving.',
+  compact: 'Less space between messages, so more of a long chat fits on the screen.',
+  thinking: 'Keeps a model\'s reasoning open as it arrives. With this off, the reasoning folds away once the reply starts, one click from view.',
 };
 
-export const SETTINGS_NOTE = 'Only values you change are sent. Anything you leave alone keeps the model\'s own default.';
+export const SETTINGS_NOTE = 'Only the values you change are sent. Everything else stays at the model\'s own default.';
