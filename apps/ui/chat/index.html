@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Augur Chat">
+  <meta name="description" content="Talk to any local or hosted model from one place.">
+  <link rel="manifest" href="../chat.webmanifest">
+  <link rel="icon" type="image/png" sizes="192x192" href="../icon-192.png">
+  <link rel="apple-touch-icon" href="../apple-touch-icon.png">
+  <title>Augur Chat</title>
+  <script>
+    // Before first paint, so a saved theme never flashes the other one.
+    try { var t = localStorage.getItem('augur.chat.theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (e) { /* blocked storage: follow the system */ }
+  </script>
+</head>
+<body>
+  <div id="chat" class="chat-root"><p class="chat-boot">Opening chat...</p></div>
+  <script type="module" src="../src/chat/main.ts"></script>
+</body>
+</html>

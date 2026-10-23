@@ -1,0 +1,16 @@
+{
+  "id": "augur-chat",
+  "name": "Augur Chat",
+  "short_name": "Chat",
+  "description": "Talk to any local or hosted model from one place.",
+  "start_url": "./chat/",
+  "scope": "./chat/",
+  "display": "standalone",
+  "background_color": "#0d0d0d",
+  "theme_color": "#0d0d0d",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
