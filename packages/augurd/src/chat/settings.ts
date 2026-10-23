@@ -4,41 +4,41 @@ import type { ChatSettingDef, ChatShape } from '@augur/dispatch-protocol';
 
 const SYSTEM: ChatSettingDef = {
   key: 'system', label: 'System prompt', type: 'text', default: '', via: 'messages[system]',
-  tooltip: 'Standing instructions the model follows for the whole conversation, such as a role, a tone, or rules about format. It is sent before your first message.',
+  tooltip: 'Instructions the model reads before anything else in the chat, such as "answer in Spanish" or "you are a patient tutor". Use it for anything you would otherwise repeat in every message.',
 };
 const TEMPERATURE = (max: number): ChatSettingDef => ({
-  key: 'temperature', label: 'Creativity (temperature)', type: 'number', min: 0, max, step: 0.05,
-  tooltip: 'How adventurous the wording is. Low is steady and repeatable, good for facts and code. High is varied and surprising, good for stories and brainstorming, and more likely to wander.',
+  key: 'temperature', label: 'Randomness (temperature)', type: 'number', min: 0, max, step: 0.05,
+  tooltip: 'How much chance goes into each word. Keep it low for facts and code, where you want the same answer each time. Raise it for stories or brainstorming, but very high values make a reply wander off. Adjust this or top P, not both.',
 });
 const TOP_P: ChatSettingDef = {
-  key: 'top_p', label: 'Word pool (top P)', type: 'number', min: 0, max: 1, step: 0.01,
-  tooltip: 'Keeps only the most likely next words that together add up to this share of the odds. Lower means safer, plainer choices; 1 allows everything. Change this or temperature, not both.',
+  key: 'top_p', label: 'Word choice cutoff (top P)', type: 'number', min: 0, max: 1, step: 0.01,
+  tooltip: 'Each next word comes only from the likeliest candidates, whose chances add up to this share. 1 rules nothing out, and 0.5 keeps only the top half of the odds, so the wording turns safer and plainer. Adjust this or temperature, not both.',
 };
 const MAX_TOKENS: ChatSettingDef = {
   key: 'max_tokens', label: 'Reply length limit', type: 'integer', min: 1,
-  tooltip: 'The most words-and-pieces (tokens) the model may write in one reply. Lower it to keep answers short and fast.',
+  tooltip: 'Caps how long a reply can get, counted in tokens (a token is a short word or part of a longer one). A reply that hits the cap stops mid-sentence, so raise it for long documents or code, and lower it to keep replies short and cheap.',
 };
 
 export const OPENAI_SETTINGS: ChatSettingDef[] = [
   SYSTEM, TEMPERATURE(2), TOP_P, MAX_TOKENS,
   { key: 'reasoning_effort', label: 'Reasoning effort', type: 'choice', choices: ['low', 'medium', 'high'], advanced: true,
-    tooltip: 'How long a reasoning model thinks before it answers. High is slower and costs more, and helps with hard problems. Models that do not reason ignore it or may refuse it.' },
-  { key: 'presence_penalty', label: 'Presence penalty', type: 'number', min: -2, max: 2, step: 0.1, advanced: true,
-    tooltip: 'Nudges the model toward new topics: any word already used once is a little less likely. Positive values widen the subject matter.' },
-  { key: 'frequency_penalty', label: 'Frequency penalty', type: 'number', min: -2, max: 2, step: 0.1, advanced: true,
-    tooltip: 'Reduces a word\'s chance more the more often it has already appeared. Positive values cut repetition without changing the topic.' },
-  { key: 'seed', label: 'Seed', type: 'integer', min: 0, advanced: true,
-    tooltip: 'A number that makes a reply repeatable: the same seed, prompt and settings give the same answer, as far as the provider allows. Empty picks a fresh one every time.' },
+    tooltip: 'How long a reasoning model thinks before it answers. Set it high for hard math or tricky code, where the extra time and cost pay off, and low for quick questions. A model that does not reason ignores this or answers with an error.' },
+  { key: 'presence_penalty', label: 'New topics (presence penalty)', type: 'number', min: -2, max: 2, step: 0.1, advanced: true,
+    tooltip: 'Any word that has already appeared, even once, becomes a little less likely to come up again. Raise it to push the model toward new subjects, or lower it below 0 to keep it close to what has been said.' },
+  { key: 'frequency_penalty', label: 'Less repetition (frequency penalty)', type: 'number', min: -2, max: 2, step: 0.1, advanced: true,
+    tooltip: 'A word gets less likely the more times it has already appeared. Raise it when replies keep repeating the same phrases; unlike the presence penalty, it leaves the topic alone. Below 0 it allows more repetition.' },
+  { key: 'seed', label: 'Repeatable replies (seed)', type: 'integer', min: 0, advanced: true,
+    tooltip: 'Pins the randomness to a number you pick. Send the same message again with the same seed and settings and you get the same reply, as far as the provider supports it. Leave it empty for a fresh reply each time.' },
   { key: 'stop', label: 'Stop phrases', type: 'text_list', max_items: 4, advanced: true,
-    tooltip: 'The model stops the moment it would write any of these. Useful when you want it to end at a marker, such as a blank line or the word END.' },
+    tooltip: 'The reply ends as soon as the model would write one of these, and the phrase itself is left out. Use it to cut a reply off at a marker such as END or ###. Up to four, one per line.' },
 ];
 
 export const ANTHROPIC_SETTINGS: ChatSettingDef[] = [
   SYSTEM, TEMPERATURE(1), TOP_P, { ...MAX_TOKENS, default: 4096 },
-  { key: 'top_k', label: 'Top K', type: 'integer', min: 0, max: 500, step: 1, advanced: true,
-    tooltip: 'Considers only this many of the likeliest next words at each step. Small numbers make the writing more predictable.' },
+  { key: 'top_k', label: 'Word choice count (top K)', type: 'integer', min: 0, max: 500, step: 1, advanced: true,
+    tooltip: 'Each next word comes only from this many of the likeliest candidates. At 1 the model always takes its single likeliest word, and larger numbers leave room for unusual ones. Temperature does a similar job and is easier to judge.' },
   { key: 'stop_sequences', label: 'Stop phrases', type: 'text_list', max_items: 4, advanced: true,
-    tooltip: 'The model stops the moment it would write any of these. Useful when you want it to end at a marker, such as a blank line or the word END.' },
+    tooltip: 'The reply ends as soon as the model would write one of these, and the phrase itself is left out. Use it to cut a reply off at a marker such as END or ###. Up to four, one per line.' },
 ];
 
 export const defaultSettings = (shape: ChatShape): ChatSettingDef[] => (shape === 'anthropic' ? ANTHROPIC_SETTINGS : OPENAI_SETTINGS).map(s => ({ ...s }));

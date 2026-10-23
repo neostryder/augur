@@ -69,7 +69,7 @@ export function mountSidebar(host: HTMLElement): void {
     h('div', { class: 'side-head' }, h('div', { class: 'brand' }, h('span', { class: 'mark' }), 'Augur Chat'), iconButton('close', 'Close the list', () => document.querySelector('.chat-root')?.classList.remove('side-open'), 'only-narrow')),
     h('div', { class: 'side-new' },
       h('button', { class: 'btn primary', type: 'button', on: { click: () => { newChat(); document.querySelector('.chat-root')?.classList.remove('side-open'); } } }, icon('plus', 16), 'New chat'),
-      h('button', { class: 'btn', type: 'button', 'aria-label': 'New temporary chat', 'data-card-title': 'Temporary chat', 'data-card': 'Kept in memory only. It is gone when you close it or the service restarts, and it never touches the disk.', on: { click: () => { newChat({ temporary: true }); document.querySelector('.chat-root')?.classList.remove('side-open'); } } }, icon('ghost', 16))),
+      h('button', { class: 'btn', type: 'button', 'aria-label': 'New temporary chat', 'data-card-title': 'Temporary chat', 'data-card': 'Held in the memory of the service and never saved to your chat history. Deleting it or restarting the service ends it for good.', on: { click: () => { newChat({ temporary: true }); document.querySelector('.chat-root')?.classList.remove('side-open'); } } }, icon('ghost', 16))),
     h('div', { class: 'side-search' }, icon('search', 16), search),
     list,
     h('div', { class: 'side-foot' }, h('a', { href: '../', 'data-tip': 'Usage and settings' }, 'Usage'), h('span', { class: 'grow' }), prefs));
