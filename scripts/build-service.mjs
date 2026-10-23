@@ -20,6 +20,7 @@ const entries = {
   runner: join(root, 'packages/augurd/src/runner.ts'),
   'api-call': join(root, 'packages/augurd/src/adapters/api-call.ts'),
   'fal-call': join(root, 'packages/augurd/src/adapters/fal-call.ts'),
+  'chat-call': join(root, 'packages/augurd/src/chat/call.ts'),
   augur: join(root, 'packages/dispatch-cli/src/main.ts'),
   'augur-mcp': join(root, 'packages/mcp/src/main.ts'),
   'jev-gateway': join(root, 'packages/jev-gateway/src/main.ts'),
