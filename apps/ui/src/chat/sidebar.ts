@@ -15,7 +15,7 @@ function groupName(c: ChatSummary, now: Date): string {
 }
 
 function row(c: ChatSummary & { snippet?: string }): HTMLElement {
-  const sub = c.snippet || c.preview || (model(c.route)?.label ?? c.route);
+  const sub = (c.snippet || c.preview || (model(c.route)?.label ?? c.route)).replace(/[#*_`>|~[\]]+/g, '').replace(/\s+/g, ' ').trim();
   const del = iconButton('trash', 'Delete this chat', e => {
     e.stopPropagation();
     const btn = e.currentTarget as HTMLElement;
