@@ -76,6 +76,9 @@ describe('route caps', () => {
     expect(resolveBalance({ caps: { 'codex/sol': { perDay: 2 } } }).caps['codex/sol']).toEqual({ perDay: 2, perSession: 0 });
     expect(resolveBalance({ caps: { 'codex/sol': { perDay: 6, perSession: 2 } } }).caps['codex/sol']).toEqual({ perDay: 6, perSession: 2 });
     expect(resolveBalance({ caps: { 'codex/sol': null } }).caps['codex/sol']).toBeUndefined();
+    expect(resolveBalance({ caps: { 'codex/sol': { parallel: 2.9 } } }).caps['codex/sol']).toEqual({ perDay: 0, perSession: 0, parallel: 2 });
+    expect(resolveBalance({ caps: { 'codex/sol': { parallel: 0 } } }).caps['codex/sol']).toEqual({ perDay: 0, perSession: 0 });
+    expect(resolveBalance({ caps: { 'codex/sol': { parallel: -1 } } }).caps['codex/sol']).toEqual({ perDay: 0, perSession: 0 });
     const off = rank(policy({ caps: { 'codex/sol': { perDay: 0, perSession: 0 } } }), null, { activity: 'write_code', dataTier: 'internal', depth: 'core', best: true, spent: { day: { 'codex/sol': 50 }, session: { 'codex/sol': 50 } } }, now);
     expect(off.pick).toBe('codex/sol');
   });

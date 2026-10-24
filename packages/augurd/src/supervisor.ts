@@ -7,7 +7,7 @@ import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES } from '@augur/core';
 import type { PolicyFile } from '@augur/core';
 import { BRIEF_RESULTS, GRADE_LABELS, STUDENT_RE, classifyDepth, classifyTask, decide as decideGrade, fitScores, grade as gradeText, gradeStats, gradeTier } from '@augur/decision';
 import type { BriefResult, DecisionBackend, GradeVerdictLabel } from '@augur/decision';
-import { BUDGET_WINDOW_MS, NAMED_PROMPT_WINDOW, PICK_WINDOW_MIN, TOOL_TIERS, account, agreement, attachmentKind, balanceReport, budgetStatus, calibrateRoutes, copilotSpend, checkLineage, routeSecretName, checkNamed, checkPick, evaluate, isTerminal, learnedShares, learnedTilt, matchNamedModels, pressure, propose, rank, resolveBalance, trainingKey, usageFactors } from '@augur/dispatch-protocol';
+import { BUDGET_WINDOW_MS, NAMED_PROMPT_WINDOW, PICK_WINDOW_MIN, TOOL_TIERS, account, agreement, attachmentKind, balanceReport, budgetStatus, calibrateRoutes, copilotSpend, checkLineage, routeSecretName, checkNamed, checkPick, evaluate, isTerminal, learnedShares, learnedTilt, lookup, matchNamedModels, pressure, propose, rank, resolveBalance, trainingKey, usageFactors } from '@augur/dispatch-protocol';
 import type { Adapter, BalanceReport, BudgetStatus, Conversation, Depth, GradeAnswer, GradeParams, GradeReport, JobRecord, JobRequest, LaunchPlan, PickAnswer, PickParams, RateCard, Rejection, ResolvedAttachment, RouteCapabilities, RouteConfig, UsageSnapshot } from '@augur/dispatch-protocol';
 import { MAX_COMMAND_LINE, optNum, optStr } from './adapters/util.js';
 import { realInside, realInsideAny, realOf } from './real-paths.js';
@@ -628,8 +628,46 @@ export class Supervisor {
   tick(): void {
     const store = this.d.store;
     for (const rec of store.active()) this.watch(rec);
-    const room = this.d.config.maxConcurrent - store.countActive();
-    if (room > 0) for (const id of store.queued(room)) this.launch(id);
+    let room = this.d.config.maxConcurrent - store.countActive();
+    if (room <= 0) return;
+    const gate = this.parallelGate();
+    for (const id of store.queued(gate ? 256 : room)) {
+      if (room <= 0) break;
+      const rec = gate ? store.get(id) : null;
+      if (gate && rec && !gate.admit(rec)) continue;
+      this.launch(id);
+      room--;
+    }
+  }
+
+  /** Holds a job back while its route already runs `caps.<route>.parallel` jobs. Null when no cap sets a parallel limit. A launch counts at once, so jobs queued in one tick cannot overshoot. */
+  private parallelGate(): { admit(rec: JobRecord): boolean } | null {
+    const policy = this.d.policy(), routes = this.d.routes();
+    if (!policy || !routes) return null;
+    const caps = resolveBalance((policy as { balance?: unknown }).balance).caps;
+    if (!Object.values(caps).some(c => (c.parallel ?? 0) > 0)) return null;
+    const label = (route: string): string | undefined => routes[route]?.model;
+    const limitOf = (route: string): number => {
+      const model = label(route);
+      if (!model) return 0;
+      for (const [provider, p] of Object.entries(policy.providers)) {
+        const entry = p.models[model];
+        if (entry) return lookup(caps, { label: model, provider, id: entry.id })?.parallel ?? 0;
+      }
+      return 0;
+    };
+    const running = new Map<string, number>();
+    for (const r of this.d.store.active()) { const m = label(r.route); if (m) running.set(m, (running.get(m) ?? 0) + 1); }
+    return {
+      admit: (rec: JobRecord): boolean => {
+        const limit = limitOf(rec.route), model = label(rec.route);
+        if (!limit || !model) return true;
+        const n = running.get(model) ?? 0;
+        if (n >= limit) return false;
+        running.set(model, n + 1);
+        return true;
+      },
+    };
   }
 
   private watch(rec: JobRecord): void {

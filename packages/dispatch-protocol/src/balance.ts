@@ -128,8 +128,8 @@ export interface TrainingRules {
 
 export const DEFAULT_TRAINING: TrainingRules = { enabled: false, agree: 0.9, window: 20, min: 10, spot: 10, askDepths: ['core'], askTiers: ['strong'], askRoutes: [] };
 
-/** Picks of a route that count against it: `perDay` over the last 24 hours, `perSession` within one caller session. 0 turns that limit off. */
-export interface RouteCap { perDay: number; perSession: number }
+/** Picks of a route that count against it: `perDay` over the last 24 hours, `perSession` within one caller session. `parallel` is the most jobs of the route that run at once, and the rest wait in the queue. 0 turns a limit off. */
+export interface RouteCap { perDay: number; perSession: number; parallel?: number }
 
 const DEEP: ActivityId[] = ['write_code', 'reason_critique', 'reverse_engineering'];
 
@@ -235,7 +235,8 @@ export function resolveBalance(raw: unknown): BalanceRules {
   for (const [m, v] of Object.entries(rec(s.caps))) {
     if (v === null) { delete caps[m]; continue; }
     const o = rec(v), was = caps[m] ?? { perDay: 0, perSession: 0 };
-    caps[m] = { perDay: Math.floor(zeroUp(o.perDay, was.perDay)), perSession: Math.floor(zeroUp(o.perSession, was.perSession)) };
+    const parallel = Math.floor(zeroUp(o.parallel, was.parallel ?? 0));
+    caps[m] = { perDay: Math.floor(zeroUp(o.perDay, was.perDay)), perSession: Math.floor(zeroUp(o.perSession, was.perSession)), ...(parallel > 0 ? { parallel } : {}) };
   }
   const tr = rec(s.training), tdef = d.training;
   const training: TrainingRules = {

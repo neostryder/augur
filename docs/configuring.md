@@ -371,17 +371,17 @@ To set the balance by hand, put the object in `config.json` under `policy`, with
 
 Every pick has a depth that says how much the task weighs. Routine work is glue, plumbing, renames, and boilerplate, and everyday work is review, research, summaries, and modest changes. Deep work is hard reasoning, a substantial feature, or a tricky bug. Core work is an engine, core logic, security-critical code, or anything costly to get wrong. The `tilt.<depth>.strong` and `tilt.<depth>.light` multipliers turn the depth into a lean, so under the classic profile a strong route scores 0.35 times as much on routine work and 1.6 times as much on core work. A caller sets the depth with `--depth` on `augur pick` or `depth` on `augur_pick`. Otherwise the decision backend judges it from the task description, with a keyword check when the backend gives no answer, and the activity's `depth.<activity>` setting applies when neither settles it.
 
-`caps.<route>` limits how often a route is picked: `perDay` counts the last 24 hours and `perSession` counts one caller session. A route at its limit drops out of the ranking with a `capped` reason, and a caller that names it still gets it. No route is capped until you add one.
+`caps.<route>` limits how a route is used: `perDay` counts picks in the last 24 hours, `perSession` counts picks in one caller session, and `parallel` sets how many jobs of the route run at the same time. A route at a pick limit drops out of the ranking with a `capped` reason, and a caller that names it still gets it. The parallel limit counts jobs instead of picks, so it holds when one pick starts several jobs or when a caller names the route, and a job over it waits in the queue until a running one finishes. No route is capped until you add one.
 
 Training mode checks Augur's picks with you before you trust them. With `training.enabled` on, a pick on a strong route, or on any route listed in `training.askRoutes`, comes back as a proposal (`training.askTiers` sets which tiers ask). No job can run on a proposal until it is answered. You answer it with `augur pick-answer <pick id> --model <route>`, naming either the proposed route or the one you would rather use, and `--why <text>` keeps your reason. Augur counts your answers for each kind of work, meaning an activity at one depth such as `write_code:deep`. Once a kind of work has at least 10 answers (`min`) and 90% (`agree`) of its newest 20 (`window`) agree with the proposal, it stops asking. One pick in 10 (`spot`) still asks so the count stays current, and core work on an asked route asks every time, as does anything in `askRoutes`. Running a job on a different model than an unasked pick counts against the proposal. Your past choices also nudge each route's fit for that kind of work, from 0.85 for a route you never chose to 1.15 for one you always chose. Answers come only from the command line, since the MCP server has no tool for them.
 
-This example lets `codex/sol` take six picks a day and two in one session, and turns training mode on with its default thresholds:
+This example lets `codex/sol` take six picks a day, two in one session, and run two jobs at once, and turns training mode on with its default thresholds:
 
 ```json
 {
   "policy": {
     "balance": {
-      "caps": { "codex/sol": { "perDay": 6, "perSession": 2 } },
+      "caps": { "codex/sol": { "perDay": 6, "perSession": 2, "parallel": 2 } },
       "training": { "enabled": true }
     }
   }
@@ -412,6 +412,7 @@ This example lets `codex/sol` take six picks a day and two in one session, and t
 | `tilt.core.light` | number above 0 | The score multiplier for a light route on core work. |
 | `caps.<route>.perDay` | count | The most times this route can be picked in 24 hours. At the limit it is left out of picks unless a caller names it, and picks that named it do not count. 0 turns the limit off. |
 | `caps.<route>.perSession` | count | The most times this route can be picked in one caller session. Named picks do not count here either, and 0 turns the limit off. |
+| `caps.<route>.parallel` | count | The most jobs this route runs at the same time, however many picks started them. A job over the limit waits in the queue until one finishes, and a named route is held to it too. 0 turns the limit off. |
 | `training.enabled` | true or false | Turns training mode on. A pick on a route in training.askTiers or training.askRoutes then waits for a person to confirm it or choose another route with augur pick-answer, and no job can run on it until then. Off by default. |
 | `training.agree` | number from 0 to 1 | How often your answers must match the proposal, as a share of the recent ones, before a kind of work stops asking. A kind of work is an activity at one depth, such as write_code at deep. 0.9 by default. |
 | `training.window` | number of 1 or more | How many of the newest answers for a kind of work count toward its agreement share. 20 by default. |

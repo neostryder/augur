@@ -4,6 +4,10 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+### Added
+
+- [Visible] [Platform] **A route can be limited to a number of jobs at once.** The new `caps.<route>.parallel` setting holds a route to that many running jobs, however many picks started them, and a job over the limit waits in the queue. Named routes are held to it too, which the pick limits do not do.
+
 ## [1.14.0] - 2026-10-22
 
 ### Added

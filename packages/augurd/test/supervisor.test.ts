@@ -157,6 +157,23 @@ describe('concurrency', () => {
     await until(e.sup, () => { max = Math.max(max, e.store.countActive()); return ids.every(id => e.store.get(id)!.state === 'completed'); });
     expect(max).toBeLessThanOrEqual(2);
   });
+
+  it('holds a route to its parallel limit across every route on its model, while other models run freely', async () => {
+    const e = setup({ maxConcurrent: 8 });
+    const d = (e.sup as unknown as { d: { policy: () => Record<string, unknown> | null } }).d, base = d.policy() as Record<string, unknown>;
+    d.policy = () => ({ ...base, balance: { caps: { 'test/fake': { parallel: 1 } } } });
+    const same = [submitOk(e.sup, request({ text: 'SLEEP 1', cwd: e.root })), submitOk(e.sup, request({ route: 'boss', text: 'SLEEP 1', cwd: e.root })), submitOk(e.sup, request({ text: 'SLEEP 1', cwd: e.root }))];
+    const other = submitOk(e.sup, request({ route: 'pub', dataTier: 'public', text: 'SLEEP 1', cwd: e.root }));
+    let max = 0, otherRanAlongside = false;
+    await until(e.sup, () => {
+      const running = same.filter(id => e.store.get(id)!.state === 'running').length;
+      max = Math.max(max, running);
+      if (running > 0 && e.store.get(other)!.state === 'running') otherRanAlongside = true;
+      return [...same, other].every(id => e.store.get(id)!.state === 'completed');
+    });
+    expect(max).toBe(1);
+    expect(otherRanAlongside).toBe(true);
+  });
 });
 
 describe('the service goes away and comes back', () => {
