@@ -11,6 +11,7 @@ The app covers most of this. The Rules page says what each model may do, the Rou
 | Routes | `dispatch/routes.json` in `~/.augur` | The Routes page, `augur provider add`, the `augur_route_add` tool for a new route, or by hand |
 | Service settings | Listed by `augur config` | The Service page |
 | Standing instructions for jobs, the charter | The `charter` folder in `~/.augur`, or the folder `runner.charterDir` names | By hand. [Standing instructions for every job](#standing-instructions-for-every-job) has the layout |
+| Prose requests and their drafts | `prose-queue.jsonl` in `~/.augur` | `augur prose` and the MCP prose tools. [Prose requests](#prose-requests) has the format |
 | Usage resets Augur has seen, early or on schedule, and changes in reset credits | `resets.jsonl` in the app's settings folder, beside `history.jsonl`. It only grows. | Not meant to be edited. Read it with `augur resets` |
 
 The settings folder is `%APPDATA%\com.neostryder.augur` on Windows, `~/Library/Application Support/com.neostryder.augur` on macOS and `~/.config/com.neostryder.augur` on Linux. `AUGUR_APP_DIR` moves it and `AUGUR_HOME` moves `~/.augur`. Both the app and the service write `config.json`, so close the app and run `augur service stop` before you edit it. A hand edit to `policy.json` is overwritten the next time a rule is saved.
@@ -309,6 +310,35 @@ Each adapter carries the servers its own way:
 On Codex and Copilot the servers load for no other job. A job on a route that cannot carry its toolkit runs without the tools and records the warning "Route <route> cannot carry the tools for <activity>, so the job runs without them." The pack still goes to any adapter that gets a charter.
 
 To use the example, point `args` at your own server, put the instructions in `packs/reverse-engineering.md`, and register the server with `grok mcp add` if Grok routes take reverse-engineering work. The denied tool is an example of a tool that runs the target program, which a job can be kept from using. Removing a name from `denyTools` lets jobs use that tool.
+
+## Prose requests
+
+`augur prose add` and the `augur_prose_add` tool put writing requests in a queue, and the service sends them to one route in batches. The README's [section on it](../README.md#prose-requests) has the commands. These service settings shape the batches, and `augur config set` changes them:
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `proseBatchSize` | `10` | The most normal requests in one batch, from 1 to 1000. A batch is due once this many are queued. |
+| `proseBatchHours` | `24` | Hours, from 1 to 720, that the oldest queued normal request waits before a batch is due. |
+| `proseRoute` | `claude/opus` | The route label every batch runs on. A label with no route fails the batch with a reason naming the setting. |
+| `proseAutoRun` | `false` | Lets the service start a due batch by itself. Like the other service settings, only the owner's terminal and app can change it. |
+
+The queue is `prose-queue.jsonl` in `~/.augur`, with one request per line. Augur rewrites the whole file on each change by writing a temporary file and renaming it over the old one. A request carries a data tier, `internal` unless the request gives `public`, `sensitive`, or `regulated`, and one of these statuses:
+
+| Status | Meaning |
+| --- | --- |
+| `queued` | Waiting for the next batch. |
+| `awaiting-approval` | An urgent request that needs `augur prose approve <id>` before it can run. |
+| `running` | In a submitted batch. A service restart puts it back to `queued`. |
+| `drafted` | Done. `result` holds the text, the model, the cost, and the job id. |
+| `failed` | The job failed, or the model's reply had no usable draft for this request. |
+
+Every status change adds an entry with the time and a note to the request's `statusLog`.
+
+A normal batch is due when `proseBatchSize` normal requests are queued or the oldest has waited `proseBatchHours`, and it takes up to `proseBatchSize` of them, oldest first. Approved urgent requests do not wait for that. The next run sends all of them as their own batch and leaves the normal requests queued. Within a batch, requests with the same data tier share one `draft_prose` job on `proseRoute`, and the model returns a JSON array of drafts keyed by request id. When one job fails or runs past 15 minutes, its requests are marked `failed` and the other groups carry on.
+
+`augur prose run` passes the owner's caller to the service, and a run that arrives without it is refused. With `proseAutoRun` on, the service also starts due batches itself under its own service caller, except while an urgent request is still waiting for approval. Augur does not keep a batch's prompt with its job, and the request text stays in `prose-queue.jsonl`.
+
+The job gets read tools and text-only output, and it runs in a fresh, empty folder under `prose-scratch` in the service's data folder, which is deleted afterward. The job never sees the repository, so a request's `repo` field is only a label. Its data tier is the group's tier, raised to `regulated` if the prompt mentions students, and to the task classifier's tier if a classifier is set and rates the prompt higher. Pauses, data tiers, ask-first, the pick rule, and budgets apply as they do to any job. A model whose rule allows text only must run on an adapter that holds the read-only tier itself. `codex-exec` cannot, so a prose job for such a model on a Codex route is refused with `read_not_enforceable`. Point `proseRoute` at a route whose adapter enforces read-only, such as an API route, or change that model's output rule.
 
 ## Tuning the balance
 

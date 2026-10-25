@@ -4,6 +4,10 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+### Added
+
+- [Visible] [Platform] **Prose requests can wait in a queue and run as one batch.** `augur prose add` queues a request from flags or a JSON file, `list` and `status` show the queue, `run` submits a due batch in the background, and `approve` releases an urgent request. A batch is due at 10 normal requests or once the oldest has waited 24 hours, and the new service settings `proseBatchSize`, `proseBatchHours`, `proseRoute`, and `proseAutoRun` change the thresholds, the route, and whether the service starts due batches by itself. MCP clients get `augur_prose_add`, `augur_prose_list`, and `augur_prose_status`. Running and approving stay with the owner, and the MCP server can do neither.
+
 ## [1.14.1] - 2026-10-23
 
 ### Added
