@@ -108,6 +108,10 @@ describe('command lines', () => {
     const rd = grokExec.plan(req({ tools: 'read' }), r, ctx('go'));
     expect(rd.args).toEqual(expect.arrayContaining(['--allow', 'Read', '--deny', 'Edit']));
     expect(rd.args).not.toContain('--always-approve');
+    const none = grokExec.plan(req({ tools: 'none' }), r, ctx('go'));
+    expect(none.args).toEqual(expect.arrayContaining(['--deny', 'Read', '--deny', 'Grep', '--deny', 'Edit', '--deny', 'Bash(*)']));
+    expect(none.args).not.toContain('--always-approve');
+    expect(none.args).not.toContain('--allow');
     expect(w.args).not.toContain('--session-id');
     expect(w.args).not.toContain('--resume');
     const resumeCtx = ctx('go', 'C:/jobs/j1');

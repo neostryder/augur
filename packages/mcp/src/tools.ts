@@ -105,6 +105,7 @@ export function createTools(d: McpDeps) {
     if (a.activity && !activity) return fail(`${a.activity} is not an activity. Use one of: ${ACTIVITIES.join(', ')}.`);
     if (a.data_tier && !dataTier) return fail(`${a.data_tier} is not a data tier. Use one of: ${DATA_TIERS.join(', ')}.`);
     if (!a.task && (!activity || !dataTier)) return fail('Give a task, or both an activity and a data tier, each one of the known values.');
+    if (a.model && !a.role) return fail('model names one candidate of a caller-chosen role, so it needs role too.');
     return guarded(() => d.call('pick', { ...(activity ? { activity: activity as ActivityId } : {}), ...(dataTier ? { dataTier: dataTier as DataTier } : {}), ...(a.role ? { role: a.role } : {}), ...(a.model ? { named: a.model } : {}), ...(a.depth === 'routine' || a.depth === 'everyday' || a.depth === 'deep' || a.depth === 'core' ? { depth: a.depth } : {}), ...(a.task ? { task: a.task } : {}), ...(a.best_only ? { best: true } : {}), ...(a.snippet ? { snippet: true } : {}), session: d.session }, d.opts), r => {
       if ('error' in r) return fail(r.error);
       const lines = r.ranking.map(x => `${x.model.padEnd(24)} score ${x.score.toFixed(2)}  odds ${Math.round((x.odds ?? 0) * 100)}%  routes ${(r.routes[x.model] ?? []).join(', ') || 'none'}`);
