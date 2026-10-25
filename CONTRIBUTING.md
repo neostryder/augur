@@ -23,7 +23,7 @@ pnpm --filter @augur/desktop tauri dev
 | `apps/desktop` | The Tauri shell: tray, popup window, keychain, updater |
 | `apps/relay` | The Cloudflare Worker that serves the web app and relays its requests |
 
-The code that runs jobs for agents is in five packages. `packages/augurd` is the service, `packages/dispatch-protocol` holds what the service and its callers share, `packages/dispatch-cli` is the `augur` command, `packages/mcp` is the MCP server, and `packages/decision` classifies tasks. The local classifier model, Laya, and its trainer are in `packages/laya`. CI runs the workspace tests on Windows, Ubuntu and macOS, and on Windows it builds the job host with Go first (`pnpm --filter @augur/augurd build:jobhost`). [AGENTS.md](AGENTS.md) and [docs/adapting.md](docs/adapting.md) explain how the packages fit together and the rules a change to each one must keep.
+The code that runs jobs for agents is in five packages. `packages/augurd` is the service, `packages/dispatch-protocol` holds what the service and its callers share, `packages/dispatch-cli` is the `augur` command, `packages/mcp` is the MCP server, and `packages/decision` classifies tasks. The prose request queue is `packages/augurd/src/prose-queue.ts`, with its `augur prose` commands in `packages/dispatch-cli` and its `augur_prose_add`, `augur_prose_list`, and `augur_prose_status` tools in `packages/mcp`. The local classifier model, Laya, and its trainer are in `packages/laya`. CI runs the workspace tests on Windows, Ubuntu and macOS, and on Windows it builds the job host with Go first (`pnpm --filter @augur/augurd build:jobhost`). [AGENTS.md](AGENTS.md) and [docs/adapting.md](docs/adapting.md) explain how the packages fit together and the rules a change to each one must keep.
 
 A provider with a JSON usage endpoint usually needs no code. Add it as a custom provider, as the README describes. A provider that has to refresh a sign-in or read a command-line login goes in `packages/core/src/providers`, with a fixture and a test in `packages/core/test`. Fixtures use made-up numbers.
 
@@ -36,6 +36,8 @@ pnpm -r typecheck
 pnpm -r test
 cd apps/desktop/src-tauri && cargo fmt --check && cargo check
 ```
+
+The prose queue's tests are in `packages/augurd/test/prose-queue.test.ts`, and `pnpm --filter @augur/augurd test -- prose-queue` runs only those.
 
 If you changed Laya, also run `python -m unittest discover -s packages/laya/tests`.
 

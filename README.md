@@ -307,6 +307,25 @@ The last line registers a logon task named Augur Laya that serves the model at `
 
 The Jev gateway is a System One server on `127.0.0.1:8020` that holds the TypeSafe key for other programs and keeps `sensitive` and `regulated` requests on Laya. [docs/jev-gateway.md](docs/jev-gateway.md) explains how to build and configure it, and how a client falls back when it is down.
 
+### Prose requests
+
+Agents and scripts can queue writing requests instead of running each one on its own, and the service sends them to one prose route in batches. `augur prose add` adds a request, from a JSON file or from flags:
+
+```bash
+augur prose add --file request.json
+augur prose add --requester docs --repo augur --target docs/mcp.md --kind write --surface doc --audience "MCP client authors" --voice plain --fact "augur_prose_list lists requests" --fact "MCP clients cannot run a batch" --data public
+augur prose list --status drafted
+augur prose status
+augur prose run --dry-run
+augur prose approve <id>
+```
+
+A request names who asked it (`--requester`), a repo label, the file it is for or `new`, its kind (`write`, `rewrite`, `review`, or `sweep-edit`), its surface (`README`, `changelog`, `ui-strings`, `post`, `doc`, or `other`), the audience, and the voice. `--fact`, `--must-include`, and `--must-avoid` can each be given more than once, and a fact added with `--fact` is recorded with `CLI request` as its source. `--context-file` adds a file's text as the context before the passage. A rewrite or a review needs the text it works on in `--current-text`. `--urgency` is `normal` or `urgent`, and `--data` sets the data tier, `internal` when left out. A JSON file takes the same fields by their JSON names (`mustInclude`, `currentText`, `dataTier`, and so on), plus `limits` with `length` and `format`, facts that carry their own `source`, and `context` with `before`, `after`, `outline`, `samples`, and `glossary`.
+
+`augur prose list` prints each request's id, status, repo, and target, `--status` keeps one status (`queued`, `awaiting-approval`, `running`, `drafted`, or `failed`), and `--json` prints the whole requests with their drafts. `augur prose status` counts the requests in each status, gives the age of the oldest normal request in the queue, and says whether a batch is due. A batch is due once 10 normal requests are queued or the oldest has waited 24 hours, and [docs/configuring.md](docs/configuring.md#prose-requests) has the settings that change both. `augur prose run` submits the batch in the background and prints its batch ID, then `status` and `list` show how it is going. `--dry-run` says how many requests would run and starts nothing.
+
+An urgent request waits in `awaiting-approval` until you run `augur prose approve <id>`, and approved urgent requests then go out together at the next run, apart from the normal batch and whether or not it is due. `run` and `approve` are owner commands: the agent token cannot call them, and the MCP server has no tools for them. MCP clients add, list and check requests with `augur_prose_add`, `augur_prose_list`, and `augur_prose_status`.
+
 ## Phone app
 
 The web app works in any modern mobile browser. Open [augur.rpgm.tools](https://augur.rpgm.tools) on the phone and add it to your home screen: on iPhone, tap Share in Safari (on newer iPhones it is in the menu at the bottom) and then Add to Home Screen; on Android, use the install prompt. On its own it can track the providers that use API keys: the keys are encrypted on the phone and requests go through a relay that forwards them without storing anything.
