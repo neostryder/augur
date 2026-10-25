@@ -33,6 +33,7 @@ augur run <route> --prompt-file <file|-> | --prompt <text> [options]
   --expect-file <f>  file the job must leave in the working directory
   --timeout <s>      wall time limit in seconds
   --named            the route was named for this task by the person
+  --caller <kind>    interactive or automated (default: AUGUR_CALLER or interactive)
   --allow <checks>   skip checks, comma separated: unpicked, exhausted (each use is recorded with the job)
   --no-failover      no fallback route at submit and no retry after a failure
   --pack <names>     charter packs, comma separated
@@ -50,14 +51,25 @@ augur result <job>                    prints that job's answer, or the last retr
 augur logs <job> [--stderr] [--follow]
 augur cancel <job>
 augur apply <job> [--check]
-augur pick (--task <description> | --activity <a> --data <tier>) [--depth routine|everyday|deep|core] [--named <model>] [--fit <model>=<0-1>,...] [--best] [--snippet]   a route drawn by its odds; --best takes the top score, --snippet marks a one-sentence draft
-augur pick-preview (--task <description> | --activity <a> --data <tier>) [--depth routine|everyday|deep|core] [--named <model>] [--fit <model>=<0-1>,...] [--snippet]   every route's score and odds; no draw is made and nothing is recorded
+augur pick (--task <description> | --activity <a> --data <tier>) [--depth routine|everyday|deep|core] [--named <model>] [--fit <model>=<0-1>,...] [--caller <kind>] [--best] [--snippet]   a route drawn by its odds; --best takes the top score, --snippet marks a one-sentence draft
+augur pick-preview (--task <description> | --activity <a> --data <tier>) [--depth routine|everyday|deep|core] [--named <model>] [--fit <model>=<0-1>,...] [--caller <kind>] [--snippet]   every route's score and odds; no draw is made and nothing is recorded
 augur pick-answer <pick id> --model <route> [--why <text>]     records the route a person chose for a proposed pick and clears that route for jobs
 augur alias list | init | refresh [--label <label>] | accept <offer id> | reject <offer id> | set <label> --kind <llm|image|speech|embed> --pattern <glob>
 augur roles | set <name> --activity <activity> --candidates <labels> [--caller-chooses] | remove <name>
 augur pressure
 augur resets [--provider <id>] [--limit <n>]   reset events and summary
 augur balance [--days <n>]            where each kind of work goes now, each provider's pace and boost, Copilot's spend and the last days' picks
+augur gate status | report | record --kind approved --route <label> --scope this|task|session [--note <text>]
+augur backlog add (--file <item.json> | --requester <name> --repo <path> --task <text> (--prompt <text> | --prompt-file <file>) --activity <a> --data <tier> --route <label> --cwd <dir> --tools <tier> --output <mode> [--deadline <date>])
+  --prompt-file <file>  prompt text from a file; resolved from the current directory
+  --deadline <date>     ISO deadline for the item
+  --estimate <points>  points of the provider's weekly allowance, 0 to 100 (default 1)
+augur backlog list [--status awaiting-approval|queued|running|done|failed|cancelled|expired]
+augur backlog status                 counts, items that fit open window budgets, and next window expected
+augur backlog run [--dry-run]         release eligible items; --dry-run only lists candidates
+augur backlog drop <id>
+augur backlog approve <id> [--yes]   show an agent-added item; with --yes, approve it
+gate record logs an approval granted elsewhere; it grants no permission
 augur label <pick or job id> --brief met|partly|missed [--note <text>]     record how a job's report met its brief, beside the pick in the decision log
 augur label <grade id> --grade agree|high|low [--note <text>]     record whether a grade was right, too high or too low
 augur grade <rubric> --task <text|@file> --candidate <text|@file> [--reference <text|@file>] [--tier <tier>]   score a candidate answer on each dimension of a rubric in ~/.augur/rubrics; the grade is recorded and its use follows the rubric's stakes
@@ -90,7 +102,7 @@ Every command takes --json. Exit codes: 0 completed, 1 usage, 2 rejected, 3 need
 interface Parsed { cmd: string[]; flags: Map<string, string | true>; /** Values of the flags that may be given more than once, in order. */ repeated: Map<string, string[]> }
 const REPEATABLE = new Set(['attach', 'fact', 'must-include', 'must-avoid']);
 export function parse(argv: string[]): Parsed {
-  const cmd: string[] = [], flags = new Map<string, string | true>(), repeated = new Map<string, string[]>(), boolean = new Set(['json', 'wait', 'named', 'follow', 'stderr', 'help', 'if-idle', 'no-failover', 'no-charter', 'urgent', 'waybar', 'all', 'force', 'stdin', 'dry-run', 'no-key', 'best', 'snippet', 'report', 'can-land-later', 'caller-chooses', 'untested']);
+  const cmd: string[] = [], flags = new Map<string, string | true>(), repeated = new Map<string, string[]>(), boolean = new Set(['json', 'wait', 'named', 'follow', 'stderr', 'help', 'if-idle', 'no-failover', 'no-charter', 'urgent', 'waybar', 'all', 'force', 'stdin', 'dry-run', 'no-key', 'best', 'snippet', 'report', 'can-land-later', 'caller-chooses', 'untested', 'yes']);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] as string;
     if (a === '-') { cmd.push(a); continue; }
@@ -127,6 +139,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
   try {
     switch (cmd) {
       case 'run': return await run(rest, p, io, opts, say, opt, json);
+      case 'backlog': return await backlogCmd(rest, p, io, opts, say, opt);
       case 'jobs': {
         const list = await call('list', { state: opt('state') as never, root: opt('root'), limit: opt('limit') ? Number(opt('limit')) : 25 }, opts);
         say(list.map(describe).join('\n') || 'No jobs.', list); return 0;
@@ -215,6 +228,24 @@ export async function main(argv: string[], io: Io): Promise<number> {
         const r = await call('balance', opt('days') ? { days: Number(opt('days')) } : undefined, opts);
         if ('error' in r) { io.err(r.error + String.fromCharCode(10)); return EXIT_CODES.failed; }
         say(renderReport(r).join(String.fromCharCode(10)), r); return 0;
+      }
+      case 'gate': {
+        if (rest[0] === 'status') {
+          const r = await call('gate_status', undefined, opts);
+          if ('error' in r) { io.err(r.error + String.fromCharCode(10)); return EXIT_CODES.failed; }
+          say(r.providers.map(x => `${x.provider}: ${x.state}, ${x.gap === null ? 'no weekly window' : `${x.gap} points behind pace`}${x.window ? `; ${x.window}` : ''}; gated ${x.labels.join(', ')}${x.lastApproval ? `; approved ${x.lastApproval}` : ''}`).join(String.fromCharCode(10)) || 'No premium gates.', r); return 0;
+        }
+        if (rest[0] === 'report') {
+          const r = await call('gate_report', undefined, opts);
+          if ('error' in r) { io.err(r.error + String.fromCharCode(10)); return EXIT_CODES.failed; }
+          say(JSON.stringify(r, null, 2), r); return 0;
+        }
+        if (rest[0] === 'record') {
+          const r = await call('gate_record', { kind: opt('kind') ?? '', route: opt('route') ?? '', scope: opt('scope') ?? '', ...(opt('note') ? { note: opt('note') as string } : {}) }, opts);
+          if ('error' in r) { io.err(r.error + String.fromCharCode(10)); return EXIT_CODES.usage; }
+          say(`Recorded an approval already granted elsewhere for ${opt('route')} (${opt('scope')}); this does not grant permission.`, r); return 0;
+        }
+        io.err('Use augur gate status, report or record.' + String.fromCharCode(10)); return EXIT_CODES.usage;
       }
       case 'label': {
         if (opt('grade')) {
@@ -459,7 +490,70 @@ async function conversationsCmd(p: Parsed, io: Io, opts: Opts, say: (h: string, 
 const conversationLine = (c: Conversation) => `${c.name}  ${c.route}  ${c.adapter}  ${c.turns}  ${new Date(c.lastUsedAt).toISOString().slice(0, 19)}Z`;
 type Opts = { dir: string; pipe?: string };
 
+async function backlogCmd(rest: string[], p: Parsed, io: Io, opts: Opts, say: (h: string, d: unknown) => void, opt: (n: string) => string | undefined): Promise<number> {
+  const action = rest[0];
+  // Best effort: a process that clears its environment still holds the owner token, which is outside this trust model.
+  const insideJob = !!io.env.AUGUR_IN_JOB || !!io.env.AUGUR_JOB_ID || io.env.AUGUR_CALLER === 'automated';
+  if (insideJob && (action === 'run' || action === 'drop' || action === 'approve')) { io.err(`augur backlog ${action} is for the owner's own terminal, not for a job.
+`); return EXIT_CODES.usage; }
+  if (action === 'add') {
+    let item: unknown;
+    if (opt('file')) {
+      try { item = JSON.parse(readFileSync(resolve(io.cwd, opt('file') as string), 'utf8')); } catch { io.err('The backlog item file could not be read as JSON.\n'); return EXIT_CODES.usage; }
+    } else {
+      const required = ['requester', 'repo', 'task', 'activity', 'data', 'route', 'cwd', 'tools', 'output'];
+      const missing = required.filter(k => opt(k) === undefined);
+      if ((!opt('prompt') && !opt('prompt-file')) || (opt('prompt') && opt('prompt-file')) || missing.length) { io.err(`Give ${missing.map(k => `--${k}`).join(', ')}${missing.length ? ' and ' : ''}exactly one of --prompt and --prompt-file.\n`); return EXIT_CODES.usage; }
+      let prompt: { text?: string; file?: string };
+      if (opt('prompt-file')) prompt = { file: resolve(io.cwd, opt('prompt-file') as string) }; else prompt = { text: opt('prompt') as string };
+      item = Object.fromEntries([...required.map(k => [k, k === 'cwd' ? resolve(io.cwd, opt(k) as string) : opt(k)]), ['prompt', prompt], ...(opt('estimate') ? [['estimate', Number(opt('estimate'))]] : []), ...(opt('deadline') ? [['deadline', opt('deadline')]] : [])]);
+    }
+    const r = await call('backlog_add', { item }, insideJob ? { ...opts, role: 'agent' } : opts);
+    if ('error' in (r as object)) { io.err(`${(r as { error: string }).error}\n`); return EXIT_CODES.usage; }
+    say(`Added backlog item ${(r as { id: string }).id}${insideJob ? ' as agent; it awaits owner approval' : ''}.`, r); return 0;
+  }
+  if (action === 'list') {
+    const r = await call('backlog_list', opt('status') ? { status: opt('status') } : undefined, opts);
+    say((r as Array<Record<string, unknown>>).map(backlogLine).join('\n') || 'No backlog items.', r); return 0;
+  }
+  if (action === 'status') {
+    const r = await call('backlog_status', undefined, opts);
+    const status = r as { counts: unknown; items: Array<Record<string, unknown>>; fitting: unknown; nextWindow: unknown };
+    say(`${JSON.stringify(status.counts)}\n${status.items.map(backlogLine).join('\n') || 'No backlog items.'}\nFitting: ${JSON.stringify(status.fitting)}\nNext window: ${JSON.stringify(status.nextWindow)}`, r as unknown); return 0;
+  }
+  if (action === 'run') {
+    const r = await call('backlog_run', { dryRun: p.flags.has('dry-run') }, opts);
+    const x = r as { candidates: string[]; released: string[]; wouldExpire?: string[]; wouldFail?: Array<{ id: string; reason: string }>; wouldHold?: Array<{ id: string; reason: string }> };
+    say(p.flags.has('dry-run') ? `Would release: ${x.candidates.join(', ') || 'none'}. Would hold: ${x.wouldHold?.map(row => `${row.id} (${row.reason})`).join(', ') || 'none'}. Would expire: ${x.wouldExpire?.join(', ') || 'none'}. Would fail: ${x.wouldFail?.map(row => `${row.id} (${row.reason})`).join(', ') || 'none'}.` : `Released: ${x.released.join(', ') || 'none'}.`, r); return 0;
+  }
+  if (action === 'drop') {
+    const r = await call('backlog_drop', { id: need(rest[1], 'backlog item id') }, opts);
+    say((r as { dropped: boolean }).dropped ? `Dropped ${rest[1]}.` : `No backlog item ${rest[1]}.`, r); return (r as { dropped: boolean }).dropped ? 0 : EXIT_CODES.usage;
+  }
+  if (action === 'approve') {
+    const before = await call('backlog_list', undefined, opts) as Array<Record<string, unknown>>;
+    const pending = before.find(x => x.id === rest[1]);
+    if (!p.flags.has('yes')) {
+      if (!pending) { io.err(`No backlog item ${rest[1]}.\n`); return EXIT_CODES.usage; }
+      const text = (pending.prompt as { text?: string } | undefined)?.text;
+      say(`${backlogLine(pending)}${text === undefined ? '' : `\nPrompt text: ${text.length > 600 ? `${text.slice(0, 600)}... (${text.length} chars)` : text}`}\nRun again with --yes to approve.`, pending); return 0;
+    }
+    const r = await call('backlog_approve', { id: need(rest[1], 'backlog item id') }, opts);
+    if ('error' in (r as object)) { io.err(`${(r as { error: string }).error}\n`); return EXIT_CODES.usage; }
+    say(`Approved backlog item:\n${backlogLine(r as Record<string, unknown>)}`, r); return 0;
+  }
+  io.err('Use augur backlog add, list, status, run, approve or drop.\n'); return EXIT_CODES.usage;
+}
+
+function backlogLine(x: Record<string, unknown>): string {
+  const prompt = x.prompt as { file?: string; text?: string } | undefined;
+  const source = prompt?.file ? `file ${prompt.file}` : `inline ${prompt?.text?.length ?? 0} chars`;
+  const log = Array.isArray(x.statusLog) ? (x.statusLog as Array<{ at?: string; status?: string; note?: string }>).slice(-5).map(row => `${row.at ?? ''} ${row.status ?? ''} ${row.note ?? ''}`).join(' | ') : '';
+  return `${x.id}  ${x.author}  ${x.status}  ${x.route}  data=${x.data} tools=${x.tools} output=${x.output} cwd=${x.cwd} prompt=${source} estimate=${x.estimate ?? 1} deadline=${x.deadline ?? 'none'}  ${x.task}${log ? `\nStatus log: ${log}` : ''}`;
+}
+
 async function run(rest: string[], p: Parsed, io: Io, opts: Opts, say: (h: string, d: unknown) => void, opt: (n: string) => string | undefined, json: boolean): Promise<number> {
+  if (p.flags.has('released')) { io.err('--released is set only by the service runner.\n'); return EXIT_CODES.usage; }
   const route = need(rest[0], 'route');
   const pf = opt('prompt-file'), text = opt('prompt');
   if ((pf === undefined) === (text === undefined)) { io.err('Give the prompt with --prompt <text> or --prompt-file <file|->.\n'); return EXIT_CODES.usage; }
@@ -477,12 +571,14 @@ async function run(rest: string[], p: Parsed, io: Io, opts: Opts, say: (h: strin
   const packs = opt('pack')?.split(',').map(s => s.trim()).filter(Boolean);
   // An attachment path is relative to where the person is standing, so it is made absolute here.
   const attach = (p.repeated.get('attach') ?? []).map(f => resolve(io.cwd, f));
+  const caller = opt('caller') ?? io.env.AUGUR_CALLER ?? 'interactive';
+  if (caller !== 'interactive' && caller !== 'automated') { io.err('--caller is interactive or automated.\n'); return EXIT_CODES.usage; }
   const req: JobRequest = {
     route, activity: activity as ActivityId, dataTier: dataTier as DataTier, tools: tools as ToolTier, output: output as OutputMode, cwd: resolve(io.cwd, opt('cwd') ?? '.'),
     prompt: { text: promptText as string },
     ...(opt('expect-file') ? { expectFile: opt('expect-file') as string } : {}), ...(opt('timeout') ? { timeoutS: Number(opt('timeout')) } : {}),
     ...(p.flags.has('named') ? { named: true } : {}), ...(attach.length ? { attach } : {}), ...(p.flags.has('urgent') ? { urgent: true } : {}),
-    caller: { kind: parentId ? 'job' : 'cli', ...(parentId ? { label: parentId } : {}), ...(io.env.CLAUDE_CODE_SESSION_ID ? { session: io.env.CLAUDE_CODE_SESSION_ID } : {}), ...(io.interactive ? { interactive: true } : {}) },
+    caller: { kind: parentId ? 'job' : 'cli', intent: caller, ...(parentId ? { label: parentId } : {}), ...(io.env.CLAUDE_CODE_SESSION_ID ? { session: io.env.CLAUDE_CODE_SESSION_ID } : {}), ...(io.interactive ? { interactive: true } : {}) },
     ...(allow.length ? { allow } : {}), ...(p.flags.has('no-failover') ? { failover: false } : {}),
     ...(packs?.length ? { packs } : {}), ...(p.flags.has('no-charter') ? { noCharter: true } : {}), ...(opt('conversation') ? { conversation: opt('conversation') } : {}),
     ...(parentId ? { parent: { jobId: parentId, rootJobId: io.env.AUGUR_ROOT_JOB_ID ?? parentId, depth: 0 } } : {}),
@@ -533,7 +629,9 @@ async function pickCmd(io: Io, opts: Opts, say: (h: string, d: unknown) => void,
     if (!model || !Number.isFinite(n) || n < 0 || n > 1) { io.err('--fit takes model=number pairs with each number from 0 to 1.' + String.fromCharCode(10)); return EXIT_CODES.usage; }
     fits[model] = n;
   }
-  const r = await call('pick', { ...(activity ? { activity: activity as ActivityId } : {}), ...(dataTier ? { dataTier: dataTier as DataTier } : {}), ...(task ? { task } : {}),
+  const caller = opt('caller') ?? io.env.AUGUR_CALLER ?? 'interactive';
+  if (caller !== 'interactive' && caller !== 'automated') { io.err('--caller is interactive or automated.' + String.fromCharCode(10)); return EXIT_CODES.usage; }
+  const r = await call('pick', { caller, ...(activity ? { activity: activity as ActivityId } : {}), ...(dataTier ? { dataTier: dataTier as DataTier } : {}), ...(task ? { task } : {}),
     ...(opt('role') ? { role: opt('role') } : {}),
     ...((opt('model') ?? opt('named')) ? { named: (opt('model') ?? opt('named')) as string } : {}), ...(depth ? { depth: depth as Depth } : {}), fits, ...(flag('best') ? { best: true } : {}), ...(flag('snippet') ? { snippet: true } : {}), ...(preview ? { preview: true } : {}), ...(io.env.CLAUDE_CODE_SESSION_ID ? { session: io.env.CLAUDE_CODE_SESSION_ID } : {}) }, opts);
   if ('error' in r) { io.err(r.error + String.fromCharCode(10)); return EXIT_CODES.failed; }

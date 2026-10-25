@@ -1,6 +1,19 @@
 {
   "profile": "classic",
   "enabled": true,
+  "gate": {
+    "premium": ["codex/sol", "claude/opus", "xai/grok", "copilot/gpt-6.1-sol", "copilot/claude-opus-5.5", "copilot/grok-4.7", "copilot/gemini-4-argon"],
+    "paceLift": ["codex/sol", "xai/grok", "claude/opus"],
+    "open": 20,
+    "close": 10,
+    "surplus": {
+      "hours": 12,
+      "open": 10,
+      "close": 5,
+      "margin": 5,
+      "countdown": ["claude", "xai"]
+    }
+  },
   "boostFitFloor": 0.6,
   "draw": {
     "enabled": true,

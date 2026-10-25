@@ -4,6 +4,7 @@ import type { PolicyFile, ResolvedModel } from '@augur/core';
 import type { AdapterCapabilities, RouteConfig } from './adapter.js';
 import { PACE, factorModels, isWindowMeter, ageMinutes, freshLimits, leastUsed, pressure, usageFactors } from './pace.js';
 import type { UsageSnapshot } from './pace.js';
+import { resolveBalance } from './balance.js';
 import type { JobRequest, Rejection } from './spec.js';
 
 export interface RuleInput {
@@ -75,7 +76,10 @@ export function evaluate(request: JobRequest, input: RuleInput): Decision {
     if (override === null) return no('model_paused', `${route.model} is paused for ${request.activity} until ${model.pause.until}.`);
     if (override) level = override;
   }
-  if (model.askFirst && !request.named) return no('ask_first', `${route.model} runs only when it is named for the task.`);
+  const gate = resolveBalance(policy.balance).gate;
+  if (gate.premium.includes(route.model) && request.caller.intent === 'automated' && request.released !== true) return no('ask_first', 'Premium models are not used for automated tasks.');
+  // Only the service's owner-approved backlog release satisfies ask-first for a premium label.
+  if ((model.askFirst || gate.premium.includes(route.model)) && !request.named && !(request.released === true && gate.premium.includes(route.model)) && !(request.caller.intent !== 'automated' && request.premiumGateLift && gate.paceLift.includes(route.model))) return no('ask_first', `${route.model} runs only when it is named for the task.`);
   if (!level) return no('activity_not_permitted', `${route.model} is not permitted to ${request.activity}.`);
   if (DATA_TIERS.indexOf(request.dataTier) > DATA_TIERS.indexOf(model.dataTier)) {
     return no('data_tier_too_high', `${route.model} may see ${model.dataTier} data at most, and the task is ${request.dataTier}.`);

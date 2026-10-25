@@ -17,7 +17,7 @@ const OWNER = { providers: {
 function policy(balance?: Record<string, unknown>): PolicyFile {
   const p = emptyPolicy(); importPolicy(p, openRules(OWNER), now);
   for (const [id, provider] of Object.entries(p.providers)) for (const label of Object.keys(provider.models)) setField(p, fieldPath(id, label, 'status'), 'confirmed', 'test', now);
-  if (balance) p.balance = balance;
+  p.balance = { gate: { premium: [], paceLift: [] }, ...balance };
   return buildPolicyFile(p, Object.keys(p.providers).map(id => ({ id, name: id, metered: true })), now);
 }
 const HOUR = 3600e3, WEEK = 7 * 24 * HOUR;

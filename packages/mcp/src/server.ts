@@ -14,6 +14,22 @@ export const INSTRUCTIONS = [
 ].join(' ');
 
 const out = (r: ToolResult) => ({ content: [{ type: 'text' as const, text: r.text }], ...(r.data ? { structuredContent: r.data } : {}), ...(r.isError ? { isError: true } : {}) });
+const runSchema = z.object({
+  route: z.string().describe('A route name from augur_pick or augur_models.'),
+  prompt: z.string().describe('The full prompt for the model.'),
+  activity: z.enum(ACTIVITIES).describe('What the work is.'),
+  data_tier: z.enum(DATA_TIERS).describe('The most sensitive data the prompt or the folder contains.'),
+  tools: z.enum(['read', 'write', 'full']).optional().describe('read (default), write, or full. The no-tools tier is available only on adapters that can enforce it.'),
+  output: z.enum(OUTPUT_MODES).optional().describe('text_only (default), patch_only or write_files.'),
+  cwd: z.string().optional().describe('The folder the job works in. Defaults to the server\'s folder.'),
+  timeout_s: z.number().int().positive().optional().describe('Seconds the job may run before it is stopped.'),
+  wait_s: z.number().int().min(0).max(900).optional().describe('Seconds to wait for the answer. 300 by default.'),
+  packs: z.array(z.string()).optional().describe('Charter packs to include, by name.'),
+  no_charter: z.boolean().optional().describe('Send the prompt with no charter.'),
+  conversation: z.string().optional().describe('Name of a conversation to open or resume. It stays on the route that opened it, and only Grok and Codex routes keep one.'),
+  attachments: z.array(z.string()).max(16).optional().describe('Absolute paths of files to send with the prompt, inside cwd. Text files are added to the prompt, images are shown to a model that sees them, and one audio file is transcribed on a transcribe route. An embed job returns the path of the saved vectors.'),
+  urgent: z.boolean().optional().describe('The job is wanted now. A local gateway then gives it its normal priority instead of the low one background work gets.'),
+}).passthrough();
 
 export function buildServer(tools: Tools, version: string): McpServer {
   const server = new McpServer({ name: 'augur', version }, { instructions: INSTRUCTIONS });
@@ -50,22 +66,7 @@ export function buildServer(tools: Tools, version: string): McpServer {
   server.registerTool('augur_run', {
     title: 'Run a job',
     description: 'Runs a prompt on a route and returns the answer. It waits for the job up to wait_s seconds; a longer job keeps running and is read later with augur_job. Tools default to read only and output to text.',
-    inputSchema: {
-      route: z.string().describe('A route name from augur_pick or augur_models.'),
-      prompt: z.string().describe('The full prompt for the model.'),
-      activity: z.enum(ACTIVITIES).describe('What the work is.'),
-      data_tier: z.enum(DATA_TIERS).describe('The most sensitive data the prompt or the folder contains.'),
-      tools: z.enum(['read', 'write', 'full']).optional().describe('read (default), write, or full. The no-tools tier is available only on adapters that can enforce it.'),
-      output: z.enum(OUTPUT_MODES).optional().describe('text_only (default), patch_only or write_files.'),
-      cwd: z.string().optional().describe('The folder the job works in. Defaults to the server\'s folder.'),
-      timeout_s: z.number().int().positive().optional().describe('Seconds the job may run before it is stopped.'),
-      wait_s: z.number().int().min(0).max(900).optional().describe('Seconds to wait for the answer. 300 by default.'),
-      packs: z.array(z.string()).optional().describe('Charter packs to include, by name.'),
-      no_charter: z.boolean().optional().describe('Send the prompt with no charter.'),
-      conversation: z.string().optional().describe('Name of a conversation to open or resume. It stays on the route that opened it, and only Grok and Codex routes keep one.'),
-      attachments: z.array(z.string()).max(16).optional().describe('Absolute paths of files to send with the prompt, inside cwd. Text files are added to the prompt, images are shown to a model that sees them, and one audio file is transcribed on a transcribe route. An embed job returns the path of the saved vectors.'),
-      urgent: z.boolean().optional().describe('The job is wanted now. A local gateway then gives it its normal priority instead of the low one background work gets.'),
-    },
+    inputSchema: runSchema,
   }, async (a) => out(await tools.run(a)));
 
   server.registerTool('augur_job', {
@@ -91,6 +92,24 @@ export function buildServer(tools: Tools, version: string): McpServer {
     description: 'Shows what the automatic balance is doing. Each provider paced against a usage window gets its stance, how far each window runs ahead of or behind pace, its boost and its rough odds. The report also gives Copilot\'s spend this month, how each provider is treated, where each kind of work goes now, and recent picks. Read only.',
     inputSchema: { days: z.number().int().min(1).max(90).optional().describe('How many days of picks to summarize. Defaults to 7.') },
   }, async (a) => out(await tools.balance(a)));
+
+  server.registerTool('gate_status', { title: 'Premium gate status', annotations: readOnly, description: 'Shows each premium provider gate, its pace gap, gated labels and last approval.' }, async () => out(await tools.gateStatus()));
+  server.registerTool('gate_report', { title: 'Premium gate report', annotations: readOnly, description: 'Shows premium gate event counts and cost totals.' }, async () => out(await tools.gateReport()));
+
+  server.registerTool('augur_backlog_add', {
+    title: 'Add premium backlog item', annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    description: 'Queues agent-authored work for owner approval and a later surplus window. It validates the item against the service backlog schema. MCP cannot run, release, drop or approve backlog items and cannot set released.',
+    inputSchema: { item: z.record(z.string(), z.unknown()).describe('A backlog item with requester, repo, task, prompt, activity, data, route, cwd, tools and output fields; lower is optional, estimate is 0 to 100 points of the provider weekly allowance (default 1), and deadline is optional. The service assigns author and approval status.') },
+  }, async (a) => out(await tools.backlogAdd(a)));
+  server.registerTool('augur_backlog_list', {
+    title: 'List premium backlog items', annotations: readOnly,
+    description: 'Lists premium backlog items. MCP cannot run, release, drop or approve backlog items.',
+    inputSchema: { status: z.enum(['awaiting-approval', 'queued', 'running', 'done', 'failed', 'cancelled', 'expired']).optional() },
+  }, async (a) => out(await tools.backlogList(a)));
+  server.registerTool('augur_backlog_status', {
+    title: 'Premium backlog status', annotations: readOnly,
+    description: 'Shows backlog counts, queued items that fit open window budgets and the next expected window. MCP cannot run, release, drop or approve backlog items.',
+  }, async () => out(await tools.backlogStatus()));
 
   server.registerTool('augur_resets', {
     title: 'Reset ledger', annotations: readOnly,

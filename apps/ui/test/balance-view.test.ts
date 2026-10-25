@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { emptyPolicy, migrateConfig } from '@augur/core';
-import { balanceReport } from '@augur/dispatch-protocol';
+import { defaultConfig, emptyPolicy, migrateConfig } from '@augur/core';
+import { balanceReport, surplusWindowStatus } from '@augur/dispatch-protocol';
 import { renderBalance } from '../src/views/balance';
+import { renderDashboard } from '../src/views/dashboard';
 import { renderRules, type RulesModel } from '../src/views/rules';
 
 describe('the balance page', () => {
@@ -24,6 +25,17 @@ describe('the balance page', () => {
     const html = renderBalance({ report: null, error: '<b>no policy</b>' });
     expect(html).toContain('&lt;b&gt;no policy&lt;/b&gt;');
     expect(html).toContain('role="alert"');
+  });
+});
+
+describe('the dashboard gate row', () => {
+  it('shows the service surplus window wording', () => {
+    const config = defaultConfig();
+    config.providers = [{ id: 'claude', enabled: true, settings: {} }];
+    const snapshot = { generatedAt: '2026-10-04T12:00:00Z', providers: { claude: { id: 'claude', name: 'Claude', ok: true, stale: false, error: null, plan: null, detail: '', meters: [], money: [], fetchedAt: '2026-10-04T12:00:00Z', links: {}, notes: {} } } } as never;
+    const window = surplusWindowStatus({ open: false, spent: false, budgetLeft: 0, hoursLeft: 12, unused: 0 }, { hours: 12, open: 10 });
+    const html = renderDashboard({ config, snapshot, history: [], plugins: new Map(), busy: false, twoColumns: false, expanded: null, dark: false, shellKind: 'desktop', gates: [{ provider: 'claude', state: 'closed', gap: null, close: 10, window, labels: ['claude/opus'] }] });
+    expect(html).toContain(window);
   });
 });
 

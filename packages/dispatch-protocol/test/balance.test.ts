@@ -22,7 +22,7 @@ const NO_PREFER = Object.fromEntries(Object.keys(DEFAULT_BALANCE.prefer).map(m =
 function policy(balance?: Record<string, unknown>): PolicyFile {
   const p = emptyPolicy(); importPolicy(p, openRules(RULES), now);
   for (const [id, provider] of Object.entries(p.providers)) for (const label of Object.keys(provider.models)) setField(p, fieldPath(id, label, 'status'), 'confirmed', 'test', now);
-  p.balance = { prefer: NO_PREFER, ...balance };
+  p.balance = { gate: { premium: [], paceLift: [] }, prefer: NO_PREFER, ...balance };
   return buildPolicyFile(p, Object.keys(p.providers).map(id => ({ id, name: id, metered: true })), now);
 }
 const order = (r: ReturnType<typeof rank>) => r.ranking.map(x => x.model);
@@ -192,6 +192,7 @@ const BACKUPS = { providers: {
 function backupPolicy(): PolicyFile {
   const p = emptyPolicy(); importPolicy(p, openRules(BACKUPS), now);
   for (const [id, provider] of Object.entries(p.providers)) for (const label of Object.keys(provider.models)) setField(p, fieldPath(id, label, 'status'), 'confirmed', 'test', now);
+  p.balance = { gate: { premium: [], paceLift: [] } };
   return buildPolicyFile(p, Object.keys(p.providers).map(id => ({ id, name: id, metered: true })), now);
 }
 const full = (o: { claude?: number; codex?: number; spend?: number } = {}) => ({ providers: {
@@ -272,7 +273,7 @@ const SEATS = { providers: {
 function seatPolicy(balance?: Record<string, unknown>): PolicyFile {
   const p = emptyPolicy(); importPolicy(p, openRules(SEATS), now);
   for (const [id, provider] of Object.entries(p.providers)) for (const label of Object.keys(provider.models)) setField(p, fieldPath(id, label, 'status'), 'confirmed', 'test', now);
-  p.balance = { prefer: NO_PREFER, ...balance };
+  p.balance = { gate: { premium: [], paceLift: [] }, prefer: NO_PREFER, ...balance };
   return buildPolicyFile(p, Object.keys(p.providers).map(id => ({ id, name: id, metered: true })), now);
 }
 const seat = (activity: 'write_code' | 'research' | 'typed_decisions' | 'generate_images', tier: 'public' | 'internal' = 'internal', balance?: Record<string, unknown>) =>

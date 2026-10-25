@@ -23,6 +23,7 @@ export interface DashboardModel {
   update?: UpdateState;
   /** True where the app carries the dispatch service, which is what the Jobs page reads. */
   canDispatch?: boolean;
+  gates?: Array<{ provider: string; state: 'open' | 'closed'; gap: number | null; window?: string | null; close: number; labels: string[] }>;
 }
 
 const WINDOWED = windowed;
@@ -93,6 +94,8 @@ function cardHtml(model: DashboardModel, pid: string): string {
   if (local) body += localCardBody(local);
   if (p) {
     for (const m of p.meters) if (!hidden.includes(m.id)) body += meterHtml(model, pid, m);
+    const gate = model.gates?.find(x => x.provider === pid);
+    if (gate) body += `<div class="mfoot"><span class="grow">${gate.state === 'closed' && (gate.gap === null || gate.gap < gate.close) ? 'On pace' : 'Gate'}</span><span class="pace">${gate.state === 'open' ? 'Open' : 'Closed'}${gate.gap === null ? '' : `, ${Math.round(gate.gap)} points behind pace`}${gate.window ? `; ${esc(gate.window)}` : ''}; gated ${esc(gate.labels.join(', '))}</span></div>`;
     const tiles = p.money.filter((x) => x.amount != null && !hidden.includes('$' + x.id));
     if (tiles.length) {
       body += '<div class="money">' + tiles.map((x) => `<div class="tile"><div class="l">${esc(x.label)}</div>

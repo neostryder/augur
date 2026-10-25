@@ -31,7 +31,9 @@ Each server process makes one random session id, and sends it with every call. `
 
 The server never sends the `allow` list that skips the pick or plan-usage checks from the command line, and it never tells the service that a person named a job's model, so an agent has no way to claim its owner did. Jobs from the server are recorded with the caller kind `mcp`.
 
-The server also signs in with its own token, `agent-token` in the service's data folder, and the service enforces what that token may do. It can run jobs, read their state and results, cancel them, pick, read the balance and add routes. It cannot record a person's message, answer a pick, label a grade or a brief, or call the app's engine, and any `named`, `allow` or `interactive` claim on a job it submits is dropped. Those belong to the owner's terminal, app and hooks, which use `token`.
+The server also signs in with its own token, `agent-token` in the service's data folder, and the service enforces what that token may do. It can run jobs, read their state and results, cancel them, pick, read the balance and the premium gate, add routes, and add and read premium backlog items. It cannot record a person's message, answer a pick, label a grade or a brief, or call the app's engine, and any `named`, `allow` or `interactive` claim on a job it submits is dropped. Those belong to the owner's terminal, app and hooks, which use `token`.
+
+No tool takes a caller argument, because the service treats every pick and run from the agent token as automated. `augur_pick` therefore never offers a model in the [premium gate](configuring.md#the-premium-gate), and `augur_run` on one comes back refused, naming the cheapest route allowed the same activity and data tier. To get premium work done, queue it with `augur_backlog_add` and let the owner approve it.
 
 The data tier is required on every run and is never assumed. An agent has to say how sensitive its task is, and the service refuses a model that is not cleared for that tier.
 
@@ -57,8 +59,15 @@ The data tier is required on every run and is never assumed. An agent has to say
 | `augur_prose_list` | optional `status` (`queued`, `awaiting-approval`, `running`, `drafted` or `failed`) | The queued prose requests with their status, and the drafts of finished ones. |
 | `augur_prose_status` | none | How many requests are in each status and whether a batch is due. |
 | `alias_list` | none | Every model that has a [series](configuring.md#series), with its label, provider, kind, pattern, current id and name, when it was last refreshed, and any offer or embedding notice waiting for it. Read only. Offers are accepted and rejected in the owner's terminal, and no tool here does either. |
+| `gate_status` | none | A line for each provider with a premium model: whether its pace lift is open, how far behind pace it is, its surplus window as one of the [window lines](configuring.md#the-premium-gate), the labels it gates, and the last approval the owner recorded. Read only. |
+| `gate_report` | none | The gate ledger summed up as JSON: how many events of each kind, premium and lower-tier dollar cost per activity, hours each pace lift has been open this week, and each provider's window now. Read only. |
+| `augur_backlog_add` | `item`: `requester`, `repo`, `task`, `prompt` (`text` or `file`), `activity`, `data`, `route`, `cwd`, `tools`, `output`; optional `lower`, `estimate` and `deadline` | The new item's id and status. `estimate` is the share of the provider's weekly allowance the work should take, 0 to 100 points, and 1 if you leave it out. `cwd` and a prompt file have to exist when the item is added, and a prompt file has to sit inside `cwd` or one of the owner's prompt roots. Items from here are marked as an agent's and sit in `awaiting-approval` until the owner approves them. Any other field, such as `author`, `status` or `released`, gets the item turned away. |
+| `augur_backlog_list` | optional `status`: `awaiting-approval`, `queued`, `running`, `done`, `failed` or `expired` | Each item's id, author, status, route, data tier, tools, output, working folder, estimate, deadline and task, with its prompt source: the file path, or the length of inline text. The prompt itself is left out. Read only. |
+| `augur_backlog_status` | none | JSON with item counts by status, every item as `augur_backlog_list` shows it, how many lines in the file could not be read, which items fit an open window right now, and which provider resets next. Read only. |
 
 Each result has a text form for the model and, where there is structure, a `structuredContent` object with the same facts. A refusal, a failed job and a service that is not running all come back as an error result with the reason in the text. A refusal carries the service's code, such as `not_picked`, in `structuredContent.rejected`.
+
+Approving, running, releasing and dropping backlog items are the owner's `augur backlog` commands, and no tool here does any of them. Only the service's runner releases an item. `augur_run` has no `released` argument and refuses a request that carries one.
 
 A run that takes longer than `wait_s` returns its job id and leaves the job running. Read it later with `augur_job`.
 
