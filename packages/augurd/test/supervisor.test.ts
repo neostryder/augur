@@ -13,6 +13,32 @@ afterEach(() => { while (envs.length) envs.pop()!.dispose(); });
 const kinds = (e: Env, id: string) => e.store.events(id).map(x => x.kind);
 
 describe('a job that finishes', () => {
+  it('submits prose with the attested caller, promoted tier, read tools, and a disposable scratch cwd', async () => {
+    const e = setup({ proseRoute: 'fake', persistPrompts: true });
+    const submit = vi.spyOn(e.sup, 'submit').mockImplementation(request => { expect(readdirSync(request.cwd)).toEqual([]); return { rejected: { code: 'not_picked', reason: 'test refusal' } }; });
+    const run = (e.sup as unknown as { runProseGroup(items: unknown[], prompt: string, caller: { kind: 'cli'; label: string; interactive: boolean }): Promise<unknown> }).runProseGroup;
+    await expect(run.call(e.sup, [{ dataTier: 'internal' }], 'student records', { kind: 'cli', label: 'augur', interactive: true })).rejects.toThrow('test refusal');
+    const request = submit.mock.calls[0]?.[0];
+    expect(request).toMatchObject({ tools: 'read', output: 'text_only', dataTier: 'regulated', persistPrompt: false, caller: { kind: 'cli', label: 'augur', interactive: true } });
+    expect(request?.named).toBeUndefined();
+    expect(request?.cwd).toBeTruthy();
+    expect(existsSync(request!.cwd)).toBe(false);
+  });
+
+  it('starts a due service batch only when proseAutoRun is enabled', async () => {
+    const off = setup({ proseBatchSize: 1, proseAutoRun: false });
+    off.sup.proseAdd({ requester: 'owner', repo: 'repo', target: 'new', kind: 'write', surface: 'doc', audience: 'readers', voice: 'plain' });
+    off.sup.tick();
+    expect(off.sup.proseList()[0]?.status).toBe('queued');
+    const on = setup({ proseBatchSize: 1, proseAutoRun: true, proseRoute: 'fake' });
+    const submit = vi.spyOn(on.sup, 'submit').mockReturnValue({ rejected: { code: 'not_picked', reason: 'test refusal' } });
+    on.sup.proseAdd({ requester: 'owner', repo: 'repo', target: 'new', kind: 'write', surface: 'doc', audience: 'readers', voice: 'plain' });
+    on.sup.tick();
+    await sleep(20);
+    expect(on.sup.proseList()[0]?.status).toBe('failed');
+    expect(submit.mock.calls[0]?.[0]).toMatchObject({ caller: { kind: 'service', label: 'prose-queue' }, named: true });
+  });
+
   it('completes, checks its expected file, and records usage, version and every event', async () => {
     const e = setup();
     const id = submitOk(e.sup, request({ text: 'WRITE out.txt\nSLEEP 1', expectFile: 'out.txt', cwd: e.root }));
@@ -103,6 +129,12 @@ describe('what a job can see', () => {
     const id2 = submitOk(kept.sup, request({ text: `# ${secret}\nSLEEP 0`, cwd: kept.root }));
     await terminal(kept.sup, kept.store, id2);
     expect(readFileSync(join(kept.dir, 'jobs', id2, 'prompt.txt'), 'utf8')).toContain(secret);
+
+    const prose = setup({ persistPrompts: true });
+    const id3 = submitOk(prose.sup, request({ text: `# ${secret}\nSLEEP 0`, cwd: prose.root, persistPrompt: false }));
+    await terminal(prose.sup, prose.store, id3);
+    expect(readdirSync(join(prose.dir, 'jobs', id3))).not.toContain('prompt.in');
+    expect(readdirSync(join(prose.dir, 'jobs', id3))).not.toContain('prompt.txt');
   });
 
   it('states the tool tier in the prompt for a harness that cannot be told', async () => {

@@ -9,6 +9,10 @@ const fresh = () => { const d = mkdtempSync(join(tmpdir(), 'augur-config-')); di
 afterEach(() => { while (dirs.length) rmSync(dirs.pop()!, { recursive: true, force: true }); });
 
 describe('config editing', () => {
+  it('lists every prose setting from ServiceConfig', () => {
+    for (const key of ['proseBatchSize', 'proseBatchHours', 'proseRoute', 'proseAutoRun']) expect(CONFIG_KEYS.some(entry => entry.key === key), key).toBe(true);
+  });
+
   it('lists every setting with its default before anything is written', () => {
     const lines = configLines(fresh());
     expect(lines.map(l => l.key)).toEqual(CONFIG_KEYS.map(k => k.key));

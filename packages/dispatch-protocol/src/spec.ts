@@ -5,7 +5,7 @@ export type ToolTier = 'read' | 'write' | 'full';
 export const TOOL_TIERS: readonly ToolTier[] = ['read', 'write', 'full'];
 
 export interface Caller {
-  kind: 'cli' | 'mcp' | 'job' | 'other';
+  kind: 'cli' | 'mcp' | 'job' | 'other' | 'service';
   label?: string;
   /** The caller's own session, matched against recent picks when picks are required. */
   session?: string;
@@ -24,6 +24,8 @@ export interface JobRequest {
   output: OutputMode;
   cwd: string;
   prompt: { text?: string; file?: string };
+  /** Keep this prompt out of the job folder even when prompt persistence is on. */
+  persistPrompt?: boolean;
   expectFile?: string;
   schema?: string;
   session?: string;

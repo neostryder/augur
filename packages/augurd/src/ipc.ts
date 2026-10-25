@@ -58,7 +58,7 @@ export function rotateWebToken(dir: string): string {
 export type Role = 'owner' | 'agent';
 
 /** What an agent token may call. Everything else, including every request that records a person's word (a prompt, a pick answer, a grade label) and the engine's settings, is the owner's. */
-export const AGENT_METHODS: ReadonlySet<string> = new Set(['ping', 'submit', 'status', 'list', 'events', 'logs', 'result', 'cancel', 'pick', 'pressure', 'balance', 'resets', 'routes', 'route_add']);
+export const AGENT_METHODS: ReadonlySet<string> = new Set(['ping', 'submit', 'status', 'list', 'events', 'logs', 'result', 'cancel', 'pick', 'pressure', 'balance', 'resets', 'routes', 'route_add', 'prose_add', 'prose_list', 'prose_status']);
 
 /** A job request as an agent may make it: it cannot say a person is at the terminal or named the model, and it cannot waive the pick or quota checks. */
 export function attestAgentRequest(req: JobRequest): JobRequest {
@@ -137,6 +137,15 @@ export class IpcServer {
       case 'grade': return this.sup.grade(params as never);
       case 'grade_label': return this.sup.gradeLabel(String(p.id ?? ''), String(p.label ?? ''), typeof p.note === 'string' ? p.note : undefined);
       case 'grade_report': return this.sup.gradeReport(typeof p.rubric === 'string' ? p.rubric : undefined);
+      case 'prose_add': return this.sup.proseAdd(params, role === 'agent' && this.needEngine().api.state.config.agentApproval === 'all');
+      case 'prose_list': return this.sup.proseList(typeof p.status === 'string' ? p.status as never : undefined);
+      case 'prose_status': return this.sup.proseStatus();
+      case 'prose_run': {
+        const caller = p.caller;
+        if (!caller || typeof caller !== 'object' || (caller as { kind?: unknown }).kind !== 'cli' || typeof (caller as { label?: unknown }).label !== 'string') throw new Error('An owner CLI caller is required to run prose requests.');
+        return this.sup.proseRun(p.dryRun === true, false, caller as never);
+      }
+      case 'prose_approve': return this.sup.proseApprove(String(p.id ?? ''));
       case 'balance': return this.sup.balance(typeof p.days === 'number' ? p.days : 7);
       case 'routes': return Object.entries(this.routes() ?? {}).map(([name, r]) => ({ name, model: r.model, adapter: r.adapter, problem: this.sup.routeProblem(r as RouteConfig, name), capabilities: this.sup.routeCapabilities(r as RouteConfig) }));
       case 'route_add': return this.routeAdd(params);

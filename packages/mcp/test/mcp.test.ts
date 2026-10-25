@@ -182,7 +182,8 @@ describe('the server', () => {
     const client = new Client({ name: 'test', version: '1' });
     await Promise.all([server.connect(a), client.connect(b)]);
     const { tools } = await client.listTools();
-    expect(tools.map(t => t.name).sort()).toEqual(['augur_balance', 'augur_cancel', 'augur_job', 'augur_jobs', 'augur_models', 'augur_pick', 'augur_pick_preview', 'augur_policy', 'augur_policy_edit', 'augur_pressure', 'augur_resets', 'augur_route_add', 'augur_routes', 'augur_run']);
+    expect(tools.map(t => t.name).sort()).toEqual(['augur_balance', 'augur_cancel', 'augur_job', 'augur_jobs', 'augur_models', 'augur_pick', 'augur_pick_preview', 'augur_policy', 'augur_policy_edit', 'augur_pressure', 'augur_prose_add', 'augur_prose_list', 'augur_prose_status', 'augur_resets', 'augur_route_add', 'augur_routes', 'augur_run']);
+    expect(tools.map(t => t.name)).not.toContain('prose_approve');
     const resets = tools.find(t => t.name === 'augur_resets')!;
     expect(resets.annotations).toMatchObject({ readOnlyHint: true, openWorldHint: false });
     expect(resets.description).toContain('never changes anything');

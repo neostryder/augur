@@ -75,6 +75,11 @@ export interface Methods {
   grade_label: { params: { id: string; label: 'agree' | 'high' | 'low'; note?: string }; result: { ok: true; rubric: string; mode: 'shadow' | 'advise' | 'gate' } | { error: string } };
   /** Each rubric in the rubrics folder with its labelled grades, agreement, and the mode it has earned; `rubric` limits it to one. */
   grade_report: { params: { rubric?: string } | undefined; result: GradeReport | { error: string } };
+  prose_add: { params: ProseAddParams; result: ProseItem | { error: string } };
+  prose_list: { params: { status?: ProseStatus } | undefined; result: ProseItem[] };
+  prose_status: { params: undefined; result: ProseQueueStatus };
+  prose_run: { params: { dryRun?: boolean; caller?: import('./spec.js').Caller } | undefined; result: { started: boolean; batchId?: string; items?: string[]; reason?: string } };
+  prose_approve: { params: { id: string }; result: ProseItem | { error: string } };
   routes: { params: undefined; result: Array<{ name: string; model: string; adapter: string; problem: string | null; capabilities: RouteCapabilities }> };
   /** Adds one route and, optionally, its model. The model stays unreviewed. An existing route name is refused and nothing is written. */
   route_add: { params: RouteAddParams; result: RouteAddAnswer };
@@ -90,6 +95,11 @@ export interface Methods {
    */
   engine_watch: { params: { hello: ViewHello }; result: { state: EngineState; views: ViewInfo[] } };
 }
+
+export type ProseStatus = 'queued' | 'awaiting-approval' | 'running' | 'drafted' | 'failed';
+export interface ProseAddParams { requester: string; repo: string; target: string; kind: 'write' | 'rewrite' | 'review' | 'sweep-edit'; surface: 'README' | 'changelog' | 'ui-strings' | 'post' | 'doc' | 'other'; audience: string; voice: string; dataTier?: DataTier; urgency?: 'normal' | 'urgent'; facts?: Array<{ text: string; source: string }>; mustInclude?: string[]; mustAvoid?: string[]; currentText?: string; context?: Record<string, string>; limits?: { length?: string; format?: string } }
+export interface ProseItem extends ProseAddParams { id: string; createdAt: string; dataTier: DataTier; status: ProseStatus; statusLog: Array<{ at: string; status: ProseStatus; note: string }>; result?: { text: string; modelId: string; cost: number | null; runId: string } }
+export interface ProseQueueStatus { counts: Record<ProseStatus, number>; oldestAgeMs: number | null; due: boolean }
 
 /** What a view can do for the engine: show a desktop notice, read a provider page through its signed-in browser, open a sign-in window. */
 export type ViewCapability = 'notify' | 'websession' | 'signin';
