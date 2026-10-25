@@ -141,6 +141,21 @@ describe('augur run', () => {
     expect(result.err).toContain('Premium models are not used for automated tasks');
   });
 
+  it('best effort: a run inside a job stays automated whatever --caller says, and cannot waive the pick', async () => {
+    const { run, e } = await boot(), path = join(e.home, 'policy.json'), policy = JSON.parse(readFileSync(path, 'utf8'));
+    policy.balance = { gate: { premium: ['test/fake'], paceLift: ['test/fake'], open: 20, close: 10 } };
+    writeFileSync(path, JSON.stringify(policy));
+    for (const env of [{ AUGUR_IN_JOB: '1' }, { AUGUR_CALLER: 'automated' }]) {
+      const result = await run(['run', 'fake', '--prompt', 'x', '--caller', 'interactive'], '', env);
+      expect(result.code).toBe(2);
+      expect(result.err).toContain('Premium models are not used for automated tasks');
+      const waived = await run(['run', 'fake', '--prompt', 'x', '--allow', 'unpicked'], '', env);
+      expect(waived.code).toBe(1);
+      expect(waived.err).toContain('--allow unpicked is for the owner');
+    }
+    expect((await run(['run', 'fake', '--prompt', 'x', '--caller', 'automated'])).err).toContain('Premium models are not used for automated tasks');
+  });
+
   it('uses the job identity in its environment as the parent of the jobs it starts', async () => {
     const { run, e } = await boot();
     const boss = await run(['run', 'boss', '--prompt', 'HANG', '--json']);
@@ -219,6 +234,7 @@ describe('augur backlog', () => {
     expect(approved.code).toBe(0);
     expect(approved.out).toContain('awaiting-approval');
     expect(approved.out).toContain('Run again with --yes to approve.');
+    expect(approved.out).toContain('activity=write_code requester=agent repo=.');
     expect(approved.out).toContain('Prompt text: Do work.');
     expect(approved.out).toContain('data=internal tools=write output=patch_only');
     expect(await call('backlog_list', undefined, { dir: e.dir, pipe })).toContainEqual(expect.objectContaining({ id, author: 'agent', status: 'awaiting-approval' }));

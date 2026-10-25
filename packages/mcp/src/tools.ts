@@ -373,7 +373,7 @@ export function createTools(d: McpDeps) {
   function backlogLine(x: Record<string, unknown>): string {
     const prompt = x.prompt as { file?: string; text?: string } | undefined;
     const source = prompt?.file ? `file ${prompt.file}` : `inline ${prompt?.text?.length ?? 0} chars`;
-    return `${x.id}  ${x.author}  ${x.status}  ${x.route}  data=${x.data} tools=${x.tools} output=${x.output} cwd=${x.cwd} prompt=${source} estimate=${x.estimate ?? 1} deadline=${x.deadline ?? 'none'}  ${x.task}`;
+    return `${x.id}  ${x.author}  ${x.status}  ${x.route}  activity=${x.activity} requester=${x.requester} repo=${x.repo}  data=${x.data} tools=${x.tools} output=${x.output} cwd=${x.cwd} prompt=${source} estimate=${x.estimate ?? 1} deadline=${x.deadline ?? 'none'}  ${x.task}`;
   }
 
   return { models, aliases, pick, run, job, jobs, cancel, pressure, balance, resets, routes, routeAdd, policy, editPolicy, pickPreview, proseAdd, proseList, proseStatus, gateStatus, gateReport, backlogAdd, backlogList, backlogStatus };
