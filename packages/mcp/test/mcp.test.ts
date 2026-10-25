@@ -92,6 +92,13 @@ describe('pick', () => {
     const r = await createTools(deps({ pick: { error: 'could not classify' } })).pick({ task: 'do a thing' });
     expect(r).toMatchObject({ isError: true, text: 'could not classify' });
   });
+  it('refuses a model without a role, so an agent cannot name a model in a plain pick', async () => {
+    const calls: Calls[] = [];
+    const r = await createTools(deps({ pick: { pick: 'codex/luna', activity: 'write_code', dataTier: 'internal', ranking: [], routes: {} } }, calls)).pick({ activity: 'write_code', data_tier: 'internal', model: 'codex/luna' });
+    expect(r).toMatchObject({ isError: true });
+    expect(r.text).toContain('needs role too');
+    expect(calls).toEqual([]);
+  });
   it('passes best_only and snippet, and prints each route odds', async () => {
     const calls: Calls[] = [];
     const r = await createTools(deps({ pick: { pick: 'codex/luna', activity: 'write_code', dataTier: 'internal', ranking: [{ model: 'codex/luna', score: 0.8, odds: 0.71 }], routes: {}, reason: 'codex/luna for deep write code.', seats: {} } }, calls))
