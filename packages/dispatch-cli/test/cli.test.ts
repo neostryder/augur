@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { startService } from '@augur/augurd';
@@ -9,6 +9,52 @@ import { main, parse } from '../src/cli.js';
 vi.setConfig({ testTimeout: 90000 });
 const cleanup: Array<() => Promise<void> | void> = [];
 afterEach(async () => { while (cleanup.length) await cleanup.pop()!(); });
+
+describe('augur alias init', () => {
+  it('prints suggested patterns and writes nothing', async () => {
+    const e = makeEnv();
+    const path = join(e.home, 'policy.json');
+    writeFileSync(path, JSON.stringify({ providers: { openrouter: { models: { 'openrouter/vendor-v2': { id: 'vendor/model-v2' } } } } }));
+    const before = readdirSync(e.home).sort();
+    let out = '';
+    const code = await main(['alias', 'init'], { out: text => { out += text; }, err: () => {}, stdin: () => '', env: { ...process.env, AUGUR_HOME: e.home }, cwd: e.root });
+    expect(code).toBe(0); expect(out).toContain('vendor/model-v*');
+    expect(readdirSync(e.home).sort()).toEqual(before);
+    e.dispose();
+  });
+
+  it('requires --untested on the CLI before accepting an untested offer', async () => {
+    const e = makeEnv();
+    writeFileSync(join(e.home, 'policy.json'), JSON.stringify({ schema: 1, updatedAt: new Date().toISOString(), weights: {}, dataTiers: [], activities: [], unreviewed: [], providers: { openrouter: { name: 'OpenRouter', metered: false, thresholds: {}, models: { label: { provider: 'openrouter', id: 'vendor/model-1', name: 'Model One', status: 'confirmed', source: 'manual', dataTier: 'public', askFirst: false, output: 'text_only', sandbox: false, effort: null, cost: 'moderate', pause: null, activities: {}, dataHandling: {}, useAfter: [], notes: '', inherited: [] } } } } }));
+    const offer = { id: 'offer-1', label: 'label', from: 'vendor/model-1', to: 'vendor/model-2', createdAt: new Date().toISOString(), status: 'pending', tested: false, notes: ['not smoke-tested: paused'] };
+    writeFileSync(join(e.home, 'alias-inbox.jsonl'), JSON.stringify(offer) + '\n');
+    mkdirSync(join(e.home, 'dispatch'), { recursive: true });
+    writeFileSync(join(e.home, 'dispatch', 'routes.json'), JSON.stringify({ routes: { chat: { model: 'label', adapter: 'openai-api', options: { model: 'vendor/model-1' } }, manual: { model: 'label', adapter: 'openai-api', options: { model: 'manual/model' } } } }));
+    let out = '';
+    const io = { out: (text: string) => { out += text; }, err: () => {}, stdin: () => '', env: { ...process.env, AUGUR_HOME: e.home, AUGURD_DATA: e.dir }, cwd: e.root };
+    expect(await main(['alias', 'accept', 'offer-1'], io)).toBe(4);
+    expect(await main(['alias', 'accept', 'offer-1', '--untested'], io)).toBe(0);
+    expect(readFileSync(join(e.home, 'policy.json'), 'utf8')).toContain('vendor/model-1');
+    expect(readFileSync(join(e.home, 'policy-edits.jsonl'), 'utf8')).toContain('"value":"vendor/model-2"');
+    expect(JSON.parse(readFileSync(join(e.home, 'dispatch', 'routes.json'), 'utf8'))).toMatchObject({ routes: { chat: { options: { model: 'vendor/model-2' } }, manual: { options: { model: 'manual/model' } } } });
+    expect(out).toContain('route manual still names manual/model; change it yourself');
+    expect(readFileSync(join(e.dir, 'decisions.jsonl'), 'utf8')).toContain('"kind":"alias_swap"');
+    e.dispose();
+  });
+
+  it('uses AUGUR_HOME for roles list, set and remove', async () => {
+    const e = makeEnv();
+    writeFileSync(join(e.home, 'policy.json'), JSON.stringify({ providers: {}, roles: { local: { activity: 'research', candidates: [], callerChooses: false } } }));
+    const io = { out: () => {}, err: () => {}, stdin: () => '', env: { ...process.env, AUGUR_HOME: e.home }, cwd: e.root };
+    expect(await main(['roles'], io)).toBe(0);
+    expect(await main(['roles', 'set', 'new', '--activity', 'research', '--candidates', 'x/y'], io)).toBe(0);
+    expect(await main(['roles', 'remove', 'local'], io)).toBe(0);
+    const edits = readFileSync(join(e.home, 'policy-edits.jsonl'), 'utf8');
+    expect(edits).toContain('"model":"new"');
+    expect(edits).toContain('"model":"local"');
+    e.dispose();
+  });
+});
 
 async function boot(extra: Record<string, unknown> = {}) {
   const e: Env = makeEnv();

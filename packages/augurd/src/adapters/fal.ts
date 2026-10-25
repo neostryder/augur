@@ -44,7 +44,7 @@ export const falApi: Adapter = {
   },
   plan(request: JobRequest, route: RouteConfig, ctx: PlanContext): LaunchPlan {
     if (request.activity !== 'generate_video') throw new Error('a fal video route takes only the generate_video activity.');
-    if (request.tools !== 'read' || request.output !== 'text_only') throw new Error('a fal video route returns text and a file in the job folder. Use tools read and output text_only.');
+    if ((request.tools !== 'read' && request.tools !== 'none') || request.output !== 'text_only') throw new Error('a fal video route returns text and a file in the job folder. Use tools none or read and output text_only.');
     const o = route.options, files = ctx.attachments ?? [];
     if (files.some(f => f.kind === 'text')) throw new Error('a fal video route takes images and audio, not text files.');
     if (files.filter(f => f.kind === 'image').length > 2 || files.filter(f => f.kind === 'audio').length > 1) throw new Error('a fal video route takes up to two images (first frame, last frame) and one audio file.');

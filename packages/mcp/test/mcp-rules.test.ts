@@ -8,16 +8,18 @@ const now = new Date('2026-10-01T00:30:00Z');
 const stored = migratePolicy({ providers: {
   minimax: { defaults: { activities: { review_code: 'often', long_context: 'normal', write_code: 'normal' }, cost: 'free' },
     models: { 'minimax/m3': { id: 'MiniMax-M3', source: 'manual', status: 'confirmed', rule: { dataTier: 'public', askFirst: false } } } },
-  openrouter: { defaults: {}, models: { 'deepseek/v4.1-flash': { id: 'deepseek/deepseek-v4.1-flash', source: 'live', status: 'confirmed',
+  openrouter: { defaults: {}, models: { 'deepseek/v4.1-flash': { id: 'deepseek/deepseek-v4.1-flash', source: 'live', status: 'confirmed', series: { kind: 'llm', pattern: 'deepseek/*' },
     rule: { dataTier: 'internal', cost: 'cheap', activities: { review_code: 'often', write_code: 'normal' } } } } },
 } });
+stored.providers.openrouter!.models['deepseek/v4.1-flash']!.series = { kind: 'llm', pattern: 'deepseek/*' };
 const POLICY = JSON.stringify(buildPolicyFile(stored, [{ id: 'minimax', name: 'MiniMax', metered: false }, { id: 'openrouter', name: 'OpenRouter', metered: false }], now));
 
-function rig(files: { inbox?: string; state?: string } = {}) {
+function rig(files: { inbox?: string; state?: string; aliases?: string } = {}) {
   const inbox: string[] = files.inbox ? [files.inbox] : [];
   const deps: McpDeps = {
     call: (async () => { throw new Error('the service is not used here'); }) as never, opts: {}, policyText: () => POLICY, usageText: () => null,
     inboxText: () => inbox.join(''), editStateText: () => files.state ?? null, appendInbox: lines => { inbox.push(lines); },
+    aliasInboxText: () => files.aliases ?? null,
     session: 'mcp-test', cwd: '/work',
   };
   return { tools: createTools(deps), inbox };
@@ -67,6 +69,15 @@ describe('augur_policy_edit', () => {
     const r = await tools.editPolicy({ edits: [{ provider: 'minimax', field: 'thresholds.denyPct', value: 95 }] });
     expect((r.data as { edits: Array<Record<string, unknown>> }).edits[0]).toMatchObject({ status: 'needs-owner' });
     expect(sent(inbox)[0]).toMatchObject({ provider: 'minimax', model: '', field: 'thresholds.denyPct' });
+  });
+  it('rejects series and role edits from MCP and exposes a real offer read only', async () => {
+    const offer = { id: 'offer-1', label: 'deepseek/v4.1-flash', from: 'deepseek/deepseek-v4.1-flash', to: 'deepseek/v4.1-flash', createdAt: now.toISOString(), status: 'pending' };
+    const { tools, inbox } = rig({ aliases: JSON.stringify(offer) + '\n' });
+    const r = await tools.editPolicy({ edits: [{ model: 'minimax/m3', field: 'series', value: { kind: 'llm', pattern: 'm3*' } }] });
+    expect(r).toMatchObject({ isError: true });
+    expect(await tools.editPolicy({ edits: [{ model: 'minimax/m3', field: 'role', value: { activity: 'research', candidates: ['minimax/m3'], callerChooses: false } }] })).toMatchObject({ isError: true });
+    expect(inbox).toEqual([]);
+    expect(await tools.aliases()).toMatchObject({ data: { aliases: [{ label: 'deepseek/v4.1-flash', offer: { id: 'offer-1', status: 'pending' } }] } });
   });
   it('writes edits the app can read back and apply', async () => {
     const { tools, inbox } = rig();

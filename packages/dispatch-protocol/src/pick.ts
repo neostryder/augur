@@ -14,6 +14,7 @@ export interface PickRequest {
   dataTier: DataTier;
   /** The model the person named for this task. It is the only way an ask-first model becomes a candidate. */
   named?: string;
+  role?: string;
   /** How well each model fits the task, 0 to 1, judged by the caller. A model with no figure counts as 0.5. */
   fits?: Record<string, number>;
   /** How much the task weighs: routine, everyday, deep, or core. Left out, the activity decides. */
@@ -96,11 +97,14 @@ function drawFrom(pool: Ranked[], rnd: () => number): Ranked {
 /** Score is fit, times the weight of the activity's level, times the usage factor, times the tilt, times the boost. A model that fails a rule is listed as blocked with the reason. */
 export function rank(policy: PolicyFile, usage: UsageSnapshot | null, req: PickRequest, now = new Date()): PickResult {
   const press = pressure(policy, usage, now), notes: string[] = [];
+  const role = req.role ? policy.roles?.[req.role] : undefined;
+  if (req.role && !role) notes.push(`Unknown role ${req.role}.`);
   if (!usage) notes.push('Augur usage file missing; usage not weighed.');
   const rows: Array<{ model: string; provider: string; level: WeightLevel }> = [], blocked: Blocked[] = [];
   for (const [provider, p] of Object.entries(policy.providers)) {
     for (const [model, m] of Object.entries(p.models)) {
       const paused = m.pause && pauseActive(m.pause, now) ? m.pause : null;
+      if (req.role && !role?.candidates.includes(model)) { blocked.push({ model, why: `not a candidate for role ${req.role}` }); continue; }
       let level = m.activities[req.activity], why: string | null = null;
       if (paused) {
         const w = paused.weights;
@@ -163,8 +167,8 @@ export function rank(policy: PolicyFile, usage: UsageSnapshot | null, req: PickR
   const pool = applyOdds(ranking, rules.draw.tail);
   const top = ranking[0];
   const named = req.named && ranking.some(r => r.model === req.named) ? req.named : null;
-  const canDraw = req.draw === true && req.best !== true && rules.draw.enabled && !named && !!top && top.score > 0 && pool.length > 0;
-  let pick = named ?? top?.model ?? null;
+  const canDraw = req.draw === true && req.best !== true && rules.draw.enabled && !role?.callerChooses && !named && !!top && top.score > 0 && pool.length > 0;
+  let pick = role?.callerChooses && !named ? null : named ?? top?.model ?? null;
   let drawn = false, seed: string | null = null;
   if (canDraw) {
     // node:crypto is not visible to the browser packages that compile this file.

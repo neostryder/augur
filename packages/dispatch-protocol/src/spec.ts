@@ -1,8 +1,8 @@
 import type { ActivityId, DataTier, OutputMode } from '@augur/core';
 import type { JobState } from './states.js';
 
-export type ToolTier = 'read' | 'write' | 'full';
-export const TOOL_TIERS: readonly ToolTier[] = ['read', 'write', 'full'];
+export type ToolTier = 'none' | 'read' | 'write' | 'full';
+export const TOOL_TIERS: readonly ToolTier[] = ['none', 'read', 'write', 'full'];
 
 export interface Caller {
   kind: 'cli' | 'mcp' | 'job' | 'other' | 'service';

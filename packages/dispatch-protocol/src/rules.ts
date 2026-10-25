@@ -81,8 +81,9 @@ export function evaluate(request: JobRequest, input: RuleInput): Decision {
     return no('data_tier_too_high', `${route.model} may see ${model.dataTier} data at most, and the task is ${request.dataTier}.`);
   }
   if (model.sandbox && !capabilities.sandboxed) return no('sandbox_required', `${route.model} must run inside a sandbox, and this adapter runs on the host.`);
+  if (request.tools === 'none' && !capabilities.enforcesReadOnly) return no('read_not_enforceable', `${route.model} has a tools: none rule, and this adapter cannot enforce it.`);
   // The stricter of the rule's output mode and the request's applies.
-  if (model.output === 'text_only' && (request.output !== 'text_only' || request.tools !== 'read')) {
+  if (model.output === 'text_only' && (request.output !== 'text_only' || (request.tools !== 'read' && request.tools !== 'none'))) {
     return no('text_only', `${route.model} may return text only, with read tools.`);
   }
   // A rule that limits a model to text is only as strong as the adapter that runs it. Where the harness cannot hold a read tier itself, the rule fails closed.
@@ -92,7 +93,7 @@ export function evaluate(request: JobRequest, input: RuleInput): Decision {
   if (request.tools === 'read' && !capabilities.enforcesReadOnly) warnings.push('This adapter asks the harness to stay read-only in the prompt and cannot enforce it. Treat the read tier as advisory.');
   if (model.output === 'patch_only' && request.output === 'write_files') return no('isolation_required', `${route.model} may return a patch only.`);
   // A text-only read job writes nothing, so a patch-only model may run it on an adapter that holds the read tier itself, such as a bare API call.
-  const readsOnly = request.output === 'text_only' && request.tools === 'read' && capabilities.enforcesReadOnly;
+  const readsOnly = request.output === 'text_only' && (request.tools === 'read' || request.tools === 'none') && capabilities.enforcesReadOnly;
   if ((model.output === 'patch_only' || request.output === 'patch_only') && !capabilities.isolatesWorkspace && !readsOnly) {
     return no('isolation_required', 'A patch-only job needs an adapter that works on a copy of the workspace.');
   }

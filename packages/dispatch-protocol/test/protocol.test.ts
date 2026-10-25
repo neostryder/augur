@@ -74,6 +74,11 @@ describe('rules', () => {
     expect(evaluate({ ...read, output: 'patch_only' }, { policy: policy(), usage: null, route: api, capabilities: host, now })).toMatchObject({ rejection: { code: 'isolation_required' } });
     expect(evaluate(read, { policy: policy(), usage: null, route: api, capabilities: { ...host, enforcesReadOnly: false }, now })).toMatchObject({ rejection: { code: 'isolation_required' } });
   });
+  it('refuses tools none on adapters that cannot enforce a read-only tool tier', () => {
+    const none = req({ activity: 'read_images', dataTier: 'public', tools: 'none', output: 'text_only' });
+    expect(evaluate(none, { policy: policy(), usage: null, route: route('minimax/api'), capabilities: { ...host, enforcesReadOnly: false }, now })).toMatchObject({ rejection: { code: 'read_not_enforceable', reason: expect.stringContaining('tools: none') } });
+    expect(evaluate(none, { policy: policy(), usage: null, route: route('minimax/api'), capabilities: host, now }).allow).toBe(true);
+  });
   it('never picks a model added with a proposed rule until its status is confirmed', () => {
     const stored = emptyPolicy();
     addModels(stored, 'acme', [{ label: 'acme/fast', id: 'fast-1', rule: { activities: { write_code: 'preferred' }, dataTier: 'internal', askFirst: false, output: 'write_files', sandbox: false, pause: { until: '2099-01-01T00:00:00Z' }, notes: 'smuggled' } }], 'manual', now);
@@ -92,6 +97,16 @@ describe('rules', () => {
     const confirmed = buildPolicyFile(stored, meta, now);
     expect(rank(confirmed, null, { activity: 'write_code', dataTier: 'internal' }).pick).toBe('acme/fast');
     expect(evaluate(req(), { policy: confirmed, usage: null, route: route('acme/fast'), capabilities: host, now }).allow).toBe(true);
+  });
+  it('does not draw for caller-chosen roles and only records a named candidate', () => {
+    const file = policy();
+    file.roles = { reviewer: { activity: 'write_code', candidates: ['codex/sol'], callerChooses: true } };
+    const preview = rank(file, null, { activity: 'write_code', dataTier: 'internal', role: 'reviewer', draw: true, seed: 'x' }, now);
+    expect(preview.pick).toBeNull(); expect(preview.drawn).toBe(false); expect(preview.seed).toBeNull();
+    const chosen = rank(file, null, { activity: 'write_code', dataTier: 'internal', role: 'reviewer', named: 'codex/sol', draw: true }, now);
+    expect(chosen.pick).toBe('codex/sol'); expect(chosen.drawn).toBe(false);
+    const outside = rank(file, null, { activity: 'write_code', dataTier: 'internal', role: 'reviewer', named: 'minimax/m3' }, now);
+    expect(outside.pick).toBeNull();
   });
   it('denies at the deny threshold and warns at the warn threshold', () => {
     const usage = (pct: number) => ({ providers: { codex: { meters: [{ id: 'plan_weekly', usedPct: pct }] } } });

@@ -76,7 +76,7 @@ export class IpcServer {
   private sockets = new Set<net.Socket>();
   private readonly startedAt = Date.now();
   private engine: EngineLink | null = null;
-  constructor(private sup: Supervisor, private store: Store, private token: string, private routes: () => Record<string, RouteConfig> | null, private rates: () => RateCard = () => ({}), private routeFile: { read(): string | null; write(text: string): void } | null = null, private agentToken: string | null = null) {}
+  constructor(private sup: Supervisor, private store: Store, private token: string, private routes: () => Record<string, RouteConfig> | null, private rates: () => RateCard = () => ({}), private routeFile: { read(): string | null; write(text: string): void } | null = null, private agentToken: string | null = null, private aliasRefresh?: (label?: string) => Promise<unknown>) {}
 
   /** A dispatch call from the web server. It runs as an agent, so the request cannot name a model or waive the pick, and only the methods in HTTP_DISPATCH_METHODS are served. */
   async dispatch(method: string, params: unknown): Promise<unknown> {
@@ -119,6 +119,7 @@ export class IpcServer {
     switch (method) {
       case 'ping': return { pid: process.pid, version: PROTOCOL_VERSION, startedAt: this.startedAt };
       case 'submit': return this.sup.submit(role === 'agent' ? attestAgentRequest(params as JobRequest) : params as JobRequest);
+      case 'alias_refresh': if (role !== 'owner') throw new Error('Alias refresh is for the owner.'); return this.aliasRefresh?.(typeof p.label === 'string' ? p.label : undefined) ?? { error: 'Alias refresh is unavailable.' };
       case 'status': return this.store.get(String(p.id));
       case 'list': return this.store.list({ state: p.state as never, root: p.root as string | undefined, limit: p.limit as number | undefined });
       case 'conversations': return this.sup.conversations();

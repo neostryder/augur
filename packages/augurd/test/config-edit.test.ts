@@ -18,6 +18,7 @@ describe('config editing', () => {
     expect(lines.map(l => l.key)).toEqual(CONFIG_KEYS.map(k => k.key));
     expect(lines.every(l => l.value === l.default)).toBe(true);
     expect(lines.find(l => l.key === 'requirePick')).toMatchObject({ value: 'true', weakens: true });
+    expect(lines.find(l => l.key === 'aliasRefreshHours')).toMatchObject({ value: '24', default: '24' });
   });
 
   it('stores a value where the loader reads it, keeping every other key', () => {

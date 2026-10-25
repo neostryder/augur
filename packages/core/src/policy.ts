@@ -4,14 +4,14 @@
 import { obj } from './util.js';
 
 export const ACTIVITIES = ['write_code', 'review_code', 'research', 'reason_critique', 'draft_prose', 'summarize_extract', 'long_context',
-  'bulk_tagging', 'typed_decisions', 'read_images', 'generate_images', 'generate_video', 'speech', 'embed', 'transcribe', 'moderate', 'translate', 'reverse_engineering'] as const;
+  'bulk_tagging', 'typed_decisions', 'read_images', 'generate_images', 'image_to_image', 'generate_video', 'speech', 'embed', 'transcribe', 'moderate', 'translate', 'reverse_engineering'] as const;
 export type ActivityId = typeof ACTIVITIES[number];
 
 export const ACTIVITY_LABELS: Record<ActivityId, string> = {
   write_code: 'Write code', review_code: 'Review code', research: 'Research', reason_critique: 'Reason and critique',
   draft_prose: 'Draft prose', summarize_extract: 'Summarize and extract', long_context: 'Long-context reading',
   bulk_tagging: 'Bulk tagging', typed_decisions: 'Typed decisions', read_images: 'Read images',
-  generate_images: 'Generate images', generate_video: 'Generate video', speech: 'Speech',
+  generate_images: 'Generate images', image_to_image: 'Image to image', generate_video: 'Generate video', speech: 'Speech',
   embed: 'Embed text', transcribe: 'Transcribe audio', moderate: 'Moderate content', translate: 'Translate', reverse_engineering: 'Reverse engineering',
 };
 
@@ -61,7 +61,7 @@ export interface Rule {
   useAfter?: string[];
   notes?: string;
 }
-export const RULE_FIELDS = ['dataTier', 'askFirst', 'output', 'sandbox', 'effort', 'cost', 'pause', 'dataHandling', 'useAfter', 'notes'] as const;
+export const RULE_FIELDS = ['dataTier', 'askFirst', 'output', 'sandbox', 'effort', 'cost', 'pause', 'dataHandling', 'useAfter', 'notes', 'series'] as const;
 export type RuleField = typeof RULE_FIELDS[number] | `activities.${ActivityId}`;
 
 export interface ModelEntry {
@@ -74,7 +74,10 @@ export interface ModelEntry {
   firstSeen: string;
   /** The older version this model replaces. Confirming this model hides that one. */
   supersedes?: string;
+  series?: { kind: 'llm' | 'image' | 'speech' | 'embed'; pattern: string };
 }
+
+export interface PolicyRole { activity: ActivityId; candidates: string[]; callerChooses: boolean }
 
 export interface ProviderPolicy {
   defaults: Rule;
@@ -98,6 +101,7 @@ export interface PolicyConfig {
   history: PolicyChange[];
   /** Overrides for the automatic balance's standing rules. Kept as written; the balance reads what it recognizes. */
   balance?: Record<string, unknown>;
+  roles?: Record<string, PolicyRole>;
 }
 
 export const HISTORY_LIMIT = 1000;
@@ -182,6 +186,7 @@ function getAt(policy: PolicyConfig, path: string): unknown {
   if (field.startsWith('thresholds.')) return (p.thresholds as Record<string, unknown> | undefined)?.[field.slice(11)];
   if (field === 'listMode') return p.listMode;
   if (field === 'status') return model ? p.models[model]?.status : undefined;
+  if (field === 'series') return model ? p.models[model]?.series : undefined;
   const rule = model ? p.models[model]?.rule : p.defaults;
   return rule ? readField(rule, field) : undefined;
 }
@@ -199,6 +204,7 @@ function setAt(policy: PolicyConfig, path: string, value: unknown): void {
   const entry = model ? p.models[model] : undefined;
   if (model && !entry) return;
   if (field === 'status') { if (entry && MODEL_STATUSES.includes(value as ModelStatus)) entry.status = value as ModelStatus; return; }
+  if (field === 'series') { if (entry) { if (value === undefined) delete entry.series; else entry.series = value as ModelEntry['series']; } return; }
   writeField(entry ? entry.rule : p.defaults, field, value);
 }
 
@@ -303,6 +309,7 @@ export interface ResolvedModel {
   notes: string;
   /** Fields taken from the provider's defaults. */
   inherited: string[];
+  series?: ModelEntry['series'];
 }
 
 const FALLBACK: Required<Omit<Rule, 'activities' | 'dataHandling'>> = { dataTier: 'public', askFirst: false, output: 'text_only', sandbox: false, effort: null, cost: 'moderate', pause: null, useAfter: [], notes: '' };
@@ -327,7 +334,7 @@ export function resolveModel(provider: string, defaults: Rule, model: ModelEntry
   }
   return { provider, id: model.id, name: model.name, status: model.status, source: model.source, activities,
     dataTier: pick('dataTier'), askFirst: pick('askFirst'), output: pick('output'), sandbox: pick('sandbox'), effort: pick('effort'),
-    cost: pick('cost'), pause: pick('pause'), dataHandling, useAfter: [...pick('useAfter')], notes: pick('notes'), inherited };
+    cost: pick('cost'), pause: pick('pause'), dataHandling, useAfter: [...pick('useAfter')], notes: pick('notes'), inherited, ...(model.series ? { series: model.series } : {}) };
 }
 
 export function resolveThresholds(p: ProviderPolicy | undefined): Thresholds { return { ...DEFAULT_THRESHOLDS, ...p?.thresholds }; }
@@ -350,6 +357,7 @@ export interface PolicyFile {
   providers: Record<string, { name: string; metered: boolean; thresholds: Thresholds; models: Record<string, ResolvedModel> }>;
   /** Overrides for the automatic balance's standing rules, when the owner has set any. */
   balance?: Record<string, unknown>;
+  roles?: Record<string, PolicyRole>;
 }
 
 export function buildPolicyFile(policy: PolicyConfig, providers: Array<{ id: string; name: string; metered: boolean }>, now = new Date()): PolicyFile {
@@ -364,7 +372,7 @@ export function buildPolicyFile(policy: PolicyConfig, providers: Array<{ id: str
     out[meta.id] = { name: meta.name, metered: meta.metered, thresholds: resolveThresholds(p), models };
   }
   const stamps = Object.values(policy.stamps).sort();
-  return { schema: 1, updatedAt: stamps.length ? stampTime(stamps.at(-1) as string) : now.toISOString(), weights: WEIGHTS, dataTiers: DATA_TIERS, activities: ACTIVITIES, unreviewed: unreviewed.sort(), providers: out, ...(policy.balance && Object.keys(policy.balance).length ? { balance: policy.balance } : {}) };
+  return { schema: 1, updatedAt: stamps.length ? stampTime(stamps.at(-1) as string) : now.toISOString(), weights: WEIGHTS, dataTiers: DATA_TIERS, activities: ACTIVITIES, unreviewed: unreviewed.sort(), providers: out, ...(policy.balance && Object.keys(policy.balance).length ? { balance: policy.balance } : {}), ...(policy.roles ? { roles: policy.roles } : {}) };
 }
 
 /**

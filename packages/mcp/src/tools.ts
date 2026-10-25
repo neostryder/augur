@@ -20,6 +20,9 @@ export interface McpDeps {
   /** The edits agents have asked for, and what the app did with them. The app owns both files; the server only appends to the inbox. */
   inboxText?: () => string | null;
   editStateText?: () => string | null;
+  aliasStateText?: () => string | null;
+  aliasInboxText?: () => string | null;
+  aliasFlagsText?: () => string | null;
   appendInbox?: (lines: string) => void;
   /** Names this server's calls to the service, so a pick and the run that follows it are matched. */
   session: string;
@@ -52,6 +55,9 @@ export interface RunArgs {
 const WAIT_DEFAULT_S = 300, WAIT_MAX_S = 900, POLL_MS = 1500;
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const fail = (text: string, data?: Record<string, unknown>): ToolResult => ({ text, isError: true, ...(data ? { data } : {}) });
+const parseJsonObject = (text: string | null): Record<string, unknown> => { try { const x = JSON.parse(text ?? '{}'); return isObj(x) ? x : {}; } catch { return {}; } };
+const parseJsonArray = (text: string | null): Array<Record<string, unknown>> => { try { const x = JSON.parse(text ?? '[]'); return Array.isArray(x) ? x.filter(isObj) : []; } catch { return []; } };
+const parseJsonLines = (text: string | null): Array<Record<string, unknown>> => (text ?? '').split(/\r?\n/).filter(Boolean).flatMap(line => { try { const x: unknown = JSON.parse(line); return isObj(x) ? [x] : []; } catch { return []; } });
 const oneOf = <T extends string>(list: readonly T[], v: string | undefined, d?: T): T | null => (v === undefined ? d ?? null : list.includes(v as T) ? (v as T) : null);
 
 async function guarded<T>(work: () => Promise<T>, then: (v: T) => ToolResult): Promise<ToolResult> {
@@ -86,15 +92,24 @@ export function createTools(d: McpDeps) {
     return { text: `${usable.length} of ${rows.length} models can take jobs now.\n${lines.join('\n')}`, data: { models: rows } };
   }
 
-  async function pick(a: { activity?: string; data_tier?: string; task?: string; depth?: string; best_only?: boolean; snippet?: boolean }): Promise<ToolResult> {
+  async function aliases(): Promise<ToolResult> {
+    const file = policyFile();
+    if (!file) return fail('policy.json was not found.');
+    const state = parseJsonObject(d.aliasStateText?.() ?? null), offers = parseJsonLines(d.aliasInboxText?.() ?? null), flags = parseJsonArray(d.aliasFlagsText?.() ?? null);
+    const rows = Object.entries(file.providers).flatMap(([provider, p]) => Object.entries(p.models).flatMap(([label, model]) => model.series ? [{ label, provider, kind: model.series.kind, pattern: model.series.pattern, id: model.id, name: model.name ?? model.id, refresh: state[label] ?? null, offer: offers.find(o => o.label === label) ?? null, flag: flags.find(f => f.label === label) ?? null }] : []));
+    return { text: rows.map(x => `${x.label}  ${x.kind}  ${x.pattern}  ${x.id}  refresh=${JSON.stringify(x.refresh)}  offer=${JSON.stringify(x.offer)}  flag=${JSON.stringify(x.flag)}`).join('\n') || 'No aliases.', data: { aliases: rows } };
+  }
+
+  async function pick(a: { activity?: string; data_tier?: string; task?: string; depth?: string; best_only?: boolean; snippet?: boolean; role?: string; model?: string }): Promise<ToolResult> {
     const activity = oneOf(ACTIVITIES, a.activity), dataTier = oneOf(DATA_TIERS, a.data_tier);
     if (a.activity && !activity) return fail(`${a.activity} is not an activity. Use one of: ${ACTIVITIES.join(', ')}.`);
     if (a.data_tier && !dataTier) return fail(`${a.data_tier} is not a data tier. Use one of: ${DATA_TIERS.join(', ')}.`);
     if (!a.task && (!activity || !dataTier)) return fail('Give a task, or both an activity and a data tier, each one of the known values.');
-    return guarded(() => d.call('pick', { ...(activity ? { activity: activity as ActivityId } : {}), ...(dataTier ? { dataTier: dataTier as DataTier } : {}), ...(a.depth === 'routine' || a.depth === 'everyday' || a.depth === 'deep' || a.depth === 'core' ? { depth: a.depth } : {}), ...(a.task ? { task: a.task } : {}), ...(a.best_only ? { best: true } : {}), ...(a.snippet ? { snippet: true } : {}), session: d.session }, d.opts), r => {
+    return guarded(() => d.call('pick', { ...(activity ? { activity: activity as ActivityId } : {}), ...(dataTier ? { dataTier: dataTier as DataTier } : {}), ...(a.role ? { role: a.role } : {}), ...(a.model ? { named: a.model } : {}), ...(a.depth === 'routine' || a.depth === 'everyday' || a.depth === 'deep' || a.depth === 'core' ? { depth: a.depth } : {}), ...(a.task ? { task: a.task } : {}), ...(a.best_only ? { best: true } : {}), ...(a.snippet ? { snippet: true } : {}), session: d.session }, d.opts), r => {
       if ('error' in r) return fail(r.error);
       const lines = r.ranking.map(x => `${x.model.padEnd(24)} score ${x.score.toFixed(2)}  odds ${Math.round((x.odds ?? 0) * 100)}%  routes ${(r.routes[x.model] ?? []).join(', ') || 'none'}`);
-      return { text: r.pick ? `Pick: ${r.pick} (${r.activity}, ${r.dataTier} data). ${[r.reason, ...seatLines(r.seats ?? {})].filter(Boolean).join('\n')}\n${lines.join('\n')}` : `No model is permitted ${r.activity} on ${r.dataTier} data.\n${lines.join('\n')}`, data: r as unknown as Record<string, unknown> };
+      const callerChoice = a.role && !a.model ? `This role is caller-chosen. Choose one with model from: ${r.ranking.map(x => x.model).join(', ') || 'no permitted candidates'}.` : '';
+      return { text: r.pick ? `Pick: ${r.pick} (${r.activity}, ${r.dataTier} data). ${[r.reason, ...seatLines(r.seats ?? {})].filter(Boolean).join('\n')}\n${lines.join('\n')}` : callerChoice || `No model is permitted ${r.activity} on ${r.dataTier} data.\n${lines.join('\n')}`, data: r as unknown as Record<string, unknown> };
     });
   }
 
@@ -244,6 +259,7 @@ export function createTools(d: McpDeps) {
   };
   const toEdit = (file: PolicyFile, a: EditArg, by: string, id: string, at: string): PolicyEdit | { problem: string } => {
     if (!a.field) return { problem: 'An edit names a field.' };
+    if (a.field === 'series' || a.field === 'role') return { problem: `${a.field} can only be set by the owner in the terminal.` };
     if (a.field === 'balance') {
       if (!Array.isArray(a.path) || !a.path.every(x => typeof x === 'string')) return { problem: 'A balance edit gives a path: one name per level, such as ["tilt", "deep", "strong"].' };
       const bad = checkBalanceSetting(a.path, a.value);
@@ -324,7 +340,7 @@ export function createTools(d: McpDeps) {
     return { text, data: { activity, dataTier, now: before, withEdits: after, applied: preview.applied, problems } };
   }
 
-  return { models, pick, run, job, jobs, cancel, pressure, balance, resets, routes, routeAdd, policy, editPolicy, pickPreview, proseAdd, proseList, proseStatus };
+  return { models, aliases, pick, run, job, jobs, cancel, pressure, balance, resets, routes, routeAdd, policy, editPolicy, pickPreview, proseAdd, proseList, proseStatus };
 }
 
 export type Tools = ReturnType<typeof createTools>;

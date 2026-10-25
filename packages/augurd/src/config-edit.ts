@@ -21,6 +21,7 @@ export interface ConfigKey {
 }
 
 export const CONFIG_KEYS: readonly ConfigKey[] = [
+  { key: 'aliasRefreshHours', label: 'Alias refresh interval', help: 'Refresh model series listings every 24 hours. 0 turns scheduled refresh off.', kind: 'number', min: 0, max: 8760 },
   { key: 'retentionDays', label: 'Keep finished jobs', help: "Logs and results stay on disk this many days after a job ends, 30 by default. The job's record stays.", kind: 'number', min: 0, max: 3650 },
   { key: 'persistPrompts', label: 'Keep prompts', help: "Saves each job's prompt in its folder. Off by default, so a prompt is deleted as soon as the job starts.", kind: 'bool' },
   { key: 'runner.charterDir', label: 'Charter folder', help: "Folder of standing instructions put in front of every job's prompt. Empty uses the charter folder in the Augur home when there is one. With no folder, jobs get no charter.", kind: 'text' },
@@ -61,6 +62,7 @@ function readRaw(dir: string): Record<string, unknown> {
 
 function valueOf(config: ServiceConfig, key: string): string {
   switch (key) {
+    case 'aliasRefreshHours': return String(config.aliasRefreshHours);
     case 'decision.backend': return config.decision.backend;
     case 'decision.shadow': return config.decision.shadow ?? 'none';
     case 'decision.gateway': return config.decision.gateway ?? '';

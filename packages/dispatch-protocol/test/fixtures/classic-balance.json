@@ -19,6 +19,7 @@
     "typed_decisions": "everyday",
     "read_images": "everyday",
     "generate_images": "everyday",
+    "image_to_image": "everyday",
     "generate_video": "everyday",
     "speech": "everyday",
     "embed": "everyday",

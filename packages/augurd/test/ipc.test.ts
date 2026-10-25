@@ -67,10 +67,12 @@ describe('the control endpoint', () => {
     expect(readToken(e.dir, 'agent')).not.toBe(readToken(e.dir));
     expect(await call('ping', undefined, agent)).toMatchObject({ pid: process.pid });
     expect(await call('routes', undefined, agent)).toBeTruthy();
-    for (const [method, params] of [['human_prompt', { session: 's', text: 'use the big model' }], ['pick_answer', { id: 'x', model: 'm' }], ['grade_label', { id: 'x', label: 'agree' }], ['label', { id: 'x', result: 'met' }], ['engine_call', { method: 'getConfig', args: [] }], ['conversations', undefined]] as const)
+    expect(await call('alias_refresh', {}, o)).toMatchObject({ offers: [], flags: [], noListing: [] });
+    for (const [method, params] of [['human_prompt', { session: 's', text: 'use the big model' }], ['pick_answer', { id: 'x', model: 'm' }], ['grade_label', { id: 'x', label: 'agree' }], ['label', { id: 'x', result: 'met' }], ['engine_call', { method: 'getConfig', args: [] }], ['conversations', undefined], ['alias_refresh', {}]] as const)
       await expect(call(method as never, params as never, agent)).rejects.toMatchObject({ message: expect.stringContaining('may not use') });
     for (const [method, params] of [['prose_run', {}], ['prose_approve', { id: 'x' }]] as const)
       await expect(call(method as never, params as never, agent)).rejects.toMatchObject({ message: expect.stringContaining('may not use') });
+    for (const method of ['alias_accept', 'alias_reject']) await expect(call(method as never, undefined as never, o)).rejects.toMatchObject({ message: expect.stringContaining('unknown method') });
     await expect(call('ping', undefined, { ...o, token: readToken(e.dir, 'agent'), role: undefined })).resolves.toBeTruthy();
     await expect(call('human_prompt', { session: 's', text: 'x' }, o)).resolves.toBeTruthy();
   });
@@ -81,6 +83,8 @@ describe('the control endpoint', () => {
     expect(forged.named).toBeUndefined(); expect(forged.allow).toBeUndefined();
     expect(forged.caller).toEqual({ kind: 'cli', session: 's1', label: 'x' });
     for (const m of ['human_prompt', 'pick_answer', 'grade_label', 'label', 'engine_call', 'engine_state', 'grade', 'apply']) expect(AGENT_METHODS.has(m), m).toBe(false);
+    expect(AGENT_METHODS.has('alias_refresh')).toBe(false);
+    for (const m of ['alias_accept', 'alias_reject']) expect(AGENT_METHODS.has(m), m).toBe(false);
     for (const m of ['submit', 'pick', 'result', 'route_add', 'routes', 'cancel']) expect(AGENT_METHODS.has(m), m).toBe(true);
   });
 

@@ -42,6 +42,7 @@ export interface RpcRequest { id: number; token: string; method: keyof Methods; 
 export type RpcResponse<T = unknown> = { id: number; result: T } | { id: number; error: { code: string; message: string } };
 
 export interface Methods {
+  alias_refresh: { params: { label?: string } | undefined; result: unknown };
   resets: { params: ResetQuery | undefined; result: ResetLedger };
   ping: { params: undefined; result: { pid: number; version: number; startedAt: number } };
   submit: { params: JobRequest; result: { id: string; warnings: string[] } | { rejected: Rejection } };

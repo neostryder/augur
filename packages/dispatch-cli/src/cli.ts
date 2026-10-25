@@ -5,12 +5,14 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES, feedFor } from '@augur/core';
+import type { AliasRefreshResult } from '@augur/core';
 import type { ActivityId, DataTier, EngineState, OutputMode, ProviderAdded } from '@augur/core';
 import { EXIT_CODES, TOOL_TIERS, describeCapabilities, describeFigure, exitCodeForState, isTerminal, renderReport, renderResets, seatLines } from '@augur/dispatch-protocol';
 import type { Conversation, Depth, JobRecord, JobRequest, ProseAddParams, ProseStatus, ToolTier } from '@augur/dispatch-protocol';
 import { STATUS_TEXT, duration, servedText, statusLine } from '@augur/view-model';
 import { bridge, stdioBridge } from './bridge.js';
 import { SERVICE_VERSION, ServiceError, call, configLines, dataDir, disableLogin, enableLogin, ensureToken, loadConfig, loginState, rotateWebToken, setConfigValue, startViaLogin, webAddresses, webCertFingerprint } from '@augur/augurd';
+import { appendPolicyEdits, augurHome, readAliasFlags, readAliasOffers, settleAliasOffer } from '@augur/augurd';
 import { subagentHook } from './claude-hook.js';
 import { KEY_HELP, keyCmd } from './key.js';
 import { LOGIN_HELP, loginCmd } from './signin.js';
@@ -51,6 +53,8 @@ augur apply <job> [--check]
 augur pick (--task <description> | --activity <a> --data <tier>) [--depth routine|everyday|deep|core] [--named <model>] [--fit <model>=<0-1>,...] [--best] [--snippet]   a route drawn by its odds; --best takes the top score, --snippet marks a one-sentence draft
 augur pick-preview (--task <description> | --activity <a> --data <tier>) [--depth routine|everyday|deep|core] [--named <model>] [--fit <model>=<0-1>,...] [--snippet]   every route's score and odds; no draw is made and nothing is recorded
 augur pick-answer <pick id> --model <route> [--why <text>]     records the route a person chose for a proposed pick and clears that route for jobs
+augur alias list | init | refresh [--label <label>] | accept <offer id> | reject <offer id> | set <label> --kind <llm|image|speech|embed> --pattern <glob>
+augur roles | set <name> --activity <activity> --candidates <labels> [--caller-chooses] | remove <name>
 augur pressure
 augur resets [--provider <id>] [--limit <n>]   reset events and summary
 augur balance [--days <n>]            where each kind of work goes now, each provider's pace and boost, Copilot's spend and the last days' picks
@@ -86,7 +90,7 @@ Every command takes --json. Exit codes: 0 completed, 1 usage, 2 rejected, 3 need
 interface Parsed { cmd: string[]; flags: Map<string, string | true>; /** Values of the flags that may be given more than once, in order. */ repeated: Map<string, string[]> }
 const REPEATABLE = new Set(['attach', 'fact', 'must-include', 'must-avoid']);
 export function parse(argv: string[]): Parsed {
-  const cmd: string[] = [], flags = new Map<string, string | true>(), repeated = new Map<string, string[]>(), boolean = new Set(['json', 'wait', 'named', 'follow', 'stderr', 'help', 'if-idle', 'no-failover', 'no-charter', 'urgent', 'waybar', 'all', 'force', 'stdin', 'dry-run', 'no-key', 'best', 'snippet', 'report', 'can-land-later']);
+  const cmd: string[] = [], flags = new Map<string, string | true>(), repeated = new Map<string, string[]>(), boolean = new Set(['json', 'wait', 'named', 'follow', 'stderr', 'help', 'if-idle', 'no-failover', 'no-charter', 'urgent', 'waybar', 'all', 'force', 'stdin', 'dry-run', 'no-key', 'best', 'snippet', 'report', 'can-land-later', 'caller-chooses', 'untested']);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] as string;
     if (a === '-') { cmd.push(a); continue; }
@@ -198,6 +202,8 @@ export async function main(argv: string[], io: Io): Promise<number> {
         throw new ServiceError('usage', 'Use augur prose add, list, status, run or approve.');
       }
       case 'pick': return await pickCmd(io, opts, say, opt, n => p.flags.has(n));
+      case 'alias': return await aliasCmd(rest, io, opts, opt, p.flags.has('untested'), say, json);
+      case 'roles': return await rolesCmd(rest, io, opt, say, json, n => p.flags.has(n));
       case 'pick-preview': return await pickCmd(io, opts, say, opt, n => p.flags.has(n), true);
       case 'resets': {
         const limit = opt('limit') === undefined ? undefined : Number(opt('limit'));
@@ -373,6 +379,72 @@ async function claudeCmd(rest: string[], io: Io, opts: Opts, say: Say): Promise<
 
 function need(v: string | undefined, what: string): string { if (!v) throw new Error(`Missing ${what}.`); return v; }
 
+function readOwnerPolicy(home = augurHome()): Record<string, unknown> | null {
+  try { const value: unknown = JSON.parse(readFileSync(join(home, 'policy.json'), 'utf8')); return typeof value === 'object' && value !== null ? value as Record<string, unknown> : null; } catch { return null; }
+}
+
+function ownerEdit(field: string, provider: string, model: string, value: unknown, home = augurHome()): void {
+  const at = new Date().toISOString();
+  const id = `${at}-${process.pid}-${Math.random().toString(16).slice(2)}`;
+  appendPolicyEdits(JSON.stringify({ id, at, by: 'augur owner', provider, model, field, value }) + '\n', home);
+}
+
+async function aliasCmd(rest: string[], io: Io, opts: Opts, opt: (n: string) => string | undefined, untested: boolean, say: (h: string, d: unknown) => void, json: boolean): Promise<number> {
+  const home = augurHome(io.env), action = rest[0], policy = readOwnerPolicy(home);
+  const providers = policy && typeof policy.providers === 'object' && policy.providers !== null ? policy.providers as Record<string, Record<string, unknown>> : {};
+  const models = Object.entries(providers).flatMap(([provider, p]) => Object.entries((p.models ?? {}) as Record<string, Record<string, unknown>>).map(([label, model]) => ({ provider, label, model })));
+  if (action === 'list') {
+    const state = (() => { try { return JSON.parse(readFileSync(join(home, 'alias-refresh.json'), 'utf8')) as Record<string, unknown>; } catch { return {}; } })();
+    const offers = readAliasOffers(home), flags = readAliasFlags(home);
+    const rows = models.filter(x => x.model.series).map(x => ({ label: x.label, provider: x.provider, id: x.model.id, series: x.model.series, refresh: state[x.label] ?? null, offer: offers.find(o => o.label === x.label) ?? null, flag: flags.find(f => f.label === x.label) ?? null }));
+    say(rows.map(x => `${x.label}  ${JSON.stringify(x.series)}  ${String(x.id)}  refresh=${JSON.stringify(x.refresh)}  offer=${JSON.stringify(x.offer)}  flag=${JSON.stringify(x.flag)}`).join('\n') || 'No aliases.', { aliases: rows }); return 0;
+  }
+  if (action === 'init') {
+    const rows = models.map(x => ({ label: x.label, kind: 'llm', pattern: String(x.model.id ?? '').replace(/\d+(?:\.\d+)*/g, '*') }));
+    say(rows.map(x => `${x.label} --kind ${x.kind} --pattern ${x.pattern}`).join('\n') || 'No models.', { proposed: rows, written: false }); return 0;
+  }
+  if (action === 'set') {
+    const label = need(rest[1], 'label'), found = models.filter(x => x.label === label);
+    const kind = opt('kind'), pattern = opt('pattern');
+    if (found.length !== 1 || !['llm', 'image', 'speech', 'embed'].includes(kind ?? '') || !pattern || pattern.length > 200 || !/^[A-Za-z0-9._/:*?-]+$/.test(pattern)) { io.err('Give an existing label, --kind llm|image|speech|embed, and a glob --pattern using letters, digits, dot, dash, underscore, slash, colon, * and ?.\n'); return EXIT_CODES.usage; }
+    ownerEdit('series', found[0]!.provider, label, { kind, pattern }, home);
+    say(`Series edit for ${label} is waiting for owner acceptance.`, { label, kind, pattern, status: 'needs-owner' }); return 0;
+  }
+  if (action === 'refresh') {
+    const result = await call('alias_refresh', { ...(opt('label') ? { label: opt('label') } : {}) }, opts) as AliasRefreshResult;
+    say(`Alias refresh completed: ${result.offers.length} offer(s), ${result.flags.length} embedding flag(s).${result.noListing.length ? ` No listing: ${result.noListing.join(', ')}.` : ''}`, result); return 0;
+  }
+  if (action === 'accept' || action === 'reject') {
+    const result = settleAliasOffer(home, need(rest[1], 'offer id'), action === 'accept', new Date(), dataDir(io.env), untested);
+    if (!result.ok) { io.err(result.error + '\n'); return EXIT_CODES.failed; }
+    say(action === 'accept' ? `Alias offer queued for the app: ${result.offer.label}; it applies within a minute.${result.warnings?.length ? ` ${result.warnings.join('. ')}.` : ''}` : `Alias offer rejected: ${result.offer.label}.`, result); return 0;
+  }
+  io.err('Use augur alias list, init, refresh, accept <offer id>, reject <offer id>, or set <label> --kind <kind> --pattern <glob>.\n'); return EXIT_CODES.usage;
+}
+
+async function rolesCmd(rest: string[], io: Io, opt: (n: string) => string | undefined, say: (h: string, d: unknown) => void, json: boolean, flag: (n: string) => boolean): Promise<number> {
+  const home = augurHome(io.env), action = rest[0], policy = readOwnerPolicy(home), roles = policy && typeof policy.roles === 'object' && policy.roles !== null ? policy.roles as Record<string, Record<string, unknown>> : {};
+  if (!action) {
+    const rows = Object.entries(roles).map(([name, role]) => ({ name, activity: role.activity, callerChooses: role.callerChooses, candidates: ((role.candidates as string[]) ?? []).map(label => {
+      const model = Object.values((policy?.providers ?? {}) as Record<string, Record<string, unknown>>).map(p => (p.models as Record<string, Record<string, unknown>>)[label]).find(Boolean);
+      return { label, tier: model?.dataTier ?? 'unknown', pause: model?.pause ?? null, askFirst: model?.askFirst === true };
+    }) }));
+    say(rows.map(r => `${r.name} (${String(r.activity)}): ${JSON.stringify(r.candidates)}${r.callerChooses ? ' caller chooses' : ''}`).join('\n') || 'No roles.', { roles: rows }); return 0;
+  }
+  if (action === 'set') {
+    const name = need(rest[1], 'role name'), activity = opt('activity'), candidates = (opt('candidates') ?? '').split(',').map(x => x.trim()).filter(Boolean);
+    if (!activity || !ACTIVITIES.includes(activity as ActivityId) || !candidates.length) { io.err('Give --activity and comma-separated --candidates labels.\n'); return EXIT_CODES.usage; }
+    ownerEdit('role', '', name, { activity, candidates, callerChooses: flag('caller-chooses') }, home);
+    say(`Role edit for ${name} is waiting for owner acceptance.`, { name, activity, candidates, callerChooses: flag('caller-chooses'), status: 'needs-owner' }); return 0;
+  }
+  if (action === 'remove') {
+    const name = need(rest[1], 'role name');
+    ownerEdit('role', '', name, null, home);
+    say(`Role removal for ${name} is waiting for owner acceptance.`, { name, status: 'needs-owner' }); return 0;
+  }
+  io.err('Use augur roles, set <name>, or remove <name>.\n'); return EXIT_CODES.usage;
+}
+
 async function conversationsCmd(p: Parsed, io: Io, opts: Opts, say: (h: string, d: unknown) => void, opt: (n: string) => string | undefined, json: boolean): Promise<number> {
   const name = opt('forget');
   if (name) {
@@ -462,14 +534,16 @@ async function pickCmd(io: Io, opts: Opts, say: (h: string, d: unknown) => void,
     fits[model] = n;
   }
   const r = await call('pick', { ...(activity ? { activity: activity as ActivityId } : {}), ...(dataTier ? { dataTier: dataTier as DataTier } : {}), ...(task ? { task } : {}),
-    ...(opt('named') ? { named: opt('named') as string } : {}), ...(depth ? { depth: depth as Depth } : {}), fits, ...(flag('best') ? { best: true } : {}), ...(flag('snippet') ? { snippet: true } : {}), ...(preview ? { preview: true } : {}), ...(io.env.CLAUDE_CODE_SESSION_ID ? { session: io.env.CLAUDE_CODE_SESSION_ID } : {}) }, opts);
+    ...(opt('role') ? { role: opt('role') } : {}),
+    ...((opt('model') ?? opt('named')) ? { named: (opt('model') ?? opt('named')) as string } : {}), ...(depth ? { depth: depth as Depth } : {}), fits, ...(flag('best') ? { best: true } : {}), ...(flag('snippet') ? { snippet: true } : {}), ...(preview ? { preview: true } : {}), ...(io.env.CLAUDE_CODE_SESSION_ID ? { session: io.env.CLAUDE_CODE_SESSION_ID } : {}) }, opts);
   if ('error' in r) { io.err(r.error + String.fromCharCode(10)); return EXIT_CODES.failed; }
   const lines = r.ranking.map(x => `  ${x.model.padEnd(22)} ${x.score.toFixed(2)}   fit ${x.fit.toFixed(2)} x ${x.level} ${x.weight.toFixed(2)} x usage ${x.usage.toFixed(2)}   odds ${Math.round((x.odds ?? 0) * 100)}%   routes ${(r.routes[x.model] ?? []).join(', ') || 'none'}`);
   for (const b of r.blocked) lines.push(`  ${b.model.padEnd(22)} --     ${b.why}`);
   const nl = String.fromCharCode(10);
   const note = preview ? `${nl}preview: no draw made` : '';
   const ask = r.proposal && r.proposal.mode !== 'auto' ? `${nl}Proposal ${r.pickId ?? ''}: ${r.proposal.reason}. No job can run on this pick yet. Ask the person which route to use, then record it with augur pick-answer <pick id> --model <route>.` : '';
-  say(r.pick ? `Pick: ${r.pick}   (${r.activity}, ${r.dataTier} data; scarcity ${r.scarcity}${r.decision ? `; ${r.decision.backend}` : ''})${note}${ask}${nl}${[r.reason, ...seatLines(r.seats)].join(nl)}${nl}${lines.join(nl)}` : `No model is permitted ${r.activity} on ${r.dataTier} data.${note}${nl}${lines.join(nl)}`, r);
+  const callerChoice = opt('role') && !opt('model') && !opt('named') ? `This role is caller-chosen. Choose one with --model from: ${r.ranking.map(x => x.model).join(', ') || 'no permitted candidates'}.` : '';
+  say(r.pick ? `Pick: ${r.pick}   (${r.activity}, ${r.dataTier} data; scarcity ${r.scarcity}${r.decision ? `; ${r.decision.backend}` : ''})${note}${ask}${nl}${[r.reason, ...seatLines(r.seats)].join(nl)}${nl}${lines.join(nl)}` : callerChoice || `No model is permitted ${r.activity} on ${r.dataTier} data.${note}${nl}${lines.join(nl)}`, r);
   return r.pick ? 0 : EXIT_CODES.rejected;
 }
 
