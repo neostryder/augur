@@ -25,6 +25,10 @@ export function buildServer(tools: Tools, version: string): McpServer {
     description: 'Lists every model in the rules with its status, cost, the most sensitive data it may see, whether it is paused, and the routes that reach it. Only confirmed models that are not paused can take jobs.',
   }, async () => out(await tools.models()));
 
+  server.registerTool('augur_prose_add', { title: 'Add prose request', description: 'Adds a prose request to Augur queue.', inputSchema: { item: z.record(z.string(), z.unknown()) } }, async ({ item }) => out(await tools.proseAdd(item)));
+  server.registerTool('augur_prose_list', { title: 'List prose requests', annotations: readOnly, description: 'Lists queued prose requests.', inputSchema: { status: z.enum(['queued', 'awaiting-approval', 'running', 'drafted', 'failed']).optional() } }, async (a) => out(await tools.proseList(a)));
+  server.registerTool('augur_prose_status', { title: 'Prose queue status', annotations: readOnly, description: 'Shows prose queue counts and whether a batch is due.' }, async () => out(await tools.proseStatus()));
+
   server.registerTool('augur_pick', {
     title: 'Pick a model', annotations: readOnly,
     description: 'Ranks the models permitted for an activity and data tier by the rules and current plan usage, gives each its odds, and draws the pick by those odds. A named model always wins, and best_only takes the top score. Set snippet when drafting one sentence or one bullet with no other prose, so the prose routes get no extra weight. Give an activity and a data tier, or describe the task and Augur classifies it.',

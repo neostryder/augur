@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES, feedFor } from '@augur/core';
 import type { ActivityId, DataTier, EngineState, OutputMode, ProviderAdded } from '@augur/core';
 import { EXIT_CODES, TOOL_TIERS, describeCapabilities, describeFigure, exitCodeForState, isTerminal, renderReport, renderResets, seatLines } from '@augur/dispatch-protocol';
-import type { Conversation, Depth, JobRecord, JobRequest, ToolTier } from '@augur/dispatch-protocol';
+import type { Conversation, Depth, JobRecord, JobRequest, ProseAddParams, ProseStatus, ToolTier } from '@augur/dispatch-protocol';
 import { STATUS_TEXT, duration, servedText, statusLine } from '@augur/view-model';
 import { bridge, stdioBridge } from './bridge.js';
 import { SERVICE_VERSION, ServiceError, call, configLines, dataDir, disableLogin, enableLogin, ensureToken, loadConfig, loginState, rotateWebToken, setConfigValue, startViaLogin, webAddresses, webCertFingerprint } from '@augur/augurd';
@@ -58,6 +58,11 @@ augur label <pick or job id> --brief met|partly|missed [--note <text>]     recor
 augur label <grade id> --grade agree|high|low [--note <text>]     record whether a grade was right, too high or too low
 augur grade <rubric> --task <text|@file> --candidate <text|@file> [--reference <text|@file>] [--tier <tier>]   score a candidate answer on each dimension of a rubric in ~/.augur/rubrics; the grade is recorded and its use follows the rubric's stakes
 augur grade --report [<rubric>]       each rubric's labelled grades, agreement, and the mode it has earned
+augur prose add (--file <item.json> | --requester <name> --repo <label> --target <path|new> --kind <kind> --surface <surface> --audience <text> --voice <name> [--fact <text>] [--context-file <file>] [--urgency normal|urgent] [--must-include <terms>] [--must-avoid <terms>] [--current-text <text>] [--data <tier>])
+augur prose list [--status queued|awaiting-approval|running|drafted|failed]
+augur prose status
+augur prose run [--dry-run]
+augur prose approve <id>
 augur usage                             tokens and cost per route, each labelled reported, derived or imputed
 augur note-prompt --session <id>     tell the service a person sent the message on standard input; it keeps only the models named
 augur routes
@@ -79,9 +84,9 @@ augur service enable | disable    start the service at each login (systemd on Li
 Every command takes --json. Exit codes: 0 completed, 1 usage, 2 rejected, 3 needs approval, 4 failed, 5 artifact check failed, 6 cancelled, 7 lost, 124 wait timed out.`;
 
 interface Parsed { cmd: string[]; flags: Map<string, string | true>; /** Values of the flags that may be given more than once, in order. */ repeated: Map<string, string[]> }
-const REPEATABLE = new Set(['attach']);
+const REPEATABLE = new Set(['attach', 'fact', 'must-include', 'must-avoid']);
 export function parse(argv: string[]): Parsed {
-  const cmd: string[] = [], flags = new Map<string, string | true>(), repeated = new Map<string, string[]>(), boolean = new Set(['json', 'wait', 'named', 'follow', 'stderr', 'help', 'if-idle', 'no-failover', 'no-charter', 'urgent', 'waybar', 'all', 'force', 'stdin', 'dry-run', 'no-key', 'best', 'snippet', 'report']);
+  const cmd: string[] = [], flags = new Map<string, string | true>(), repeated = new Map<string, string[]>(), boolean = new Set(['json', 'wait', 'named', 'follow', 'stderr', 'help', 'if-idle', 'no-failover', 'no-charter', 'urgent', 'waybar', 'all', 'force', 'stdin', 'dry-run', 'no-key', 'best', 'snippet', 'report', 'can-land-later']);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] as string;
     if (a === '-') { cmd.push(a); continue; }
@@ -176,6 +181,21 @@ export async function main(argv: string[], io: Io): Promise<number> {
         if ('error' in r) { io.err(r.error + String.fromCharCode(10)); return EXIT_CODES.failed; }
         const dims = Object.entries(r.dims).map(([k, d]) => `  ${k.padEnd(20)} ${d.score.toFixed(2)}${d.spread > 0.2 ? `  (orders differ by ${d.spread.toFixed(2)})` : ''}`);
         say([`Grade ${r.id}: overall ${r.overall.toFixed(2)} on ${r.rubric} v${r.version} (${r.tier} tier, ${r.backend}). Mode ${r.mode}${r.verdict ? `, verdict ${r.verdict}` : ''}${r.audit ? ', flagged for a spot check' : ''}.`, ...dims].join(String.fromCharCode(10)), r); return 0;
+      }
+      case 'prose': {
+        const action = rest[0];
+        if (action === 'add') {
+          let item: unknown;
+          if (opt('file')) { try { item = JSON.parse(readFileSync(resolve(io.cwd, opt('file') as string), 'utf8')); } catch { throw new ServiceError('usage', 'Cannot read prose item JSON.'); } }
+          else { const facts = p.repeated.get('fact') ?? (opt('fact') ? [opt('fact') as string] : []); let context: Record<string, unknown> = {}; if (opt('context-file')) { try { context = { before: readFileSync(resolve(io.cwd, opt('context-file') as string), 'utf8') }; } catch { throw new ServiceError('usage', 'Cannot read prose context file.'); } } const dataTier = opt('data'); if (dataTier && !DATA_TIERS.includes(dataTier as DataTier)) throw new ServiceError('usage', `--data is one of ${DATA_TIERS.join(', ')}.`); item = { requester: opt('requester'), repo: opt('repo'), target: opt('target'), kind: opt('kind'), surface: opt('surface'), audience: opt('audience'), voice: opt('voice'), urgency: opt('urgency'), currentText: opt('current-text'), dataTier, mustInclude: p.repeated.get('must-include') ?? (opt('must-include') ? [opt('must-include') as string] : []), mustAvoid: p.repeated.get('must-avoid') ?? (opt('must-avoid') ? [opt('must-avoid') as string] : []), facts: facts.map(text => ({ text, source: 'CLI request' })), context }; }
+          const r = await call('prose_add', item as ProseAddParams, opts); if ('error' in (r as object)) { io.err(`${(r as { error: string }).error}\n`); return EXIT_CODES.usage; }
+          say(`Added prose item ${(r as { id: string }).id}.`, r); return 0;
+        }
+        if (action === 'list') { const filter = opt('status'); if (filter && !['queued', 'awaiting-approval', 'running', 'drafted', 'failed'].includes(filter)) throw new ServiceError('usage', 'Unknown prose status filter.'); const r = await call('prose_list', filter ? { status: filter as ProseStatus } : undefined, opts); say((r as Array<{ id: string; status: string; repo: string; target: string }>).map(x => `${x.id}  ${x.status}  ${x.repo}  ${x.target}`).join('\n') || 'No prose items.', r); return 0; }
+        if (action === 'status') { const r = await call('prose_status', undefined, opts); const x = r as { counts: Record<string, number>; oldestAgeMs: number | null; due: boolean }; say(`${Object.entries(x.counts).map(([k, v]) => `${k}: ${v}`).join(', ')}; oldest ${x.oldestAgeMs === null ? 'none' : `${Math.floor(x.oldestAgeMs / 3600000)}h`}; ${x.due ? 'run due' : 'not due'}.`, r); return 0; }
+        if (action === 'run') { const r = await call('prose_run', { dryRun: p.flags.has('dry-run'), caller: { kind: 'cli', label: 'prose-queue', ...(io.interactive ? { interactive: true } : {}) } }, opts); const x = r as { started?: boolean; batchId?: string; reason?: string }; say(x.started ? `Started prose batch ${x.batchId ?? ''}.` : x.reason ?? 'No prose batch started.', r); return 0; }
+        if (action === 'approve') { const r = await call('prose_approve', { id: need(rest[1], 'prose item id') }, opts); if ('error' in (r as object)) { io.err(`${(r as { error: string }).error}\n`); return EXIT_CODES.usage; } say(`Approved ${(r as { id: string }).id}.`, r); return 0; }
+        throw new ServiceError('usage', 'Use augur prose add, list, status, run or approve.');
       }
       case 'pick': return await pickCmd(io, opts, say, opt, n => p.flags.has(n));
       case 'pick-preview': return await pickCmd(io, opts, say, opt, n => p.flags.has(n), true);

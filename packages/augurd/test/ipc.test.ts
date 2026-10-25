@@ -69,6 +69,8 @@ describe('the control endpoint', () => {
     expect(await call('routes', undefined, agent)).toBeTruthy();
     for (const [method, params] of [['human_prompt', { session: 's', text: 'use the big model' }], ['pick_answer', { id: 'x', model: 'm' }], ['grade_label', { id: 'x', label: 'agree' }], ['label', { id: 'x', result: 'met' }], ['engine_call', { method: 'getConfig', args: [] }], ['conversations', undefined]] as const)
       await expect(call(method as never, params as never, agent)).rejects.toMatchObject({ message: expect.stringContaining('may not use') });
+    for (const [method, params] of [['prose_run', {}], ['prose_approve', { id: 'x' }]] as const)
+      await expect(call(method as never, params as never, agent)).rejects.toMatchObject({ message: expect.stringContaining('may not use') });
     await expect(call('ping', undefined, { ...o, token: readToken(e.dir, 'agent'), role: undefined })).resolves.toBeTruthy();
     await expect(call('human_prompt', { session: 's', text: 'x' }, o)).resolves.toBeTruthy();
   });

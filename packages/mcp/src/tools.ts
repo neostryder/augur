@@ -6,7 +6,7 @@ import type { ClientOptions } from '@augur/augurd/client';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES, balanceField, balanceSegments, checkEdit, editKind, isBalanceField, parseEditState, parseInbox, previewEdits } from '@augur/core';
 import type { ActivityId, DataTier, OutputMode, PolicyEdit, PolicyFile } from '@augur/core';
 import { TOOL_TIERS, checkBalanceSetting, describeCapabilities, isTerminal, rank, renderReport, renderResets, routeAddShapeProblems, seatLines } from '@augur/dispatch-protocol';
-import type { JobRecord, JobRequest, ToolTier, UsageSnapshot } from '@augur/dispatch-protocol';
+import type { JobRecord, JobRequest, ProseAddParams, ProseQueueStatus, ProseStatus, ToolTier, UsageSnapshot } from '@augur/dispatch-protocol';
 
 export interface ToolResult { text: string; isError?: boolean; data?: Record<string, unknown> }
 
@@ -188,6 +188,16 @@ export function createTools(d: McpDeps) {
     return guarded(() => d.call('routes', undefined, d.opts), r => ({ text: r.map(x => `${x.name.padEnd(14)} ${x.model.padEnd(20)} ${x.adapter}   ${describeCapabilities(x.capabilities)}${x.problem ? `   cannot run: ${x.problem}` : ''}`).join('\n') || 'No routes.', data: { routes: r } }));
   }
 
+  async function proseAdd(item: Record<string, unknown>): Promise<ToolResult> {
+    return guarded(() => d.call('prose_add', item as unknown as ProseAddParams, d.opts), r => 'error' in (r as object) ? fail((r as { error: string }).error) : { text: `Added prose item ${(r as { id: string }).id}.`, data: r as Record<string, unknown> });
+  }
+  async function proseList(a: { status?: string }): Promise<ToolResult> {
+    return guarded(() => d.call('prose_list', a.status ? { status: a.status as ProseStatus } : undefined, d.opts), r => ({ text: (r as Array<{ id: string; status: string; repo: string; target: string }>).map(x => `${x.id}  ${x.status}  ${x.repo}  ${x.target}`).join('\n') || 'No prose items.', data: { items: r as unknown[] } }));
+  }
+  async function proseStatus(): Promise<ToolResult> {
+    return guarded(() => d.call('prose_status', undefined, d.opts), r => { const x = r as ProseQueueStatus; return { text: `${Object.entries(x.counts).map(([k, v]) => `${k}: ${v}`).join(', ')}; ${x.due ? 'batch due' : 'batch not due'}.`, data: { ...x } }; });
+  }
+
   /** Adds one route. A key or a bad shape is refused here, so it never reaches the service. The service checks the rest and writes. */
   async function routeAdd(a: RouteAddArgs): Promise<ToolResult> {
     const raw: Record<string, unknown> = { ...a };
@@ -314,7 +324,7 @@ export function createTools(d: McpDeps) {
     return { text, data: { activity, dataTier, now: before, withEdits: after, applied: preview.applied, problems } };
   }
 
-  return { models, pick, run, job, jobs, cancel, pressure, balance, resets, routes, routeAdd, policy, editPolicy, pickPreview };
+  return { models, pick, run, job, jobs, cancel, pressure, balance, resets, routes, routeAdd, policy, editPolicy, pickPreview, proseAdd, proseList, proseStatus };
 }
 
 export type Tools = ReturnType<typeof createTools>;

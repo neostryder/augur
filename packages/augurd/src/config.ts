@@ -51,6 +51,10 @@ export interface ServiceConfig {
   maxConcurrent: number;
   maxDepth: number;
   maxDescendants: number;
+  proseBatchSize: number;
+  proseBatchHours: number;
+  proseRoute: string;
+  proseAutoRun: boolean;
   /** Path of the Job Object launcher. Windows uses it to contain every process a job starts. */
   jobhostPath: string | null;
   /** Adapters that may be used. The generic `exec` adapter runs any command a route names, so it is off unless listed here. */
@@ -70,7 +74,7 @@ export interface ServiceConfig {
   web: WebSettings;
 }
 
-export const DEFAULT_CONFIG: ServiceConfig = { retentionDays: 30, persistPrompts: false, maxConcurrent: 8, maxDepth: 2, maxDescendants: 16,
+export const DEFAULT_CONFIG: ServiceConfig = { retentionDays: 30, persistPrompts: false, maxConcurrent: 8, maxDepth: 2, maxDescendants: 16, proseBatchSize: 10, proseBatchHours: 24, proseRoute: 'claude/opus', proseAutoRun: false,
   jobhostPath: null, adapters: ['codex-exec'], requirePick: true, promptRoots: [], verifyNamed: 'enforce', decision: { backend: 'none' }, learn: { recordTasks: false }, runnerStaleS: 20, engine: true,
   web: { enabled: false, host: '127.0.0.1', port: 7420, allowedHosts: [], tlsCert: '', tlsKey: '', tlsAuto: 'auto' },
   runner: { charterDir: '', ambient: 'keep', failover: 'off' } };
@@ -134,7 +138,7 @@ export function loadConfig(dir: string): ServiceConfig {
   return {
     retentionDays: num(raw.retentionDays, c.retentionDays, 0, 3650), persistPrompts: raw.persistPrompts === true,
     maxConcurrent: num(raw.maxConcurrent, c.maxConcurrent, 1, 64), maxDepth: num(raw.maxDepth, c.maxDepth, 0, 8),
-    maxDescendants: num(raw.maxDescendants, c.maxDescendants, 0, 256),
+    maxDescendants: num(raw.maxDescendants, c.maxDescendants, 0, 256), proseBatchSize: num(raw.proseBatchSize, c.proseBatchSize, 1, 1000), proseBatchHours: num(raw.proseBatchHours, c.proseBatchHours, 1, 720), proseRoute: typeof raw.proseRoute === 'string' && raw.proseRoute.trim() ? raw.proseRoute.trim() : c.proseRoute, proseAutoRun: raw.proseAutoRun === true,
     jobhostPath: typeof raw.jobhostPath === 'string' ? raw.jobhostPath : defaultJobhost(),
     adapters: Array.isArray(raw.adapters) ? raw.adapters.filter((a): a is string => typeof a === 'string') : c.adapters,
     requirePick: raw.requirePick !== false, promptRoots: Array.isArray(raw.promptRoots) ? raw.promptRoots.filter((r): r is string => typeof r === 'string') : c.promptRoots,

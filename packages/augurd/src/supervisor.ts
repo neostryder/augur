@@ -1,7 +1,7 @@
 // Accepts jobs, applies the rules, launches one runner per job and keeps the store true to what the runners leave on disk.
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { closeSync, cpSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, cpSync, existsSync, mkdtempSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES } from '@augur/core';
 import type { PolicyFile } from '@augur/core';
@@ -21,6 +21,8 @@ import { MAX_HOPS, classifyFailure } from './failover.js';
 import { augurHome, scriptPath } from './paths.js';
 import { hasStoredKey } from './secrets.js';
 import { RubricStore } from './rubrics.js';
+import { ProseQueue } from './prose-queue.js';
+import type { ProseItem, ProseStatus } from './prose-queue.js';
 
 export interface SupervisorDeps {
   store: Store; config: ServiceConfig; dir: string; adapters: Map<string, Adapter>;
@@ -90,6 +92,7 @@ const MAX_ATTACHMENTS = 16;
 const optMb = (route: RouteConfig, key: string, fallback: number): number => optNum(route.options, key) ?? fallback;
 
 export class Supervisor {
+  private readonly proseQueue: ProseQueue;
   private adopted = new Set<string>();
   private outputSeen = new Set<string>();
   /** The request and the routes already used for each job this process launched. A restart drops the map, and then that job is not retried. */
@@ -100,7 +103,43 @@ export class Supervisor {
     this.now = d.now ?? Date.now;
     this.runner = d.runnerPath ?? scriptPath(import.meta.url, 'runner');
     mkdirSync(join(d.dir, 'jobs'), { recursive: true });
+    this.proseQueue = new ProseQueue(d.home ?? augurHome(), this.now, (items, prompt, caller) => this.runProseGroup(items, prompt, caller), d.config.proseBatchSize, d.config.proseBatchHours);
+    this.proseQueue.resetRunning();
   }
+
+  proseAdd(raw: unknown, holdForApproval = false): ProseItem | { error: string } { return this.proseQueue.add(raw, holdForApproval); }
+  proseList(status?: ProseStatus): ProseItem[] { return this.proseQueue.list(status); }
+  proseStatus(): ReturnType<ProseQueue['status']> { return this.proseQueue.status(); }
+  proseApprove(id: string): ProseItem | { error: string } { return this.proseQueue.approve(id); }
+  proseRun(dryRun = false, automatic = false, caller?: { kind: 'cli' | 'service'; label: string; interactive?: boolean }): ReturnType<ProseQueue['run']> { return this.proseQueue.run(dryRun, automatic, caller); }
+
+  private async runProseGroup(items: ProseItem[], prompt: string, caller: { kind: 'cli' | 'service'; label: string; interactive?: boolean }): Promise<{ text: string; modelId: string; cost: number | null; runId: string }> {
+    const route = Object.entries(this.d.routes() ?? {}).find(([label]) => label === this.d.config.proseRoute);
+    if (!route) throw new Error(`No route for ${this.d.config.proseRoute}; set proseRoute to an available route label.`);
+    const tiers = ['public', 'internal', 'sensitive', 'regulated'];
+    const tier = tiers[Math.max(...items.map(x => tiers.indexOf((x as ProseItem & { dataTier?: string }).dataTier ?? 'internal')))] as JobRequest['dataTier'];
+    const cwd = this.proseScratch();
+    try {
+      const classifiedTier = this.d.decision ? (await classifyTask(this.d.decision, prompt)).dataTier : tier;
+      const promoted = tiers[Math.max(tiers.indexOf(tier), tiers.indexOf(gradeTier(tier, prompt)), tiers.indexOf(classifiedTier))] as JobRequest['dataTier'];
+      const submitted = this.submit({ route: route[0], activity: 'draft_prose', dataTier: promoted, tools: 'read', output: 'text_only', cwd, prompt: { text: prompt }, persistPrompt: false, failover: false, caller, ...(caller.kind === 'service' && this.d.config.proseAutoRun ? { named: true } : {}) });
+      if ('rejected' in submitted) throw new Error(`${submitted.rejected.code}: ${submitted.rejected.reason} The owner can choose a route with a rule that permits ${promoted} data and read-only text output.`);
+      const until = Date.now() + 900_000;
+      while (Date.now() < until) {
+        const result = this.result(submitted.id);
+        if (result && isTerminal(result.job.state)) {
+          if (result.job.state !== 'completed' || result.answer === null) throw new Error(result.job.reason ?? 'Prose run failed.');
+          return { text: result.answer, modelId: result.job.served?.model ?? route[1].model, cost: result.job.usage?.costUsd ?? null, runId: submitted.id };
+        }
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+      throw new Error('Prose run timed out.');
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  }
+
+  private proseScratch(): string { const p = join(this.d.dir, 'prose-scratch'); mkdirSync(p, { recursive: true }); return mkdtempSync(join(p, 'group-')); }
 
   jobDir(id: string): string { return join(this.d.dir, 'jobs', id); }
 
@@ -251,7 +290,7 @@ export class Supervisor {
         : { scope: null }) };
     writeFileSync(join(dir, 'job.json'), JSON.stringify(file));
     if (plan.stdin !== null) writeFileSync(join(dir, 'prompt.in'), plan.stdin);
-    if (this.d.config.persistPrompts) writeFileSync(join(dir, 'prompt.txt'), prompt);
+    if (this.d.config.persistPrompts && req.persistPrompt !== false) writeFileSync(join(dir, 'prompt.txt'), prompt);
     const createdAt = this.now();
     this.d.store.insert({ id, route: req.route, adapter: adapter.id, activity: req.activity, dataTier: req.dataTier, tools: req.tools, output: req.output, cwd: req.cwd,
       createdAt, rootJobId: root ?? id, parentJobId: parentId, depth, caller: req.caller, named: !!req.named, expectFile: req.expectFile ?? null,
@@ -626,6 +665,7 @@ export class Supervisor {
   }
 
   tick(): void {
+    if (this.d.config.proseAutoRun && !this.proseQueue.list('running').length && this.proseQueue.status().due) this.proseQueue.run(false, true, { kind: 'service', label: 'prose-queue' });
     const store = this.d.store;
     for (const rec of store.active()) this.watch(rec);
     let room = this.d.config.maxConcurrent - store.countActive();
@@ -769,8 +809,9 @@ export class Supervisor {
 
   private cleanup(id: string): void {
     this.outputSeen.delete(id);
+    const request = this.submitted.get(id)?.req;
     this.submitted.delete(id);
-    if (this.d.config.persistPrompts) return;
+    if (this.d.config.persistPrompts && request?.persistPrompt !== false) return;
     try { unlinkSync(join(this.jobDir(id), 'prompt.in')); } catch { /* already read by the runner */ }
     const file = readJson<JobFile>(join(this.jobDir(id), 'job.json')), rec = this.d.store.get(id);
     for (const f of file?.files ?? []) {

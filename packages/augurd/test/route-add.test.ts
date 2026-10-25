@@ -38,23 +38,32 @@ async function boot(approval?: 'all' | 'none') {
     next.agentApproval = approval;
     await engine.saveConfig(next);
   }
-  const sup = { knownAdapters: () => ['codex-exec'] } as unknown as Supervisor;
+  const sup = { knownAdapters: () => ['codex-exec'], proseAdd: (raw: Record<string, unknown>, hold: boolean) => ({ ...raw, status: hold ? 'awaiting-approval' : 'queued' }) } as unknown as Supervisor;
   const token = 'k'.repeat(64);
   const server = new IpcServer(sup, {} as never, token, () => null, () => ({}), {
     read: () => { try { return readFileSync(routesPath, 'utf8'); } catch { return null; } },
     write: (text: string) => writeFileSync(routesPath, text),
-  });
+  }, 'a'.repeat(64));
   server.attachEngine({ api: engine, views: new ViewHub() });
   const pipe = process.platform === 'win32' ? `\\\\.\\pipe\\augur-route-add-${Date.now()}-${Math.floor(Math.random() * 1e6)}` : join(root, 's.sock');
   await server.start(pipe);
   stops.push(async () => { engine.stop(); await server.close(); rmSync(root, { recursive: true, force: true }); });
   const add = (params: RouteAddParams) => call('route_add', params, { pipe, token });
-  return { engine, routesPath, add };
+  const agentProseAdd = (params: Record<string, unknown>) => call('prose_add', params as never, { pipe, token: 'a'.repeat(64), role: 'agent' });
+  return { engine, routesPath, add, agentProseAdd };
 }
 
 const good = { name: 'acme', adapter: 'codex-exec', provider: 'acme', model: { label: 'fast', id: 'fast-1', name: 'Fast' } };
 
 describe('route_add', () => {
+  it('holds agent prose additions when agentApproval is all', async () => {
+    const all = await boot('all');
+    const params = { requester: 'agent', repo: 'repo', target: 'new', kind: 'write', surface: 'doc', audience: 'readers', voice: 'plain', urgency: 'normal' };
+    expect(await all.agentProseAdd(params)).toMatchObject({ status: 'awaiting-approval' });
+    const none = await boot('none');
+    expect(await none.agentProseAdd(params)).toMatchObject({ status: 'queued' });
+  });
+
   it('adds a route and an unreviewed model, and leaves a custom reading off', async () => {
     const { engine, routesPath, add } = await boot();
     const next = structuredClone(engine.state.config);
