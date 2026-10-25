@@ -232,7 +232,7 @@ augur usage
 
 Here `luna` is a route you added on the Routes page. To add one, choose Add route, name it, pick the model it runs and the adapter that runs it (Codex CLI, Grok CLI, GitHub Copilot CLI, an OpenAI-style or Anthropic-style API, or fal video, among others), and fill in the options the form marks as required. Test route sends one word through it, so a bad path or a missing key shows up before an agent depends on the route.
 
-A run has to state its activity and data tier, and it has to follow a pick made for the same caller in the last hour. `--activity` takes one of `write_code`, `review_code`, `research`, `reason_critique`, `draft_prose`, `summarize_extract`, `long_context`, `bulk_tagging`, `typed_decisions`, `read_images`, `generate_images`, `generate_video`, `speech`, `embed`, `transcribe`, `translate` or `reverse_engineering`. `--data` takes `public`, `internal`, `sensitive` or `regulated`, and a model is only offered for data at or below the tier its rules allow. A caller is whatever asks: the `augur` command, an MCP client or a script. `augur --help` lists every command.
+A run has to state its activity and data tier, and it has to follow a pick made for the same caller in the last hour. `--activity` takes one of `write_code`, `review_code`, `research`, `reason_critique`, `draft_prose`, `summarize_extract`, `long_context`, `bulk_tagging`, `typed_decisions`, `read_images`, `generate_images`, `image_to_image`, `generate_video`, `speech`, `embed`, `transcribe`, `moderate`, `translate` or `reverse_engineering`. `--data` takes `public`, `internal`, `sensitive` or `regulated`, and a model is only offered for data at or below the tier its rules allow. A caller is whatever asks: the `augur` command, an MCP client or a script. `augur --help` lists every command.
 
 A few options change what a run sends. When the service has a [charter folder](docs/configuring.md#standing-instructions-for-every-job), every prompt starts with its standing instructions, `--pack <names>` adds packs from it, and `--no-charter` leaves it out. `--conversation <name>` opens a conversation on a Grok or Codex route, and later runs with the same name resume that session, so `augur run grok --conversation parser --prompt "Now check the error paths" ...` picks up where the last run on `parser` stopped. `augur conversations` lists them and `--forget <name>` drops one. With Retry on failure turned on in the service settings, a job that fails on a provider limit, a harness that will not start or a read-only timeout runs again on its route's [fallback](docs/accounting.md#budgets-and-fallback-routes), and `--no-failover` keeps it where it is.
 
@@ -325,6 +325,22 @@ A request names who asked it (`--requester`), a repo label, the file it is for o
 `augur prose list` prints each request's id, status, repo, and target, `--status` keeps one status (`queued`, `awaiting-approval`, `running`, `drafted`, or `failed`), and `--json` prints the whole requests with their drafts. `augur prose status` counts the requests in each status, gives the age of the oldest normal request in the queue, and says whether a batch is due. A batch is due once 10 normal requests are queued or the oldest has waited 24 hours, and [docs/configuring.md](docs/configuring.md#prose-requests) has the settings that change both. `augur prose run` submits the batch in the background and prints its batch ID, then `status` and `list` show how it is going. `--dry-run` says how many requests would run and starts nothing.
 
 An urgent request waits in `awaiting-approval` until you run `augur prose approve <id>`, and approved urgent requests then go out together at the next run, apart from the normal batch and whether or not it is due. `run` and `approve` are owner commands: the agent token cannot call them, and the MCP server has no tools for them. MCP clients add, list and check requests with `augur_prose_add`, `augur_prose_list`, and `augur_prose_status`.
+
+### Model series and roles
+
+Give a model a series and Augur tells you when its provider lists a newer release. Set up a role and the picks made for it come only from the models you put in it.
+
+```bash
+augur alias set openrouter/deepseek-flash --kind llm --pattern "deepseek/deepseek-v*-flash"
+augur alias refresh
+augur alias list
+augur alias accept <offer id>
+augur roles set reviewer --activity review_code --candidates claude/claude-sonnet-5-5,openrouter/deepseek-flash --caller-chooses
+augur pick --role reviewer --activity review_code --data internal
+augur pick --role reviewer --model openrouter/deepseek-flash --activity review_code --data internal
+```
+
+Once a day by default, the service looks for a newer model matching each series and records it as an offer, and it never swaps a model by itself. An offer fails if a pinned host no longer serves the new model or the new model takes fewer kinds of input, and on an API route the new model also has to answer a short test prompt. `augur alias accept` moves the matching routes to the new model and queues its id as an edit you accept in Model rules, and `augur alias reject` drops the offer. Edits from `augur alias set`, `augur roles set` and `augur roles remove` wait in Model rules in the same way. When a role lets the caller choose, the first pick lists the candidates your rules allow and the second records the one named with `--model`. [docs/configuring.md](docs/configuring.md#model-series-and-roles) has the checks, the offer statuses, the files, and which providers can be refreshed.
 
 ## Phone app
 

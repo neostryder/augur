@@ -6,11 +6,12 @@ The app covers most of this. The Rules page says what each model may do, the Rou
 
 | What | File | Edited with |
 | --- | --- | --- |
-| Rules for every model, and the balance overrides | `policy` inside `config.json` in the app's settings folder. Augur writes it out to `policy.json` in `~/.augur` each time a rule changes. | The Rules page, the `augur_policy_edit` tool for models and balance settings, and by hand |
+| Rules for every model, and the balance overrides | `policy` inside `config.json` in the app's settings folder. Augur writes it out to `policy.json` in `~/.augur` each time a rule changes. | The Rules page, the `augur_policy_edit` tool for models and balance settings, `augur alias set` and `augur roles` for series and roles, and by hand |
 | Providers, where their keys come from, custom providers, alerts, and `agentApproval` | `config.json` in the app's settings folder | Settings, or by hand. `agentApproval` is set on the window app's Service page, or under Service on the terminal app's Dispatch page |
 | Routes | `dispatch/routes.json` in `~/.augur` | The Routes page, `augur provider add`, the `augur_route_add` tool for a new route, or by hand |
 | Service settings | Listed by `augur config` | The Service page |
 | Standing instructions for jobs, the charter | The `charter` folder in `~/.augur`, or the folder `runner.charterDir` names | By hand. [Standing instructions for every job](#standing-instructions-for-every-job) has the layout |
+| Series offers, refresh times and embedding notices | `alias-inbox.jsonl`, `alias-refresh.json` and `alias-flags.json` in `~/.augur` | `augur alias`. [Model series and roles](#model-series-and-roles) has the details |
 | Prose requests and their drafts | `prose-queue.jsonl` in `~/.augur` | `augur prose` and the MCP prose tools. [Prose requests](#prose-requests) has the format |
 | Usage resets Augur has seen, early or on schedule, and changes in reset credits | `resets.jsonl` in the app's settings folder, beside `history.jsonl`. It only grows. | Not meant to be edited. Read it with `augur resets` |
 
@@ -29,6 +30,94 @@ Every model has a route label of the form `<provider>/<model>`, such as `codex/s
 A model also has a standard name, its provider id and model id joined by a slash, such as `codex/gpt-6.1-sol`. Wherever the balance names a model (tiers, preferences, the prose models, the backup lists and the seats), it accepts either the label or the standard name. A `*` in a name matches any text, so `claude/*opus*` covers every Opus a Claude provider lists. A rule written against a label takes precedence over one written against the standard name, and a standard name takes precedence over a pattern. A label is only your own name for a model, so rules written with standard names work on an install whose labels differ from yours.
 
 Augur reads each provider's model list once a day and keeps the newest model of each family. You can also add a model by hand on the Rules page. A new model is never picked until you confirm it there and set which activities it may do and how sensitive the data it sees can be.
+
+## Model series and roles
+
+A series lets a model's label follow newer releases of that model, and a role limits a pick to a set of models chosen for one activity. Both are stored in the rules and change only through held edits from the owner's terminal.
+
+### Series
+
+A model's entry in the rules can have a `series` with a `kind` (`llm`, `image`, `speech` or `embed`) and a `pattern` that matches the model ids in the series:
+
+```json
+"series": { "kind": "llm", "pattern": "deepseek/deepseek-v*-flash" }
+```
+
+The pattern must match the whole id, ignoring case. `*` stands for any run of characters and `?` for a single one. The other characters allowed are letters, digits, dots, dashes, underscores, slashes and colons, and a pattern is at most 200 characters long. When several listed ids match, the one with the latest listing date wins, and an id without a listing date is never chosen.
+
+```bash
+augur alias init
+augur alias set openrouter/deepseek-flash --kind llm --pattern "deepseek/deepseek-v*-flash"
+augur alias list
+augur alias refresh --label openrouter/deepseek-flash
+augur alias accept <offer id> [--untested]
+augur alias reject <offer id>
+```
+
+`augur alias init` prints a suggested `set` line for each model in the rules and writes nothing. Each suggestion replaces the runs of digits in the model id with `*` and sets the kind to `llm`. `augur alias set` appends a `series` edit to `policy-edits.jsonl`, and `augur roles set` and `augur roles remove` append a `role` edit. These are held edits, so at the default approval level they wait in Model rules for the owner to accept them, as a data tier change does. `augur_policy_edit` refuses both fields, so only the owner's terminal can request them. `augur alias list` prints every model that has a series with its pattern, its current id, its last refresh, and any offer or embedding notice.
+
+### Refreshing a series
+
+The service setting `aliasRefreshHours` sets how many hours pass between scheduled refreshes. It defaults to 24 and takes values from 0 to 8760, where 0 turns scheduled refreshes off. The service looks once an hour and refreshes when the interval has passed, provided at least one model has a series. `augur config set aliasRefreshHours <hours>` changes the setting. `augur alias refresh` starts a refresh right away for every series, or for the label given with `--label`. The command goes through the service, which runs one refresh at a time, and the agent token cannot call it.
+
+A refresh never changes a model. If the newest matching id differs from the model's current id, it records an offer to move the label to the newer id. An `embed` series gets a notice in place of an offer, since switching embedding models means rebuilding every stored vector. The notice is written to `alias-flags.json` and added as an alert in `alerts.json`.
+
+Refresh depends on each provider's model listing. OpenRouter's public listing has each model's listing date, the input kinds it accepts and the providers that serve it. For Codex the listing is the local `models_cache.json`, which has no dates or endpoint data, so a Codex series never yields an offer and a Codex pin cannot be checked. Copilot and the remaining providers have no listing at all. The refresh result names the providers that had no listing, and a listing that fails to load is skipped without stopping the refresh.
+
+### Checking an offer
+
+A new offer goes through three checks in this order. The first one to fail marks the offer `failed` and records a short reason.
+
+1. Pinned host. If the model's rule sets `dataHandling.pinnedHost`, that host must serve the new model. Augur checks the endpoint providers in the listing first, then OpenRouter's endpoint list for the model. With no endpoint data the reason is `pin not verifiable`, and with endpoint data that leaves out the host it is `pinned provider does not serve model`.
+2. Input kinds. If the old and new listing rows both state their input kinds, the new model must accept every kind the old one accepted, and otherwise the reason is `new model does not accept current input kinds`. If either row leaves them out, the offer gets the note `capabilities not compared` and moves on to the next check.
+3. Smoke job. Augur sends the prompt `Reply with OK.` to the new id on the first route in `routes.json` for the label. The job is `public`, uses the `none` tool tier, and has no charter, attachments or fallback, and its activity is the first text activity the model's rule permits. Pauses, data tiers, ask-first and budgets apply as they do to any job. The pick requirement is waived for this service job and for nothing else. A completed job marks the offer tested. A job that fails or runs longer than two minutes fails the offer, and the reason leaves out the provider's reply.
+
+Only `openai-api` and `anthropic-api` routes get a smoke job, because they can guarantee a run with no tools. The offer stays pending with `tested` set to false and a note such as `not smoke-tested: route cannot guarantee a no-tools run` when the label's route is of another kind, when the label has no route, when its rule permits no text activity, or when a rule refuses the job. `image` and `speech` series are never sent a text prompt, and their offers carry `not smoke-tested: image` or `not smoke-tested: speech`.
+
+Each offer records an `id`, the model `label`, the current id as `from`, the newer id as `to`, the time it was made as `createdAt`, and a `status`. It may also have `tested`, a `reason` for a failure, and `notes` naming any checks that were skipped. The statuses are:
+
+| Status | Meaning |
+| --- | --- |
+| `pending` | Can be accepted or rejected. An offer that was not smoke-tested is accepted only with `--untested`. |
+| `failed` | A check failed and `reason` names it. It cannot be accepted. |
+| `superseded` | A later refresh found a newer id for the same label, and the new offer takes its place. |
+| `stale` | The label already names a different id. Accept sets this when it finds the mismatch, and a new refresh produces a current offer. |
+
+### Accepting an offer
+
+`augur alias accept <offer id>` checks that the label still names the offer's `from` id, and then:
+
+- appends an `id` edit for the label to `policy-edits.jsonl`. The edit changes the model id only, and the model's name and rules stay as they are. It is a held edit, so at the default approval level it waits in Model rules, and its result is written to `policy-edit-results.json` like any other edit's.
+- updates `dispatch/routes.json` straight away. A route for the label whose `options.model` is still the `from` id gets the new id, and the rest of the route is left untouched. A route that names a different id is not changed, and the command lists it so it can be fixed by hand.
+- adds an `alias_swap` row to `decisions.jsonl`, the decision log in the service's data folder.
+
+The offer is removed from the inbox once all of this succeeds. If the edit cannot be queued, the offer stays pending. If `routes.json` cannot be read or written, the edit stays queued and the offer stays pending. `augur alias reject <offer id>` removes an offer whatever its status. Accept and reject are owner commands in the terminal, and no MCP tool or agent call can perform them.
+
+The alias files are kept in `~/.augur` next to `policy.json`:
+
+| File | Contents |
+| --- | --- |
+| `alias-inbox.jsonl` | The offers, one per line. |
+| `alias-refresh.json` | For each label, the newest matching id seen and when it was last refreshed. |
+| `alias-flags.json` | The embedding notices. |
+
+Augur writes each of these to a temporary file and renames it over the old one while holding a lock file. A file that cannot be parsed is copied to the same name with `.bad` appended and then read as empty.
+
+### Roles
+
+A role names the models allowed to take one activity. Roles are stored under `roles` in the rules, keyed by name:
+
+```json
+"roles": { "reviewer": { "activity": "review_code", "candidates": ["claude/claude-sonnet-5-5", "openrouter/deepseek-flash"], "callerChooses": false } }
+```
+
+Every candidate must be a model label in the rules, or the edit is refused. A pick with `--role <name>` ranks only the candidates and lists every other model as blocked with `not a candidate for role <name>`. Pauses, ask-first, data tiers, weights and the balance apply to the candidates as usual. A role pick still needs `--activity` and `--data`, or `--task`, and with `--task` the activity comes from the role. `augur roles` lists each role along with every candidate's data tier, pause and ask-first setting. `augur roles set <name> --activity <activity> --candidates <labels> [--caller-chooses]` adds or replaces a role, and `augur roles remove <name>` removes one.
+
+A role without `callerChooses` draws its pick by the odds, as any pick does. A role with it takes two calls. The first, for example `augur pick --role reviewer --activity review_code --data internal`, lists the permitted candidates, makes no draw, records nothing and exits with code 2. The second adds `--model <label>` with one of those candidates and records a normal pick of it. The second call is still held to the role's candidates and to the rules, so a label outside the role, or one the rules block, produces no pick.
+
+### Jobs with no tools
+
+The `none` tool tier runs a job with no tools, as in `augur run <route> --tools none`. A model whose rule allows text only accepts `none` the same way it accepts `read`. The job needs an adapter that holds jobs to reading by itself. `openai-api`, `anthropic-api`, `fal-api` and `grok-exec` accept it (`grok-exec` denies every tool for the job), while `codex-exec`, `copilot-exec`, `hermes-exec`, the sandboxed adapters and `exec` refuse it with `read_not_enforceable`. The `augur_run` tool does not offer `none`.
 
 ## Adding a provider
 
