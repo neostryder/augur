@@ -50,6 +50,15 @@ describe('premium pace gate', () => {
     const snapshot = (meters: ReturnType<typeof meter>[]): UsageSnapshot => ({ providers: { claude: { fetchedAt: now.toISOString(), meters } } });
     expect(surplusEvaluate({}, snapshot([meter('weekly_scoped_fable', 0)]), settings, now).claude?.open).toBe(false);
     expect(surplusEvaluate({}, snapshot([meter('weekly', 90, false)]), settings, now).claude?.open).toBe(true);
+    expect(surplusEvaluate({}, snapshot([meter('seven_day_opus', 0)]), settings, now).claude?.open).toBe(false);
+  });
+  it('measures the pace gap on the same weekly meter the surplus window uses', () => {
+    const meter = (id: string, usedPct: number, active?: boolean) => ({ id, windowKind: 'weekly', usedPct, active, windowSeconds: week, resetsAt: new Date(now.getTime() + week * 500).toISOString() });
+    const snapshot = (meters: ReturnType<typeof meter>[]): UsageSnapshot => ({ providers: { claude: { fetchedAt: now.toISOString(), meters } } });
+    expect(paceGap(snapshot([meter('weekly', 10, false)]), 'claude', now)).toBe(40);
+    expect(paceGap(snapshot([meter('weekly', 10), meter('weekly_scoped_fable', 90)]), 'claude', now)).toBe(40);
+    expect(paceGap(snapshot([meter('seven_day', 10), meter('seven_day_opus', 90)]), 'claude', now)).toBe(40);
+    expect(paceGap(snapshot([meter('seven_day_opus', 90)]), 'claude', now)).toBeNull();
   });
   it('drops configured Codex and Copilot countdowns instead of evaluating their meters', () => {
     const snap: UsageSnapshot = { providers: Object.fromEntries(['codex', 'copilot'].map(provider => [provider, { fetchedAt: now.toISOString(), meters: [{ id: 'week', windowKind: 'weekly', usedPct: 0, windowSeconds: week, resetsAt: new Date(now.getTime() + 3600000).toISOString() }] }])) };

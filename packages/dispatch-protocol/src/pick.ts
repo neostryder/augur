@@ -1,7 +1,7 @@
 // Ranks the models a task may use, and checks a job against the picks made for its caller. Pure.
 import { DATA_TIERS, builtinProviders, pauseActive } from '@augur/core';
 import type { ActivityId, DataTier, PolicyFile, WeightLevel } from '@augur/core';
-import { boostFor, govern, listed, lookup, paceState, pacedProviders, reasonLine, resolveBalance, weeklyMeter } from './balance.js';
+import { boostFor, govern, listed, lookup, paceMeter, paceState, pacedProviders, reasonLine, resolveBalance, weeklyMeter } from './balance.js';
 import type { Depth, ProseSwitch } from './balance.js';
 import { seatsFor } from './seats.js';
 import type { Seats } from './seats.js';
@@ -105,7 +105,7 @@ export function surplusEvaluate(state: PickRequest['surplusState'], usage: Usage
 export function paceGap(usage: UsageSnapshot | null, provider: string, now = new Date()): number | null {
   const source = usage?.providers[provider];
   if (!source || ageMinutes(source, now) > freshLimits(source).ignoreMin) return null;
-  const meters = (source.meters ?? []).filter(m => m.active !== false && m.windowKind === 'weekly' && typeof m.usedPct === 'number' && m.resetsAt && typeof m.windowSeconds === 'number' && m.windowSeconds > 0);
+  const meters = (source.meters ?? []).filter(m => paceMeter(m) && m.windowKind === 'weekly' && m.resetsAt && typeof m.windowSeconds === 'number' && m.windowSeconds > 0);
   if (!meters.length) return null;
   const gaps = meters.map(m => {
     const elapsed = 1 - Math.max(0, Math.min(1, (Date.parse(m.resetsAt as string) - now.getTime()) / 1000 / (m.windowSeconds as number)));

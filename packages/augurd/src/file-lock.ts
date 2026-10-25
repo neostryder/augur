@@ -27,5 +27,9 @@ export function withFileLock<T>(target: string, update: () => T): T {
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
     }
   }
-  try { return update(); } finally { closeSync(fd); try { unlinkSync(lock); } catch { /* the lock is already gone */ } }
+  try { return update(); } finally {
+    closeSync(fd);
+    // A lock taken over after it went stale belongs to the new holder, so only remove it while it still names this process.
+    try { if (Number(readFileSync(lock, 'utf8').trim()) === process.pid) unlinkSync(lock); } catch { /* the lock is already gone */ }
+  }
 }

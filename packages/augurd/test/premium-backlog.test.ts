@@ -111,6 +111,30 @@ describe('premium backlog store', () => {
       expect.objectContaining({ id: complete.id, status: 'done' }), expect.objectContaining({ id: failed.id, status: 'failed' }),
     ]));
   });
+  it('drops a stale job id when it requeues, so a later restart finds the new job by its marker', () => {
+    const store = new PremiumBacklog(home()), row = store.add(item);
+    if ('error' in row) return;
+    store.update(row.id, 'running', 'released', { jobId: 'gone', cost: null });
+    store.reconcile(id => id === 'gone' ? null : null);
+    expect(store.list()[0]).toMatchObject({ status: 'queued' });
+    expect(store.list()[0]?.result).toBeUndefined();
+    store.update(row.id, 'running', 'releasing');
+    store.reconcile((id, itemId) => id === '' && itemId === row.id ? { id: 'fresh', state: 'running' } : null);
+    expect(store.list()[0]).toMatchObject({ status: 'running', result: { jobId: 'fresh' } });
+  });
+  it('records the job when a marker search finds one that already finished', () => {
+    const store = new PremiumBacklog(home()), row = store.add(item);
+    if ('error' in row) return;
+    store.update(row.id, 'running', 'releasing');
+    store.reconcile(() => ({ id: 'finished', state: 'completed' }));
+    expect(store.list()[0]).toMatchObject({ status: 'done', result: { jobId: 'finished' } });
+  });
+  it('leaves a lock alone when it was taken over by another holder', () => {
+    const target = join(home(), 'items.jsonl');
+    withFileLock(target, () => { writeFileSync(`${target}.lock`, `${process.pid + 1}
+`); });
+    expect(existsSync(`${target}.lock`)).toBe(true);
+  });
   it('keeps and relinks every live job state, maps terminal states, and requeues missing jobs', () => {
     const store = new PremiumBacklog(home());
     const states = ['queued', 'running', 'cancel_requested', 'starting', 'completed', 'failed', 'cancelled', 'killed', 'lost'] as const;
