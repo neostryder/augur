@@ -24,6 +24,7 @@ export const ACTIVITY_TEXT: Record<ActivityId, string> = {
   typed_decisions: 'A yes/no gate, a pick among fixed options, or a ranking.',
   read_images: 'Reading or describing images, screenshots or video frames.',
   generate_images: 'Creating or editing images.',
+  image_to_image: 'Transforming an input image into another image.',
   generate_video: 'Creating video.',
   speech: 'Transcribing or generating speech audio.',
   embed: 'Turning text into embedding vectors for search or comparison.',

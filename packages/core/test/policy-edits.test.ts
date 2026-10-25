@@ -16,7 +16,7 @@ const has = (p: PolicyConfig) => (provider: string, model: string) => !!p.provid
 describe('which edits apply at once', () => {
   it('applies weights, pauses, notes and hold rules, and holds the rest for the owner', () => {
     for (const f of ['activities.review_code', 'pause', 'notes', 'useAfter']) expect(editKind(f)).toBe('direct');
-    for (const f of ['dataTier', 'askFirst', 'output', 'sandbox', 'effort', 'cost', 'status', 'dataHandling.hostCountry', 'thresholds.denyPct']) expect(editKind(f)).toBe('confirm');
+    for (const f of ['id', 'dataTier', 'askFirst', 'output', 'sandbox', 'effort', 'cost', 'status', 'series', 'role', 'dataHandling.hostCountry', 'thresholds.denyPct']) expect(editKind(f)).toBe('confirm');
     for (const f of ['activities.cooking', 'dataHandling', 'listMode', 'name', 'thresholds.nope']) expect(editKind(f)).toBeNull();
   });
 });
@@ -33,6 +33,8 @@ describe('checking an edit', () => {
     expect(checkEdit(edit({ field: 'pause', value: { until: 'tomorrow' } }), has(p))).toMatch(/ISO time/);
     expect(checkEdit(edit({ field: 'useAfter', value: ['minimax/m3'] }), has(p))).toMatch(/wait on itself/);
     expect(checkEdit(edit({ field: 'status', value: 'inherit' }), has(p))).toMatch(/no default/);
+    expect(checkEdit(edit({ field: 'series', value: { kind: 'llm', pattern: 'vendor/model-*?:_1.0' } }), has(p))).toBeNull();
+    expect(checkEdit(edit({ field: 'series', value: { kind: 'llm', pattern: 'vendor/model-[1]' } }), has(p))).toMatch(/letters, digits/);
   });
   it('treats thresholds as provider-level', () => {
     expect(checkEdit(edit({ field: 'thresholds.denyPct', model: '', value: 95 }), has(p))).toBeNull();
@@ -42,6 +44,15 @@ describe('checking an edit', () => {
 });
 
 describe('processing the inbox', () => {
+  it('applies an id edit without changing the display name and stamps its history', () => {
+    const p = policy(), e = edit({ field: 'id', value: 'MiniMax-M4' });
+    expect(checkEdit(e, has(p))).toBeNull();
+    const applied = processInbox(p, [e], emptyEditState(), 'desktop', now);
+    expect(applied.state.results[0]).toMatchObject({ status: 'held', before: 'MiniMax-M3', after: 'MiniMax-M4' });
+    resolveHeld(p, applied.state, 'e1', true, 'owner', now);
+    expect(p.providers.minimax?.models['minimax/m3']).toMatchObject({ id: 'MiniMax-M4', name: undefined });
+    expect(p.history.at(-1)).toMatchObject({ path: 'minimax|minimax/m3|id', from: 'MiniMax-M3', to: 'MiniMax-M4' });
+  });
   it('applies a direct edit through the rules, with before and after, and records it in the history', () => {
     const p = policy();
     const r = processInbox(p, [edit({}), edit({ id: 'e2', field: 'activities.bulk_tagging', value: 'often' })], emptyEditState(), 'desktop', now);
@@ -63,6 +74,13 @@ describe('processing the inbox', () => {
     expect(accepted.state.held).toEqual([]);
     expect(resolvedValue(p, edit({ field: 'dataTier' }))).toBe('internal');
     expect(accepted.state.results.at(-1)).toMatchObject({ status: 'applied', before: 'public', after: 'internal' });
+  });
+  it('holds and applies role changes as owner edits', () => {
+    const p = policy(), e = edit({ id: 'role-1', provider: '', model: 'reviewer', field: 'role', value: { activity: 'review_code', candidates: ['minimax/m3'], callerChooses: true } });
+    const held = processInbox(p, [e], emptyEditState(), 'desktop', now);
+    expect(held.state.held).toEqual([e]);
+    const accepted = resolveHeld(p, held.state, 'role-1', true, 'desktop', now);
+    expect(p.roles).toEqual({ reviewer: e.value });
   });
   it('lets the owner dismiss a held edit', () => {
     const p = policy();

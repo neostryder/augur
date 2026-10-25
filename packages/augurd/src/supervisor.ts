@@ -190,10 +190,10 @@ export class Supervisor {
    * Submits to the route named. When that route cannot take the job for a reason that may pass, each fallback route is tried in order, and every one is
    * checked against every rule as if it had been asked for, so a fallback never gets around a data tier, a pick or a pause. `failover: false` keeps the job put.
    */
-  submit(input: JobRequest): SubmitResult {
+  submit(input: JobRequest, routeOverride?: RouteConfig): SubmitResult {
     const off = this.d.jobsOff?.() ?? null;
     if (off) return reject('jobs_off', off);
-    const first = this.submitTo(input);
+    const first = this.submitTo(input, undefined, routeOverride);
     // A named conversation stays on the route it was opened on, including when that route refuses the job.
     if (!('rejected' in first) || input.failover === false || input.conversation || !Supervisor.FAILOVER.has(first.rejected.code)) return first;
     for (const next of this.d.routes()?.[input.route]?.fallback ?? []) {
@@ -207,12 +207,12 @@ export class Supervisor {
     return first;
   }
 
-  private submitTo(input: JobRequest, chain?: { req: JobRequest; hops: string[] }): SubmitResult {
+  private submitTo(input: JobRequest, chain?: { req: JobRequest; hops: string[] }, routeOverride?: RouteConfig): SubmitResult {
     let req = input;
     const bad = this.validate(req);
     if (bad) return reject('bad_request', bad);
     const routes = this.d.routes();
-    const route = routes?.[req.route];
+    const route = req.route === input.route && routeOverride ? routeOverride : routes?.[req.route];
     if (!route) return reject('unknown_route', `Route ${req.route} is not in routes.json.`);
     const adapter = this.d.adapters.get(route.adapter);
     if (!adapter) return reject('adapter_unavailable', `Adapter ${route.adapter} is not enabled.`);
@@ -334,7 +334,8 @@ export class Supervisor {
     const policy = this.d.policy();
     if (!policy) return { error: 'policy.json was not found. Augur writes it when a rule is saved.' };
     const declared = { activity: !!req.activity, dataTier: !!req.dataTier }, descriptions: Record<string, string> = {};
-    let activity = req.activity, dataTier = req.dataTier, classified: unknown, fitError: string | undefined, weight = req.depth;
+    let activity = req.activity ?? (req.role ? policy.roles?.[req.role]?.activity : undefined), dataTier = req.dataTier, classified: unknown, fitError: string | undefined, weight = req.depth;
+    if (req.role && !policy.roles?.[req.role]) return { error: `Unknown role ${req.role}.` };
     const fits = { ...(req.fits ?? {}) };
     const backend = this.d.decision;
     if (req.task && backend && (!activity || !dataTier)) {
@@ -348,12 +349,12 @@ export class Supervisor {
     if (!activity) return { error: req.task ? 'The task could not be classified. Pass the activity, or configure a decision backend.' : 'Give an activity and data tier, or a task description.' };
     dataTier ??= 'sensitive';
     if (!ACTIVITIES.includes(activity) || !DATA_TIERS.includes(dataTier)) return { error: 'Unknown activity or data tier.' };
-    const preview = req.preview === true;
+    const preview = req.preview === true || !!(req.role && policy.roles?.[req.role]?.callerChooses && !req.named);
     const snippet = req.snippet === true ? { snippet: true as const } : {};
     const depth = weight ? { depth: weight } : {};
     const spent = this.spentPicks(req.session ?? null);
     if (req.task && backend) {
-      const asked = rank(policy, this.d.usage(), { activity, dataTier, proseSwitched: this.proseWas(), ...depth, ...snippet }, new Date(this.now())).ranking.map(r => r.model).filter(m => fits[m] === undefined);
+      const asked = rank(policy, this.d.usage(), { activity, dataTier, ...(req.role ? { role: req.role } : {}), proseSwitched: this.proseWas(), ...depth, ...snippet }, new Date(this.now())).ranking.map(r => r.model).filter(m => fits[m] === undefined);
       // Student-related text is scored only by a backend on this network, as classifyTask does; with none, fit stays neutral.
       const fitter = STUDENT_RE.test(req.task) ? (backend.local ?? (backend.primary.local ? backend.primary : undefined)) : backend.primary;
       if (asked.length && fitter) {
@@ -368,11 +369,11 @@ export class Supervisor {
     // What a person chose before for this kind of work leans each fit a little, and never decides the pick alone.
     const shares = learnedShares(answers, key, rules.training.window, rules.training.min);
     if (Object.keys(shares).length) {
-      const live = rank(policy, this.d.usage(), { activity, dataTier, ...(req.named ? { named: req.named } : {}), ...depth, ...snippet, spent }, new Date(this.now())).ranking.map(r => r.model);
+      const live = rank(policy, this.d.usage(), { activity, dataTier, ...(req.role ? { role: req.role } : {}), ...(req.named ? { named: req.named } : {}), ...depth, ...snippet, spent }, new Date(this.now())).ranking.map(r => r.model);
       for (const m of live) fits[m] = Math.min(1, Math.round((fits[m] ?? 0.5) * learnedTilt(shares[m] ?? 0) * 1000) / 1000);
     }
     const result = rank(policy, this.d.usage(), {
-      activity, dataTier, ...(req.named ? { named: req.named } : {}), ...depth, fits, proseSwitched: this.proseWas(), ...snippet,
+      activity, dataTier, ...(req.role ? { role: req.role } : {}), ...(req.named ? { named: req.named } : {}), ...depth, fits, proseSwitched: this.proseWas(), ...snippet,
       spent, draw: !preview && req.best !== true, ...(req.best === true ? { best: true } : {}), ...(req.seed !== undefined ? { seed: req.seed } : {}),
     }, new Date(this.now()));
     const routes: Record<string, string[]> = {};

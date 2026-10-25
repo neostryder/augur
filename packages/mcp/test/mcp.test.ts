@@ -176,19 +176,23 @@ describe('job, jobs, cancel, pressure, routes', () => {
 });
 
 describe('the server', () => {
-  it('offers fourteen tools with the rules in its instructions, and runs one through a client', async () => {
+  it('offers the MCP tools with the rules in its instructions, and runs one through a client', async () => {
     const [a, b] = InMemoryTransport.createLinkedPair();
     const server = buildServer(createTools(deps({ routes: ROUTES, resets: { events: [], summary: { rows: 0, meters: [] } } })), 'test');
     const client = new Client({ name: 'test', version: '1' });
     await Promise.all([server.connect(a), client.connect(b)]);
     const { tools } = await client.listTools();
-    expect(tools.map(t => t.name).sort()).toEqual(['augur_balance', 'augur_cancel', 'augur_job', 'augur_jobs', 'augur_models', 'augur_pick', 'augur_pick_preview', 'augur_policy', 'augur_policy_edit', 'augur_pressure', 'augur_prose_add', 'augur_prose_list', 'augur_prose_status', 'augur_resets', 'augur_route_add', 'augur_routes', 'augur_run']);
+    expect(tools.map(t => t.name).sort()).toEqual(['alias_list', 'augur_balance', 'augur_cancel', 'augur_job', 'augur_jobs', 'augur_models', 'augur_pick', 'augur_pick_preview', 'augur_policy', 'augur_policy_edit', 'augur_pressure', 'augur_prose_add', 'augur_prose_list', 'augur_prose_status', 'augur_resets', 'augur_route_add', 'augur_routes', 'augur_run']);
     expect(tools.map(t => t.name)).not.toContain('prose_approve');
+    expect(tools.some(t => /alias_(accept|reject)/.test(t.name))).toBe(false);
     const resets = tools.find(t => t.name === 'augur_resets')!;
     expect(resets.annotations).toMatchObject({ readOnlyHint: true, openWorldHint: false });
     expect(resets.description).toContain('never changes anything');
     expect(resets.inputSchema.properties).toHaveProperty('provider');
     expect(resets.inputSchema.properties).toHaveProperty('limit');
+    expect(tools.find(t => t.name === 'augur_pick')!.inputSchema.properties).toHaveProperty('role');
+    expect(tools.find(t => t.name === 'augur_pick')!.inputSchema.properties).toHaveProperty('model');
+    expect(tools.find(t => t.name === 'alias_list')!.annotations).toMatchObject({ readOnlyHint: true });
     const ledger = await client.callTool({ name: 'augur_resets', arguments: { provider: 'sample', limit: 5 } });
     expect(ledger.structuredContent).toEqual({ events: [], summary: { rows: 0, meters: [] } });
     expect(JSON.stringify(ledger.content)).toContain('No reset events.');
@@ -201,6 +205,8 @@ describe('the server', () => {
     expect(add.inputSchema.properties).toHaveProperty('balance_url');
     expect(add.inputSchema.properties).toHaveProperty('balance_path');
     const run = tools.find(t => t.name === 'augur_run')!;
+    expect(JSON.stringify(run.inputSchema)).toContain('"enum":["read","write","full"]');
+    expect(run.inputSchema.properties).not.toHaveProperty('allow');
     expect(run.inputSchema.required).toEqual(expect.arrayContaining(['route', 'prompt', 'activity', 'data_tier']));
     expect(run.inputSchema.properties).toMatchObject({ packs: { type: 'array' }, no_charter: { type: 'boolean' }, conversation: { type: 'string' }, attachments: { type: 'array' }, urgent: { type: 'boolean' } });
     const res = await client.callTool({ name: 'augur_routes', arguments: {} });

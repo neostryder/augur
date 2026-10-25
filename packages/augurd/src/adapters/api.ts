@@ -69,7 +69,7 @@ function make(id: string, shape: 'openai' | 'anthropic'): Adapter {
       return null;
     },
     plan(request: JobRequest, route: RouteConfig, ctx: PlanContext): LaunchPlan {
-      if (request.tools !== 'read' || request.output !== 'text_only') throw new Error('an API route returns text only. Use tools read and output text_only.');
+      if ((request.tools !== 'read' && request.tools !== 'none') || request.output !== 'text_only') throw new Error('an API route returns text only. Use tools none or read and output text_only.');
       const mode = optStr(route.options, 'mode') ?? 'chat', files = ctx.attachments ?? [];
       if (request.activity === 'embed' !== (mode === 'embeddings')) throw new Error(mode === 'embeddings' ? 'an embeddings route takes only the embed activity.' : 'the embed activity needs a route whose mode is embeddings.');
       if (request.activity === 'transcribe' !== (mode === 'transcribe')) throw new Error(mode === 'transcribe' ? 'a transcribe route takes only the transcribe activity.' : 'the transcribe activity needs a route whose mode is transcribe.');

@@ -151,6 +151,7 @@ export interface Adapter {
 }
 
 const NOTES: Record<ToolTier, string> = {
+  none: '',
   read: 'READ-ONLY TASK. Do not create, modify, delete, move or rename any file, and do not run any command that writes to disk, installs packages, or mutates git state. Read, search and report only. If the task cannot be done without writing, say so and stop.',
   write: 'Confine all edits to the working directory for this task. Do not modify files outside it, and do not install packages or change global or git config.',
   full: '',

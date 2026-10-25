@@ -50,7 +50,7 @@ export function editKind(field: string): EditKind | null {
   if (isBalanceField(field)) return 'direct';
   if (field.startsWith('activities.')) return ACTIVITIES.includes(field.slice(11) as ActivityId) ? 'direct' : null;
   if (DIRECT_FIELDS.has(field)) return 'direct';
-  if (['dataTier', 'askFirst', 'output', 'sandbox', 'effort', 'cost', 'status'].includes(field)) return 'confirm';
+  if (['id', 'dataTier', 'askFirst', 'output', 'sandbox', 'effort', 'cost', 'status', 'series', 'role'].includes(field)) return 'confirm';
   if (['hostCountry', 'retainsPrompts', 'trainsOnPrompts', 'pinnedHost'].includes(field.replace('dataHandling.', '')) && field.startsWith('dataHandling.')) return 'confirm';
   if (['warnPct', 'denyPct', 'minBalance'].includes(field.replace('thresholds.', '')) && field.startsWith('thresholds.')) return 'confirm';
   return null;
@@ -62,11 +62,14 @@ export function checkValue(field: string, value: unknown): string | null {
   if (value === INHERIT) return field.startsWith('thresholds.') || field === 'status' ? `${field} has no default to go back to.` : null;
   if (field.startsWith('activities.')) return value === null || level(value) ? null : `An activity takes ${WEIGHT_LEVELS.join(', ')}, null to block it, or "${INHERIT}".`;
   switch (field) {
+    case 'role': return value === null || (isObj(value) && ACTIVITIES.includes(value.activity as ActivityId) && Array.isArray(value.candidates) && value.candidates.every(x => typeof x === 'string') && typeof value.callerChooses === 'boolean') ? null : 'role is null or { activity, candidates, callerChooses }.';
+    case 'id': return typeof value === 'string' && value.length > 0 ? null : 'id is a non-empty model id.';
     case 'dataTier': return DATA_TIERS.includes(value as never) ? null : `dataTier is one of ${DATA_TIERS.join(', ')}.`;
     case 'askFirst': case 'sandbox': return typeof value === 'boolean' ? null : `${field} is true or false.`;
     case 'output': return OUTPUT_MODES.includes(value as never) ? null : `output is one of ${OUTPUT_MODES.join(', ')}.`;
     case 'cost': return COST_TIERS.includes(value as never) ? null : `cost is one of ${COST_TIERS.join(', ')}.`;
     case 'status': return MODEL_STATUSES.includes(value as never) ? null : `status is one of ${MODEL_STATUSES.join(', ')}.`;
+    case 'series': return value === null || (isObj(value) && ['llm', 'image', 'speech', 'embed'].includes(String(value.kind)) && typeof value.pattern === 'string' && value.pattern.length > 0 && value.pattern.length <= 200 && /^[A-Za-z0-9._/:*?-]+$/.test(value.pattern)) ? null : 'series is null or { kind, pattern } using letters, digits, dot, dash, underscore, slash, colon, * and ?.';
     case 'effort': return value === null || (typeof value === 'string' && value.length <= STRINGS.effort) ? null : 'effort is a short text or null.';
     case 'notes': return typeof value === 'string' && value.length <= STRINGS.notes ? null : `notes is a text of at most ${STRINGS.notes} characters.`;
     case 'useAfter': return Array.isArray(value) && value.length <= 10 && value.every(x => typeof x === 'string' && x.includes('/')) ? null : 'useAfter is a list of route labels such as codex/sol.';
@@ -146,6 +149,14 @@ export function checkEdit(edit: PolicyEdit, has: (provider: string, model: strin
   const kind = editKind(edit.field);
   if (!kind) return `${edit.field} cannot be edited here.`;
   if (isBalanceField(edit.field)) return edit.provider || edit.model ? 'A balance setting names no provider and no model.' : checkValue(edit.field, edit.value);
+  if (edit.field === 'role') {
+    if (edit.provider || !edit.model) return 'A role edit names a role and no provider.';
+    const bad = checkValue(edit.field, edit.value);
+    if (bad || edit.value === null) return bad;
+    const role = edit.value as { candidates: string[] };
+    return role.candidates.every(label => has(label.split('/', 1)[0] as string, label)) ? null : 'Every role candidate names a model label in the rules.';
+  }
+  if (edit.field === 'id' && (edit.provider === '' || !edit.model || typeof edit.value !== 'string' || !edit.value)) return 'An id edit needs a provider, model and non-empty id.';
   if (!edit.provider) return 'An edit names a provider.';
   if (edit.field.startsWith('thresholds.')) { if (edit.model) return 'Thresholds belong to a provider, so no model is named.'; }
   else if (!edit.model) return 'An edit names a model.';
@@ -159,11 +170,13 @@ export function checkEdit(edit: PolicyEdit, has: (provider: string, model: strin
 /** The value a field resolves to right now, for the before and after in a result. */
 export function resolvedValue(policy: PolicyConfig, edit: Pick<PolicyEdit, 'provider' | 'model' | 'field'>): unknown {
   if (isBalanceField(edit.field)) return balanceAt(policy, balanceSegments(edit.field)) ?? null;
+  if (edit.field === 'role') return policy.roles?.[edit.model] ?? null;
   const p = policy.providers[edit.provider];
   if (!p) return undefined;
   if (edit.field.startsWith('thresholds.')) return (resolveThresholds(p) as unknown as Record<string, unknown>)[edit.field.slice(11)];
   const entry = p.models[edit.model];
   if (!entry) return undefined;
+  if (edit.field === 'id') return entry.id;
   const r = resolveModel(edit.provider, p.defaults, entry) as unknown as Record<string, unknown>;
   if (edit.field.startsWith('activities.')) return (r.activities as ResolvedModel['activities'])[edit.field.slice(11) as ActivityId] ?? null;
   if (edit.field.startsWith('dataHandling.')) return (r.dataHandling as Record<string, unknown>)[edit.field.slice(13)] ?? null;
@@ -174,7 +187,22 @@ export function resolvedValue(policy: PolicyConfig, edit: Pick<PolicyEdit, 'prov
 export function applyEdit(policy: PolicyConfig, edit: PolicyEdit, device: string, now = new Date()): { before: unknown; after: unknown } {
   const before = resolvedValue(policy, edit);
   const value = edit.value === INHERIT ? undefined : edit.value;
-  if (isBalanceField(edit.field)) setBalance(policy, balanceSegments(edit.field), value, device, now);
+  if (edit.field === 'role') {
+    policy.roles ??= {};
+    if (value === undefined || value === null) delete policy.roles[edit.model]; else policy.roles[edit.model] = value as PolicyConfig['roles'] extends Record<string, infer R> ? R : never;
+    policy.history.push({ at: now.toISOString(), device, path: `roles|${edit.model}`, from: before, to: value ?? null });
+    if (policy.history.length > HISTORY_LIMIT) policy.history.splice(0, policy.history.length - HISTORY_LIMIT);
+  }
+  else if (edit.field === 'id') {
+    const entry = policy.providers[edit.provider]?.models[edit.model];
+    if (entry) {
+      const before = entry.id;
+      entry.id = value as string;
+      policy.history.push({ at: now.toISOString(), device, path: `${edit.provider}|${edit.model}|id`, from: before, to: value });
+      if (policy.history.length > HISTORY_LIMIT) policy.history.splice(0, policy.history.length - HISTORY_LIMIT);
+    }
+  }
+  else if (isBalanceField(edit.field)) setBalance(policy, balanceSegments(edit.field), value, device, now);
   else if (edit.field === 'status') setModelStatus(policy, edit.provider, edit.model, value as never, device, now);
   else setField(policy, fieldPath(edit.provider, edit.model || null, edit.field), value, device, now);
   return { before, after: resolvedValue(policy, edit) };

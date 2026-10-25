@@ -1,7 +1,6 @@
 // The MCP protocol layer: names, descriptions and input shapes for the tools in tools.ts. Claude Code, Claude Desktop and any other MCP client see these.
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES } from '@augur/core';
-import { TOOL_TIERS } from '@augur/dispatch-protocol';
 import { z } from 'zod';
 import type { ToolResult, Tools } from './tools.js';
 
@@ -28,10 +27,14 @@ export function buildServer(tools: Tools, version: string): McpServer {
   server.registerTool('augur_prose_add', { title: 'Add prose request', description: 'Adds a prose request to Augur queue.', inputSchema: { item: z.record(z.string(), z.unknown()) } }, async ({ item }) => out(await tools.proseAdd(item)));
   server.registerTool('augur_prose_list', { title: 'List prose requests', annotations: readOnly, description: 'Lists queued prose requests.', inputSchema: { status: z.enum(['queued', 'awaiting-approval', 'running', 'drafted', 'failed']).optional() } }, async (a) => out(await tools.proseList(a)));
   server.registerTool('augur_prose_status', { title: 'Prose queue status', annotations: readOnly, description: 'Shows prose queue counts and whether a batch is due.' }, async () => out(await tools.proseStatus()));
+  server.registerTool('alias_list', {
+    title: 'List aliases', annotations: readOnly,
+    description: 'Lists model aliases with their series pattern and current provider model id.',
+  }, async () => out(await tools.aliases()));
 
   server.registerTool('augur_pick', {
     title: 'Pick a model', annotations: readOnly,
-    description: 'Ranks the models permitted for an activity and data tier by the rules and current plan usage, gives each its odds, and draws the pick by those odds. A named model always wins, and best_only takes the top score. Set snippet when drafting one sentence or one bullet with no other prose, so the prose routes get no extra weight. Give an activity and a data tier, or describe the task and Augur classifies it.',
+    description: 'Ranks the models permitted for an activity and data tier by the rules and current plan usage, gives each its odds, and draws the pick by those odds. A named model always wins, and best_only takes the top score. For a caller-chosen role, first call with the role to see candidates, then call again with model set to one listed candidate to record the pick. Set snippet when drafting one sentence or one bullet with no other prose, so the prose routes get no extra weight. Give an activity and a data tier, or describe the task and Augur classifies it.',
     inputSchema: {
       activity: z.enum(ACTIVITIES).optional().describe('What the work is.'),
       data_tier: z.enum(DATA_TIERS).optional().describe('The most sensitive data the task touches.'),
@@ -39,6 +42,8 @@ export function buildServer(tools: Tools, version: string): McpServer {
       depth: z.enum(['routine', 'everyday', 'deep', 'core']).optional().describe('How much the task weighs: routine (glue, plumbing, small edits), everyday (review, research, summaries), deep (hard reasoning, substantial coding), or core (an engine, core logic, security-critical code). Heavier work leans toward strong models. Left out, the classifier judges the task description, or the default for the activity applies.'),
       best_only: z.boolean().optional().describe('Take the top score. Left out, the pick is drawn from the odds.'),
       snippet: z.boolean().optional().describe('One sentence or one bullet, with no prose batch to attach it to.'),
+      role: z.string().optional().describe('Restrict the pick to this owner-defined role.'),
+      model: z.string().optional().describe('Name a model from the role candidates. For a caller-chosen role, this second pick records the caller choice.'),
     },
   }, async (a) => out(await tools.pick(a)));
 
@@ -50,7 +55,7 @@ export function buildServer(tools: Tools, version: string): McpServer {
       prompt: z.string().describe('The full prompt for the model.'),
       activity: z.enum(ACTIVITIES).describe('What the work is.'),
       data_tier: z.enum(DATA_TIERS).describe('The most sensitive data the prompt or the folder contains.'),
-      tools: z.enum(TOOL_TIERS as unknown as [string, ...string[]]).optional().describe('read (default), write, or full.'),
+      tools: z.enum(['read', 'write', 'full']).optional().describe('read (default), write, or full. The no-tools tier is available only on adapters that can enforce it.'),
       output: z.enum(OUTPUT_MODES).optional().describe('text_only (default), patch_only or write_files.'),
       cwd: z.string().optional().describe('The folder the job works in. Defaults to the server\'s folder.'),
       timeout_s: z.number().int().positive().optional().describe('Seconds the job may run before it is stopped.'),
