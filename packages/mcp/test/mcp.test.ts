@@ -58,6 +58,19 @@ describe('resets', () => {
   });
 });
 
+describe('gate and backlog output', () => {
+  it('includes the last approval in gate status and item fields in backlog list', async () => {
+    const approved = '2026-10-01T12:00:00Z';
+    const gate = await createTools(deps({ gate_status: { providers: [{ provider: 'claude', state: 'open', gap: 3, window: 'window open', labels: ['claude/opus'], lastApproval: approved }] } })).gateStatus();
+    expect(gate.text).toContain(`approved ${approved}`);
+    const row = { id: 'item', author: 'agent', status: 'awaiting-approval', route: 'claude/opus', task: 'write', data: 'internal', tools: 'write', output: 'patch_only', cwd: '/work/repo', prompt: { text: 'prompt' }, estimate: 2, deadline: approved };
+    const list = await createTools(deps({ backlog_list: [row] })).backlogList({});
+    expect(list.text).toContain('data=internal tools=write output=patch_only');
+    expect(list.text).toContain('prompt=inline 6 chars');
+    expect((list.data as { items: Array<Record<string, unknown>> }).items[0]).toMatchObject({ id: 'item', route: 'claude/opus', promptSource: { inlineLength: 6 }, data: 'internal', tools: 'write', output: 'patch_only', cwd: '/work/repo', estimate: 2, deadline: approved, author: 'agent' });
+  });
+});
+
 describe('pick', () => {
   it('needs a task or both an activity and a data tier', async () => {
     const t = createTools(deps({}));
@@ -69,7 +82,7 @@ describe('pick', () => {
     const r = await createTools(deps({ pick: { pick: 'codex/luna', activity: 'write_code', dataTier: 'internal', ranking: [{ model: 'codex/luna', score: 0.8 }], routes: { 'codex/luna': ['luna'] } } }, calls))
       .pick({ activity: 'write_code', data_tier: 'internal' });
     expect(r.text).toContain('Pick: codex/luna');
-    expect(calls[0]).toEqual({ method: 'pick', params: { activity: 'write_code', dataTier: 'internal', session: 'mcp-test' } });
+    expect(calls[0]).toEqual({ method: 'pick', params: { caller: 'interactive', activity: 'write_code', dataTier: 'internal', session: 'mcp-test' } });
   });
   it('prints the reason and the seats under the pick', async () => {
     const seats = { second: { model: 'minimax/m3', why: 'a second opinion from a route with plenty of room' }, shadow: { model: 'laya/laya', why: 'the local model answers the same decision' } };
@@ -116,6 +129,18 @@ describe('run', () => {
     const t = createTools(deps({}, calls));
     expect((await t.run({ ...args, data_tier: 'secretish' })).isError).toBe(true);
     expect((await t.run({ ...args, activity: 'bogus' })).isError).toBe(true);
+    expect(calls).toHaveLength(0);
+  });
+  it('rejects a released flag before submitting a job', async () => {
+    const calls: Calls[] = [], result = await createTools(deps({}, calls)).run({ ...args, released: true } as unknown as import('../src/tools.js').RunArgs);
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain('Only the service runner');
+    expect(calls).toHaveLength(0);
+  });
+  it('rejects the unpicked release bypass before submitting a job', async () => {
+    const calls: Calls[] = [], result = await createTools(deps({}, calls)).run({ ...args, allow: ['unpicked'] } as never);
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain('Only the service runner');
     expect(calls).toHaveLength(0);
   });
   it('passes packs, no_charter and conversation through on the job request', async () => {
@@ -182,6 +207,18 @@ describe('job, jobs, cancel, pressure, routes', () => {
   });
 });
 
+describe('premium backlog tools', () => {
+  it('offers add, list and status calls without run or drop operations', async () => {
+    const calls: Calls[] = [], t = createTools(deps({ backlog_add: { id: 'item-1' }, backlog_list: [], backlog_status: { counts: { queued: 0 } } }, calls));
+    expect((await t.backlogAdd({ item: { requester: 'owner' } })).isError).toBeUndefined();
+    expect((await t.backlogList({ status: 'queued' })).text).toBe('No backlog items.');
+    expect((await t.backlogStatus()).text).toContain('queued');
+    expect(calls.map(x => x.method)).toEqual(['backlog_add', 'backlog_list', 'backlog_status']);
+    expect(Object.keys(t)).not.toContain('backlogRun');
+    expect(Object.keys(t)).not.toContain('backlogDrop');
+  });
+});
+
 describe('the server', () => {
   it('offers the MCP tools with the rules in its instructions, and runs one through a client', async () => {
     const [a, b] = InMemoryTransport.createLinkedPair();
@@ -189,9 +226,10 @@ describe('the server', () => {
     const client = new Client({ name: 'test', version: '1' });
     await Promise.all([server.connect(a), client.connect(b)]);
     const { tools } = await client.listTools();
-    expect(tools.map(t => t.name).sort()).toEqual(['alias_list', 'augur_balance', 'augur_cancel', 'augur_job', 'augur_jobs', 'augur_models', 'augur_pick', 'augur_pick_preview', 'augur_policy', 'augur_policy_edit', 'augur_pressure', 'augur_prose_add', 'augur_prose_list', 'augur_prose_status', 'augur_resets', 'augur_route_add', 'augur_routes', 'augur_run']);
+    expect(tools.map(t => t.name).sort()).toEqual(['alias_list', 'augur_backlog_add', 'augur_backlog_list', 'augur_backlog_status', 'augur_balance', 'augur_cancel', 'augur_job', 'augur_jobs', 'augur_models', 'augur_pick', 'augur_pick_preview', 'augur_policy', 'augur_policy_edit', 'augur_pressure', 'augur_prose_add', 'augur_prose_list', 'augur_prose_status', 'augur_resets', 'augur_route_add', 'augur_routes', 'augur_run', 'gate_report', 'gate_status']);
     expect(tools.map(t => t.name)).not.toContain('prose_approve');
     expect(tools.some(t => /alias_(accept|reject)/.test(t.name))).toBe(false);
+    expect(tools.some(t => /backlog_(run|drop|release)/.test(t.name))).toBe(false);
     const resets = tools.find(t => t.name === 'augur_resets')!;
     expect(resets.annotations).toMatchObject({ readOnlyHint: true, openWorldHint: false });
     expect(resets.description).toContain('never changes anything');
@@ -214,8 +252,14 @@ describe('the server', () => {
     const run = tools.find(t => t.name === 'augur_run')!;
     expect(JSON.stringify(run.inputSchema)).toContain('"enum":["read","write","full"]');
     expect(run.inputSchema.properties).not.toHaveProperty('allow');
+    expect(tools.find(t => t.name === 'gate_status')?.annotations).toMatchObject({ readOnlyHint: true });
+    expect(tools.find(t => t.name === 'gate_report')?.annotations).toMatchObject({ readOnlyHint: true });
+    expect(tools.some(t => /gate_record/.test(t.name))).toBe(false);
     expect(run.inputSchema.required).toEqual(expect.arrayContaining(['route', 'prompt', 'activity', 'data_tier']));
     expect(run.inputSchema.properties).toMatchObject({ packs: { type: 'array' }, no_charter: { type: 'boolean' }, conversation: { type: 'string' }, attachments: { type: 'array' }, urgent: { type: 'boolean' } });
+    expect(run.inputSchema.properties).not.toHaveProperty('caller');
+    expect(run.inputSchema.properties).not.toHaveProperty('released');
+    expect(tools.find(t => t.name === 'augur_pick')?.inputSchema.properties).not.toHaveProperty('caller');
     const res = await client.callTool({ name: 'augur_routes', arguments: {} });
     expect(JSON.stringify(res.content)).toContain('cannot run: no program');
     expect((res.structuredContent as { routes: unknown[] }).routes).toHaveLength(2);
@@ -228,6 +272,15 @@ describe('the server', () => {
     const client = new Client({ name: 'test', version: '1' });
     await Promise.all([server.connect(a), client.connect(b)]);
     const res = await client.callTool({ name: 'augur_run', arguments: { route: 'luna', prompt: 'x', activity: 'write_code', data_tier: 'bogus' } });
+    expect(res.isError).toBe(true);
+    expect(calls).toHaveLength(0);
+    await client.close();
+  });
+  it('refuses a released flag in an external MCP run request', async () => {
+    const calls: Calls[] = [], [a, b] = InMemoryTransport.createLinkedPair();
+    const server = buildServer(createTools(deps({}, calls)), 'test'), client = new Client({ name: 'test', version: '1' });
+    await Promise.all([server.connect(a), client.connect(b)]);
+    const res = await client.callTool({ name: 'augur_run', arguments: { route: 'luna', prompt: 'x', activity: 'write_code', data_tier: 'internal', released: true } });
     expect(res.isError).toBe(true);
     expect(calls).toHaveLength(0);
     await client.close();

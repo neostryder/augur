@@ -19,6 +19,7 @@ const RULES = { providers: {
 function policy(confirm = ['codex/sol', 'codex/luna', 'minimax/m3', 'minimax/api', 'claude/fable']): PolicyFile {
   const p = emptyPolicy(); importPolicy(p, openRules(RULES), now);
   for (const [id, provider] of Object.entries(p.providers)) for (const label of Object.keys(provider.models)) if (confirm.includes(label)) setField(p, fieldPath(id, label, 'status'), 'confirmed', 'test', now);
+  p.balance = { gate: { premium: [], paceLift: [] } };
   return buildPolicyFile(p, Object.keys(p.providers).map(id => ({ id, name: id, metered: true })), now);
 }
 const host: AdapterCapabilities = { permissionRequests: false, sessions: false, reportsUsage: true, sandboxed: false, isolatesWorkspace: false, enforcesReadOnly: true };

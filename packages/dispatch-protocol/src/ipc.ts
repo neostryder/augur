@@ -43,6 +43,12 @@ export type RpcResponse<T = unknown> = { id: number; result: T } | { id: number;
 
 export interface Methods {
   alias_refresh: { params: { label?: string } | undefined; result: unknown };
+  backlog_add: { params: { item: unknown }; result: unknown };
+  backlog_approve: { params: { id: string }; result: unknown };
+  backlog_list: { params: { status?: string }; result: unknown };
+  backlog_status: { params: undefined; result: unknown };
+  backlog_run: { params: { dryRun?: boolean }; result: unknown };
+  backlog_drop: { params: { id: string }; result: unknown };
   resets: { params: ResetQuery | undefined; result: ResetLedger };
   ping: { params: undefined; result: { pid: number; version: number; startedAt: number } };
   submit: { params: JobRequest; result: { id: string; warnings: string[] } | { rejected: Rejection } };
@@ -64,8 +70,11 @@ export interface Methods {
   human_prompt: { params: { session: string; text: string }; result: { models: string[] } | { error: string } };
   /** Headroom per provider and the usage factor of every model. */
   pressure: { params: undefined; result: { pressure: Record<string, Headroom>; factors: Record<string, number>; scarcity: number } | null };
-  /** The read-only balance report: one pace row per paced provider, Copilot's spend, each provider's stance, where each kind of work goes now, and what the pick log shows for the last few days. */
+  /** The balance report records current provider window changes on the owner's path; agent calls read it without recording changes. */
   balance: { params: { days?: number } | undefined; result: BalanceReport | { error: string } };
+  gate_status: { params: undefined; result: { close: number; providers: Array<{ provider: string; state: 'open' | 'closed'; gap: number | null; window: string | null; labels: string[]; lastApproval: string | null }> } | { error: string } };
+  gate_report: { params: undefined; result: Record<string, unknown> | { error: string } };
+  gate_record: { params: { kind: string; route: string; scope: string; note?: string }; result: { ok: true } | { error: string } };
   /** Records a person's answer to a pending proposal: the route they chose, and an optional reason. The chosen route is then cleared for jobs, and the answer feeds training mode. */
   pick_answer: { params: { id: string; model: string; why?: string }; result: { ok: true; agreed: boolean; key: string; n: number; agreedOf: number } | { error: string } };
   /** Records how a job's report met its brief, beside the pick in the decision log. `id` is a pick id or a job id; the check itself runs in the caller's tooling. */

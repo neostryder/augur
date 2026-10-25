@@ -1,13 +1,13 @@
 // Accepts jobs, applies the rules, launches one runner per job and keeps the store true to what the runners leave on disk.
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { closeSync, cpSync, existsSync, mkdtempSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, cpSync, existsSync, mkdtempSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES } from '@augur/core';
 import type { PolicyFile } from '@augur/core';
 import { BRIEF_RESULTS, GRADE_LABELS, STUDENT_RE, classifyDepth, classifyTask, decide as decideGrade, fitScores, grade as gradeText, gradeStats, gradeTier } from '@augur/decision';
 import type { BriefResult, DecisionBackend, GradeVerdictLabel } from '@augur/decision';
-import { BUDGET_WINDOW_MS, NAMED_PROMPT_WINDOW, PICK_WINDOW_MIN, TOOL_TIERS, account, agreement, attachmentKind, balanceReport, budgetStatus, calibrateRoutes, copilotSpend, checkLineage, routeSecretName, checkNamed, checkPick, evaluate, isTerminal, learnedShares, learnedTilt, lookup, matchNamedModels, pressure, propose, rank, resolveBalance, trainingKey, usageFactors } from '@augur/dispatch-protocol';
+import { BUDGET_WINDOW_MS, NAMED_PROMPT_WINDOW, PICK_WINDOW_MIN, TOOL_TIERS, account, agreement, attachmentKind, balanceReport, budgetStatus, calibrateRoutes, copilotSpend, checkLineage, routeSecretName, checkNamed, checkPick, evaluate, isTerminal, learnedShares, learnedTilt, lookup, matchNamedModels, pressure, propose, rank, resolveBalance, surplusWindowStatus, trainingKey, usageFactors } from '@augur/dispatch-protocol';
 import type { Adapter, BalanceReport, BudgetStatus, Conversation, Depth, GradeAnswer, GradeParams, GradeReport, JobRecord, JobRequest, LaunchPlan, PickAnswer, PickParams, RateCard, Rejection, ResolvedAttachment, RouteCapabilities, RouteConfig, UsageSnapshot } from '@augur/dispatch-protocol';
 import { MAX_COMMAND_LINE, optNum, optStr } from './adapters/util.js';
 import { realInside, realInsideAny, realOf } from './real-paths.js';
@@ -16,6 +16,12 @@ import { buildEnv } from './env.js';
 import type { Store } from './store.js';
 import type { DecisionLog } from './decisions.js';
 import { buildCharter, resolveAmbient, resolveCharterDir } from './charter.js';
+
+// Route and install failures stay queued; item-specific rule failures end the item.
+export const REJECTION_CATEGORIES = {
+  transient: ['model_unreviewed', 'no_policy', 'adapter_unavailable', 'sandbox_required', 'isolation_required', 'text_only', 'read_not_enforceable', 'unknown_route', 'unknown_model', 'model_paused', 'ask_first', 'quota_denied', 'pace_denied', 'not_picked', 'budget_exhausted', 'jobs_off'],
+  permanent: ['activity_not_permitted', 'data_tier_too_high', 'bad_request', 'prompt_too_large', 'attachment_rejected', 'depth_exceeded', 'descendants_exceeded', 'delegation_not_granted'],
+} as const;
 import { loadToolkits } from './toolkits.js';
 import { MAX_HOPS, classifyFailure } from './failover.js';
 import { augurHome, scriptPath } from './paths.js';
@@ -23,6 +29,9 @@ import { hasStoredKey } from './secrets.js';
 import { RubricStore } from './rubrics.js';
 import { ProseQueue } from './prose-queue.js';
 import type { ProseItem, ProseStatus } from './prose-queue.js';
+import { appendGate, gateTotals, readGate } from './balance-files.js';
+import { PremiumBacklog } from './premium-backlog.js';
+import type { BacklogItem, BacklogStatus } from './premium-backlog.js';
 
 export interface SupervisorDeps {
   store: Store; config: ServiceConfig; dir: string; adapters: Map<string, Adapter>;
@@ -93,15 +102,31 @@ const optMb = (route: RouteConfig, key: string, fallback: number): number => opt
 
 export class Supervisor {
   private readonly proseQueue: ProseQueue;
+  private readonly backlog: PremiumBacklog;
   private adopted = new Set<string>();
   private outputSeen = new Set<string>();
   /** The request and the routes already used for each job this process launched. A restart drops the map, and then that job is not retried. */
   private readonly submitted = new Map<string, { req: JobRequest; hops: string[] }>();
+  private releasingBacklog = false;
+  private lastBacklogEvaluation = 0;
+  private readonly gateFallbackJobs = new Set<string>();
   private readonly now: () => number;
   private readonly runner: string;
   constructor(private d: SupervisorDeps) {
     this.now = d.now ?? Date.now;
     this.runner = d.runnerPath ?? scriptPath(import.meta.url, 'runner');
+    this.backlog = new PremiumBacklog(d.home ?? augurHome(d.env), () => this.now());
+    const unlinked = this.backlog.list('running').filter(item => !item.result?.jobId);
+    const recovered = unlinked.flatMap(item => {
+      const job = this.d.store.list({ limit: 10000 }).find(row => row.caller.label === `backlog:${item.id}`);
+      const provider = job ? this.d.routes()?.[job.route]?.model.split('/')[0] : undefined;
+      return job && provider ? [{ item, provider }] : [];
+    });
+    this.backlog.reconcile((id, itemId) => {
+      const job = id ? this.d.store.get(id) : this.d.store.list({ limit: 10000 }).find(row => row.caller.label === `backlog:${itemId}`) ?? null;
+      return job ? { id: job.id, state: job.state, provider: this.d.routes()?.[job.route]?.model.split('/')[0] } : null;
+    });
+    for (const { item, provider } of recovered) this.surplusSpend(provider, item.estimate ?? 1);
     mkdirSync(join(d.dir, 'jobs'), { recursive: true });
     this.proseQueue = new ProseQueue(d.home ?? augurHome(), this.now, (items, prompt, caller) => this.runProseGroup(items, prompt, caller), d.config.proseBatchSize, d.config.proseBatchHours);
     this.proseQueue.resetRunning();
@@ -226,15 +251,30 @@ export class Supervisor {
       const parent = this.d.store.get(req.parent.jobId);
       if (!parent || isTerminal(parent.state)) return reject('delegation_not_granted', 'The parent job is not running.');
       root = parent.rootJobId; parentId = parent.id; depth = parent.depth + 1;
+      if (this.d.store.get(root)?.caller.intent === 'automated') req = { ...req, caller: { ...req.caller, intent: 'automated' } };
       const lineage = checkLineage({ ...req, parent: { jobId: parent.id, rootJobId: parent.rootJobId, depth: parent.depth } }, routes?.[parent.route] ?? null,
         this.d.store.countDescendants(parent.rootJobId), { maxDepth: this.d.config.maxDepth, maxDescendants: this.d.config.maxDescendants });
       if (lineage) return { rejected: lineage };
     }
 
+    const policy = this.d.policy(), usage = this.d.usage();
+    if (policy && req.caller.intent === 'automated' && req.released !== true && resolveBalance(policy.balance).gate.premium.includes(route.model)) {
+      const ranked = rank(policy, usage, { activity: req.activity, dataTier: req.dataTier, caller: 'automated', gateState: this.gateRead() }, new Date(this.now()));
+      const cost = (label: string) => ({ free: 0, very_cheap: 1, cheap: 2, moderate: 3, high: 4, very_high: 5 }[Object.values(policy.providers).find(p => p.models[label])?.models[label]?.cost ?? 'moderate'] ?? 3);
+      const fallback = ranked.ranking.map(r => r.model).sort((a, b) => cost(a) - cost(b))[0];
+      const fallbackRoute = fallback ? Object.entries(routes ?? {}).find(([, x]) => x.model === fallback)?.[0] : null;
+      return reject('ask_first', `Premium models are not used for automated tasks. Use ${fallbackRoute ?? 'no permitted route'} for ${req.activity} on ${req.dataTier} data.`);
+    }
     const named = this.confirmNamed(req, route.model);
     if ('rejected' in named) return named;
     if (named.note) req = { ...req, named: named.value };
-    const decision = evaluate(req, { policy: this.d.policy(), usage: this.d.usage(), route, capabilities: adapter.capabilities, now: new Date(this.now()) });
+    if (policy) {
+      const gate = resolveBalance(policy.balance).gate, provider = route.model.split('/')[0] as string;
+      const live = rank(policy, usage, { activity: req.activity, dataTier: req.dataTier, caller: req.caller.intent, gateState: this.gateRead(), surplusState: this.surplusRead() }, new Date(this.now()));
+      const window = live.surplus[provider];
+      req = { ...req, premiumGateLift: req.caller.intent !== 'automated' && gate.paceLift.includes(route.model) && (live.gateState[provider] === true || !!window?.open && !window.spent && !window.stale) };
+    }
+    const decision = evaluate(req, { policy, usage, route, capabilities: adapter.capabilities, now: new Date(this.now()) });
     if (!decision.allow) { this.d.store.event(null, 'policy_evaluated', `rejected ${decision.rejection.code}: ${req.route}`, this.now()); return { rejected: named.note && decision.rejection.code === 'ask_first' ? { ...decision.rejection, reason: `${decision.rejection.reason} ${named.note}` } : decision.rejection }; }
     const spent = this.budget(req.route, route);
     if (spent?.exhausted) { this.d.store.event(null, 'policy_evaluated', `rejected budget_exhausted: ${req.route}`, this.now()); return reject('budget_exhausted', spent.exhausted); }
@@ -294,7 +334,7 @@ export class Supervisor {
     const createdAt = this.now();
     this.d.store.insert({ id, route: req.route, adapter: adapter.id, activity: req.activity, dataTier: req.dataTier, tools: req.tools, output: req.output, cwd: req.cwd,
       createdAt, rootJobId: root ?? id, parentJobId: parentId, depth, caller: req.caller, named: !!req.named, expectFile: req.expectFile ?? null,
-      timeoutS: req.timeoutS ?? null, harnessVersion: null, workspace, conversation: req.conversation ?? null, turn: conv.turn ?? null });
+      timeoutS: req.timeoutS ?? null, harnessVersion: null, workspace, conversation: req.conversation ?? null, turn: conv.turn ?? null, released: req.released === true });
     if (req.conversation && conv.resume) {
       if (!conv.existing) this.d.store.insertConversation({
         name: req.conversation, route: req.route, adapter: adapter.id, nativeId: conv.nativeId, cwd: req.cwd, tools: req.tools,
@@ -309,6 +349,11 @@ export class Supervisor {
     if (req.allow?.length) s.event(id, 'checks_overridden', req.allow.join(', '), this.now());
     this.d.store.event(id, 'queued', '', this.now());
     this.d.decisions?.linkJob(req.caller.session ?? null, route.model, id);
+    const selectedByPick = !req.named && this.d.store.picksSince(this.now() - PICK_WINDOW_MIN * 60000).some(p => p.model === route.model && !p.named && p.session === (req.caller.session ?? null));
+    if (policy && selectedByPick && resolveBalance(policy.balance).tiers[route.model] === 'light' && req.caller.intent !== 'automated') {
+      const ranked = rank(policy, usage, { activity: req.activity, dataTier: req.dataTier, caller: req.caller.intent, gateState: this.gateRead(), ...(req.named ? { named: route.model } : {}) }, new Date(this.now()));
+      if (ranked.blocked.some(b => resolveBalance(policy.balance).gate.premium.includes(b.model) && /ask[- ]first/.test(b.why))) this.gateFallbackJobs.add(id);
+    }
     this.submitted.set(id, chain ?? { req, hops: [req.route] });
     this.tick();
     return { id, warnings };
@@ -317,6 +362,36 @@ export class Supervisor {
   // ------------------------------------------------------------------ picks and pressure
 
   private proseOn: boolean | undefined;
+  private gateRead(): Record<string, boolean> { return readJson<{ state?: Record<string, boolean> }>(join(this.d.dir, 'gate-state.json'))?.state ?? {}; }
+  private surplusRead(): Record<string, { open: boolean; spent: number; openedAt?: number; resetsAt?: string; stale?: boolean }> { return readJson<{ surplus?: Record<string, { open: boolean; spent: number; openedAt?: number; resetsAt?: string; stale?: boolean }> }>(join(this.d.dir, 'gate-state.json'))?.surplus ?? {}; }
+  private surplusSpend(provider: string, points: number): void {
+    const path = join(this.d.dir, 'gate-state.json'), state = readJson<{ state?: Record<string, boolean>; at?: string; week?: number; openMs?: Record<string, number>; openedAt?: Record<string, number>; surplus?: Record<string, { open: boolean; spent: number; openedAt?: number; resetsAt?: string; stale?: boolean }> }>(path);
+    const surplus = { ...(state?.surplus ?? {}) }, old = surplus[provider];
+    if (!old?.open) return;
+    surplus[provider] = { ...old, spent: old.spent + points };
+    writeFileSync(path, JSON.stringify({ ...state, surplus }) + '\n');
+  }
+  private gateKeep(state: Record<string, boolean>, surplus?: Record<string, { open: boolean; hoursLeft: number | null; unused: number; budgetLeft: number; spent: boolean; resetsAt: string | null; stale: boolean }>): void {
+    try {
+      const path = join(this.d.dir, 'gate-state.json'), now = this.now(), week = Math.floor(now / (7 * 86400_000)), old = readJson<{ state?: Record<string, boolean>; at?: string; week?: number; openMs?: Record<string, number>; openedAt?: Record<string, number>; surplus?: Record<string, { open: boolean; spent: number; openedAt?: number; resetsAt?: string; stale?: boolean }> }>(path);
+      const sameWeek = old?.week === week, openMs = sameWeek ? { ...(old?.openMs ?? {}) } : {}, openedAt = sameWeek ? { ...(old?.openedAt ?? {}) } : {}, spent = { ...(old?.surplus ?? {}) }, elapsed = old?.at ? Math.max(0, now - Date.parse(old.at)) : 0;
+      for (const [provider, isOpen] of Object.entries(old?.state ?? {})) {
+        if (isOpen && sameWeek) openMs[provider] = (openMs[provider] ?? 0) + elapsed;
+        if (isOpen && !state[provider]) delete openedAt[provider];
+      }
+      for (const [provider, isOpen] of Object.entries(state)) if (isOpen && !old?.state?.[provider]) openedAt[provider] = now;
+      for (const [provider, reading] of Object.entries(surplus ?? {})) {
+        const was = spent[provider];
+        const sameWindow = !!was && was.resetsAt === reading.resetsAt;
+        spent[provider] = reading.open ? { open: true, spent: sameWindow ? was.spent : 0, openedAt: sameWindow ? was.openedAt : now, resetsAt: reading.resetsAt ?? undefined, stale: reading.stale } : { open: false, spent: was?.spent ?? 0, ...((reading.resetsAt ?? was?.resetsAt) ? { resetsAt: reading.resetsAt ?? was?.resetsAt } : {}), stale: reading.stale };
+        if ((!reading.open || !sameWindow) && was?.open) appendGate(this.d.home ?? augurHome(this.d.env), { at: new Date(now).toISOString(), kind: 'surplus-close', label: '', provider, caller: 'service', gap: null, hoursLeft: reading.hoursLeft, unused: reading.unused, budgetLeft: 0 });
+        if (reading.open && (!sameWindow || !was?.open)) appendGate(this.d.home ?? augurHome(this.d.env), { at: new Date(now).toISOString(), kind: 'surplus-open', label: '', provider, caller: 'service', gap: null, hoursLeft: reading.hoursLeft, unused: reading.unused, budgetLeft: reading.budgetLeft });
+      }
+      if (sameWeek && JSON.stringify(state) === JSON.stringify(old?.state ?? {}) && JSON.stringify(spent) === JSON.stringify(old?.surplus ?? {})) return;
+      const body = JSON.stringify({ state, at: new Date(now).toISOString(), week, openMs, openedAt, surplus: spent }) + '\n';
+      try { if (readFileSync(path, 'utf8') !== body) { const tmp = `${path}.${randomUUID()}.tmp`; writeFileSync(tmp, body); renameSync(tmp, path); } } catch { writeFileSync(path, body); }
+    } catch { /* the next report tries again */ }
+  }
   /** Whether the prose pace switch was on at the last pick, read from `prose-switch.json` the first time. It turns off at a lower lead than it turns on at, so the last answer has to outlive a restart. */
   private proseWas(): boolean {
     this.proseOn ??= readJson<{ on?: unknown }>(join(this.d.dir, 'prose-switch.json'))?.on === true;
@@ -354,7 +429,7 @@ export class Supervisor {
     const depth = weight ? { depth: weight } : {};
     const spent = this.spentPicks(req.session ?? null);
     if (req.task && backend) {
-      const asked = rank(policy, this.d.usage(), { activity, dataTier, ...(req.role ? { role: req.role } : {}), proseSwitched: this.proseWas(), ...depth, ...snippet }, new Date(this.now())).ranking.map(r => r.model).filter(m => fits[m] === undefined);
+      const asked = rank(policy, this.d.usage(), { activity, dataTier, caller: req.caller ?? 'interactive', ...(req.role ? { role: req.role } : {}), gateState: this.gateRead(), proseSwitched: this.proseWas(), ...depth, ...snippet }, new Date(this.now())).ranking.map(r => r.model).filter(m => fits[m] === undefined);
       // Student-related text is scored only by a backend on this network, as classifyTask does; with none, fit stays neutral.
       const fitter = STUDENT_RE.test(req.task) ? (backend.local ?? (backend.primary.local ? backend.primary : undefined)) : backend.primary;
       if (asked.length && fitter) {
@@ -369,25 +444,41 @@ export class Supervisor {
     // What a person chose before for this kind of work leans each fit a little, and never decides the pick alone.
     const shares = learnedShares(answers, key, rules.training.window, rules.training.min);
     if (Object.keys(shares).length) {
-      const live = rank(policy, this.d.usage(), { activity, dataTier, ...(req.role ? { role: req.role } : {}), ...(req.named ? { named: req.named } : {}), ...depth, ...snippet, spent }, new Date(this.now())).ranking.map(r => r.model);
+      const live = rank(policy, this.d.usage(), { activity, dataTier, caller: req.caller ?? 'interactive', ...(req.role ? { role: req.role } : {}), gateState: this.gateRead(), surplusState: this.surplusRead(), ...(req.named ? { named: req.named } : {}), ...depth, ...snippet, spent }, new Date(this.now())).ranking.map(r => r.model);
       for (const m of live) fits[m] = Math.min(1, Math.round((fits[m] ?? 0.5) * learnedTilt(shares[m] ?? 0) * 1000) / 1000);
     }
     const result = rank(policy, this.d.usage(), {
-      activity, dataTier, ...(req.role ? { role: req.role } : {}), ...(req.named ? { named: req.named } : {}), ...depth, fits, proseSwitched: this.proseWas(), ...snippet,
+      activity, dataTier, caller: req.caller ?? 'interactive', ...(req.role ? { role: req.role } : {}), gateState: this.gateRead(), surplusState: this.surplusRead(), ...(req.named ? { named: req.named } : {}), ...depth, fits, proseSwitched: this.proseWas(), ...snippet,
       spent, draw: !preview && req.best !== true, ...(req.best === true ? { best: true } : {}), ...(req.seed !== undefined ? { seed: req.seed } : {}),
     }, new Date(this.now()));
+    if (!preview && req.caller !== 'automated') this.gateKeep(result.gateState, result.surplus);
+    const newId = randomBytes(6).toString('hex');
+    const events = preview ? [] : result.blocked.flatMap(b => {
+      if (!resolveBalance(policy.balance).gate.premium.includes(b.model)) return [];
+      const provider = b.model.split('/')[0] as string, kind = req.caller === 'automated' ? 'denied-automated' : /ask-first/.test(b.why) ? 'blocked' : null;
+      return kind ? [{ at: new Date(this.now()).toISOString(), kind, label: b.model, provider, caller: req.caller ?? 'interactive', gap: result.gateGaps[provider] ?? null, pickId: newId }] : [];
+    });
+    for (const event of events) appendGate(this.d.home ?? augurHome(this.d.env), event as Parameters<typeof appendGate>[1]);
+    for (const note of preview ? [] : result.notes.filter(x => x.startsWith('ask-first lifted: '))) {
+      const provider = note.slice('ask-first lifted: '.length).split(/ (?:is|resets in) /)[0] as string;
+      const rules = resolveBalance(policy.balance);
+      const lifted: string[] = rules.gate.paceLift.filter((label: string) => label !== req.named && label.startsWith(`${provider}/`) && (policy.providers[provider]?.models[label]?.askFirst || rules.gate.premium.includes(label)) && result.ranking.some(r => r.model === label));
+      for (const label of lifted) {
+        const reading = result.surplus[provider];
+        appendGate(this.d.home ?? augurHome(this.d.env), { at: new Date(this.now()).toISOString(), kind: reading?.open ? 'surplus-lifted' : 'lifted', label, provider, caller: req.caller ?? 'interactive', gap: result.gateGaps[provider] ?? null, pickId: newId, ...(reading?.open ? { hoursLeft: reading.hoursLeft, unused: reading.unused, budgetLeft: reading.budgetLeft } : {}) });
+      }
+    }
     const routes: Record<string, string[]> = {};
     for (const [name, r] of Object.entries(this.d.routes() ?? {})) if (this.d.adapters.has(r.adapter)) (routes[r.model] ??= []).push(name);
     if (preview) return { ...result, routes, activity, dataTier, ...(backend ? { decision: { backend: backend.primary.id, ...(classified ? { classified } : {}), ...(fitError ? { fitError } : {}) } } : {}) };
     this.proseKeep(result.proseSwitch.on);
     const picked = result.ranking.find(r => r.model === result.pick);
-    const newId = randomBytes(6).toString('hex');
     const owner = result.pick ? Object.entries(policy.providers).find(([, p]) => p.models[result.pick as string]) : undefined;
     const proposal = rules.training.enabled && this.d.decisions && result.pick && owner && !req.named
       ? propose(rules, { label: result.pick, provider: owner[0], id: owner[1].models[result.pick]?.id ?? '' }, key, result.depth, newId, answers) : null;
     const pending = proposal !== null && proposal.mode !== 'auto';
     const pickId = this.d.decisions?.pick({ id: newId, ...(proposal ? { proposal: { mode: proposal.mode, key: proposal.key, reason: proposal.reason } } : {}), session: req.session ?? null, ...(req.task ? { task: req.task } : {}), activity, dataTier, pick: result.pick ?? null,
-      ranking: result.ranking.map(r => ({ model: r.model, ...(fits[r.model] !== undefined ? { fit: fits[r.model] } : {}) })), named: req.named ?? null,
+      ranking: result.ranking.map(r => ({ model: r.model, ...(fits[r.model] !== undefined ? { fit: fits[r.model] } : {}) })), named: req.named ?? null, caller: req.caller ?? 'interactive',
       ...(backend ? { backend: backend.primary.id } : {}), classified: { activity: !declared.activity, dataTier: !declared.dataTier }, descriptions,
       ...(result.pick?.startsWith('copilot/') ? { spend: copilotSpend(this.d.usage()) } : {}),
       depth: result.depth, reason: result.reason, seats: { ...(result.seats.second ? { second: result.seats.second.model } : {}), ...(result.seats.web ? { web: result.seats.web.model } : {}), ...(result.seats.shadow ? { shadow: result.seats.shadow.model } : {}) },
@@ -424,12 +515,188 @@ export class Supervisor {
   }
 
   /** The balance report for the policy and usage as they stand, with what the pick log shows for the last `days` days. */
-  balance(days = 7): BalanceReport | { error: string } {
+  balance(days = 7, persistGate = true): BalanceReport | { error: string } {
     const policy = this.d.policy();
     if (!policy) return { error: 'policy.json was not found. Augur writes it when a rule is saved.' };
-    const report = balanceReport(policy, this.d.usage(), new Date(this.now()), this.d.decisions ? this.d.decisions.summary(Math.min(Math.max(Math.round(days), 1), 90)) : null, 'internal', this.proseWas());
+    const usage = this.d.usage(), now = new Date(this.now());
+    const state = rank(policy, usage, { activity: 'research', dataTier: 'public', gateState: this.gateRead(), surplusState: this.surplusRead() }, now);
+    if (persistGate) this.gateKeep(state.gateState, state.surplus);
+    const rules = resolveBalance(policy.balance);
+    const surplus = Object.entries(state.surplus).flatMap(([provider, window]) => {
+      const status = surplusWindowStatus(window, rules.gate.surplus);
+      return status ? [{ provider, status }] : [];
+    });
+    const report = balanceReport(policy, usage, now, this.d.decisions ? this.d.decisions.summary(Math.min(Math.max(Math.round(days), 1), 90)) : null, 'internal', this.proseWas(), surplus);
     if (report.claude.prose) this.proseKeep(report.claude.prose.on);
     return report;
+  }
+
+  gateStatus(): { close: number; providers: Array<{ provider: string; state: 'open' | 'closed'; gap: number | null; window: string | null; labels: string[]; lastApproval: string | null }> } | { error: string } {
+    const policy = this.d.policy();
+    if (!policy) return { error: 'policy.json was not found.' };
+    const now = new Date(this.now()), rules = resolveBalance(policy.balance), result = rank(policy, this.d.usage(), { activity: 'research', dataTier: 'public', gateState: this.gateRead(), surplusState: this.surplusRead() }, now);
+    const ledger = readGate(this.d.home ?? augurHome(this.d.env));
+    const providers = [...new Set(rules.gate.premium.map(x => x.split('/')[0] as string))].map(provider => {
+      const approvals = ledger.filter(x => x.provider === provider && x.kind === 'approved');
+      const window = result.surplus[provider], windowStatus = window ? surplusWindowStatus(window, rules.gate.surplus) : null;
+      return { provider, state: result.gateState[provider] ? 'open' as const : 'closed' as const, gap: result.gateGaps[provider] ?? null, window: windowStatus,
+        labels: rules.gate.premium.filter(x => x.startsWith(`${provider}/`)), lastApproval: approvals.at(-1)?.at ?? null };
+    });
+    return { close: rules.gate.close, providers };
+  }
+
+  backlogAdd(item: unknown, author: 'owner' | 'agent' = 'owner'): BacklogItem | { error: string } {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return { error: 'Item must be an object.' };
+    const allowed = new Set(['requester', 'repo', 'task', 'prompt', 'activity', 'data', 'route', 'lower', 'estimate', 'deadline', 'cwd', 'tools', 'output']);
+    const extras = Object.keys(item).filter(key => !allowed.has(key));
+    if (extras.length) return { error: `Unknown item field${extras.length === 1 ? '' : 's'}: ${extras.join(', ')}.` };
+    const prompt = (item as { prompt?: unknown }).prompt;
+    if (prompt && typeof prompt === 'object' && !Array.isArray(prompt) && Object.keys(prompt).some(key => key !== 'text' && key !== 'file')) return { error: 'Prompt takes only text or file.' };
+    const candidate = item as { cwd?: unknown; prompt?: { file?: unknown } };
+    if (typeof candidate.cwd === 'string') { try { if (!statSync(candidate.cwd).isDirectory()) return { error: 'cwd must be an absolute path to an existing directory.' }; } catch { return { error: 'cwd must be an absolute path to an existing directory.' }; } }
+    if (typeof candidate.prompt?.file === 'string') {
+      const file = resolve(candidate.prompt.file), cwd = typeof candidate.cwd === 'string' ? resolve(candidate.cwd) : '';
+      if (!cwd || !existsSync(file) || !realInsideAny(file, [cwd, ...this.d.config.promptRoots])) return { error: 'Prompt file must exist inside cwd or a configured prompt root.' };
+    }
+    return this.backlog.add(item, author);
+  }
+  backlogApprove(id: string): BacklogItem | { error: string } {
+    const found = this.backlog.list().find(row => row.id === id);
+    if (found?.status === 'expired') return { error: `Backlog item ${id} has expired and cannot be approved.` };
+    if (found?.status === 'awaiting-approval' && found.deadline && Date.parse(found.deadline) <= this.now()) return { error: `Backlog item ${id} has expired and cannot be approved.` };
+    const item = this.backlog.approve(id); return item ?? { error: `No backlog item ${id} awaiting approval.` };
+  }
+  backlogList(status?: string): BacklogItem[] { return this.backlog.list(status as BacklogStatus | undefined); }
+  backlogDrop(id: string): { dropped: boolean } { return { dropped: this.backlog.drop(id) }; }
+  backlogStatus(): Record<string, unknown> {
+    const items = this.backlog.list(), policy = this.d.policy(), routes = this.d.routes() ?? {};
+    const windows = policy ? rank(policy, this.d.usage(), { activity: 'research', dataTier: 'public', gateState: this.gateRead(), surplusState: this.surplusRead() }, new Date(this.now())).surplus : {};
+    const decisions = policy ? this.backlogReleaseDecisions(items.filter(item => item.status === 'queued'), policy, routes, windows, this.now()) : [];
+    const fit = decisions.filter(decision => decision.release);
+    const next = Object.entries(windows).filter(([, w]) => w.hoursLeft !== null && w.hoursLeft >= 0).sort((a, b) => (a[1].hoursLeft ?? Infinity) - (b[1].hoursLeft ?? Infinity))[0];
+    return { counts: Object.fromEntries(['awaiting-approval', 'queued', 'running', 'done', 'failed', 'cancelled', 'expired'].map(s => [s, items.filter(i => i.status === s).length])), items, invalidRows: this.backlog.invalidCount(), fitting: fit.map(d => d.item.id), nextWindow: next ? { provider: next[0], hours: next[1].hoursLeft } : null };
+  }
+  backlogRun(dryRun = false): { released: string[]; candidates: string[]; wouldExpire: string[]; wouldFail: Array<{ id: string; reason: string }>; wouldHold: Array<{ id: string; reason: string }> } { return this.releaseDue(this.now(), dryRun); }
+
+  /** Releases eligible owner-queued work from open provider windows. */
+  releaseDue(now: number, dryRun = false): { released: string[]; candidates: string[]; wouldExpire: string[]; wouldFail: Array<{ id: string; reason: string }>; wouldHold: Array<{ id: string; reason: string }> } {
+    if (this.releasingBacklog) return { released: [], candidates: [], wouldExpire: [], wouldFail: [], wouldHold: [] };
+    this.releasingBacklog = true;
+    try {
+    const policy = this.d.policy();
+    if (!policy) return { released: [], candidates: [], wouldExpire: [], wouldFail: [], wouldHold: [] };
+    const home = this.d.home ?? augurHome(this.d.env), evaluated = rank(policy, this.d.usage(), { activity: 'research', dataTier: 'public', gateState: this.gateRead(), surplusState: this.surplusRead() }, new Date(now));
+    if (!dryRun) this.gateKeep(evaluated.gateState, evaluated.surplus);
+    const windows = rank(policy, this.d.usage(), { activity: 'research', dataTier: 'public', gateState: this.gateRead(), surplusState: this.surplusRead() }, new Date(now)).surplus;
+    const routes = this.d.routes() ?? {}, candidates: string[] = [], released: string[] = [], wouldExpire: string[] = [], wouldFail: Array<{ id: string; reason: string }> = [], wouldHold: Array<{ id: string; reason: string }> = [];
+    for (const expired of this.backlog.list('awaiting-approval')) if (expired.deadline && Date.parse(expired.deadline) <= now) {
+      if (dryRun) wouldExpire.push(expired.id); else this.backlog.update(expired.id, 'expired', 'deadline passed');
+    }
+    const decisions = this.backlogReleaseDecisions(this.backlog.list('queued'), policy, routes, windows, now);
+    for (let index = 0; index < decisions.length; index++) {
+      const decision = decisions[index]!;
+      const { item, provider, reason, failure } = decision;
+      if (decision.expired) {
+        if (dryRun) wouldExpire.push(item.id);
+        else { this.backlog.update(item.id, 'expired', 'deadline passed'); this.d.store.event(null, 'alert', `Premium backlog item ${item.id} expired at its deadline.`, now); }
+        continue;
+      }
+      if (reason) {
+        if (failure) { if (dryRun) wouldFail.push({ id: item.id, reason }); else this.backlog.update(item.id, 'failed', reason); }
+        else { if (dryRun) wouldHold.push({ id: item.id, reason }); else this.backlogNote(item, reason); }
+        continue;
+      }
+      candidates.push(item.id);
+      if (dryRun) continue;
+      const route = routes[item.route] as RouteConfig;
+      const req: JobRequest = { route: item.route, activity: item.activity as JobRequest['activity'], dataTier: item.data, tools: item.tools, output: item.output,
+        cwd: item.cwd, prompt: item.prompt, caller: { kind: 'job', label: `backlog:${item.id}`, intent: 'automated' }, released: true,
+        // The owner-approved backlog release has no interactive pick; all other rule checks still apply.
+        allow: ['unpicked'], failover: false };
+      this.backlog.update(item.id, 'running', 'releasing', undefined, undefined, true);
+      let result: SubmitResult;
+      try { result = this.submit(req); } catch (error) {
+        this.backlog.update(item.id, 'failed', error instanceof Error ? error.message : String(error));
+        decisions.splice(index + 1);
+        const refreshed = rank(policy, this.d.usage(), { activity: 'research', dataTier: 'public', gateState: this.gateRead(), surplusState: this.surplusRead() }, new Date(now)).surplus;
+        decisions.push(...this.backlogReleaseDecisions(this.backlog.list('queued'), policy, routes, refreshed, now));
+        continue;
+      }
+      if ('rejected' in result) {
+        const transient = REJECTION_CATEGORIES.transient.some(code => code === result.rejected.code);
+        this.backlog.update(item.id, transient ? 'queued' : 'failed', result.rejected.reason, undefined, undefined, transient);
+        continue;
+      }
+      this.backlog.update(item.id, 'running', 'released by service', { jobId: result.id, cost: item.estimate ?? 1 }, provider);
+      this.d.store.event(result.id, 'approved', `released from premium backlog item ${item.id}`, now);
+      appendGate(home, { at: new Date(now).toISOString(), kind: 'released', label: route.model, provider, caller: 'automated', gap: null, itemId: item.id, jobId: result.id, estimatePoints: item.estimate ?? 1, note: `released from premium backlog item ${item.id}` });
+      this.surplusSpend(provider, item.estimate ?? 1);
+      released.push(item.id);
+    }
+    return { released, candidates, wouldExpire, wouldFail, wouldHold };
+    } finally { this.releasingBacklog = false; }
+  }
+
+  private backlogReleaseDecisions(items: BacklogItem[], policy: PolicyFile, routes: Record<string, RouteConfig>, windows: Record<string, { open: boolean; stale: boolean; budgetLeft: number }>, now: number): Array<{ item: BacklogItem; provider: string; release: boolean; reason?: string; failure?: boolean; expired?: boolean }> {
+    const busy = new Set(this.backlog.list('running').map(item => item.provider ?? routes[item.route]?.model.split('/')[0]).filter((provider): provider is string => !!provider));
+    const remaining = new Map(Object.entries(windows).map(([provider, window]) => [provider, window.budgetLeft]));
+    const queue = [...items].sort((a, b) => (Date.parse(a.deadline ?? '9999-12-31') - Date.parse(b.deadline ?? '9999-12-31')) || (Date.parse(a.createdAt) - Date.parse(b.createdAt)));
+    return queue.map(item => {
+      const route = routes[item.route], provider = route?.model.split('/')[0] ?? item.route.split('/')[0] as string, window = windows[provider];
+      const hold = (reason: string, failure = false) => ({ item, provider, release: false, reason, failure });
+      if (item.deadline && Date.parse(item.deadline) <= now) return { item, provider, release: false, expired: true };
+      if (route?.model.startsWith('copilot/')) return hold('Copilot labels are not released from the premium backlog.', true);
+      if (!route) return hold('route is not in routes.json');
+      const model = policy.providers[route.model.split('/')[0] as string]?.models[route.model];
+      if (model?.status !== 'confirmed') return hold(`${route.model} is not confirmed`);
+      if (!this.backlogCanRelease(item, policy, route)) return hold(this.backlogReleaseProblem(item, policy, route), true);
+      let cwdExists = false; try { cwdExists = statSync(item.cwd).isDirectory(); } catch { /* a removed cwd is a permanent backlog failure */ }
+      if (!cwdExists) return hold('working directory no longer exists', true);
+      const routeProblem = this.routeProblem(route, item.route);
+      if (routeProblem) return hold(`route is not currently eligible: ${routeProblem}`);
+      if (!window?.open) return hold('surplus window is closed');
+      if (window.stale) return hold('surplus window is stale');
+      if ((item.estimate ?? 1) > (remaining.get(provider) ?? 0)) return hold('surplus budget is exhausted');
+      if (busy.has(provider)) return hold('provider already has a running backlog item');
+      remaining.set(provider, (remaining.get(provider) ?? 0) - (item.estimate ?? 1));
+      busy.add(provider);
+      return { item, provider, release: true };
+    });
+  }
+
+  private backlogCanRelease(item: BacklogItem, policy: PolicyFile | null, route: RouteConfig | undefined): boolean {
+    if (!route || item.status !== 'queued') return false;
+    const model = policy?.providers[route.model.split('/')[0] as string]?.models[route.model];
+    return !route.model.startsWith('copilot/') && resolveBalance(policy?.balance).gate.premium.includes(route.model) && !!model && model.status === 'confirmed'
+      && DATA_TIERS.indexOf(item.data) <= DATA_TIERS.indexOf(model.dataTier) && !!model.activities[item.activity as keyof typeof model.activities];
+  }
+  private backlogReleaseProblem(item: BacklogItem, policy: PolicyFile | null, route: RouteConfig): string {
+    if (route.model.startsWith('copilot/')) return 'Copilot labels are not released from the premium backlog.';
+    if (!resolveBalance(policy?.balance).gate.premium.includes(route.model)) return `Route ${item.route} is not a configured premium route.`;
+    const model = policy?.providers[route.model.split('/')[0] as string]?.models[route.model];
+    if (model && DATA_TIERS.indexOf(item.data) > DATA_TIERS.indexOf(model.dataTier)) return `${route.model} may see ${model.dataTier} data at most, and the task is ${item.data}.`;
+    return model?.activities[item.activity as keyof typeof model.activities] ? `Route ${item.route} is not a configured premium route.` : `${route.model} is not permitted to ${item.activity}.`;
+  }
+  private backlogNote(item: BacklogItem, note: string): void { if (item.statusLog.at(-1)?.note !== note) this.backlog.update(item.id, item.status, note); }
+
+  gateReport(): Record<string, unknown> | { error: string } {
+    const status = this.gateStatus();
+    if ('error' in status) return status;
+    const ledger = readGate(this.d.home ?? augurHome(this.d.env)), now = this.now(), totals = gateTotals(ledger);
+    const state = readJson<{ week?: number; state?: Record<string, boolean>; at?: string; openMs?: Record<string, number>; openedAt?: Record<string, number> }>(join(this.d.dir, 'gate-state.json'));
+    const openMs: Record<string, number> = state?.week === Math.floor(now / (7 * 86400_000)) ? { ...(state.openMs ?? {}) } : {};
+    if (state?.week === Math.floor(now / (7 * 86400_000)) && state.at) for (const [provider, open] of Object.entries(state.state ?? {})) if (open) openMs[provider] = (openMs[provider] ?? 0) + Math.max(0, now - Date.parse(state.at));
+    const openHours = Object.fromEntries(Object.entries(openMs).map(([provider, ms]) => [provider, Math.round(ms / 360000) / 10]));
+    return { ...totals, openHours, providers: status.providers.map(({ provider, window }) => ({ provider, window })).filter(row => row.window !== null) };
+  }
+
+  gateRecord(input: { kind: string; route: string; scope: string; note?: string }): { ok: true } | { error: string } {
+    if (input.kind !== 'approved' || !['this', 'task', 'session'].includes(input.scope)) return { error: 'Use --kind approved and --scope this, task or session. This records an approval granted elsewhere; it does not grant permission.' };
+    const policy = this.d.policy();
+    if (!policy || !resolveBalance(policy.balance).gate.premium.includes(input.route)) return { error: `${input.route} is not a premium route.` };
+    const provider = input.route.split('/')[0] as string;
+    appendGate(this.d.home ?? augurHome(this.d.env), { at: new Date(this.now()).toISOString(), kind: 'approved', label: input.route, provider, caller: 'owner', gap: null, scope: input.scope, ...(input.note ? { note: input.note.slice(0, 200) } : {}) });
+    return { ok: true };
   }
 
   pressure(): { pressure: ReturnType<typeof pressure>; factors: Record<string, number>; scarcity: number } | null {
@@ -648,7 +915,7 @@ export class Supervisor {
       try { mkdirSync(dirname(target), { recursive: true }); writeFileSync(target, f.content); } catch (e) { if (this.d.store.transition(id, 'failed', { reason: `could not write ${f.name}: ${(e as Error).message}` }, this.now())) this.settleConversation(rec, false, null); return; }
     }
     const route = this.d.routes()?.[rec.route];
-    const extra: Record<string, string> = { ...file.env, AUGUR_JOB_ID: id, AUGUR_ROOT_JOB_ID: rec.rootJobId };
+    const extra: Record<string, string> = { ...file.env, AUGUR_JOB_ID: id, AUGUR_ROOT_JOB_ID: rec.rootJobId, AUGUR_CALLER: rec.caller.intent ?? 'interactive', AUGUR_IN_JOB: '1' };
     if (!route?.delegation) { delete extra.AUGUR_JOB_ID; delete extra.AUGUR_ROOT_JOB_ID; }
     const more = typeof route?.options?.envAllow === 'string' ? route.options.envAllow.split(',').map(n => n.trim()).filter(Boolean) : [];
     if (typeof route?.options?.apiKeyEnv === 'string') more.push(route.options.apiKeyEnv);
@@ -668,6 +935,12 @@ export class Supervisor {
   tick(): void {
     if (this.d.config.proseAutoRun && !this.proseQueue.list('running').length && this.proseQueue.status().due) this.proseQueue.run(false, true, { kind: 'service', label: 'prose-queue' });
     const store = this.d.store;
+    const policy = this.d.policy();
+    if (policy) {
+      const state = rank(policy, this.d.usage(), { activity: 'research', dataTier: 'public', gateState: this.gateRead(), surplusState: this.surplusRead() }, new Date(this.now()));
+      this.gateKeep(state.gateState, state.surplus);
+      if ((this.backlog.list('queued').length || this.backlog.list('awaiting-approval').length) && this.now() - this.lastBacklogEvaluation >= 5000) { this.lastBacklogEvaluation = this.now(); this.releaseDue(this.now()); }
+    }
     for (const rec of store.active()) this.watch(rec);
     let room = this.d.config.maxConcurrent - store.countActive();
     if (room <= 0) return;
@@ -732,7 +1005,11 @@ export class Supervisor {
     // A scope can hold processes that outlived the child, so it is stopped whether or not the child is still there.
     const scope = readJson<JobFile>(join(dir, 'job.json'))?.scope;
     if (scope) spawnSync('systemctl', ['--user', 'kill', '--signal=SIGKILL', `${scope}.scope`], { stdio: 'ignore', timeout: 10000 });
-    if (store.transition(rec.id, rec.state === 'cancel_requested' ? 'cancelled' : 'lost', { reason: `runner gone, child ${orphan ? 'orphaned and killed' : 'not running'}` }, this.now())) this.settleConversation(rec, false, null);
+    if (store.transition(rec.id, rec.state === 'cancel_requested' ? 'cancelled' : 'lost', { reason: `runner gone, child ${orphan ? 'orphaned and killed' : 'not running'}` }, this.now())) {
+      this.settleConversation(rec, false, null);
+      const item = this.backlog.list('running').find(row => row.result?.jobId === rec.id);
+      if (item) this.backlog.update(item.id, rec.state === 'cancel_requested' ? 'cancelled' : 'failed', rec.state === 'cancel_requested' ? 'cancelled' : 'lost');
+    }
     this.collectPatch(rec);
     this.cleanup(rec.id);
   }
@@ -773,6 +1050,15 @@ export class Supervisor {
     else { if (expected) store.event(rec.id, 'artifact_validated', inner!.expectFile ?? '', at); store.transition(rec.id, 'completed', patch, at); }
     store.event(rec.id, 'finalized', '', this.now());
     const done = store.get(rec.id), model = this.d.routes()?.[rec.route]?.model ?? rec.route;
+    const backlogItem = this.backlog.list('running').find(item => item.result?.jobId === rec.id);
+    if (backlogItem) this.backlog.update(backlogItem.id, done?.state === 'completed' ? 'done' : done?.state === 'cancelled' ? 'cancelled' : 'failed', done?.reason ?? done?.state ?? 'job ended');
+    if (done?.state === 'completed' && model.includes('/')) {
+      const balance = resolveBalance(this.d.policy()?.balance), premium = balance.gate.premium.includes(model), lower = balance.tiers[model] === 'light' && this.gateFallbackJobs.has(rec.id), provider = model.split('/')[0] as string;
+      const accounting = account(done, model, this.d.rates?.() ?? {}, calibrateRoutes(store.list({ limit: 500 }))[done.route]);
+      if (premium || lower) appendGate(this.d.home ?? augurHome(this.d.env), { at: new Date(at).toISOString(), kind: premium ? 'ran' : 'lower-ran', label: model, provider, caller: rec.caller.intent ?? 'interactive', gap: null, pickId: null, jobId: rec.id, cost: accounting.costUsd?.value ?? null, activity: rec.activity });
+      if (premium && !rec.released) this.surplusSpend(provider, 1);
+    }
+    this.gateFallbackJobs.delete(rec.id);
     if (done && isTerminal(done.state)) this.settleConversation(done, done.state === 'completed', sessionId);
     if (done) this.d.decisions?.outcome(rec.id, model, done.state, done.reason, done.endedAt && done.startedAt ? done.endedAt - done.startedAt : null);
     this.retryFailed(rec, res, failure, answer, stderr);

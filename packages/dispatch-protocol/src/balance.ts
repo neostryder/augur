@@ -1,6 +1,6 @@
 // The automatic balance: standing rules about which models suit which kind of work, turned into a tilt on each model's score. Pure.
 // `rank()` multiplies the tilt into the score it already computes, so the weights, pauses, ask-first, data tiers and the usage factor all still apply.
-import { ACTIVITIES } from '@augur/core';
+import { ACTIVITIES, builtinProviders } from '@augur/core';
 import type { ActivityId, PolicyFile } from '@augur/core';
 import { BOOST, PACE, ageMinutes, freshLimits, pressure } from './pace.js';
 import type { UsageSnapshot } from './pace.js';
@@ -43,6 +43,9 @@ export interface BalanceRules {
   profile: Profile;
   /** Switches the whole balance off. The pick then ranks on weights and usage alone. */
   enabled: boolean;
+  /** Premium routes wait for owner approval unless an interactive pace gate lifts ask-first. */
+  gate: { premium: string[]; paceLift: string[]; open: number; close: number; surplus: { hours: number; open: number; close: number; margin: number; countdown: string[] } };
+  notes?: string[];
   /** A route is boosted only when the caller fit is at or above this. No caller fit still counts. */
   boostFitFloor: number;
   /** Whether a caller that asks for a draw gets one, and the share of the top score a route must reach to stay in it. */
@@ -136,6 +139,7 @@ const DEEP: ActivityId[] = ['write_code', 'reason_critique', 'reverse_engineerin
 export const DEFAULT_BALANCE: BalanceRules = {
   profile: 'classic',
   enabled: true,
+  gate: { premium: ['codex/sol', 'claude/opus', 'xai/grok', 'copilot/gpt-6.1-sol', 'copilot/claude-opus-5.5', 'copilot/grok-4.7', 'copilot/gemini-4-argon'], paceLift: ['codex/sol', 'xai/grok', 'claude/opus'], open: 20, close: 10, surplus: { hours: 12, open: 10, close: 5, margin: 5, countdown: ['claude', 'xai'] } },
   boostFitFloor: BOOST.fitFloor,
   draw: { enabled: true, tail: 0.25 },
   depth: Object.fromEntries(ACTIVITIES.map(a => [a, DEEP.includes(a) ? 'deep' : 'everyday'])) as Record<ActivityId, Depth>,
@@ -280,9 +284,13 @@ export function resolveBalance(raw: unknown): BalanceRules {
   }
   const steeredPace = pace[steered] as PaceRules;
   const draw = rec(s.draw);
-  return {
+  const gate = rec(s.gate), gateDefaults = d.gate;
+  const requestedCountdown = strings(rec(gate.surplus).countdown) ?? [...gateDefaults.surplus.countdown];
+  const countdown = [...new Set(requestedCountdown.map(id => builtinProviders.find(p => p.id.toLowerCase() === id.toLowerCase() || p.labelPrefix?.toLowerCase() === id.toLowerCase())?.labelPrefix ?? id).filter(id => !['codex', 'copilot'].includes(id.toLowerCase()) && !/^(codex|copilot)\//i.test(id)))];
+  const resolved: BalanceRules = {
     profile,
     enabled: typeof s.enabled === 'boolean' ? s.enabled : d.enabled,
+    gate: { premium: strings(gate.premium) ?? [...gateDefaults.premium], paceLift: (strings(gate.paceLift) ?? [...gateDefaults.paceLift]).filter(label => !label.toLowerCase().startsWith('copilot/')), open: zeroUp(gate.open, gateDefaults.open), close: zeroUp(gate.close, gateDefaults.close), surplus: { hours: zeroUp(rec(gate.surplus).hours, gateDefaults.surplus.hours), open: zeroUp(rec(gate.surplus).open, gateDefaults.surplus.open), close: zeroUp(rec(gate.surplus).close, gateDefaults.surplus.close), margin: zeroUp(rec(gate.surplus).margin, gateDefaults.surplus.margin), countdown } },
     boostFitFloor: unit(s.boostFitFloor, d.boostFitFloor),
     draw: { enabled: typeof draw.enabled === 'boolean' ? draw.enabled : d.draw.enabled, tail: unit(draw.tail, d.draw.tail) },
     depth, tiers, tilt, caps, training,
@@ -305,6 +313,11 @@ export function resolveBalance(raw: unknown): BalanceRules {
       jev: { route: typeof jev.route === 'string' && jev.route ? jev.route : d.seats.jev.route, activities: acts(jev.activities) ?? [...d.seats.jev.activities], tilt: num(jev.tilt, d.seats.jev.tilt) },
     },
   };
+  Object.defineProperty(resolved, 'notes', { value: [
+    ...((strings(gate.paceLift) ?? []).some(label => label.toLowerCase().startsWith('copilot/')) ? ['Copilot labels in gate.paceLift are ignored; Copilot premium models remain gated.'] : []),
+    ...((strings(rec(gate.surplus).countdown) ?? []).some(id => ['codex', 'copilot'].includes(id.toLowerCase()) || /^(codex|copilot)\//i.test(id)) ? ['Codex and Copilot countdown entries in gate.surplus.countdown are ignored.'] : []),
+  ], enumerable: false });
+  return resolved;
 }
 
 const plain = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -356,7 +369,7 @@ export interface PaceState extends ClaudeState { provider: string }
 
 const paceOf = (rules: BalanceRules, provider: string): PaceRules => rules.pace[provider] ?? DEFAULT_PACE_RULES;
 /** A session or weekly window with a numeric used percent. A meter scoped to one model is that model's own week, not the subscription. */
-const paceMeter = (m: { id?: string; usedPct?: number | null; windowKind?: string }): boolean =>
+export const paceMeter = (m: { id?: string; usedPct?: number | null; windowKind?: string }): boolean =>
   typeof m.usedPct === 'number' && (m.windowKind === 'session' || m.windowKind === 'weekly') && !/scoped/.test(m.id ?? '');
 
 /**
@@ -381,6 +394,12 @@ export function paceState(usage: UsageSnapshot | null, rules: BalanceRules, prov
   }
   const stance: ClaudeStance = !p ? 'on pace' : !tracks.length ? 'unknown' : tracks.some(t => t.ahead > pace.band) ? 'hot' : tracks.every(t => t.ahead < -pace.band) ? 'behind' : 'on pace';
   return { provider, stance, tracks, peak, atReserve: peak !== null && peak >= pace.reserve };
+}
+
+/** The selected weekly meter shared by pace and surplus window evaluation. */
+export function weeklyMeter<T extends { id?: string; usedPct?: number | null; windowKind?: string; resetsAt?: string | null; active?: boolean }>(meters: T[] | undefined): T | undefined {
+  return meters?.filter(m => paceMeter(m) && m.windowKind === 'weekly' && typeof m.resetsAt === 'string')
+    .sort((a, b) => Date.parse(a.resetsAt as string) - Date.parse(b.resetsAt as string))[0];
 }
 
 /** The steered provider's pace. Same result as `paceState` for `rules.claude.provider`. */

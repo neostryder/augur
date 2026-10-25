@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { startService } from '@augur/augurd';
+import { call } from '../../augurd/src/client.js';
 import { JOBHOST, ROUTES, makeEnv } from '../../augurd/test/harness.js';
 import type { Env } from '../../augurd/test/harness.js';
 import { main, parse } from '../src/cli.js';
@@ -74,10 +75,29 @@ async function boot(extra: Record<string, unknown> = {}) {
     const code = await main(withUsual(args), { out: t => { out += t; }, err: t => { err += t; }, stdin: () => stdin, env: { ...process.env, AUGURD_DATA: e.dir, AUGURD_PIPE: pipe, ...env }, cwd: e.root });
     return { code, out, err };
   };
-  return { e, run };
+  return { e, run, pipe };
 }
 
 describe('augur run', () => {
+  it('rejects a released flag from the command line', async () => {
+    const { run } = await boot();
+    const trailing = await run(['run', 'fake', '--prompt', 'hi', '--released']);
+    expect(trailing.code).toBe(1);
+    expect(trailing.err).toContain('only by the service runner');
+    const valued = await run(['run', 'fake', '--prompt', 'hi', '--released', 'true']);
+    expect(valued.code).toBe(1);
+    expect(valued.err).toContain('only by the service runner');
+  });
+  it('records the caller selected by --caller and AUGUR_CALLER', async () => {
+    const { run } = await boot();
+    const started = await run(['run', 'fake', '--prompt', 'SLEEP 0', '--caller', 'automated', '--json']);
+    const id = (JSON.parse(started.out) as { id: string }).id;
+    const status = await run(['status', id, '--json']);
+    expect(JSON.parse(status.out)).toMatchObject({ caller: { intent: 'automated' } });
+    const fromEnv = await run(['run', 'fake', '--prompt', 'SLEEP 0', '--json'], '', { AUGUR_CALLER: 'automated' });
+    const envId = (JSON.parse(fromEnv.out) as { id: string }).id;
+    expect((await run(['status', envId, '--json'])).out).toContain('"intent":"automated"');
+  });
   it('starts a job and returns its id, then waits and prints the final message', async () => {
     const { run } = await boot();
     const start = await run(['run', 'fake', '--prompt', 'WRITE a.txt\nSLEEP 1', '--expect-file', 'a.txt', '--json']);
@@ -112,6 +132,15 @@ describe('augur run', () => {
     expect((await run(['nonsense'])).code).toBe(1);
   });
 
+  it('blocks an automated premium run from the CLI', async () => {
+    const { run, e } = await boot(), path = join(e.home, 'policy.json'), policy = JSON.parse(readFileSync(path, 'utf8'));
+    policy.balance = { gate: { premium: ['test/fake'], paceLift: ['test/fake'], open: 20, close: 10 } };
+    writeFileSync(path, JSON.stringify(policy));
+    const result = await run(['run', 'fake', '--prompt', 'x', '--caller', 'automated']);
+    expect(result.code).toBe(2);
+    expect(result.err).toContain('Premium models are not used for automated tasks');
+  });
+
   it('uses the job identity in its environment as the parent of the jobs it starts', async () => {
     const { run, e } = await boot();
     const boss = await run(['run', 'boss', '--prompt', 'HANG', '--json']);
@@ -128,6 +157,74 @@ describe('augur run', () => {
     await run(['cancel', plainParent]);
     await run(['cancel', bossId]); await run(['cancel', childId]);
     expect(e.store.get(bossId)).toBeTruthy();
+  });
+});
+
+describe('augur backlog', () => {
+  it('documents backlog prompt and deadline flags and the pick caller option', async () => {
+    const { run } = await boot();
+    const help = await run(['--help']);
+    expect(help.out).toContain('--prompt-file <file>');
+    expect(help.out).toContain('--deadline <date>');
+    expect(help.out).toContain('pick-preview');
+    expect(help.out).toContain('--caller <kind>');
+    expect(help.out).not.toContain('--lower <label>');
+  });
+  it('adds, lists, reports and drops a validated item', async () => {
+    const { run, e } = await boot();
+    writeFileSync(join(e.root, 'prompt.md'), 'Do the task.');
+    const added = await run(['backlog', 'add', '--requester', 'owner', '--repo', '.', '--task', 'small task', '--prompt-file', 'prompt.md', '--activity', 'write_code', '--data', 'internal', '--route', 'fake', '--cwd', e.root, '--tools', 'write', '--output', 'patch_only', '--json']);
+    expect(added.code).toBe(0);
+    const id = (JSON.parse(added.out) as { id: string }).id;
+    const human = await run(['backlog', 'list', '--status', 'queued']);
+    expect(human.out).toContain(id);
+    expect(human.out).toContain(`prompt=file ${join(e.root, 'prompt.md')}`);
+    expect(human.out).toContain('data=internal tools=write output=patch_only');
+    expect(human.out).toContain(`cwd=${e.root}`);
+    expect((await run(['backlog', 'status', '--json'])).out).toContain('queued');
+    expect((await run(['backlog', 'drop', id, '--json'])).code).toBe(0);
+    expect((await run(['backlog', 'list'])).out).toContain('No backlog items.');
+  });
+  it('best-effort protects backlog add inside jobs by awaiting owner approval', async () => {
+    const { run } = await boot();
+    const args = ['backlog', 'add', '--requester', 'agent', '--repo', '.', '--task', 'agent work', '--prompt', 'Do work.', '--activity', 'write_code', '--data', 'internal', '--route', 'fake', '--cwd', '.', '--tools', 'write', '--output', 'patch_only', '--json'];
+    for (const env of [{ AUGUR_JOB_ID: 'job-id' }, { AUGUR_CALLER: 'automated' }, { AUGUR_IN_JOB: '1' }]) {
+      const added = await run(args, '', env);
+      expect(added.code).toBe(0);
+      expect(added.out).toContain('agent');
+      const row = JSON.parse(added.out) as { author: string; status: string };
+      expect(row).toMatchObject({ author: 'agent', status: 'awaiting-approval' });
+    }
+    const fromOwner = await run(args);
+    expect(fromOwner.code).toBe(0);
+    expect(JSON.parse(fromOwner.out)).toMatchObject({ author: 'owner', status: 'queued' });
+  });
+  it('refuses backlog approve, run and drop from inside a job (best effort: the environment is the caller own to clear)', async () => {
+    const { run } = await boot();
+    for (const env of [{ AUGUR_IN_JOB: '1' }, { AUGUR_JOB_ID: 'job-id' }, { AUGUR_CALLER: 'automated' }]) {
+      for (const args of [['backlog', 'approve', 'x', '--yes'], ['backlog', 'run'], ['backlog', 'drop', 'x']]) {
+        const r = await run(args, '', env);
+        expect(r.code).not.toBe(0);
+        expect(r.err).toContain('not for a job');
+      }
+    }
+  });
+  it('approves an agent item from the owner CLI', async () => {
+    const { run, e, pipe } = await boot();
+    const result = await call('backlog_add', { item: { requester: 'agent', repo: '.', task: 'agent work', prompt: { text: 'Do work.' }, activity: 'write_code', data: 'internal', route: 'fake', lower: 'fake', cwd: e.root, tools: 'write', output: 'patch_only' } }, { dir: e.dir, pipe, role: 'agent' });
+    const id = (result as { id: string }).id;
+    const before = await call('backlog_list', undefined, { dir: e.dir, pipe });
+    expect(before).toContainEqual(expect.objectContaining({ id, author: 'agent', status: 'awaiting-approval' }));
+    const approved = await run(['backlog', 'approve', id]);
+    expect(approved.code).toBe(0);
+    expect(approved.out).toContain('awaiting-approval');
+    expect(approved.out).toContain('Run again with --yes to approve.');
+    expect(approved.out).toContain('Prompt text: Do work.');
+    expect(approved.out).toContain('data=internal tools=write output=patch_only');
+    expect(await call('backlog_list', undefined, { dir: e.dir, pipe })).toContainEqual(expect.objectContaining({ id, author: 'agent', status: 'awaiting-approval' }));
+    const confirmed = await run(['backlog', 'approve', id, '--yes']);
+    expect(confirmed.out).toContain('queued');
+    expect(await call('backlog_list', undefined, { dir: e.dir, pipe })).toContainEqual(expect.objectContaining({ id, author: 'agent', status: 'queued' }));
   });
 });
 

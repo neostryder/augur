@@ -68,7 +68,7 @@ describe('the control endpoint', () => {
     expect(await call('ping', undefined, agent)).toMatchObject({ pid: process.pid });
     expect(await call('routes', undefined, agent)).toBeTruthy();
     expect(await call('alias_refresh', {}, o)).toMatchObject({ offers: [], flags: [], noListing: [] });
-    for (const [method, params] of [['human_prompt', { session: 's', text: 'use the big model' }], ['pick_answer', { id: 'x', model: 'm' }], ['grade_label', { id: 'x', label: 'agree' }], ['label', { id: 'x', result: 'met' }], ['engine_call', { method: 'getConfig', args: [] }], ['conversations', undefined], ['alias_refresh', {}]] as const)
+    for (const [method, params] of [['human_prompt', { session: 's', text: 'use the big model' }], ['pick_answer', { id: 'x', model: 'm' }], ['grade_label', { id: 'x', label: 'agree' }], ['label', { id: 'x', result: 'met' }], ['engine_call', { method: 'getConfig', args: [] }], ['conversations', undefined], ['alias_refresh', {}], ['backlog_run', { dryRun: true }], ['backlog_drop', { id: 'x' }]] as const)
       await expect(call(method as never, params as never, agent)).rejects.toMatchObject({ message: expect.stringContaining('may not use') });
     for (const [method, params] of [['prose_run', {}], ['prose_approve', { id: 'x' }]] as const)
       await expect(call(method as never, params as never, agent)).rejects.toMatchObject({ message: expect.stringContaining('may not use') });
@@ -77,15 +77,53 @@ describe('the control endpoint', () => {
     await expect(call('human_prompt', { session: 's', text: 'x' }, o)).resolves.toBeTruthy();
   });
 
+  it('keeps gate status and balance read only for agent tokens across a usage change', async () => {
+    const { o, e } = await boot(), agent = { ...o, role: 'agent' as const }, statePath = join(e.dir, 'gate-state.json'), policyPath = join(e.home, 'policy.json');
+    const p = JSON.parse(readFileSync(policyPath, 'utf8'));
+    p.balance = { gate: { premium: ['test/fake'], paceLift: ['test/fake'], open: 20, close: 10 } };
+    writeFileSync(policyPath, JSON.stringify(p));
+    const saved = JSON.stringify({ state: { test: false }, at: new Date().toISOString(), week: Math.floor(Date.now() / (7 * 86400000)) }) + '\n';
+    writeFileSync(statePath, saved);
+    const now = Date.now(), windowSeconds = 7 * 86400;
+    writeFileSync(join(e.home, 'usage.json'), JSON.stringify({ providers: { test: { fetchedAt: new Date(now).toISOString(), meters: [{ id: 'weekly', windowKind: 'weekly', usedPct: 30, windowSeconds, resetsAt: new Date(now + windowSeconds * 500).toISOString() }] } } }));
+    const status = await call('gate_status', undefined, agent);
+    expect('error' in status ? status : status.providers[0]?.state).toBe('open');
+    expect(readFileSync(statePath, 'utf8')).toBe(saved);
+    await call('balance', {}, agent);
+    expect(readFileSync(statePath, 'utf8')).toBe(saved);
+  });
+
   it('strips the claims that would stand in for the owner from an agent job request', () => {
     const base = request({ text: 'hi', cwd: '.' });
-    const forged = attestAgentRequest({ ...base, named: true, allow: ['unpicked', 'exhausted'], caller: { kind: 'cli', interactive: true, session: 's1', label: 'x' } });
+    const forged = attestAgentRequest({ ...base, named: true, allow: ['unpicked', 'exhausted'], released: true, caller: { kind: 'cli', interactive: true, session: 's1', label: 'x' } });
     expect(forged.named).toBeUndefined(); expect(forged.allow).toBeUndefined();
-    expect(forged.caller).toEqual({ kind: 'cli', session: 's1', label: 'x' });
+    expect(forged.released).toBeUndefined();
+    expect(forged.caller).toEqual({ kind: 'cli', session: 's1', label: 'x', intent: 'automated' });
     for (const m of ['human_prompt', 'pick_answer', 'grade_label', 'label', 'engine_call', 'engine_state', 'grade', 'apply']) expect(AGENT_METHODS.has(m), m).toBe(false);
     expect(AGENT_METHODS.has('alias_refresh')).toBe(false);
     for (const m of ['alias_accept', 'alias_reject']) expect(AGENT_METHODS.has(m), m).toBe(false);
     for (const m of ['submit', 'pick', 'result', 'route_add', 'routes', 'cancel']) expect(AGENT_METHODS.has(m), m).toBe(true);
+    for (const m of ['backlog_run', 'backlog_drop']) expect(AGENT_METHODS.has(m), m).toBe(false);
+    for (const m of ['backlog_add', 'backlog_list', 'backlog_status']) expect(AGENT_METHODS.has(m), m).toBe(true);
+    expect(AGENT_METHODS.has('backlog_approve')).toBe(false);
+  });
+
+  it('attests agent backlog authorship and requires owner approval', async () => {
+    const { o, e } = await boot(), agent = { ...o, role: 'agent' as const };
+    const item = { requester: 'agent', repo: 'repo', task: 'work', prompt: { text: 'work' }, activity: 'write_code', data: 'internal', route: 'fake', lower: 'test/ask', cwd: e.root, tools: 'write', output: 'write_files' };
+    const result = await call('backlog_add', { item }, agent) as { id: string; author: string; status: string };
+    expect(result).toMatchObject({ author: 'agent', status: 'awaiting-approval' });
+    expect(await call('backlog_list', undefined, o)).toContainEqual(expect.objectContaining({ id: result.id, status: 'awaiting-approval' }));
+    await expect(call('backlog_approve', { id: result.id }, agent)).rejects.toMatchObject({ message: expect.stringContaining('may not use') });
+    await expect(call('backlog_add', { item: { ...item, author: 'owner', status: 'queued', released: true } }, agent)).resolves.toMatchObject({ error: expect.stringContaining('Unknown item field') });
+    expect(await call('backlog_approve', { id: result.id }, o)).toMatchObject({ author: 'agent', status: 'queued' });
+  });
+
+  it('refuses released on owner and agent submit requests', async () => {
+    const { o } = await boot(), base = request({ text: 'hi', cwd: '.' });
+    await expect(call('submit', { ...base, released: true }, o)).rejects.toMatchObject({ message: expect.stringContaining('Only the service runner') });
+    await expect(call('submit', { ...base, released: true }, { ...o, role: 'agent' })).rejects.toMatchObject({ message: expect.stringContaining('Only the service runner') });
+    await expect(call('submit', { ...base, allow: ['unpicked'] }, { ...o, role: 'agent' })).rejects.toMatchObject({ message: expect.stringContaining('cannot skip the pick check') });
   });
 
   it('runs a job end to end through the pipe and shows its record, events, logs and result', async () => {

@@ -14,6 +14,8 @@ The app covers most of this. The Rules page says what each model may do, the Rou
 | Series offers, refresh times and embedding notices | `alias-inbox.jsonl`, `alias-refresh.json` and `alias-flags.json` in `~/.augur` | `augur alias`. [Model series and roles](#model-series-and-roles) has the details |
 | Prose requests and their drafts | `prose-queue.jsonl` in `~/.augur` | `augur prose` and the MCP prose tools. [Prose requests](#prose-requests) has the format |
 | Usage resets Augur has seen, early or on schedule, and changes in reset credits | `resets.jsonl` in the app's settings folder, beside `history.jsonl`. It only grows. | Not meant to be edited. Read it with `augur resets` |
+| Premium backlog items | `premium-backlog.jsonl` in `~/.augur` | `augur backlog`, or the `augur_backlog_add` tool for an agent. [The premium backlog](#the-premium-backlog) lists the fields |
+| Premium gate events | `gate-ledger.jsonl` in `~/.augur`. It only grows. | Not meant to be edited. Read it with `augur gate report` |
 
 The settings folder is `%APPDATA%\com.neostryder.augur` on Windows, `~/Library/Application Support/com.neostryder.augur` on macOS and `~/.config/com.neostryder.augur` on Linux. `AUGUR_APP_DIR` moves it and `AUGUR_HOME` moves `~/.augur`. Both the app and the service write `config.json`, so close the app and run `augur service stop` before you edit it. A hand edit to `policy.json` is overwritten the next time a rule is saved.
 
@@ -507,6 +509,87 @@ This example lets `codex/sol` take six picks a day, two in one session, and run 
 }
 ```
 
+### The premium gate
+
+The premium gate holds the most expensive models for work the owner asks for. Any label in `gate.premium` acts as ask first, whatever its own rule says, so a pick skips it with the reason `ask-first: owner approval required` unless the caller names it. Out of the box the list holds `codex/sol`, `claude/opus`, `xai/grok`, `copilot/gpt-6.1-sol`, `copilot/claude-opus-5.5`, `copilot/grok-4.7` and `copilot/gemini-4-argon`. Entries must match route labels exactly; a standard name or a `*` pattern covers nothing here. Setting the balance's `enabled` to `false` leaves the gate on.
+
+Every pick and run carries a caller intent, `interactive` or `automated`. `augur pick`, `augur pick-preview` and `augur run` take `--caller`, and without it they read the `AUGUR_CALLER` environment variable and then fall back to `interactive`. The service puts each job's own intent in that job's `AUGUR_CALLER`, so an `augur` command inside an automated job is automated unless it passes `--caller`. On a route that grants `delegation`, the jobs a job starts are tied to its chain, and each one is automated whenever the root job was, whatever its own request says. Every request made with the agent token is automated, and that includes everything from the MCP server. An automated caller never gets a premium label from a pick, even by naming it, and a run on one is refused with `Premium models are not used for automated tasks` and the cheapest permitted route for the same activity and data tier. The only automated path to a premium label is the service's own release of a backlog item the owner approved, described in [the premium backlog](#the-premium-backlog).
+
+For an interactive caller the wait can lift without a name, but only for labels in `gate.paceLift`, which ships as `codex/sol`, `xai/grok` and `claude/opus`. Copilot labels in that list are ignored and `augur balance` says so under Notes, so a Copilot premium model runs only when it is named. The pace lift opens for a provider once every weekly window it reports runs `gate.open` points or more behind pace (20 by default), where the gap is the share of the week that has passed minus the share used. It stays open until the gap drops below `gate.close` (10 by default), and a provider with no fresh weekly reading stays closed. While it is open, an interactive pick can choose that provider's lifted labels and adds a note such as `ask-first lifted: claude is 24 points behind pace`, and an interactive run on one of them needs no name.
+
+A surplus window lifts the same labels before a reset would waste allowance. Only providers in `gate.surplus.countdown` get one: Claude and Grok by default, where `grok` and `xai` both mean the `xai` labels. Codex and Copilot entries are dropped with a note, so Codex has only the pace lift and Copilot has neither. The window follows the provider's weekly meter that resets first, counting meters the provider marks inactive and skipping meters scoped to one model. It opens when a fresh reading puts that reset `gate.surplus.hours` hours away or less (12) with at least `gate.surplus.open` points of the week unused (10). It closes when unused falls below `gate.surplus.close` (5) or when the reset it opened against passes, even if a later reading shows a fresh meter. A window that closes and opens again before the same reset keeps the points it already spent. A stale reading cannot open a window, and a window that goes stale stays open until its reset but releases no backlog items. A `gate.surplus.hours` of 0 turns windows off.
+
+A window's budget is its unused points minus `gate.surplus.margin` (5) and minus the points spent since it opened. A released backlog item spends its estimate, or 1 point without one, and every other completed job on a premium label spends 1 point. While a window is open on a fresh reading and has budget left, an interactive caller gets the same lift as behind pace: a pick can choose the provider's labels in `gate.paceLift`, with a note such as `ask-first lifted: claude resets in 7 hours with 18 points unused`, and a run on one needs no name. The note appears only when the lift let in a label the caller did not name. A stale or spent window lifts nothing. `augur gate status`, the Surplus windows lines of `augur balance`, the dashboard's gate row and the terminal app's usage page describe each countdown provider's window with one of these lines.
+
+| Line | Meaning |
+| --- | --- |
+| `<u> of <open> points unused` | Under `gate.surplus.open` points of the week are left, so no window will open |
+| `window opens in <h>h`, `window opens in <m> min` | Enough of the week is unused, and the window opens when the reset is `gate.surplus.hours` away. Hours are whole and rounded down, and the last hour counts in minutes |
+| `window open, closes at reset, <n> points budget` | The window is open and `<n>` points of budget remain |
+| `window spent, closes at reset` | The window is open and its budget is used up |
+
+The service keeps the gate's state in `gate-state.json` in its data folder: which pace lifts are open, how long each has been open this week, and for each window its reset time, the points spent and whether its reading is stale. The service checks the gate every half second, and an interactive pick that is not a preview, `augur balance` run by the owner and each release check do the same. The file is rewritten, through a temporary file, only when a pace lift, a window or the week changes. `augur gate status`, `augur gate report`, previews, dry runs and every call made with the agent token only read it.
+
+Gate events go to `gate-ledger.jsonl` in `~/.augur`, one JSON line each, with no task text. The file only grows. Each line has the time, the kind, the label, the provider and the caller, plus what applies to that kind: the pace gap, the pick or job id, the dollar cost, the window's hours left, unused points and budget, or the backlog item id and its `estimatePoints`.
+
+| Kind | Written when |
+| --- | --- |
+| `blocked` | An interactive pick left out a premium label that was waiting for approval |
+| `denied-automated` | An automated pick left out a premium label |
+| `lifted` | The pace lift let an interactive pick consider a label the caller did not name |
+| `surplus-lifted` | A surplus window let an interactive pick consider a label the caller did not name |
+| `surplus-open`, `surplus-close` | A provider's surplus window opened or closed |
+| `approved` | The owner recorded an approval with `augur gate record` |
+| `released` | The service released a backlog item |
+| `ran` | A job on a premium label completed |
+| `lower-ran` | A job on a light-tier label completed after it was picked while a premium label waited for approval |
+
+`augur gate status` prints one line per provider with a premium label: whether its pace lift is open, how far behind pace it runs, its window, the gated labels and the last recorded approval. `augur gate report` prints JSON with a count for each ledger kind, the premium and lower-tier dollar cost for each activity, the hours each pace lift has been open this week, and the current window lines. `augur gate record --kind approved --route <label> --scope this|task|session [--note <text>]` adds an `approved` line for an approval given somewhere else, such as in a conversation with an agent. It grants nothing, so the run still needs a name or a lift. The label has to be in `gate.premium`, and the note is cut to 200 characters. An agent can read the status and the report, and only the owner can record.
+
+### The premium backlog
+
+Premium work that can wait for a surplus window goes in the premium backlog. It is the file `premium-backlog.jsonl` in `~/.augur`, with one JSON object per line and no keys in it. The service rewrites the whole file each time through a temporary file, holding a `.lock` file next to it meanwhile and creating the folder first if it is missing. The lock file holds the process id of its owner. When another lock is there, the service waits up to 2 seconds for it, and takes it over at once if that process is gone, or once the lock is more than 30 seconds old even if its process still runs. A line it cannot read stays in the file untouched, and `augur backlog status --json` counts it.
+
+| Field | What it holds |
+| --- | --- |
+| `id`, `createdAt` | A random id and the time you added the item, both filled in by the service |
+| `author` | `owner` or `agent`, from the token that added the item |
+| `requester`, `repo`, `task` | Who wants the work, the repository it belongs to, and a short description |
+| `prompt` | `{"text": "..."}` or `{"file": "..."}`. A file has to exist inside `cwd` or a folder in `promptRoots` when the item is added, and in an item file it is given as an absolute path |
+| `activity`, `data` | The activity and data tier, the same values `augur run` takes |
+| `route` | A route in `routes.json` whose model is in `gate.premium` |
+| `lower` | Optional. A cheaper route for the same work, kept with the item for reference. The release does not use it |
+| `estimate` | Optional. How many points of the provider's weekly allowance you expect the work to use, 0 to 100, the same unit as a window's budget. Leave it out and the item counts as 1 point |
+| `deadline` | Optional. An ISO date. An item still waiting for approval or still queued then becomes `expired` |
+| `cwd` | The job's working folder, an absolute path to a folder that exists when the item is added |
+| `tools`, `output` | The tool tier and output mode, the same values `augur run` takes |
+| `status`, `statusLog` | Where the item stands (`awaiting-approval`, `queued`, `running`, `done`, `failed`, `cancelled` or `expired`), and each change with its time and a note |
+| `result` | After release, the job id, and the points charged as `cost` |
+| `provider` | After release, the provider the item runs on |
+
+You supply the fields from `requester` to `output`, and the service fills in the rest. It turns away an item with any other field, including `author`, `status` or `released`, and it checks that `cwd` and any prompt file exist when the item is added. Your own items start out `queued`. An agent's items start as `awaiting-approval` and wait there until you run `augur backlog approve <id> --yes`, which refuses an item whose deadline has passed. `augur backlog add` run inside a job, where `AUGUR_JOB_ID` or `AUGUR_IN_JOB` is set or `AUGUR_CALLER` is `automated`, adds the item as an agent's, so it waits for approval as well, and `approve`, `run` and `drop` refuse to run from inside a job. This is a convenience and not a guard, because a process that clears those variables still holds the owner token. A released item shows `running` while its job is alive and `done`, `failed` or `cancelled` when the job ends, and a job the service loses fails its item.
+
+While any item is queued or waiting for approval, the service runs a release check at most once every 5 seconds, and `augur backlog run` runs one at once. The check does nothing without a `policy.json`, and a policy with no `balance` section uses the shipped gate and window settings. First it marks `expired` every item waiting for approval or queued whose deadline has passed, and an expired queued item also gets an `alert` event in the job store, which is the only notice it gives. Then it walks the queued items, earliest deadline first, items with no deadline last, and older items before newer ones. Each item it would release takes its estimate out of the provider's remaining budget and holds the provider's one running slot before the next item is weighed. `augur backlog status`, `augur backlog run --dry-run` and the real release all use this same walk. Some problems fail an item, with the reason in its log: a Copilot route, a model missing from `gate.premium`, data more sensitive than the model may see, an activity the model is not allowed, or a working folder that is gone. Others hold it in the queue: a route that is not in `routes.json`, a model you have not confirmed, a route that cannot run right now, a closed or stale window, a budget too small for the estimate, or another backlog item already running for the provider. A held item gets a note unless the latest line of its log says the same. An item that passes is marked `running` with the note `releasing` and submitted on its route as an automated job labelled `backlog:<id>`, with no fallback and the released flag set. Every other rule still applies, and the table below shows which refusals send the item back to the queue and which fail it.
+
+| Refusal codes | What happens to the item |
+| --- | --- |
+| `model_unreviewed`, `no_policy`, `adapter_unavailable`, `sandbox_required`, `isolation_required`, `text_only`, `read_not_enforceable`, `unknown_route`, `unknown_model`, `model_paused`, `ask_first`, `quota_denied`, `pace_denied`, `not_picked`, `budget_exhausted`, `jobs_off` | It goes back to `queued`, and each reason is logged once |
+| `activity_not_permitted`, `data_tier_too_high`, `bad_request`, `prompt_too_large`, `attachment_rejected`, `depth_exceeded`, `descendants_exceeded`, `delegation_not_granted` | It fails with the reason |
+
+A release takes the estimate out of the window's budget, adds a `released` line to the gate ledger, puts `released from premium backlog item <id>` in the job's events, and saves the provider on the item, so deleting the route does not free that provider's slot. A provider that never gets a window, such as Codex, keeps its items in the queue until their deadline, and so does an item whose route was deleted. At startup the service checks each `running` item against its job. A job that is still alive keeps the item `running`, a finished job sets it to `done`, `failed` or `cancelled`, and a missing job sends it back to `queued` with the note `service restarted`. An item whose job id was never saved is matched to its job by the `backlog:<id>` label, so a crash between submitting and saving does not release it twice.
+
+| Command | What it does | Who can run it |
+| --- | --- | --- |
+| `augur backlog add --file <item.json>` | Adds the item described in the file. A relative path to the file is read from the current folder | You and agents |
+| `augur backlog add --requester <name> --repo <path> --task <text> (--prompt <text> \| --prompt-file <file>) --activity <a> --data <tier> --route <route> --cwd <dir> --tools <tier> --output <mode>` | Adds an item from flags. Relative `--cwd` and `--prompt-file` paths are resolved from the current folder and saved as absolute paths. `--estimate <points>` and `--deadline <date>` are optional, and `lower` can only be set in an item file | You and agents |
+| `augur backlog list [--status <status>]` | Prints a line for each item with its id, author, status, route, data tier, tools, output, working folder, prompt source (the file, or the length of inline text), estimate, deadline and task, then its last five log entries. `--status` limits it to one status | You and agents |
+| `augur backlog status` | Prints the count for each status as a JSON line, then every item as `list` shows it, then `Fitting:` and `Next window:` lines holding the items an open window would release now and the countdown provider that resets next. `--json` prints the whole result as JSON, with the number of lines that could not be read | You and agents |
+| `augur backlog run [--dry-run]` | Runs a release check right away. With `--dry-run` it lists the items it would release, hold, expire and fail, with the reason for each hold and failure, and writes nothing: not the items, their logs or the gate state | You |
+| `augur backlog approve <id> [--yes]` | Without `--yes`, prints the item, the first 600 characters of an inline prompt and its last log entries, and changes nothing. With `--yes`, moves an agent's item from `awaiting-approval` to `queued` and prints it. An item past its deadline is refused | You |
+| `augur backlog drop <id>` | Deletes an item | You |
+
+Agents get add, list and status through the agent token or the MCP tools, and the MCP results carry the same details as `augur backlog list`. Nothing an agent can call approves, runs, releases or drops an item. Only the service sets the released flag, and `augur run --released` or a `released` field in any request from outside the service is turned away.
+
 ### Every balance setting
 
 <!-- balance-reference:start -->
@@ -515,6 +598,15 @@ This example lets `codex/sol` take six picks a day, two in one session, and run 
 | --- | --- | --- |
 | `profile` | classic or neutral | The starting rules the other settings sit on. Classic is the original rule set and is what an install with no profile uses. Neutral gives a tier only to Claude's own models, so pace moves work between Opus and Sonnet and leaves other routes alone. Both profiles boost providers with unused allowance. |
 | `enabled` | true or false | Switches the whole balance off, pace and the boost with it. Scores then come from fit, weights and usage alone. |
+| `gate.premium` | list of routes | Routes that need owner approval for interactive picks and are unavailable to automated callers. |
+| `gate.paceLift` | list of routes | Ask-first routes whose approval wait can lift for interactive callers while their provider is behind pace. |
+| `gate.open` | points | The provider pace gap that opens its premium gate. 20 by default. |
+| `gate.close` | points | The pace gap below which an open premium gate closes. 10 by default. |
+| `gate.surplus.hours` | hours | How close a trusted provider reset must be for a surplus window to open. 12 by default; 0 disables windows. |
+| `gate.surplus.open` | points | Unused allowance needed to open a surplus window. 10 by default. |
+| `gate.surplus.close` | points | Unused allowance below which an open surplus window closes. 5 by default. |
+| `gate.surplus.margin` | points | Allowance reserved from the surplus run budget. 5 by default. |
+| `gate.surplus.countdown` | provider ids | Providers whose reset countdown can open a surplus window. Claude and Grok by default; Codex and Copilot are ignored. Grok and xai both resolve to xai. |
 | `boostFitFloor` | number from 0 to 1 | The lowest caller fit that still gets the unused-allowance boost. A route the caller gave no fit for is boosted. |
 | `draw.enabled` | true or false | Draws each pick at random by its odds. Off, every pick takes the top score. |
 | `draw.tail` | number from 0 to 1 | The share of the top score a route needs to stay in the draw. A route below it gets 0% odds and stays in the ranking. |

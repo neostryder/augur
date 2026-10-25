@@ -106,7 +106,7 @@ export function createTools(d: McpDeps) {
     if (a.data_tier && !dataTier) return fail(`${a.data_tier} is not a data tier. Use one of: ${DATA_TIERS.join(', ')}.`);
     if (!a.task && (!activity || !dataTier)) return fail('Give a task, or both an activity and a data tier, each one of the known values.');
     if (a.model && !a.role) return fail('model names one candidate of a caller-chosen role, so it needs role too.');
-    return guarded(() => d.call('pick', { ...(activity ? { activity: activity as ActivityId } : {}), ...(dataTier ? { dataTier: dataTier as DataTier } : {}), ...(a.role ? { role: a.role } : {}), ...(a.model ? { named: a.model } : {}), ...(a.depth === 'routine' || a.depth === 'everyday' || a.depth === 'deep' || a.depth === 'core' ? { depth: a.depth } : {}), ...(a.task ? { task: a.task } : {}), ...(a.best_only ? { best: true } : {}), ...(a.snippet ? { snippet: true } : {}), session: d.session }, d.opts), r => {
+    return guarded(() => d.call('pick', { caller: 'interactive', ...(activity ? { activity: activity as ActivityId } : {}), ...(dataTier ? { dataTier: dataTier as DataTier } : {}), ...(a.role ? { role: a.role } : {}), ...(a.model ? { named: a.model } : {}), ...(a.depth === 'routine' || a.depth === 'everyday' || a.depth === 'deep' || a.depth === 'core' ? { depth: a.depth } : {}), ...(a.task ? { task: a.task } : {}), ...(a.best_only ? { best: true } : {}), ...(a.snippet ? { snippet: true } : {}), session: d.session }, d.opts), r => {
       if ('error' in r) return fail(r.error);
       const lines = r.ranking.map(x => `${x.model.padEnd(24)} score ${x.score.toFixed(2)}  odds ${Math.round((x.odds ?? 0) * 100)}%  routes ${(r.routes[x.model] ?? []).join(', ') || 'none'}`);
       const callerChoice = a.role && !a.model ? `This role is caller-chosen. Choose one with model from: ${r.ranking.map(x => x.model).join(', ') || 'no permitted candidates'}.` : '';
@@ -115,6 +115,8 @@ export function createTools(d: McpDeps) {
   }
 
   async function run(a: RunArgs): Promise<ToolResult> {
+    if ('released' in (a as object)) return fail('Only the service runner may set released.');
+    if ((a as RunArgs & { allow?: string[] }).allow?.includes('unpicked')) return fail('Only the service runner may release an unpicked premium backlog item.');
     const activity = oneOf(ACTIVITIES, a.activity), dataTier = oneOf(DATA_TIERS, a.data_tier);
     const tools = oneOf(TOOL_TIERS, a.tools, 'read'), output = oneOf(OUTPUT_MODES, a.output, 'text_only');
     if (!activity || !dataTier || !tools || !output) return fail('An activity, a data tier, tools or output is not a known value. The data tier is never assumed: say how sensitive the task is.');
@@ -122,7 +124,7 @@ export function createTools(d: McpDeps) {
     const req: JobRequest = { route: a.route, activity: activity as ActivityId, dataTier: dataTier as DataTier, tools: tools as ToolTier, output: output as OutputMode, cwd: a.cwd ?? d.cwd,
       prompt: { text: a.prompt }, ...(a.timeout_s ? { timeoutS: a.timeout_s } : {}), ...(a.packs ? { packs: a.packs } : {}), ...(a.no_charter ? { noCharter: true } : {}), ...(a.conversation ? { conversation: a.conversation } : {}),
       ...(a.attachments?.length ? { attach: a.attachments } : {}), ...(a.urgent ? { urgent: true } : {}),
-      caller: { kind: 'mcp', label: 'augur-mcp', session: d.session } };
+      caller: { kind: 'mcp', label: 'augur-mcp', session: d.session, intent: 'interactive' } };
     let sub;
     try { sub = await d.call('submit', req, d.opts); } catch (e) { return fail(e instanceof Error ? e.message : String(e)); }
     if ('rejected' in sub) return fail(`Rejected (${sub.rejected.code}): ${sub.rejected.reason}`, { rejected: sub.rejected });
@@ -341,7 +343,40 @@ export function createTools(d: McpDeps) {
     return { text, data: { activity, dataTier, now: before, withEdits: after, applied: preview.applied, problems } };
   }
 
-  return { models, aliases, pick, run, job, jobs, cancel, pressure, balance, resets, routes, routeAdd, policy, editPolicy, pickPreview, proseAdd, proseList, proseStatus };
+  async function gateStatus(): Promise<ToolResult> {
+    return guarded(() => d.call('gate_status', undefined, d.opts), r => 'error' in r ? fail(r.error) : { text: r.providers.map(p => `${p.provider}: ${p.state}, ${p.gap === null ? 'no weekly window' : `${p.gap} points behind pace`}${p.window ? `; ${p.window}` : ''}; gated ${p.labels.join(', ')}${p.lastApproval ? `; approved ${p.lastApproval}` : ''}`).join('\n') || 'No premium gates.', data: r as unknown as Record<string, unknown> });
+  }
+  async function gateReport(): Promise<ToolResult> {
+    return guarded(() => d.call('gate_report', undefined, d.opts), r => 'error' in r ? fail(String(r.error)) : { text: JSON.stringify(r), data: r as Record<string, unknown> });
+  }
+
+  async function backlogAdd(a: { item: unknown }): Promise<ToolResult> {
+    return guarded(() => d.call('backlog_add', { item: a.item }, d.opts), r => 'error' in (r as object) ? fail((r as { error: string }).error) : { text: `Added backlog item ${(r as { id: string }).id} (${(r as { status: string }).status}).`, data: r as Record<string, unknown> });
+  }
+  async function backlogList(a: { status?: string }): Promise<ToolResult> {
+    return guarded(() => d.call('backlog_list', a.status ? { status: a.status } : undefined, d.opts), r => { const rows = r as Array<Record<string, unknown>>; return { text: rows.map(backlogLine).join('\n') || 'No backlog items.', data: { items: rows.map(backlogView) } }; });
+  }
+  async function backlogStatus(): Promise<ToolResult> {
+    return guarded(() => d.call('backlog_status', undefined, d.opts), r => {
+      const body = r as Record<string, unknown>, items = Array.isArray(body.items) ? body.items.map(x => backlogView(x as Record<string, unknown>)) : [];
+      const data = { ...body, items };
+      return { text: JSON.stringify(data), data };
+    });
+  }
+
+  function backlogView(x: Record<string, unknown>): Record<string, unknown> {
+    const prompt = x.prompt as { file?: string; text?: string } | undefined;
+    const { prompt: _prompt, ...item } = x;
+    return { ...item, promptSource: prompt?.file ? { file: prompt.file } : { inlineLength: prompt?.text?.length ?? 0 } };
+  }
+
+  function backlogLine(x: Record<string, unknown>): string {
+    const prompt = x.prompt as { file?: string; text?: string } | undefined;
+    const source = prompt?.file ? `file ${prompt.file}` : `inline ${prompt?.text?.length ?? 0} chars`;
+    return `${x.id}  ${x.author}  ${x.status}  ${x.route}  data=${x.data} tools=${x.tools} output=${x.output} cwd=${x.cwd} prompt=${source} estimate=${x.estimate ?? 1} deadline=${x.deadline ?? 'none'}  ${x.task}`;
+  }
+
+  return { models, aliases, pick, run, job, jobs, cancel, pressure, balance, resets, routes, routeAdd, policy, editPolicy, pickPreview, proseAdd, proseList, proseStatus, gateStatus, gateReport, backlogAdd, backlogList, backlogStatus };
 }
 
 export type Tools = ReturnType<typeof createTools>;

@@ -4,13 +4,18 @@ import { spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { JOBHOST, killEverything, makeEnv, processesWith, request, sleep, submitOk, terminal, until } from './harness.js';
 import type { Env } from './harness.js';
-import { systemdScopes } from '../src/supervisor.js';
+import { REJECTION_CATEGORIES, systemdScopes } from '../src/supervisor.js';
+import { REJECTION_CODES } from '@augur/dispatch-protocol';
 
 vi.setConfig({ testTimeout: 90000 });
 const envs: Env[] = [];
 const setup = (...a: Parameters<typeof makeEnv>) => { const e = makeEnv(...a); envs.push(e); return e; };
 afterEach(() => { while (envs.length) envs.pop()!.dispose(); });
 const kinds = (e: Env, id: string) => e.store.events(id).map(x => x.kind);
+
+it('classifies every rejection code as exactly one backlog result category', () => {
+  for (const code of REJECTION_CODES) expect(Number(REJECTION_CATEGORIES.transient.includes(code as never)) + Number(REJECTION_CATEGORIES.permanent.includes(code as never))).toBe(1);
+});
 
 describe('a job that finishes', () => {
   it('submits prose with the attested caller, promoted tier, read tools, and a disposable scratch cwd', async () => {
@@ -73,6 +78,82 @@ describe('a job that finishes', () => {
     expect(text.length).toBe(whole.length);
     expect(text).toBe(whole);
     expect(text).toContain('h\u00e9llo \u4e16\u754c');
+  });
+});
+
+describe('surplus window status text', () => {
+  it('reports not-near, opens-in, open, and spent states from resolved settings', () => {
+    const e = setup(), policyPath = join(e.home, 'policy.json'), usagePath = join(e.home, 'usage.json');
+    const p = JSON.parse(readFileSync(policyPath, 'utf8'));
+    p.balance = { gate: { premium: ['test/fake', 'codex/sol', 'copilot/gpt-6.1-sol'], paceLift: ['test/fake'], surplus: { hours: 12, open: 10, close: 5, margin: 5, countdown: ['test'] } } };
+    writeFileSync(policyPath, JSON.stringify(p));
+    const usage = (usedPct: number, hours: number) => {
+      const now = Date.now();
+      writeFileSync(usagePath, JSON.stringify({ providers: { test: { fetchedAt: new Date(now).toISOString(), meters: [{ id: 'weekly', windowKind: 'weekly', usedPct, windowSeconds: 604800, resetsAt: new Date(now + hours * 3600000).toISOString() }] } } }));
+    };
+    usage(91, 48);
+    const rows = () => {
+      const result = e.sup.gateStatus();
+      return 'error' in result ? [] : result.providers;
+    };
+    expect(rows().find(row => row.provider === 'test')?.window).toBe('9 of 10 points unused');
+    expect(e.sup.gateReport()).toMatchObject({ providers: [{ provider: 'test', window: '9 of 10 points unused' }] });
+    usage(90, 24);
+    expect(rows().find(row => row.provider === 'test')?.window).toBe('window opens in 12h');
+    expect(rows().find(row => row.provider === 'codex')?.window).toBeNull();
+    expect(rows().find(row => row.provider === 'copilot')?.window).toBeNull();
+    usage(90, 12);
+    expect(rows().find(row => row.provider === 'test')?.window).toBe('window open, closes at reset, 5 points budget');
+    expect((e.sup.balance() as { surplus: Array<{ status: string }> }).surplus).toContainEqual({ provider: 'test', status: 'window open, closes at reset, 5 points budget' });
+    expect((e.sup.gateReport() as { providers: Array<{ window: string }> }).providers).toContainEqual({ provider: 'test', window: 'window open, closes at reset, 5 points budget' });
+    usage(95, 12);
+    expect(rows().find(row => row.provider === 'test')?.window).toBe('window spent, closes at reset');
+  });
+
+  it('persists the configured window across ticks and a service restart, then closes and reopens at real resets', () => {
+    vi.useFakeTimers();
+    try {
+      const start = new Date('2026-10-01T00:00:00Z'); vi.setSystemTime(start);
+      const e = setup(), policyPath = join(e.home, 'policy.json'), usagePath = join(e.home, 'usage.json'), statePath = join(e.dir, 'gate-state.json');
+      const p = JSON.parse(readFileSync(policyPath, 'utf8'));
+      p.balance = { gate: { premium: ['test/fake'], paceLift: ['test/fake'], surplus: { hours: 6, open: 20, close: 10, margin: 5, countdown: ['test'] } } };
+      writeFileSync(policyPath, JSON.stringify(p));
+      const usage = (at: number, usedPct: number, stale = false) => writeFileSync(usagePath, JSON.stringify({ providers: { test: { fetchedAt: new Date(at).toISOString(), stale, meters: [{ id: 'weekly', windowKind: 'weekly', usedPct, windowSeconds: 604800, resetsAt: new Date(at + 6 * 3600000).toISOString() }] } } }));
+      usage(start.getTime(), 80);
+      expect((e.sup.balance() as { surplus: Array<{ status: string }> }).surplus).toContainEqual({ provider: 'test', status: 'window open, closes at reset, 15 points budget' });
+      const opened = JSON.parse(readFileSync(statePath, 'utf8')).surplus.test;
+      expect(opened).toMatchObject({ open: true, spent: 0, resetsAt: new Date(start.getTime() + 6 * 3600000).toISOString() });
+      writeFileSync(statePath, JSON.stringify({ ...JSON.parse(readFileSync(statePath, 'utf8')), surplus: { test: { ...opened, spent: 40 } } }));
+      usage(start.getTime(), 90);
+      expect((e.sup.balance() as { surplus: Array<{ status: string }> }).surplus).toContainEqual({ provider: 'test', status: 'window spent, closes at reset' });
+      const restarted = e.make();
+      expect((restarted.balance() as { surplus: Array<{ status: string }> }).surplus).toContainEqual({ provider: 'test', status: 'window spent, closes at reset' });
+      usage(start.getTime(), 91);
+      restarted.balance();
+      expect(JSON.parse(readFileSync(statePath, 'utf8')).surplus.test).toMatchObject({ open: false, spent: 40 });
+      usage(start.getTime(), 90);
+      restarted.balance();
+      expect(JSON.parse(readFileSync(statePath, 'utf8')).surplus.test).toMatchObject({ open: false, spent: 40 });
+      vi.setSystemTime(new Date(start.getTime() + 6 * 3600000 + 1000));
+      usage(Date.now(), 96);
+      restarted.balance();
+      expect(JSON.parse(readFileSync(statePath, 'utf8')).surplus.test).toMatchObject({ open: false, spent: 40 });
+      usage(Date.now(), 80);
+      restarted.balance();
+      expect(JSON.parse(readFileSync(statePath, 'utf8')).surplus.test).toMatchObject({ open: true, spent: 40 });
+      const state = JSON.parse(readFileSync(statePath, 'utf8'));
+      state.surplus.test = { open: true, spent: 40, resetsAt: new Date(start.getTime() + 6 * 3600000).toISOString() };
+      writeFileSync(statePath, JSON.stringify(state));
+      usage(Date.now(), 80);
+      restarted.balance();
+      expect(JSON.parse(readFileSync(statePath, 'utf8')).surplus.test).toMatchObject({ open: true, spent: 0, resetsAt: new Date(Date.now() + 6 * 3600000).toISOString() });
+      restarted.backlogAdd({ requester: 'owner', repo: 'repo', task: 'stale release', prompt: { text: 'work' }, activity: 'write_code', data: 'internal', route: 'fake', cwd: e.root, tools: 'write', output: 'write_files', estimate: 1 });
+      vi.setSystemTime(new Date(start.getTime() + 6 * 3600000 + 2000));
+      usage(Date.now(), 80, true);
+      restarted.balance();
+      expect(restarted.releaseDue(Date.now(), true).candidates).toEqual([]);
+      expect(JSON.parse(readFileSync(statePath, 'utf8')).surplus.test.stale).toBe(true);
+    } finally { vi.useRealTimers(); }
   });
 });
 
@@ -247,6 +328,47 @@ describe('the service goes away and comes back', () => {
 });
 
 describe('a job that starts jobs', () => {
+  it('rejects a premium child when the recorded root caller is automated', async () => {
+    const e = setup(), path = join(e.home, 'policy.json'), p = JSON.parse(readFileSync(path, 'utf8'));
+    p.balance = { gate: { premium: ['test/ask'], paceLift: ['test/ask'], open: 20, close: 10 } };
+    writeFileSync(path, JSON.stringify(p));
+    const parent = submitOk(e.sup, request({ route: 'boss', text: 'HANG', caller: { kind: 'other', intent: 'automated' } }, e.root));
+    await until(e.sup, () => e.store.get(parent)?.state === 'running');
+    const child = e.sup.submit(request({ route: 'ask', parent: { jobId: parent, rootJobId: parent, depth: 0 }, caller: { kind: 'other', intent: 'interactive' } }, e.root));
+    expect(child).toMatchObject({ rejected: { code: 'ask_first', reason: expect.stringContaining('automated tasks') } });
+    e.sup.cancel(parent);
+  });
+
+  it('passes the recorded root caller intent into every delegated child environment', async () => {
+    const e = setup();
+    const parent = submitOk(e.sup, request({ route: 'boss', text: 'HANG', caller: { kind: 'other', intent: 'automated' } }, e.root));
+    await until(e.sup, () => e.store.get(parent)?.state === 'running');
+    const child = submitOk(e.sup, request({ route: 'boss', text: 'ENV AUGUR_CALLER\nHANG', caller: { kind: 'other', intent: 'interactive' }, parent: { jobId: parent, rootJobId: parent, depth: 0 } }, e.root));
+    await until(e.sup, () => e.sup.logs(child)?.text.includes('ENV AUGUR_CALLER=automated'));
+    expect(e.store.get(child)?.caller.intent).toBe('automated');
+    e.sup.cancel(child); e.sup.cancel(parent);
+  });
+
+  it('records lower-ran only when a completed light route replaces a gated premium candidate', async () => {
+    const e = setup(), path = join(e.home, 'policy.json');
+    const p = JSON.parse(readFileSync(path, 'utf8'));
+    p.balance = { gate: { premium: ['test/ask'], paceLift: [], open: 20, close: 10 }, tiers: { 'test/fake': 'light' } };
+    writeFileSync(path, JSON.stringify(p));
+    const pick = await e.sup.pick({ activity: 'write_code', dataTier: 'internal', fits: { 'test/fake': 1, 'test/patch': 0.01, 'test/public': 0.01, 'test/sandboxed': 0.01 } });
+    expect('error' in pick ? null : pick.pick).toBe('test/fake');
+    const fallback = submitOk(e.sup, request({ text: 'SLEEP 0' }, e.root));
+    await terminal(e.sup, e.store, fallback);
+    let ledger = readFileSync(join(e.home, 'gate-ledger.jsonl'), 'utf8');
+    expect(ledger).toContain('"kind":"lower-ran"');
+    const noPremium = JSON.parse(readFileSync(path, 'utf8'));
+    noPremium.balance.gate.premium = [];
+    writeFileSync(path, JSON.stringify(noPremium));
+    const ordinary = submitOk(e.sup, request({ text: 'SLEEP 0' }, e.root));
+    await terminal(e.sup, e.store, ordinary);
+    ledger = readFileSync(join(e.home, 'gate-ledger.jsonl'), 'utf8');
+    expect(ledger.match(/"kind":"lower-ran"/g)).toHaveLength(1);
+  });
+
   it('hands the dispatch identity only to a route that grants delegation, and bounds depth', async () => {
     const e = setup({ maxDepth: 2 });
     const plain = submitOk(e.sup, request({ text: 'ENV AUGUR_JOB_ID', cwd: e.root }));

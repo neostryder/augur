@@ -82,6 +82,7 @@ export class App {
   private jobs: JobsModel = { service: null, serviceNote: '', unavailable: '', jobs: null, accounted: {}, sel: null, detail: null, busy: false };
   private jobsTimer: ReturnType<typeof setInterval> | undefined;
   private stances: Record<string, string> = {};
+  private gates: Array<{ provider: string; state: 'open' | 'closed'; gap: number | null; close: number; labels: string[] }> = [];
   private balancePage: BalanceModel = { report: null, error: '' };
   /** The machine open on the Local page, and the recent jobs a gateway served. */
   private localSel: string | null = null;
@@ -210,6 +211,7 @@ export class App {
       void this.engine?.viewShown();
     });
     setInterval(() => { if (this.view === 'dashboard' && document.visibilityState === 'visible') void this.render(); }, 30000);
+    await this.loadGateStatus();
     await this.render();
     await this.updateTray();
     if (!this.firstRun && !this.engine) { this.schedule(); void this.refresh(); }
@@ -346,7 +348,7 @@ export class App {
 
   /** force refreshes every provider now, or only those listed in `only`; otherwise each waits out its own interval. */
   async refresh(force = false, only?: string[]): Promise<void> {
-    if (this.engine) { await this.engine.refresh(force, only); return; }
+    if (this.engine) { await this.engine.refresh(force, only); await this.loadGateStatus(); return; }
     if (this.busy) return;
     this.busy = true;
     document.body.classList.add('busy');
@@ -374,6 +376,7 @@ export class App {
       this.busy = false;
       document.body.classList.remove('busy');
     }
+    await this.loadGateStatus();
     await this.render();
     await this.updateTray();
   }
@@ -468,6 +471,7 @@ export class App {
       config: this.config, snapshot: this.snapshot, history: this.history, plugins: this.pluginMap(), busy: this.busy,
       twoColumns: this.twoColumns, expanded: this.expanded, dark: this.isDark(), shellKind: this.shell.kind, desktopWait: this.desktopWait, update: this.update,
       canDispatch: this.shell.dispatch !== undefined,
+      gates: this.gates,
     };
   }
 
@@ -1276,6 +1280,14 @@ export class App {
       else { page.error = r.err || r.text || 'The dispatch service did not answer.'; page.report = null; }
     } catch (e) { page.error = e instanceof Error ? e.message : String(e); page.report = null; }
     if (this.view === 'balance') await this.render();
+  }
+
+  private async loadGateStatus(): Promise<void> {
+    if (!this.shell.dispatch) { this.gates = []; return; }
+    try {
+      const result = await this.augur<{ close: number; providers: Array<{ provider: string; state: 'open' | 'closed'; gap: number | null; labels: string[] }> } | { error: string }>(['gate', 'status', '--json']);
+      if (result.data && !('error' in result.data)) { const close = result.data.close; this.gates = result.data.providers.map(provider => ({ ...provider, close })); }
+    } catch { this.gates = []; }
   }
 
   private async loadRoutes(): Promise<void> {

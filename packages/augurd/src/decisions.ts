@@ -15,7 +15,7 @@ export interface LearnSettings {
 export interface PickEntry {
   /** A caller-chosen id, when the proposal logic needed it before the pick was written. */
   id?: string;
-  session: string | null; task?: string; activity: string; dataTier: string; pick: string | null;
+  session: string | null; task?: string; activity: string; dataTier: string; pick: string | null; caller?: 'interactive' | 'automated';
   ranking: Array<{ model: string; fit?: number }>; named: string | null; backend?: string;
   /** Whether the activity and the data tier came from the classifier (true) or from the caller (false). Only declared values are labels. */
   classified?: { activity: boolean; dataTier: boolean };

@@ -2,10 +2,18 @@ import { describe, expect, it } from 'vitest';
 import { openRules } from './open-rules.js';
 import { buildPolicyFile, emptyPolicy, importPolicy, fieldPath, setField } from '@augur/core';
 import { ACTIVITIES } from '@augur/core';
-import { balanceReport, renderReport, reportSections } from '../src/index.js';
+import { balanceReport, renderReport, reportSections, surplusWindowStatus } from '../src/index.js';
 import type { UsageMeter } from '../src/index.js';
 
 const now = new Date('2026-09-28T12:00:00Z');
+it('reports the threshold, time until opening and reset close accurately', () => {
+  expect(surplusWindowStatus({ open: false, spent: false, budgetLeft: 0, hoursLeft: 12.2, unused: 12 }, { hours: 12, open: 10 })).toBe('window opens in 12 min');
+  expect(surplusWindowStatus({ open: false, spent: false, budgetLeft: 0, hoursLeft: 14.9, unused: 12 }, { hours: 12, open: 10 })).toBe('window opens in 2h');
+  expect(surplusWindowStatus({ open: false, spent: false, budgetLeft: 0, hoursLeft: 24, unused: 8 }, { hours: 12, open: 10 })).toBe('8 of 10 points unused');
+  expect(surplusWindowStatus({ open: true, spent: false, budgetLeft: 7, hoursLeft: 3, unused: 12 }, { hours: 12, open: 10 })).toBe('window open, closes at reset, 7 points budget');
+  expect(surplusWindowStatus({ open: true, spent: true, budgetLeft: 0, hoursLeft: 3, unused: 12 }, { hours: 12, open: 10 })).toBe('window spent, closes at reset');
+  expect(surplusWindowStatus({ open: false, spent: false, budgetLeft: 0, hoursLeft: 24, unused: 12 }, { hours: 0, open: 10 })).toBeNull();
+});
 const level = Object.fromEntries(ACTIVITIES.map(a => [a, 'normal']));
 const RULES = { providers: {
   codex: { defaults: { dataTier: 'sensitive', output: 'write_files', cost: 'moderate' }, models: { 'codex/sol': { id: 'gpt-6.1-sol', rule: { activities: level } }, 'codex/luna': { id: 'gpt-6-luna', rule: { activities: level } } } },
@@ -16,6 +24,7 @@ const RULES = { providers: {
 const policy = () => {
   const p = emptyPolicy(); importPolicy(p, openRules(RULES), now);
   for (const [id, provider] of Object.entries(p.providers)) for (const label of Object.keys(provider.models)) setField(p, fieldPath(id, label, 'status'), 'confirmed', 'test', now);
+  p.balance = { gate: { premium: [], paceLift: [] } };
   return buildPolicyFile(p, Object.keys(p.providers).map(id => ({ id, name: id, metered: true })), now);
 };
 const week = { id: 'weekly', usedPct: 60, windowKind: 'weekly', windowSeconds: 604800, resetsAt: new Date(now.getTime() + 302400e3).toISOString() };
@@ -101,6 +110,17 @@ describe('the balance report', () => {
     const lines = reportSections(balanceReport(policy(), { providers: { claude: { fetchedAt: now.toISOString(), meters: [week, session] } } }, now))[0]?.lines ?? [];
     expect(lines).toContain('week: 60% used, 50% of the week gone, 10 points ahead of pace');
     expect(lines).toContain('5-hour window: 20% used, 30% of the 5-hour window gone, 10 points behind pace');
+  });
+
+  it('prints surplus window statuses with the shared short wording', () => {
+    const report = balanceReport(policy(), usage, now, null, 'internal', false, [
+      { provider: 'claude', status: 'window opens in 12 min' },
+      { provider: 'grok', status: 'window open, closes at reset, 5 points budget' },
+      { provider: 'xai', status: 'window spent, closes at reset' },
+    ]);
+    expect(renderReport(report).join('\n')).toContain('claude: window opens in 12 min');
+    expect(renderReport(report).join('\n')).toContain('grok: window open, closes at reset, 5 points budget');
+    expect(renderReport(report).join('\n')).toContain('xai: window spent, closes at reset');
   });
 });
 

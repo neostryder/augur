@@ -1,7 +1,8 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DecisionLog } from '../src/decisions.js';
+import { readGate } from '../src/balance-files.js';
 import { ROUTES, makeEnv, request, submitOk, terminal } from './harness.js';
 import type { Env } from './harness.js';
 
@@ -12,6 +13,55 @@ const setup = (...a: Parameters<typeof makeEnv>) => { const e = makeEnv(...a); e
 const caller = (session: string) => ({ kind: 'other' as const, label: 'test', session });
 
 describe('picks through the service', () => {
+  it('records surplus lifts only for models the caller did not name', async () => {
+    const e = setup(), policyPath = join(e.home, 'policy.json'), p = JSON.parse(readFileSync(policyPath, 'utf8'));
+    p.balance = { gate: { premium: ['test/fake', 'test/ask'], paceLift: ['test/fake', 'test/ask'], surplus: { hours: 12, open: 10, close: 5, margin: 5, countdown: ['test'] } } };
+    writeFileSync(policyPath, JSON.stringify(p));
+    const now = Date.now();
+    writeFileSync(join(e.home, 'usage.json'), JSON.stringify({ providers: { test: { fetchedAt: new Date(now).toISOString(), meters: [{ id: 'weekly', windowKind: 'weekly', usedPct: 90, windowSeconds: 604800, resetsAt: new Date(now + 6 * 3600000).toISOString() }] } } }));
+    e.sup.tick();
+    const named = await e.sup.pick({ activity: 'write_code', dataTier: 'internal', named: 'test/fake' });
+    if ('error' in named) throw new Error(named.error);
+    const namedLiftRows = readGate(e.home).filter(row => row.kind === 'surplus-lifted');
+    expect(namedLiftRows.map(row => row.label)).toContain('test/ask');
+    expect(namedLiftRows.map(row => row.label)).not.toContain('test/fake');
+    const unnamed = await e.sup.pick({ activity: 'write_code', dataTier: 'internal' });
+    if ('error' in unnamed) throw new Error(unnamed.error);
+    const allLiftRows = readGate(e.home).filter(row => row.kind === 'surplus-lifted');
+    expect(allLiftRows.map(row => row.label)).toEqual(expect.arrayContaining(['test/fake', 'test/ask']));
+  });
+
+  it('persists gate hysteresis across ticks and a service restart', () => {
+    const e = setup(), policyPath = join(e.home, 'policy.json'), statePath = join(e.dir, 'gate-state.json');
+    const p = JSON.parse(readFileSync(policyPath, 'utf8'));
+    p.balance = { gate: { premium: ['test/fake'], paceLift: ['test/fake'], open: 20, close: 10 } };
+    writeFileSync(policyPath, JSON.stringify(p));
+    const setGap = (gap: number) => {
+      const now = Date.now(), windowSeconds = 7 * 86400;
+      writeFileSync(join(e.home, 'usage.json'), JSON.stringify({ providers: { test: { fetchedAt: new Date(now).toISOString(), meters: [{ id: 'weekly', windowKind: 'weekly', usedPct: 50 - gap, windowSeconds, resetsAt: new Date(now + windowSeconds * 500).toISOString() }] } } }));
+    };
+    setGap(20); e.sup.tick();
+    expect(JSON.parse(readFileSync(statePath, 'utf8')).state.test).toBe(true);
+    const restarted = e.make();
+    setGap(15); restarted.tick();
+    expect(JSON.parse(readFileSync(statePath, 'utf8')).state.test).toBe(true);
+    setGap(9); restarted.tick();
+    expect(JSON.parse(readFileSync(statePath, 'utf8')).state.test).toBe(false);
+  });
+
+  it('keeps the persisted gate file unchanged for a preview whose usage opens it', async () => {
+    const e = setup(), policyPath = join(e.home, 'policy.json'), statePath = join(e.dir, 'gate-state.json');
+    const p = JSON.parse(readFileSync(policyPath, 'utf8'));
+    p.balance = { gate: { premium: ['test/fake'], paceLift: ['test/fake'], open: 20, close: 10 } };
+    writeFileSync(policyPath, JSON.stringify(p));
+    const saved = '{"state":{"test":false},"at":"2026-10-01T00:00:00.000Z"}\n';
+    writeFileSync(statePath, saved);
+    const now = Date.now(), windowSeconds = 7 * 86400;
+    writeFileSync(join(e.home, 'usage.json'), JSON.stringify({ providers: { test: { fetchedAt: new Date(now).toISOString(), meters: [{ id: 'weekly', windowKind: 'weekly', usedPct: 30, windowSeconds, resetsAt: new Date(now + windowSeconds * 500).toISOString() }] } } }));
+    await e.sup.pick({ activity: 'write_code', dataTier: 'internal', preview: true });
+    expect(readFileSync(statePath, 'utf8')).toBe(saved);
+  });
+
   it('ranks the models a task may use, leaves out the ones that fail a rule, and names the routes that reach each', async () => {
     const e = setup();
     const r = await e.sup.pick({ activity: 'write_code', dataTier: 'internal' });

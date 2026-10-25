@@ -23,6 +23,7 @@ const RULES = { providers: {
 function policy(): PolicyFile {
   const p = emptyPolicy(); importPolicy(p, openRules(RULES), now);
   for (const [id, provider] of Object.entries(p.providers)) for (const label of Object.keys(provider.models)) setField(p, fieldPath(id, label, 'status'), 'confirmed', 'test', now);
+  p.balance = { gate: { premium: [], paceLift: [] } };
   return buildPolicyFile(p, Object.keys(p.providers).map(id => ({ id, name: id === 'codex' ? 'Codex' : id, metered: id !== 'openrouter' })), now);
 }
 const host: AdapterCapabilities = { permissionRequests: false, sessions: false, reportsUsage: true, sandboxed: false, isolatesWorkspace: false, enforcesReadOnly: true };
@@ -246,6 +247,7 @@ describe('spending a provider in full before the models that wait on it', () => 
   const policy2 = (tweak: (p: ReturnType<typeof emptyPolicy>) => void = () => {}): PolicyFile => {
     const p = emptyPolicy(); importPolicy(p, openRules(RULES2), now);
     for (const [id, provider] of Object.entries(p.providers)) for (const label of Object.keys(provider.models)) setField(p, fieldPath(id, label, 'status'), 'confirmed', 'test', now);
+    p.balance = { gate: { premium: [], paceLift: [] } };
     tweak(p);
     return buildPolicyFile(p, [{ id: 'codex', name: 'Codex', metered: true }, { id: 'copilot', name: 'GitHub Copilot', metered: true }], now);
   };
