@@ -370,7 +370,7 @@ export interface PaceState extends ClaudeState { provider: string }
 const paceOf = (rules: BalanceRules, provider: string): PaceRules => rules.pace[provider] ?? DEFAULT_PACE_RULES;
 /** A session or weekly window with a numeric used percent. A meter scoped to one model is that model's own week, not the subscription. */
 export const paceMeter = (m: { id?: string; usedPct?: number | null; windowKind?: string }): boolean =>
-  typeof m.usedPct === 'number' && (m.windowKind === 'session' || m.windowKind === 'weekly') && !/scoped/.test(m.id ?? '');
+  typeof m.usedPct === 'number' && (m.windowKind === 'session' || m.windowKind === 'weekly') && !/scoped|^seven_day_/.test(m.id ?? '');
 
 /**
  * One provider's session (5-hour) and weekly windows. The stricter track wins: hot if either is hot, behind only when every known track is behind.

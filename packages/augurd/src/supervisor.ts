@@ -272,7 +272,7 @@ export class Supervisor {
       const gate = resolveBalance(policy.balance).gate, provider = route.model.split('/')[0] as string;
       const live = rank(policy, usage, { activity: req.activity, dataTier: req.dataTier, caller: req.caller.intent, gateState: this.gateRead(), surplusState: this.surplusRead() }, new Date(this.now()));
       const window = live.surplus[provider];
-      req = { ...req, premiumGateLift: req.caller.intent !== 'automated' && gate.paceLift.includes(route.model) && (live.gateState[provider] === true || !!window?.open && !window.spent && !window.stale) };
+      req = { ...req, premiumGateLift: req.caller.intent === 'interactive' && gate.paceLift.includes(route.model) && (live.gateState[provider] === true || !!window?.open && !window.spent && !window.stale) };
     }
     const decision = evaluate(req, { policy, usage, route, capabilities: adapter.capabilities, now: new Date(this.now()) });
     if (!decision.allow) { this.d.store.event(null, 'policy_evaluated', `rejected ${decision.rejection.code}: ${req.route}`, this.now()); return { rejected: named.note && decision.rejection.code === 'ask_first' ? { ...decision.rejection, reason: `${decision.rejection.reason} ${named.note}` } : decision.rejection }; }
@@ -369,7 +369,8 @@ export class Supervisor {
     const surplus = { ...(state?.surplus ?? {}) }, old = surplus[provider];
     if (!old?.open) return;
     surplus[provider] = { ...old, spent: old.spent + points };
-    writeFileSync(path, JSON.stringify({ ...state, surplus }) + '\n');
+    const tmp = `${path}.${randomUUID()}.tmp`;
+    writeFileSync(tmp, JSON.stringify({ ...state, surplus }) + '\n'); renameSync(tmp, path);
   }
   private gateKeep(state: Record<string, boolean>, surplus?: Record<string, { open: boolean; hoursLeft: number | null; unused: number; budgetLeft: number; spent: boolean; resetsAt: string | null; stale: boolean }>): void {
     try {
@@ -464,8 +465,8 @@ export class Supervisor {
       const rules = resolveBalance(policy.balance);
       const lifted: string[] = rules.gate.paceLift.filter((label: string) => label !== req.named && label.startsWith(`${provider}/`) && (policy.providers[provider]?.models[label]?.askFirst || rules.gate.premium.includes(label)) && result.ranking.some(r => r.model === label));
       for (const label of lifted) {
-        const reading = result.surplus[provider];
-        appendGate(this.d.home ?? augurHome(this.d.env), { at: new Date(this.now()).toISOString(), kind: reading?.open ? 'surplus-lifted' : 'lifted', label, provider, caller: req.caller ?? 'interactive', gap: result.gateGaps[provider] ?? null, pickId: newId, ...(reading?.open ? { hoursLeft: reading.hoursLeft, unused: reading.unused, budgetLeft: reading.budgetLeft } : {}) });
+        const reading = result.surplus[provider], windowLifted = !!reading?.open && !reading.spent && !reading.stale;
+        appendGate(this.d.home ?? augurHome(this.d.env), { at: new Date(this.now()).toISOString(), kind: windowLifted ? 'surplus-lifted' : 'lifted', label, provider, caller: req.caller ?? 'interactive', gap: result.gateGaps[provider] ?? null, pickId: newId, ...(windowLifted ? { hoursLeft: reading.hoursLeft, unused: reading.unused, budgetLeft: reading.budgetLeft } : {}) });
       }
     }
     const routes: Record<string, string[]> = {};

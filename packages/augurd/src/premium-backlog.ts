@@ -60,9 +60,9 @@ export class PremiumBacklog {
   drop(id: string): boolean { return this.change(data => { const n = data.rows.length; data.rows = data.rows.filter(item => item.id !== id); return data.rows.length !== n; }); }
   reconcile(job: (id: string, itemId: string) => { id?: string; state: string; provider?: string } | null): void {
     this.change(data => { for (const item of data.rows.filter(row => row.status === 'running')) { const jobId = item.result?.jobId, found = job(jobId ?? '', item.id);
-      if (found && ['completed', 'failed', 'artifact_validation_failed', 'cancelled', 'killed', 'lost'].includes(found.state)) this.set(item, found.state === 'completed' ? 'done' : found.state === 'cancelled' ? 'cancelled' : 'failed', found.state);
+      if (found && ['completed', 'failed', 'artifact_validation_failed', 'cancelled', 'killed', 'lost'].includes(found.state)) { if (!item.result?.jobId && found.id) item.result = { jobId: found.id, cost: null }; this.set(item, found.state === 'completed' ? 'done' : found.state === 'cancelled' ? 'cancelled' : 'failed', found.state); }
       else if (found) { if (!item.result?.jobId) item.result = { jobId: found.id ?? '', cost: null }; if (found.provider) item.provider = found.provider; }
-      else this.set(item, 'queued', 'service restarted');
+      else { delete item.result; this.set(item, 'queued', 'service restarted'); }
     } });
   }
   private set(item: BacklogItem, status: BacklogStatus, note: string): void { item.status = status; item.statusLog.push({ at: new Date(this.now()).toISOString(), status, note }); }

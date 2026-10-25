@@ -339,6 +339,15 @@ describe('premium backlog release selection', () => {
     }
   });
 
+  it('refuses a run that declares no intent even while a surplus window is open, and logs a window lift as surplus-lifted', async () => {
+    const e = setup(); windowOpen(e);
+    expect(e.sup.submit(request({ caller: { kind: 'cli', label: 'terminal' } }, e.root))).toMatchObject({ rejected: { code: 'ask_first' } });
+    const picked = await e.sup.pick({ activity: 'write_code', dataTier: 'internal', caller: 'interactive' });
+    expect('error' in picked).toBe(false);
+    const rows = readFileSync(join(e.home, 'gate-ledger.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    expect(rows.filter(row => row.label === 'test/fake').map(row => row.kind)).toEqual(['surplus-lifted']);
+  });
+
   it('keeps the pace lift and refuses spent or stale surplus windows at run time', () => {
     const e = setup(); windowOpen(e);
     const run = () => e.sup.submit(request({ caller: { kind: 'cli', label: 'terminal', intent: 'interactive' } }, e.root));
