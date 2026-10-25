@@ -33,7 +33,7 @@ augur run <route> --prompt-file <file|-> | --prompt <text> [options]
   --expect-file <f>  file the job must leave in the working directory
   --timeout <s>      wall time limit in seconds
   --named            the route was named for this task by the person
-  --caller <kind>    interactive or automated (default: AUGUR_CALLER or interactive)
+  --caller <kind>    interactive or automated (default: AUGUR_CALLER or interactive; inside a job always automated)
   --allow <checks>   skip checks, comma separated: unpicked, exhausted (each use is recorded with the job)
   --no-failover      no fallback route at submit and no retry after a failure
   --pack <names>     charter packs, comma separated
@@ -490,10 +490,13 @@ async function conversationsCmd(p: Parsed, io: Io, opts: Opts, say: (h: string, 
 const conversationLine = (c: Conversation) => `${c.name}  ${c.route}  ${c.adapter}  ${c.turns}  ${new Date(c.lastUsedAt).toISOString().slice(0, 19)}Z`;
 type Opts = { dir: string; pipe?: string };
 
+/** Best effort: a job's environment carries markers the service wrote. A process that clears them still holds the owner token, which is outside this trust model. */
+function runsInsideJob(io: Io): boolean { return !!io.env.AUGUR_IN_JOB || !!io.env.AUGUR_JOB_ID || io.env.AUGUR_CALLER === 'automated'; }
+
 async function backlogCmd(rest: string[], p: Parsed, io: Io, opts: Opts, say: (h: string, d: unknown) => void, opt: (n: string) => string | undefined): Promise<number> {
   const action = rest[0];
   // Best effort: a process that clears its environment still holds the owner token, which is outside this trust model.
-  const insideJob = !!io.env.AUGUR_IN_JOB || !!io.env.AUGUR_JOB_ID || io.env.AUGUR_CALLER === 'automated';
+  const insideJob = runsInsideJob(io);
   if (insideJob && (action === 'run' || action === 'drop' || action === 'approve')) { io.err(`augur backlog ${action} is for the owner's own terminal, not for a job.
 `); return EXIT_CODES.usage; }
   if (action === 'add') {
@@ -549,7 +552,7 @@ function backlogLine(x: Record<string, unknown>): string {
   const prompt = x.prompt as { file?: string; text?: string } | undefined;
   const source = prompt?.file ? `file ${prompt.file}` : `inline ${prompt?.text?.length ?? 0} chars`;
   const log = Array.isArray(x.statusLog) ? (x.statusLog as Array<{ at?: string; status?: string; note?: string }>).slice(-5).map(row => `${row.at ?? ''} ${row.status ?? ''} ${row.note ?? ''}`).join(' | ') : '';
-  return `${x.id}  ${x.author}  ${x.status}  ${x.route}  data=${x.data} tools=${x.tools} output=${x.output} cwd=${x.cwd} prompt=${source} estimate=${x.estimate ?? 1} deadline=${x.deadline ?? 'none'}  ${x.task}${log ? `\nStatus log: ${log}` : ''}`;
+  return `${x.id}  ${x.author}  ${x.status}  ${x.route}  activity=${x.activity} requester=${x.requester} repo=${x.repo}  data=${x.data} tools=${x.tools} output=${x.output} cwd=${x.cwd} prompt=${source} estimate=${x.estimate ?? 1} deadline=${x.deadline ?? 'none'}  ${x.task}${log ? `\nStatus log: ${log}` : ''}`;
 }
 
 async function run(rest: string[], p: Parsed, io: Io, opts: Opts, say: (h: string, d: unknown) => void, opt: (n: string) => string | undefined, json: boolean): Promise<number> {
@@ -571,8 +574,9 @@ async function run(rest: string[], p: Parsed, io: Io, opts: Opts, say: (h: strin
   const packs = opt('pack')?.split(',').map(s => s.trim()).filter(Boolean);
   // An attachment path is relative to where the person is standing, so it is made absolute here.
   const attach = (p.repeated.get('attach') ?? []).map(f => resolve(io.cwd, f));
-  const caller = opt('caller') ?? io.env.AUGUR_CALLER ?? 'interactive';
+  const caller = runsInsideJob(io) ? 'automated' : opt('caller') ?? io.env.AUGUR_CALLER ?? 'interactive';
   if (caller !== 'interactive' && caller !== 'automated') { io.err('--caller is interactive or automated.\n'); return EXIT_CODES.usage; }
+  if (runsInsideJob(io) && allow.includes('unpicked')) { io.err('--allow unpicked is for the owner\'s own terminal, not for a job.\n'); return EXIT_CODES.usage; }
   const req: JobRequest = {
     route, activity: activity as ActivityId, dataTier: dataTier as DataTier, tools: tools as ToolTier, output: output as OutputMode, cwd: resolve(io.cwd, opt('cwd') ?? '.'),
     prompt: { text: promptText as string },
@@ -629,7 +633,7 @@ async function pickCmd(io: Io, opts: Opts, say: (h: string, d: unknown) => void,
     if (!model || !Number.isFinite(n) || n < 0 || n > 1) { io.err('--fit takes model=number pairs with each number from 0 to 1.' + String.fromCharCode(10)); return EXIT_CODES.usage; }
     fits[model] = n;
   }
-  const caller = opt('caller') ?? io.env.AUGUR_CALLER ?? 'interactive';
+  const caller = runsInsideJob(io) ? 'automated' : opt('caller') ?? io.env.AUGUR_CALLER ?? 'interactive';
   if (caller !== 'interactive' && caller !== 'automated') { io.err('--caller is interactive or automated.' + String.fromCharCode(10)); return EXIT_CODES.usage; }
   const r = await call('pick', { caller, ...(activity ? { activity: activity as ActivityId } : {}), ...(dataTier ? { dataTier: dataTier as DataTier } : {}), ...(task ? { task } : {}),
     ...(opt('role') ? { role: opt('role') } : {}),

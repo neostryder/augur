@@ -63,10 +63,11 @@ describe('gate and backlog output', () => {
     const approved = '2026-10-01T12:00:00Z';
     const gate = await createTools(deps({ gate_status: { providers: [{ provider: 'claude', state: 'open', gap: 3, window: 'window open', labels: ['claude/opus'], lastApproval: approved }] } })).gateStatus();
     expect(gate.text).toContain(`approved ${approved}`);
-    const row = { id: 'item', author: 'agent', status: 'awaiting-approval', route: 'claude/opus', task: 'write', data: 'internal', tools: 'write', output: 'patch_only', cwd: '/work/repo', prompt: { text: 'prompt' }, estimate: 2, deadline: approved };
+    const row = { id: 'item', author: 'agent', status: 'awaiting-approval', route: 'claude/opus', task: 'write', activity: 'write_code', requester: 'agent-7', repo: 'augur', data: 'internal', tools: 'write', output: 'patch_only', cwd: '/work/repo', prompt: { text: 'prompt' }, estimate: 2, deadline: approved };
     const list = await createTools(deps({ backlog_list: [row] })).backlogList({});
     expect(list.text).toContain('data=internal tools=write output=patch_only');
     expect(list.text).toContain('prompt=inline 6 chars');
+    expect(list.text).toContain('activity=write_code requester=agent-7 repo=augur');
     expect((list.data as { items: Array<Record<string, unknown>> }).items[0]).toMatchObject({ id: 'item', route: 'claude/opus', promptSource: { inlineLength: 6 }, data: 'internal', tools: 'write', output: 'patch_only', cwd: '/work/repo', estimate: 2, deadline: approved, author: 'agent' });
   });
 });
