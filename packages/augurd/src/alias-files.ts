@@ -1,9 +1,10 @@
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { dataDir } from './paths.js';
 import { refreshAliases, type AliasOffer, type AliasRefreshState, type ListedModel, type PolicyFile } from '@augur/core';
 import { INBOX_FILE } from '@augur/core';
 import { ownerOnly } from './ipc.js';
+import { withFileLock } from './file-lock.js';
 import { checkAliasPin } from './alias-pins.js';
 
 export const ALIAS_INBOX = 'alias-inbox.jsonl';
@@ -11,21 +12,7 @@ export const ALIAS_STATE = 'alias-refresh.json';
 export const ALIAS_FLAGS = 'alias-flags.json';
 const read = (path: string): string => { try { return readFileSync(path, 'utf8'); } catch { return ''; } };
 
-export function withAliasFileLock<T>(path: string, action: () => T): T {
-  const lock = `${path}.lock`, started = Date.now();
-  mkdirSync(join(path, '..'), { recursive: true });
-  while (true) {
-    try {
-      const fd = openSync(lock, 'wx', 0o600);
-      try { return action(); } finally { closeSync(fd); unlinkSync(lock); }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      try { if (Date.now() - statSync(lock).mtimeMs > 30000) unlinkSync(lock); } catch { /* another writer released it */ }
-      if (Date.now() - started >= 2000) throw new Error('Alias file is busy. Try again.');
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
-    }
-  }
-}
+export const withAliasFileLock = withFileLock;
 
 function writeAtomic(path: string, text: string): void {
   const tmp = `${path}.${process.pid}.tmp`;

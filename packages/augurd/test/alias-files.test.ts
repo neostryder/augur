@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -144,6 +144,14 @@ describe('alias persistence', () => {
     const run = promisify(execFile);
     await Promise.all(['first', 'second'].map(value => run(process.execPath, ['--import', 'tsx', '-e', script, path, value], { windowsHide: true })));
     expect(readFileSync(path, 'utf8').trim().split(/\r?\n/).sort()).toEqual(['first', 'second']);
+  });
+
+  it('takes over an alias lock left by a dead process and creates a missing folder', () => {
+    const dir = fresh(), path = join(dir, 'sub', 'alias-inbox.jsonl');
+    expect(withAliasFileLock(path, () => 'made')).toBe('made');
+    writeFileSync(`${path}.lock`, '2147483646');
+    expect(withAliasFileLock(path, () => 'taken')).toBe('taken');
+    expect(existsSync(`${path}.lock`)).toBe(false);
   });
 
   it('refuses a stale offer when policy id changed', async () => {
