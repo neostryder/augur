@@ -1,6 +1,19 @@
 {
   "profile": "classic",
   "enabled": true,
+  "gate": {
+    "premium": ["codex/sol", "claude/opus", "xai/grok", "copilot/gpt-6.1-sol", "copilot/claude-opus-5.5", "copilot/grok-4.7", "copilot/gemini-4-argon"],
+    "paceLift": ["codex/sol", "xai/grok", "claude/opus"],
+    "open": 20,
+    "close": 10,
+    "surplus": {
+      "hours": 12,
+      "open": 10,
+      "close": 5,
+      "margin": 5,
+      "countdown": ["claude", "xai"]
+    }
+  },
   "boostFitFloor": 0.6,
   "draw": {
     "enabled": true,
@@ -14,10 +27,12 @@
     "draft_prose": "everyday",
     "summarize_extract": "everyday",
     "long_context": "everyday",
+    "moderate": "everyday",
     "bulk_tagging": "everyday",
     "typed_decisions": "everyday",
     "read_images": "everyday",
     "generate_images": "everyday",
+    "image_to_image": "everyday",
     "generate_video": "everyday",
     "speech": "everyday",
     "embed": "everyday",
@@ -36,7 +51,7 @@
     "claude/claude-sonnet-5-5": "light",
     "claude/sonnet": "light",
     "codex/luna": "light",
-    "minimax/m3": "light",
+    "minimax/*m3*": "light",
     "deepseek/v4.1-flash": "light",
     "copilot/claude-sonnet-5.5": "light",
     "copilot/gpt-6-luna": "light",
@@ -124,7 +139,7 @@
     "margin": 5
   },
   "prefer": {
-    "minimax/m3": {
+    "minimax/*m3*": {
       "long_context": 1.6,
       "summarize_extract": 1.4
     },
@@ -155,7 +170,7 @@
   "seats": {
     "second": {
       "models": [
-        "minimax/m3"
+        "minimax/*m3*"
       ],
       "skip": [
         "bulk_tagging",

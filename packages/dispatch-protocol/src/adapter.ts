@@ -34,6 +34,33 @@ export interface RouteConfig {
   fallback?: string[];
 }
 
+/** What a route can take, read from its adapter and options before a call, so a caller can skip a route that lacks what the job needs. */
+export interface RouteCapabilities {
+  /** The attachment kinds the route takes. Empty when it takes none. */
+  attachments: AttachmentKind[];
+  /** The route takes image attachments. */
+  vision: boolean;
+  /** The route turns text into vectors. */
+  embed: boolean;
+  /** The route turns an audio attachment into text. */
+  transcribe: boolean;
+  /** The route scores text or images for objectionable content and returns flags and raw scores. */
+  moderate?: boolean;
+  /** Largest image or audio attachment in megabytes, set only when the route takes that kind. */
+  maxImageMb?: number;
+  maxAudioMb?: number;
+  /** Most characters of prompt, with text attachments, the route takes. Absent means no limit. */
+  maxInput?: number;
+  /** Set on an embeddings route: the model and, when the route says so, the vector length. */
+  embedding?: { model: string; dimensions?: number };
+}
+
+/** A short phrase for a route's capabilities, such as `sees images, embeds` or `text prompts only`. */
+export function describeCapabilities(c: RouteCapabilities): string {
+  const parts = [c.vision && 'sees images', c.transcribe && 'transcribes audio', c.embed && 'embeds text', c.moderate && 'moderates content'].filter(Boolean);
+  return parts.length ? parts.join(', ') : 'text prompts only';
+}
+
 export const BUDGET_PERIODS = ['day', 'week', 'month'] as const;
 export type BudgetPeriod = typeof BUDGET_PERIODS[number];
 /** Dollars and jobs are each optional; at least one is set. Dollars count only jobs whose cost is known. */
@@ -124,6 +151,7 @@ export interface Adapter {
 }
 
 const NOTES: Record<ToolTier, string> = {
+  none: '',
   read: 'READ-ONLY TASK. Do not create, modify, delete, move or rename any file, and do not run any command that writes to disk, installs packages, or mutates git state. Read, search and report only. If the task cannot be done without writing, say so and stop.',
   write: 'Confine all edits to the working directory for this task. Do not modify files outside it, and do not install packages or change global or git config.',
   full: '',

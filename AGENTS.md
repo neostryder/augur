@@ -28,10 +28,10 @@ pnpm docs:update   # rewrites the generated tables in docs/configuring.md
 
 - A key goes only to its own provider. It is never written to `routes.json`, a job record or a log, and it reaches the phone sync only inside the encrypted update.
 - Task text stays out of the decision log and `labels.jsonl` unless the owner has turned on recording for training. Text about students never leaves the computer for a hosted classifier.
-- The balance only tilts scores. Pauses, ask-first, data tiers and weights apply before it, and a model is never offered for data above the tier its rules allow.
+- The premium gate may lift ask-first for interactive callers on `gate.paceLift` labels when the pace gate is open or the provider's surplus window is open, unspent and not stale; the service's own backlog release is the only path that runs a premium label for an automated caller, and only for owner-approved items inside an open window's budget, with pauses and data tiers still applying.
 - An edit that widens what data a model may see waits for the owner to accept it in the app, unless the owner has set the approval level to apply everything. That level is `agentApproval` in `config.json`, and no tool an agent can call reads or changes it.
 - A model added by an agent or by a profile import starts unreviewed and cannot run until the owner confirms it. An agent's route add never carries a key and never changes or removes an existing route.
-- A run needs a pick for the same caller in the last hour, or a model named by its label.
+- A run needs a pick for the same caller in the last hour, or a model named by its label, except the service's backlog release and an owner's explicit `--allow unpicked` run may run without either.
 - Installs that name no profile resolve to the shipped balance defaults, so a change to a default needs a matching change to `packages/dispatch-protocol/test/fixtures/classic-balance.json` and a changelog note.
 
 ## Docs move with the code

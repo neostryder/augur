@@ -1,16 +1,18 @@
 import type { ActivityId, DataTier, OutputMode } from '@augur/core';
 import type { JobState } from './states.js';
 
-export type ToolTier = 'read' | 'write' | 'full';
-export const TOOL_TIERS: readonly ToolTier[] = ['read', 'write', 'full'];
+export type ToolTier = 'none' | 'read' | 'write' | 'full';
+export const TOOL_TIERS: readonly ToolTier[] = ['none', 'read', 'write', 'full'];
 
 export interface Caller {
-  kind: 'cli' | 'mcp' | 'job' | 'other';
+  kind: 'cli' | 'mcp' | 'job' | 'other' | 'service';
   label?: string;
   /** The caller's own session, matched against recent picks when picks are required. */
   session?: string;
   /** A person is at the keyboard: the caller is a terminal with input and output attached. A claim that the person named a model is taken as true. */
   interactive?: boolean;
+  /** Whether this request serves a person or runs without a person at the keyboard. */
+  intent?: 'interactive' | 'automated';
 }
 export interface Lineage { jobId: string; rootJobId: string; depth: number }
 
@@ -24,6 +26,8 @@ export interface JobRequest {
   output: OutputMode;
   cwd: string;
   prompt: { text?: string; file?: string };
+  /** Keep this prompt out of the job folder even when prompt persistence is on. */
+  persistPrompt?: boolean;
   expectFile?: string;
   schema?: string;
   session?: string;
@@ -31,6 +35,10 @@ export interface JobRequest {
   /** The caller reports that the person named this route. Recorded with the job. */
   named?: boolean;
   caller: Caller;
+  /** A pace-gate lift granted by the service for this interactive run. */
+  premiumGateLift?: boolean;
+  /** Set only by the service when releasing an owner-queued premium backlog item. */
+  released?: boolean;
   parent?: Lineage;
   /** Checks the caller means to skip. Each use is recorded with the job. */
   allow?: Array<'unpicked' | 'exhausted'>;
@@ -86,6 +94,7 @@ export interface JobRecord {
   depth: number;
   caller: Caller;
   named: boolean;
+  released?: boolean;
   harnessVersion: string | null;
   usage: UsageReport | null;
   /** Length in characters of the prompt sent and of the answer received. Only the lengths are kept, so token counts can be estimated for a harness that reports none. The prompt length is the caller's prompt, not a charter prefixed to it. */

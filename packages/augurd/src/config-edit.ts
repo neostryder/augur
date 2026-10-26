@@ -21,11 +21,16 @@ export interface ConfigKey {
 }
 
 export const CONFIG_KEYS: readonly ConfigKey[] = [
+  { key: 'aliasRefreshHours', label: 'Alias refresh interval', help: 'Refresh model series listings every 24 hours. 0 turns scheduled refresh off.', kind: 'number', min: 0, max: 8760 },
   { key: 'retentionDays', label: 'Keep finished jobs', help: "Logs and results stay on disk this many days after a job ends, 30 by default. The job's record stays.", kind: 'number', min: 0, max: 3650 },
   { key: 'persistPrompts', label: 'Keep prompts', help: "Saves each job's prompt in its folder. Off by default, so a prompt is deleted as soon as the job starts.", kind: 'bool' },
   { key: 'runner.charterDir', label: 'Charter folder', help: "Folder of standing instructions put in front of every job's prompt. Empty uses the charter folder in the Augur home when there is one. With no folder, jobs get no charter.", kind: 'text' },
   { key: 'runner.ambient', label: 'Harness context', help: "keep, the default, leaves each harness's own instructions, tools and plugins on. trim turns them off for Codex and Copilot. A route's ambient option overrides this.", kind: 'choice', choices: ['keep', 'trim'] },
   { key: 'runner.failover', label: 'Retry on failure', help: "on runs a failed job again on its route's next fallback when a spawn error, a provider limit or a read-only timeout stopped it. off, the default, leaves the failure as it is.", kind: 'choice', choices: ['off', 'on'] },
+  { key: 'proseBatchSize', label: 'Prose batch size', help: 'Maximum normal requests in one batch. 10 by default.', kind: 'number', min: 1, max: 1000 },
+  { key: 'proseBatchHours', label: 'Prose batch age', help: 'Hours before a normal batch is due. 24 by default.', kind: 'number', min: 1, max: 720 },
+  { key: 'proseRoute', label: 'Prose route', help: 'Route label used for prose batches. claude/opus by default.', kind: 'text', check: t => t.trim() ? null : 'proseRoute must not be empty.' },
+  { key: 'proseAutoRun', label: 'Run prose batches automatically', help: 'Allows the service to start due prose batches. Off by default.', kind: 'bool' },
   { key: 'maxConcurrent', label: 'Jobs at once', help: 'How many jobs run together while the rest wait. 8 by default.', kind: 'number', min: 1, max: 64 },
   { key: 'maxDepth', label: 'Nesting depth', help: 'How many levels deep jobs may start jobs of their own. 2 by default.', kind: 'number', min: 0, max: 8 },
   { key: 'maxDescendants', label: 'Jobs one job can start', help: 'The most that one job, and the jobs it starts, can add up to. 16 by default.', kind: 'number', min: 0, max: 256 },
@@ -57,6 +62,7 @@ function readRaw(dir: string): Record<string, unknown> {
 
 function valueOf(config: ServiceConfig, key: string): string {
   switch (key) {
+    case 'aliasRefreshHours': return String(config.aliasRefreshHours);
     case 'decision.backend': return config.decision.backend;
     case 'decision.shadow': return config.decision.shadow ?? 'none';
     case 'decision.gateway': return config.decision.gateway ?? '';

@@ -5,8 +5,8 @@ import { call as serviceCall } from '@augur/augurd/client';
 import type { ClientOptions } from '@augur/augurd/client';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES, balanceField, balanceSegments, checkEdit, editKind, isBalanceField, parseEditState, parseInbox, previewEdits } from '@augur/core';
 import type { ActivityId, DataTier, OutputMode, PolicyEdit, PolicyFile } from '@augur/core';
-import { TOOL_TIERS, checkBalanceSetting, isTerminal, rank, renderReport, renderResets, routeAddShapeProblems, seatLines } from '@augur/dispatch-protocol';
-import type { JobRecord, JobRequest, ToolTier, UsageSnapshot } from '@augur/dispatch-protocol';
+import { TOOL_TIERS, checkBalanceSetting, describeCapabilities, isTerminal, rank, renderReport, renderResets, routeAddShapeProblems, seatLines } from '@augur/dispatch-protocol';
+import type { JobRecord, JobRequest, ProseAddParams, ProseQueueStatus, ProseStatus, ToolTier, UsageSnapshot } from '@augur/dispatch-protocol';
 
 export interface ToolResult { text: string; isError?: boolean; data?: Record<string, unknown> }
 
@@ -20,6 +20,9 @@ export interface McpDeps {
   /** The edits agents have asked for, and what the app did with them. The app owns both files; the server only appends to the inbox. */
   inboxText?: () => string | null;
   editStateText?: () => string | null;
+  aliasStateText?: () => string | null;
+  aliasInboxText?: () => string | null;
+  aliasFlagsText?: () => string | null;
   appendInbox?: (lines: string) => void;
   /** Names this server's calls to the service, so a pick and the run that follows it are matched. */
   session: string;
@@ -52,6 +55,9 @@ export interface RunArgs {
 const WAIT_DEFAULT_S = 300, WAIT_MAX_S = 900, POLL_MS = 1500;
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const fail = (text: string, data?: Record<string, unknown>): ToolResult => ({ text, isError: true, ...(data ? { data } : {}) });
+const parseJsonObject = (text: string | null): Record<string, unknown> => { try { const x = JSON.parse(text ?? '{}'); return isObj(x) ? x : {}; } catch { return {}; } };
+const parseJsonArray = (text: string | null): Array<Record<string, unknown>> => { try { const x = JSON.parse(text ?? '[]'); return Array.isArray(x) ? x.filter(isObj) : []; } catch { return []; } };
+const parseJsonLines = (text: string | null): Array<Record<string, unknown>> => (text ?? '').split(/\r?\n/).filter(Boolean).flatMap(line => { try { const x: unknown = JSON.parse(line); return isObj(x) ? [x] : []; } catch { return []; } });
 const oneOf = <T extends string>(list: readonly T[], v: string | undefined, d?: T): T | null => (v === undefined ? d ?? null : list.includes(v as T) ? (v as T) : null);
 
 async function guarded<T>(work: () => Promise<T>, then: (v: T) => ToolResult): Promise<ToolResult> {
@@ -78,7 +84,7 @@ export function createTools(d: McpDeps) {
         const pause = isObj(m.pause) && typeof m.pause.until === 'string' && Date.parse(m.pause.until) > Date.now() ? m.pause : null;
         rows.push({ model: label, provider: pid, status: m.status, cost: m.cost, dataTier: m.dataTier, askFirst: m.askFirst === true, output: m.output, sandbox: m.sandbox === true,
           activities: m.activities, paused: pause ? { until: pause.until, weightsChanged: isObj(pause.weights) } : null,
-          routes: (routes ?? []).filter(r => r.model === label).map(r => ({ name: r.name, canRun: r.problem === null, problem: r.problem })) });
+          routes: (routes ?? []).filter(r => r.model === label).map(r => ({ name: r.name, canRun: r.problem === null, problem: r.problem, capabilities: r.capabilities })) });
       }
     }
     const usable = rows.filter(r => r.status === 'confirmed' && !(isObj(r.paused) && r.paused.weightsChanged !== true));
@@ -86,19 +92,31 @@ export function createTools(d: McpDeps) {
     return { text: `${usable.length} of ${rows.length} models can take jobs now.\n${lines.join('\n')}`, data: { models: rows } };
   }
 
-  async function pick(a: { activity?: string; data_tier?: string; task?: string; depth?: string; best_only?: boolean; snippet?: boolean }): Promise<ToolResult> {
+  async function aliases(): Promise<ToolResult> {
+    const file = policyFile();
+    if (!file) return fail('policy.json was not found.');
+    const state = parseJsonObject(d.aliasStateText?.() ?? null), offers = parseJsonLines(d.aliasInboxText?.() ?? null), flags = parseJsonArray(d.aliasFlagsText?.() ?? null);
+    const rows = Object.entries(file.providers).flatMap(([provider, p]) => Object.entries(p.models).flatMap(([label, model]) => model.series ? [{ label, provider, kind: model.series.kind, pattern: model.series.pattern, id: model.id, name: model.name ?? model.id, refresh: state[label] ?? null, offer: offers.find(o => o.label === label) ?? null, flag: flags.find(f => f.label === label) ?? null }] : []));
+    return { text: rows.map(x => `${x.label}  ${x.kind}  ${x.pattern}  ${x.id}  refresh=${JSON.stringify(x.refresh)}  offer=${JSON.stringify(x.offer)}  flag=${JSON.stringify(x.flag)}`).join('\n') || 'No aliases.', data: { aliases: rows } };
+  }
+
+  async function pick(a: { activity?: string; data_tier?: string; task?: string; depth?: string; best_only?: boolean; snippet?: boolean; role?: string; model?: string }): Promise<ToolResult> {
     const activity = oneOf(ACTIVITIES, a.activity), dataTier = oneOf(DATA_TIERS, a.data_tier);
     if (a.activity && !activity) return fail(`${a.activity} is not an activity. Use one of: ${ACTIVITIES.join(', ')}.`);
     if (a.data_tier && !dataTier) return fail(`${a.data_tier} is not a data tier. Use one of: ${DATA_TIERS.join(', ')}.`);
     if (!a.task && (!activity || !dataTier)) return fail('Give a task, or both an activity and a data tier, each one of the known values.');
-    return guarded(() => d.call('pick', { ...(activity ? { activity: activity as ActivityId } : {}), ...(dataTier ? { dataTier: dataTier as DataTier } : {}), ...(a.depth === 'routine' || a.depth === 'everyday' || a.depth === 'deep' || a.depth === 'core' ? { depth: a.depth } : {}), ...(a.task ? { task: a.task } : {}), ...(a.best_only ? { best: true } : {}), ...(a.snippet ? { snippet: true } : {}), session: d.session }, d.opts), r => {
+    if (a.model && !a.role) return fail('model names one candidate of a caller-chosen role, so it needs role too.');
+    return guarded(() => d.call('pick', { caller: 'interactive', ...(activity ? { activity: activity as ActivityId } : {}), ...(dataTier ? { dataTier: dataTier as DataTier } : {}), ...(a.role ? { role: a.role } : {}), ...(a.model ? { named: a.model } : {}), ...(a.depth === 'routine' || a.depth === 'everyday' || a.depth === 'deep' || a.depth === 'core' ? { depth: a.depth } : {}), ...(a.task ? { task: a.task } : {}), ...(a.best_only ? { best: true } : {}), ...(a.snippet ? { snippet: true } : {}), session: d.session }, d.opts), r => {
       if ('error' in r) return fail(r.error);
       const lines = r.ranking.map(x => `${x.model.padEnd(24)} score ${x.score.toFixed(2)}  odds ${Math.round((x.odds ?? 0) * 100)}%  routes ${(r.routes[x.model] ?? []).join(', ') || 'none'}`);
-      return { text: r.pick ? `Pick: ${r.pick} (${r.activity}, ${r.dataTier} data). ${[r.reason, ...seatLines(r.seats ?? {})].filter(Boolean).join('\n')}\n${lines.join('\n')}` : `No model is permitted ${r.activity} on ${r.dataTier} data.\n${lines.join('\n')}`, data: r as unknown as Record<string, unknown> };
+      const callerChoice = a.role && !a.model ? `This role is caller-chosen. Choose one with model from: ${r.ranking.map(x => x.model).join(', ') || 'no permitted candidates'}.` : '';
+      return { text: r.pick ? `Pick: ${r.pick} (${r.activity}, ${r.dataTier} data). ${[r.reason, ...seatLines(r.seats ?? {})].filter(Boolean).join('\n')}\n${lines.join('\n')}` : callerChoice || `No model is permitted ${r.activity} on ${r.dataTier} data.\n${lines.join('\n')}`, data: r as unknown as Record<string, unknown> };
     });
   }
 
   async function run(a: RunArgs): Promise<ToolResult> {
+    if ('released' in (a as object)) return fail('Only the service runner may set released.');
+    if ((a as RunArgs & { allow?: string[] }).allow?.includes('unpicked')) return fail('Only the service runner may release an unpicked premium backlog item.');
     const activity = oneOf(ACTIVITIES, a.activity), dataTier = oneOf(DATA_TIERS, a.data_tier);
     const tools = oneOf(TOOL_TIERS, a.tools, 'read'), output = oneOf(OUTPUT_MODES, a.output, 'text_only');
     if (!activity || !dataTier || !tools || !output) return fail('An activity, a data tier, tools or output is not a known value. The data tier is never assumed: say how sensitive the task is.');
@@ -106,7 +124,7 @@ export function createTools(d: McpDeps) {
     const req: JobRequest = { route: a.route, activity: activity as ActivityId, dataTier: dataTier as DataTier, tools: tools as ToolTier, output: output as OutputMode, cwd: a.cwd ?? d.cwd,
       prompt: { text: a.prompt }, ...(a.timeout_s ? { timeoutS: a.timeout_s } : {}), ...(a.packs ? { packs: a.packs } : {}), ...(a.no_charter ? { noCharter: true } : {}), ...(a.conversation ? { conversation: a.conversation } : {}),
       ...(a.attachments?.length ? { attach: a.attachments } : {}), ...(a.urgent ? { urgent: true } : {}),
-      caller: { kind: 'mcp', label: 'augur-mcp', session: d.session } };
+      caller: { kind: 'mcp', label: 'augur-mcp', session: d.session, intent: 'interactive' } };
     let sub;
     try { sub = await d.call('submit', req, d.opts); } catch (e) { return fail(e instanceof Error ? e.message : String(e)); }
     if ('rejected' in sub) return fail(`Rejected (${sub.rejected.code}): ${sub.rejected.reason}`, { rejected: sub.rejected });
@@ -185,7 +203,17 @@ export function createTools(d: McpDeps) {
   }
 
   async function routes(): Promise<ToolResult> {
-    return guarded(() => d.call('routes', undefined, d.opts), r => ({ text: r.map(x => `${x.name.padEnd(14)} ${x.model.padEnd(20)} ${x.adapter}${x.problem ? `   cannot run: ${x.problem}` : ''}`).join('\n') || 'No routes.', data: { routes: r } }));
+    return guarded(() => d.call('routes', undefined, d.opts), r => ({ text: r.map(x => `${x.name.padEnd(14)} ${x.model.padEnd(20)} ${x.adapter}   ${describeCapabilities(x.capabilities)}${x.problem ? `   cannot run: ${x.problem}` : ''}`).join('\n') || 'No routes.', data: { routes: r } }));
+  }
+
+  async function proseAdd(item: Record<string, unknown>): Promise<ToolResult> {
+    return guarded(() => d.call('prose_add', item as unknown as ProseAddParams, d.opts), r => 'error' in (r as object) ? fail((r as { error: string }).error) : { text: `Added prose item ${(r as { id: string }).id}.`, data: r as Record<string, unknown> });
+  }
+  async function proseList(a: { status?: string }): Promise<ToolResult> {
+    return guarded(() => d.call('prose_list', a.status ? { status: a.status as ProseStatus } : undefined, d.opts), r => ({ text: (r as Array<{ id: string; status: string; repo: string; target: string }>).map(x => `${x.id}  ${x.status}  ${x.repo}  ${x.target}`).join('\n') || 'No prose items.', data: { items: r as unknown[] } }));
+  }
+  async function proseStatus(): Promise<ToolResult> {
+    return guarded(() => d.call('prose_status', undefined, d.opts), r => { const x = r as ProseQueueStatus; return { text: `${Object.entries(x.counts).map(([k, v]) => `${k}: ${v}`).join(', ')}; ${x.due ? 'batch due' : 'batch not due'}.`, data: { ...x } }; });
   }
 
   /** Adds one route. A key or a bad shape is refused here, so it never reaches the service. The service checks the rest and writes. */
@@ -234,6 +262,7 @@ export function createTools(d: McpDeps) {
   };
   const toEdit = (file: PolicyFile, a: EditArg, by: string, id: string, at: string): PolicyEdit | { problem: string } => {
     if (!a.field) return { problem: 'An edit names a field.' };
+    if (a.field === 'series' || a.field === 'role') return { problem: `${a.field} can only be set by the owner in the terminal.` };
     if (a.field === 'balance') {
       if (!Array.isArray(a.path) || !a.path.every(x => typeof x === 'string')) return { problem: 'A balance edit gives a path: one name per level, such as ["tilt", "deep", "strong"].' };
       const bad = checkBalanceSetting(a.path, a.value);
@@ -314,7 +343,40 @@ export function createTools(d: McpDeps) {
     return { text, data: { activity, dataTier, now: before, withEdits: after, applied: preview.applied, problems } };
   }
 
-  return { models, pick, run, job, jobs, cancel, pressure, balance, resets, routes, routeAdd, policy, editPolicy, pickPreview };
+  async function gateStatus(): Promise<ToolResult> {
+    return guarded(() => d.call('gate_status', undefined, d.opts), r => 'error' in r ? fail(r.error) : { text: r.providers.map(p => `${p.provider}: ${p.state}, ${p.gap === null ? 'no weekly window' : `${p.gap} points behind pace`}${p.window ? `; ${p.window}` : ''}; gated ${p.labels.join(', ')}${p.lastApproval ? `; approved ${p.lastApproval}` : ''}`).concat(r.backlog?.awaiting.length ? [`${r.backlog.awaiting.length} premium ${r.backlog.awaiting.length === 1 ? 'task waits' : 'tasks wait'} for the owner's approval`] : []).join('\n') || 'No premium gates.', data: r as unknown as Record<string, unknown> });
+  }
+  async function gateReport(): Promise<ToolResult> {
+    return guarded(() => d.call('gate_report', undefined, d.opts), r => 'error' in r ? fail(String(r.error)) : { text: JSON.stringify(r), data: r as Record<string, unknown> });
+  }
+
+  async function backlogAdd(a: { item: unknown }): Promise<ToolResult> {
+    return guarded(() => d.call('backlog_add', { item: a.item }, d.opts), r => 'error' in (r as object) ? fail((r as { error: string }).error) : { text: `Added backlog item ${(r as { id: string }).id} (${(r as { status: string }).status}).`, data: r as Record<string, unknown> });
+  }
+  async function backlogList(a: { status?: string }): Promise<ToolResult> {
+    return guarded(() => d.call('backlog_list', a.status ? { status: a.status } : undefined, d.opts), r => { const rows = r as Array<Record<string, unknown>>; return { text: rows.map(backlogLine).join('\n') || 'No backlog items.', data: { items: rows.map(backlogView) } }; });
+  }
+  async function backlogStatus(): Promise<ToolResult> {
+    return guarded(() => d.call('backlog_status', undefined, d.opts), r => {
+      const body = r as Record<string, unknown>, items = Array.isArray(body.items) ? body.items.map(x => backlogView(x as Record<string, unknown>)) : [];
+      const data = { ...body, items };
+      return { text: JSON.stringify(data), data };
+    });
+  }
+
+  function backlogView(x: Record<string, unknown>): Record<string, unknown> {
+    const prompt = x.prompt as { file?: string; text?: string } | undefined;
+    const { prompt: _prompt, ...item } = x;
+    return { ...item, promptSource: prompt?.file ? { file: prompt.file } : { inlineLength: prompt?.text?.length ?? 0 } };
+  }
+
+  function backlogLine(x: Record<string, unknown>): string {
+    const prompt = x.prompt as { file?: string; text?: string } | undefined;
+    const source = prompt?.file ? `file ${prompt.file}` : `inline ${prompt?.text?.length ?? 0} chars`;
+    return `${x.id}  ${x.author}  ${x.status}  ${x.route}  activity=${x.activity} requester=${x.requester} repo=${x.repo}  data=${x.data} tools=${x.tools} output=${x.output} cwd=${x.cwd} prompt=${source} estimate=${x.estimate ?? 1} deadline=${x.deadline ?? 'none'}  ${x.task}`;
+  }
+
+  return { models, aliases, pick, run, job, jobs, cancel, pressure, balance, resets, routes, routeAdd, policy, editPolicy, pickPreview, proseAdd, proseList, proseStatus, gateStatus, gateReport, backlogAdd, backlogList, backlogStatus };
 }
 
 export type Tools = ReturnType<typeof createTools>;

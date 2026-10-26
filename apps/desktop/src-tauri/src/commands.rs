@@ -217,6 +217,10 @@ fn dispatch_args_allowed(args: &[String]) -> bool {
             )
         }
         Some("routes" | "pressure" | "balance") => rest.all(|a| a == "--json"),
+        Some("gate") => {
+            let rest: Vec<&str> = rest.filter(|a| *a != "--json").collect();
+            matches!(rest.as_slice(), ["status"] | ["report"])
+        }
         Some("usage") => {
             let rest: Vec<&str> = rest.collect();
             match rest.as_slice() {
@@ -497,6 +501,8 @@ mod tests {
         assert!(allowed(&["logs", "0d26110efa99", "--stderr"]));
         assert!(allowed(&["routes", "--json"]));
         assert!(allowed(&["balance", "--json"]));
+        assert!(allowed(&["gate", "status", "--json"]));
+        assert!(allowed(&["gate", "report", "--json"]));
         assert!(allowed(&["usage", "--json"]));
         assert!(allowed(&["usage", "--json", "--limit", "50"]));
         assert!(allowed(&["config", "--json"]));
@@ -516,6 +522,7 @@ mod tests {
         assert!(!allowed(&[]));
         assert!(!allowed(&["run", "codex", "--prompt", "x"]));
         assert!(!allowed(&["apply", "0d26110efa99"]));
+        assert!(!allowed(&["gate", "record", "--kind", "approved"]));
         assert!(!allowed(&["usage", "--json", "--limit", "5;x"]));
         assert!(!allowed(&["service", "stop", "--force"]));
         assert!(!allowed(&["status", r"..\..\evil", "--json"]));

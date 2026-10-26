@@ -45,6 +45,7 @@ export interface PickSummary {
 export interface BalanceReport {
   at: string;
   enabled: boolean;
+  notes?: string[];
   claude: { stance: ClaudeStance; lean: string; peak: number | null; reserve: number; band: number; atReserve: boolean; tracks: PaceTrack[]; /** Where the prose pace switch stands. Reports written before the switch existed have none. */ prose?: ProseSwitch };
   /** One row per paced provider, hot first, then unknown, behind, and on pace. A higher used percent wins a tie. */
   pace: PaceLine[];
@@ -53,9 +54,18 @@ export interface BalanceReport {
   mix: MixLine[];
   excluded: string[];
   picks: PickSummary | null;
+  surplus?: Array<{ provider: string; status: string }>;
 }
 
-export function balanceReport(policy: PolicyFile, usage: UsageSnapshot | null, now: Date, picks: PickSummary | null = null, tier: 'public' | 'internal' | 'sensitive' | 'regulated' = 'internal', proseSwitched = false): BalanceReport {
+export function surplusWindowStatus(window: { open: boolean; spent: boolean; budgetLeft: number; hoursLeft: number | null; unused: number }, settings: { hours: number; open: number }): string | null {
+  if (window.open) return window.spent ? 'window spent, closes at reset' : `window open, closes at reset, ${Math.floor(window.budgetLeft)} points budget`;
+  if (window.unused < settings.open) return `${Math.floor(window.unused)} of ${settings.open} points unused`;
+  if (window.hoursLeft === null || settings.hours <= 0 || window.hoursLeft <= settings.hours) return null;
+  const minutes = Math.ceil((window.hoursLeft - settings.hours) * 60);
+  return minutes < 60 ? `window opens in ${minutes} min` : `window opens in ${Math.floor(minutes / 60)}h`;
+}
+
+export function balanceReport(policy: PolicyFile, usage: UsageSnapshot | null, now: Date, picks: PickSummary | null = null, tier: 'public' | 'internal' | 'sensitive' | 'regulated' = 'internal', proseSwitched = false, surplus?: BalanceReport['surplus']): BalanceReport {
   const rules = resolveBalance((policy as { balance?: unknown }).balance);
   const state = claudeState(usage, rules, now);
   const steeredId = rules.claude.provider;
@@ -91,11 +101,11 @@ export function balanceReport(policy: PolicyFile, usage: UsageSnapshot | null, n
     return { activity, depth: r.depth, pick: r.pick, next: r.ranking[1]?.model ?? null, reason: r.reason, second: r.seats.second?.model ?? null, web: r.seats.web?.model ?? null };
   });
   return {
-    at: now.toISOString(), enabled: rules.enabled,
+    at: now.toISOString(), enabled: rules.enabled, notes: rules.notes,
     claude: { stance: state.stance, lean, peak: state.peak, reserve: rules.claude.reserve, band: rules.claude.band, atReserve: state.atReserve, tracks: state.tracks, prose: rules.enabled ? proseSwitchState(rules, state, proseSwitched) : { ...proseSwitchState(rules, state, proseSwitched), on: false } },
     pace,
     copilot: { spend, aim: rules.fallback.aim, cap: rules.fallback.cap, zone },
-    providers, mix, excluded: rules.exclude, picks,
+    providers, mix, excluded: rules.exclude, picks, ...(surplus ? { surplus } : {}),
   };
 }
 
@@ -121,6 +131,8 @@ export const reportHeading = (r: BalanceReport): string => `Balance report, ${r.
 /** The report as titled groups of plain lines. The window app, the terminal app, the command and the daily file all show these same words. */
 export function reportSections(r: BalanceReport): ReportSection[] {
   const out: ReportSection[] = [];
+  if (r.notes?.length) out.push({ title: 'Notes', lines: r.notes });
+  if (r.surplus?.length) out.push({ title: 'Surplus windows', lines: r.surplus.map(row => `${row.provider}: ${row.status}`) });
   const rows = r.pace ?? [];
   const prose = proseLine(r.claude);
   const steered = rows.find(row => row.tracks === r.claude.tracks);

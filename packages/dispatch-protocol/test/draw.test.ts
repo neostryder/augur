@@ -16,7 +16,7 @@ function policy(models: Record<string, Record<string, string>>, balance?: Record
   }
   const p = emptyPolicy(); importPolicy(p, openRules({ providers }), now);
   for (const [id, provider] of Object.entries(p.providers)) for (const label of Object.keys(provider.models)) setField(p, fieldPath(id, label, 'status'), 'confirmed', 'test', now);
-  p.balance = { enabled: false, ...balance };
+  p.balance = { enabled: false, gate: { premium: [], paceLift: [] }, ...balance };
   return buildPolicyFile(p, Object.keys(p.providers).map(id => ({ id, name: id, metered: true })), now);
 }
 

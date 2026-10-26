@@ -9,11 +9,16 @@ const fresh = () => { const d = mkdtempSync(join(tmpdir(), 'augur-config-')); di
 afterEach(() => { while (dirs.length) rmSync(dirs.pop()!, { recursive: true, force: true }); });
 
 describe('config editing', () => {
+  it('lists every prose setting from ServiceConfig', () => {
+    for (const key of ['proseBatchSize', 'proseBatchHours', 'proseRoute', 'proseAutoRun']) expect(CONFIG_KEYS.some(entry => entry.key === key), key).toBe(true);
+  });
+
   it('lists every setting with its default before anything is written', () => {
     const lines = configLines(fresh());
     expect(lines.map(l => l.key)).toEqual(CONFIG_KEYS.map(k => k.key));
     expect(lines.every(l => l.value === l.default)).toBe(true);
     expect(lines.find(l => l.key === 'requirePick')).toMatchObject({ value: 'true', weakens: true });
+    expect(lines.find(l => l.key === 'aliasRefreshHours')).toMatchObject({ value: '24', default: '24' });
   });
 
   it('stores a value where the loader reads it, keeping every other key', () => {

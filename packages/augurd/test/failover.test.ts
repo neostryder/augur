@@ -5,6 +5,11 @@ import type { FailureInput } from '../src/failover.js';
 const base = (over: Partial<FailureInput> = {}): FailureInput => ({ tools: 'read', exitCode: 1, ...over });
 
 describe('classifyFailure', () => {
+  it('retries a preempted request at any tool tier', () => {
+    expect(classifyFailure(base({ tools: 'write', failure: 'preempted: the gateway gave the model to another request', answer: 'part', changed: true }))).toEqual({ retry: true, why: 'preempted' });
+    expect(classifyFailure(base({ stderrTail: 'HTTP 503: not preempted' })).retry).toBe(false);
+  });
+
   it('retries a spawn error', () => {
     expect(classifyFailure(base({ tools: 'write', spawnError: 'spawn ENOENT', exitCode: null }))).toEqual({ retry: true, why: 'spawn error' });
   });

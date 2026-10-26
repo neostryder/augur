@@ -11,6 +11,7 @@ export const KIND_LABELS: Record<AlertKind, string> = {
   models: 'New models to review',
   rules: 'Rule changes to accept',
   update: 'Update available',
+  backlog: 'Premium tasks need you',
 };
 
 export const ALERT_TEXT = {

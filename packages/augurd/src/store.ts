@@ -10,7 +10,7 @@ interface Row {
   created_at: number; started_at: number | null; ended_at: number | null; exit_code: number | null; reason: string | null;
   root_job_id: string; parent_job_id: string | null; depth: number; caller: string; named: number; harness_version: string | null;
   usage: string | null; runner_pid: number | null; child_pid: number | null; expect_file: string | null; timeout_s: number | null;
-  purged: number; workspace: string | null; patch_path: string | null; changed_files: number | null; prompt_chars: number | null; answer_chars: number | null;
+  purged: number; released: number; workspace: string | null; patch_path: string | null; changed_files: number | null; prompt_chars: number | null; answer_chars: number | null;
   charter: string | null; charter_chars: number | null; charter_notes: string | null; ambient: string | null;
   retry_of: string | null; retried_as: string | null; conversation: string | null; conversation_turn: number | null; served: string | null;
 }
@@ -31,7 +31,7 @@ const toRecord = (r: Row): JobRecord => {
     id: r.id, state: r.state as JobState, route: r.route, adapter: r.adapter, activity: r.activity as JobRecord['activity'], dataTier: r.data_tier as JobRecord['dataTier'],
     tools: r.tools as JobRecord['tools'], output: r.output as JobRecord['output'], cwd: r.cwd, createdAt: r.created_at, startedAt: r.started_at, endedAt: r.ended_at,
     exitCode: r.exit_code, reason: r.reason, rootJobId: r.root_job_id, parentJobId: r.parent_job_id, depth: r.depth, caller: JSON.parse(r.caller) as JobRecord['caller'],
-    named: r.named === 1, harnessVersion: r.harness_version, usage: r.usage ? JSON.parse(r.usage) as UsageReport : null,
+    named: r.named === 1, released: r.released === 1, harnessVersion: r.harness_version, usage: r.usage ? JSON.parse(r.usage) as UsageReport : null,
     promptChars: r.prompt_chars, answerChars: r.answer_chars,
     ...(charter ? { charter } : {}), ...(r.charter_chars != null ? { charterChars: r.charter_chars } : {}), ...(charterNotes?.length ? { charterNotes } : {}),
     ...(r.ambient === 'keep' || r.ambient === 'trim' ? { ambient: r.ambient } : {}), ...(servedOf(r.served) ? { served: servedOf(r.served) as Served } : {}),
@@ -54,7 +54,7 @@ const conversationFrom = (r: ConversationSql): Conversation => ({
 export interface NewJob {
   id: string; route: string; adapter: string; activity: string; dataTier: string; tools: string; output: string; cwd: string; createdAt: number;
   rootJobId: string; parentJobId: string | null; depth: number; caller: JobRecord['caller']; named: boolean; expectFile: string | null; timeoutS: number | null;
-  harnessVersion: string | null; workspace: string | null; conversation?: string | null; turn?: number | null;
+  harnessVersion: string | null; workspace: string | null; conversation?: string | null; turn?: number | null; released?: boolean;
 }
 
 export interface Patch { startedAt?: number; endedAt?: number; exitCode?: number | null; reason?: string; runnerPid?: number; childPid?: number }
@@ -69,7 +69,7 @@ export class Store {
       id text primary key, state text not null, route text not null, adapter text not null, activity text not null, data_tier text not null, tools text not null,
       output text not null, cwd text not null, created_at integer not null, started_at integer, ended_at integer, exit_code integer, reason text,
       root_job_id text not null, parent_job_id text, depth integer not null default 0, caller text not null, named integer not null default 0,
-      harness_version text, usage text, runner_pid integer, child_pid integer, expect_file text, timeout_s integer, purged integer not null default 0);
+      harness_version text, usage text, runner_pid integer, child_pid integer, expect_file text, timeout_s integer, purged integer not null default 0, released integer not null default 0);
       create index if not exists jobs_state on jobs(state);
       create index if not exists jobs_root on jobs(root_job_id);
       create table if not exists events(seq integer primary key autoincrement, job_id text, at integer not null, kind text not null, detail text not null default '');
@@ -80,7 +80,7 @@ export class Store {
         name text not null, route text not null, adapter text not null, native_id text, cwd text not null, tools text not null,
         turns integer not null, created_at integer not null, last_used_at integer not null, primary key (name, route));`);
     const have = new Set((this.db.prepare('pragma table_info(jobs)').all() as Array<{ name: string }>).map(c => c.name));
-    for (const [name, type] of [['workspace', 'text'], ['patch_path', 'text'], ['changed_files', 'integer'], ['prompt_chars', 'integer'], ['answer_chars', 'integer'], ['charter', 'text'], ['charter_chars', 'integer'], ['charter_notes', 'text'], ['ambient', 'text'], ['retry_of', 'text'], ['retried_as', 'text'], ['conversation', 'text'], ['conversation_turn', 'integer'], ['served', 'text']] as const) {
+    for (const [name, type] of [['workspace', 'text'], ['patch_path', 'text'], ['changed_files', 'integer'], ['prompt_chars', 'integer'], ['answer_chars', 'integer'], ['charter', 'text'], ['charter_chars', 'integer'], ['charter_notes', 'text'], ['ambient', 'text'], ['retry_of', 'text'], ['retried_as', 'text'], ['conversation', 'text'], ['conversation_turn', 'integer'], ['served', 'text'], ['released', 'integer not null default 0']] as const) {
       if (!have.has(name)) this.db.exec(`alter table jobs add column ${name} ${type}`);
     }
     const pickCols = new Set((this.db.prepare('pragma table_info(picks)').all() as Array<{ name: string }>).map(c => c.name));
@@ -92,9 +92,9 @@ export class Store {
   close(): void { this.db.close(); }
 
   insert(j: NewJob): void {
-    this.db.prepare(`insert into jobs(id,state,route,adapter,activity,data_tier,tools,output,cwd,created_at,root_job_id,parent_job_id,depth,caller,named,harness_version,expect_file,timeout_s,workspace,conversation,conversation_turn)
-      values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(j.id, 'queued', j.route, j.adapter, j.activity, j.dataTier, j.tools, j.output, j.cwd, j.createdAt, j.rootJobId,
-      j.parentJobId, j.depth, JSON.stringify(j.caller), j.named ? 1 : 0, j.harnessVersion, j.expectFile, j.timeoutS, j.workspace, j.conversation ?? null, j.turn ?? null);
+    this.db.prepare(`insert into jobs(id,state,route,adapter,activity,data_tier,tools,output,cwd,created_at,root_job_id,parent_job_id,depth,caller,named,harness_version,expect_file,timeout_s,workspace,conversation,conversation_turn,released)
+      values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(j.id, 'queued', j.route, j.adapter, j.activity, j.dataTier, j.tools, j.output, j.cwd, j.createdAt, j.rootJobId,
+      j.parentJobId, j.depth, JSON.stringify(j.caller), j.named ? 1 : 0, j.harnessVersion, j.expectFile, j.timeoutS, j.workspace, j.conversation ?? null, j.turn ?? null, j.released ? 1 : 0);
   }
 
   private row(id: string): Row | undefined { return this.db.prepare('select * from jobs where id=?').get(id) as Row | undefined; }

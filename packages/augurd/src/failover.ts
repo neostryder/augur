@@ -39,10 +39,12 @@ export interface FailureInput {
 
 const limited = (text: string): boolean => LIMIT_PATTERNS.some(p => p === '429' ? /(?:^|\D)429(?:\D|$)/.test(text) : text.toLowerCase().includes(p));
 
-/** A spawn error, a provider limit, or a timeout of a read-only job can be retried. A cancel, a write timeout, and an ordinary failure cannot. */
+/** A spawn error, a preemption by a person's request, a provider limit, or a timeout of a read-only job can be retried. A cancel, a write timeout, and an ordinary failure cannot. */
 export function classifyFailure(input: FailureInput): { retry: boolean; why: string } {
   if (input.killedBy === 'cancel') return { retry: false, why: 'cancelled' };
   if (input.spawnError) return { retry: true, why: 'spawn error' };
+  // A gateway that gave the model to a person's request ran nothing of this job, so it is safe to move whatever the tool tier.
+  if (/(?:^|\W)preempted:/.test(`${input.failure ?? ''}\n${input.stderrTail ?? ''}`)) return { retry: true, why: 'preempted' };
   if (input.killedBy === 'timeout') return { retry: input.tools === 'read' || input.tools === 'none', why: 'timed out' };
   if (limited(`${input.failure ?? ''}\n${input.stderrTail ?? ''}`)) {
     // A write or full job may have changed files. Retry a limit only when it left no answer and no recorded change.

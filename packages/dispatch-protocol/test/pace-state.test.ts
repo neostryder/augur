@@ -13,7 +13,7 @@ const NO_PREFER = Object.fromEntries(Object.keys(DEFAULT_BALANCE.prefer).map(m =
 function policyFrom(rules: Record<string, unknown>, balance?: Record<string, unknown>, names?: Record<string, string>): PolicyFile {
   const p = emptyPolicy(); importPolicy(p, openRules(rules), now);
   for (const [id, provider] of Object.entries(p.providers)) for (const label of Object.keys(provider.models)) setField(p, fieldPath(id, label, 'status'), 'confirmed', 'test', now);
-  p.balance = { prefer: NO_PREFER, ...balance };
+  p.balance = { gate: { premium: [], paceLift: [] }, prefer: NO_PREFER, ...balance };
   return buildPolicyFile(p, Object.keys(p.providers).map(id => ({ id, name: names?.[id] ?? id, metered: true })), now);
 }
 
