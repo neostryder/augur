@@ -428,6 +428,22 @@ export class UsageEngine implements EngineApi {
     await this.clearFeed();
   }
 
+  /** Premium notices raised since the service started. A dismissed notice stays gone while it still applies, so it is not raised again on the next poll. */
+  private premiumRaised = new Set<string>();
+
+  /**
+   * The service reports which premium notices apply now: backlog tasks that wait for the owner's approval, and surplus windows about to end with budget unspent.
+   * A new one raises an alert, and one that no longer applies leaves the feed.
+   */
+  async setPremiumNotices(notices: Array<{ key: string; title: string; body: string }>): Promise<void> {
+    const keys = new Set(notices.map((n) => `backlog.${n.key}`));
+    for (const id of [...this.premiumRaised]) if (!keys.has(id)) this.premiumRaised.delete(id);
+    const fresh = notices.filter((n) => !this.premiumRaised.has(`backlog.${n.key}`));
+    for (const n of fresh) this.premiumRaised.add(`backlog.${n.key}`);
+    if (fresh.length) await this.raise(fresh.map((n) => ({ id: `backlog.${n.key}`, kind: 'backlog' as const, severity: 'warn' as const, group: `backlog.${n.key}`, clears: { when: 'never' as const }, title: n.title, body: n.body })));
+    await this.dismiss(this.keeper.feed.alerts.filter((a) => a.kind === 'backlog' && !keys.has(a.id)).map((a) => a.id));
+  }
+
   async dismiss(ids: string[]): Promise<void> {
     ids = ids.filter(Boolean);
     if (ids.length && await this.keeper.dismiss(ids)) this.feedChanged();

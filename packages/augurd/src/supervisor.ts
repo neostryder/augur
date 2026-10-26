@@ -100,6 +100,9 @@ const MAX_ATTACHMENTS = 16;
 /** A route's size cap for one kind of attachment, in megabytes. */
 const optMb = (route: RouteConfig, key: string, fallback: number): number => optNum(route.options, key) ?? fallback;
 
+/** A surplus window with fewer hours than this left, budget unspent and an empty backlog raises a tray notice. */
+const SURPLUS_ENDING_HOURS = 12;
+
 export class Supervisor {
   private readonly proseQueue: ProseQueue;
   private readonly backlog: PremiumBacklog;
@@ -547,6 +550,21 @@ export class Supervisor {
     const backlog = { awaiting: rows.filter(x => x.status === 'awaiting-approval').map(x => ({ id: x.id, task: x.task, route: x.route, estimate: x.estimate ?? null, requester: x.requester, deadline: x.deadline ?? null })),
       queued: rows.filter(x => x.status === 'queued').length, running: rows.filter(x => x.status === 'running').length };
     return { close: rules.gate.close, providers, backlog };
+  }
+
+  /** Notices for the owner's attention: backlog tasks waiting for approval, and a surplus window about to close with budget unspent and nothing queued to use it. */
+  premiumNotices(): Array<{ key: string; title: string; body: string }> {
+    const rows = this.backlog.list(), out: Array<{ key: string; title: string; body: string }> = [];
+    for (const item of rows.filter(x => x.status === 'awaiting-approval')) out.push({ key: `await.${item.id}`, title: 'A premium task waits for your approval', body: `${item.task} (${item.route}, asked by ${item.requester}). Approve it in Augur or run augur backlog approve ${item.id}.` });
+    const policy = this.d.policy();
+    if (policy && !rows.some(x => x.status === 'queued' || x.status === 'running' || x.status === 'awaiting-approval')) {
+      const result = rank(policy, this.d.usage(), { activity: 'research', dataTier: 'public', gateState: this.gateRead(), surplusState: this.surplusRead() }, new Date(this.now()));
+      for (const [provider, window] of Object.entries(result.surplus)) {
+        if (!window.open || window.spent || window.stale || window.hoursLeft === null || window.hoursLeft > SURPLUS_ENDING_HOURS) continue;
+        out.push({ key: `window.${provider}.${window.resetsAt ?? 'next'}`, title: `${provider} has unused premium budget that is about to expire`, body: `The ${provider} surplus window closes at reset in about ${Math.max(1, Math.round(window.hoursLeft))}h with ${Math.floor(window.budgetLeft)} points of budget left and nothing queued to use it. Add a task with augur backlog add.` });
+      }
+    }
+    return out;
   }
 
   backlogAdd(item: unknown, author: 'owner' | 'agent' = 'owner'): BacklogItem | { error: string } {

@@ -162,11 +162,15 @@ export async function startService(opts: ServiceOptions = {}) {
   };
   hourlyTasks();
   const hourly = setInterval(hourlyTasks, 3600000);
+  // Premium notices (tasks waiting for approval, a surplus window ending unspent) reach the tray and the other outlets through the engine's feed.
+  const premiumNotices = () => { try { void engine?.setPremiumNotices(supervisor.premiumNotices()).catch(e => log(`premium notices failed: ${(e as Error).message}`)); } catch (e) { log(`premium notices failed: ${(e as Error).message}`); } };
+  const notices = setInterval(premiumNotices, 30000);
+  notices.unref();
   log('started');
   return {
     supervisor, store, config,
     engine, web,
-    async stop() { await web?.close(); engine?.stop(); clearInterval(timer); clearInterval(daily); clearInterval(hourly); await server.close(); await engine?.flush(); store.close(); log('stopped'); },
+    async stop() { await web?.close(); engine?.stop(); clearInterval(timer); clearInterval(daily); clearInterval(hourly); clearInterval(notices); await server.close(); await engine?.flush(); store.close(); log('stopped'); },
   };
 }
 
