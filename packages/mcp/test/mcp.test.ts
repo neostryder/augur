@@ -63,6 +63,8 @@ describe('gate and backlog output', () => {
     const approved = '2026-10-01T12:00:00Z';
     const gate = await createTools(deps({ gate_status: { providers: [{ provider: 'claude', state: 'open', gap: 3, window: 'window open', labels: ['claude/opus'], lastApproval: approved }] } })).gateStatus();
     expect(gate.text).toContain(`approved ${approved}`);
+    const waiting = await createTools(deps({ gate_status: { providers: [], backlog: { awaiting: [{ id: 'a', task: 't', route: 'claude/opus', estimate: 1, requester: 'r', deadline: null }], queued: 0, running: 0 } } })).gateStatus();
+    expect(waiting.text).toContain('1 premium task waits for the owner');
     const row = { id: 'item', author: 'agent', status: 'awaiting-approval', route: 'claude/opus', task: 'write', activity: 'write_code', requester: 'agent-7', repo: 'augur', data: 'internal', tools: 'write', output: 'patch_only', cwd: '/work/repo', prompt: { text: 'prompt' }, estimate: 2, deadline: approved };
     const list = await createTools(deps({ backlog_list: [row] })).backlogList({});
     expect(list.text).toContain('data=internal tools=write output=patch_only');

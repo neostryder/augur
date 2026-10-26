@@ -37,6 +37,17 @@ describe('the dashboard gate row', () => {
     const html = renderDashboard({ config, snapshot, history: [], plugins: new Map(), busy: false, twoColumns: false, expanded: null, dark: false, shellKind: 'desktop', gates: [{ provider: 'claude', state: 'closed', gap: null, close: 10, window, labels: ['claude/opus'] }] });
     expect(html).toContain(window);
   });
+  it('lists premium tasks that wait for approval with an Approve button each, and the last failure', () => {
+    const config = defaultConfig();
+    config.providers = [{ id: 'claude', enabled: true, settings: {} }];
+    const snapshot = { generatedAt: '2026-10-04T12:00:00Z', providers: {} } as never;
+    const awaiting = [{ id: 'bk1', task: 'refactor the parser', route: 'claude/opus', estimate: 3, requester: 'agent-7', deadline: null }];
+    const html = renderDashboard({ config, snapshot, history: [], plugins: new Map(), busy: false, twoColumns: false, expanded: null, dark: false, shellKind: 'desktop', awaiting, awaitingNote: 'Item bk1 expired.' });
+    expect(html).toContain('refactor the parser (agent-7 wants claude/opus, about 3 points)');
+    expect(html).toContain('data-action="backlog-approve" data-backlog="bk1"');
+    expect(html).toContain('Item bk1 expired.');
+    expect(renderDashboard({ config, snapshot, history: [], plugins: new Map(), busy: false, twoColumns: false, expanded: null, dark: false, shellKind: 'desktop' })).not.toContain('backlog-approve');
+  });
 });
 
 describe('stance chips on the rules page', () => {

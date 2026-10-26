@@ -233,7 +233,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
         if (rest[0] === 'status') {
           const r = await call('gate_status', undefined, opts);
           if ('error' in r) { io.err(r.error + String.fromCharCode(10)); return EXIT_CODES.failed; }
-          say(r.providers.map(x => `${x.provider}: ${x.state}, ${x.gap === null ? 'no weekly window' : `${x.gap} points behind pace`}${x.window ? `; ${x.window}` : ''}; gated ${x.labels.join(', ')}${x.lastApproval ? `; approved ${x.lastApproval}` : ''}`).join(String.fromCharCode(10)) || 'No premium gates.', r); return 0;
+          say([...r.providers.map(x => `${x.provider}: ${x.state}, ${x.gap === null ? 'no weekly window' : `${x.gap} points behind pace`}${x.window ? `; ${x.window}` : ''}; gated ${x.labels.join(', ')}${x.lastApproval ? `; approved ${x.lastApproval}` : ''}`), ...(r.backlog?.awaiting.length ? [`${r.backlog.awaiting.length} premium ${r.backlog.awaiting.length === 1 ? 'task waits' : 'tasks wait'} for your approval: ${r.backlog.awaiting.map(x => x.id).join(', ')}`] : [])].join(String.fromCharCode(10)) || 'No premium gates.', r); return 0;
         }
         if (rest[0] === 'report') {
           const r = await call('gate_report', undefined, opts);

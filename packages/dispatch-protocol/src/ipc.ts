@@ -72,7 +72,7 @@ export interface Methods {
   pressure: { params: undefined; result: { pressure: Record<string, Headroom>; factors: Record<string, number>; scarcity: number } | null };
   /** The balance report records current provider window changes on the owner's path; agent calls read it without recording changes. */
   balance: { params: { days?: number } | undefined; result: BalanceReport | { error: string } };
-  gate_status: { params: undefined; result: { close: number; providers: Array<{ provider: string; state: 'open' | 'closed'; gap: number | null; window: string | null; labels: string[]; lastApproval: string | null }> } | { error: string } };
+  gate_status: { params: undefined; result: { close: number; providers: Array<{ provider: string; state: 'open' | 'closed'; gap: number | null; window: string | null; labels: string[]; lastApproval: string | null }>; /** Absent from a service older than the premium backlog. */ backlog?: { awaiting: Array<{ id: string; task: string; route: string; estimate: number | null; requester: string; deadline: string | null }>; queued: number; running: number } } | { error: string } };
   gate_report: { params: undefined; result: Record<string, unknown> | { error: string } };
   gate_record: { params: { kind: string; route: string; scope: string; note?: string }; result: { ok: true } | { error: string } };
   /** Records a person's answer to a pending proposal: the route they chose, and an optional reason. The chosen route is then cleared for jobs, and the answer feeds training mode. */

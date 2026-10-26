@@ -50,4 +50,15 @@ describe('usage gate row', () => {
     await t.app.poll();
     expect(t.draw(100, 30)).toContain(window);
   });
+  it('lists premium tasks that wait for approval', async () => {
+    const usage = new UsagePage(), list = pages();
+    list[0] = usage;
+    const awaiting = [{ id: 'bk1', task: 'refactor the parser', route: 'claude/opus', estimate: 3, requester: 'agent-7', deadline: null }];
+    const t = setup(undefined, { pages: list, answers: { gate_status: { close: 10, providers: [], backlog: { awaiting, queued: 0, running: 0 } } } });
+    await t.app.poll();
+    const screen = t.draw(120, 30);
+    expect(screen).toContain('1 premium task waits for your approval');
+    expect(screen).toContain('bk1');
+    expect(screen).toContain('agent-7 wants claude/opus');
+  });
 });

@@ -344,7 +344,7 @@ export function createTools(d: McpDeps) {
   }
 
   async function gateStatus(): Promise<ToolResult> {
-    return guarded(() => d.call('gate_status', undefined, d.opts), r => 'error' in r ? fail(r.error) : { text: r.providers.map(p => `${p.provider}: ${p.state}, ${p.gap === null ? 'no weekly window' : `${p.gap} points behind pace`}${p.window ? `; ${p.window}` : ''}; gated ${p.labels.join(', ')}${p.lastApproval ? `; approved ${p.lastApproval}` : ''}`).join('\n') || 'No premium gates.', data: r as unknown as Record<string, unknown> });
+    return guarded(() => d.call('gate_status', undefined, d.opts), r => 'error' in r ? fail(r.error) : { text: r.providers.map(p => `${p.provider}: ${p.state}, ${p.gap === null ? 'no weekly window' : `${p.gap} points behind pace`}${p.window ? `; ${p.window}` : ''}; gated ${p.labels.join(', ')}${p.lastApproval ? `; approved ${p.lastApproval}` : ''}`).concat(r.backlog?.awaiting.length ? [`${r.backlog.awaiting.length} premium ${r.backlog.awaiting.length === 1 ? 'task waits' : 'tasks wait'} for the owner's approval`] : []).join('\n') || 'No premium gates.', data: r as unknown as Record<string, unknown> });
   }
   async function gateReport(): Promise<ToolResult> {
     return guarded(() => d.call('gate_report', undefined, d.opts), r => 'error' in r ? fail(String(r.error)) : { text: JSON.stringify(r), data: r as Record<string, unknown> });
