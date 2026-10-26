@@ -532,7 +532,7 @@ export class Supervisor {
     return report;
   }
 
-  gateStatus(): { close: number; providers: Array<{ provider: string; state: 'open' | 'closed'; gap: number | null; window: string | null; labels: string[]; lastApproval: string | null }> } | { error: string } {
+  gateStatus(): { close: number; providers: Array<{ provider: string; state: 'open' | 'closed'; gap: number | null; window: string | null; labels: string[]; lastApproval: string | null }>; backlog: { awaiting: Array<{ id: string; task: string; route: string; estimate: number | null; requester: string; deadline: string | null }>; queued: number; running: number } } | { error: string } {
     const policy = this.d.policy();
     if (!policy) return { error: 'policy.json was not found.' };
     const now = new Date(this.now()), rules = resolveBalance(policy.balance), result = rank(policy, this.d.usage(), { activity: 'research', dataTier: 'public', gateState: this.gateRead(), surplusState: this.surplusRead() }, now);
@@ -543,7 +543,10 @@ export class Supervisor {
       return { provider, state: result.gateState[provider] ? 'open' as const : 'closed' as const, gap: result.gateGaps[provider] ?? null, window: windowStatus,
         labels: rules.gate.premium.filter(x => x.startsWith(`${provider}/`)), lastApproval: approvals.at(-1)?.at ?? null };
     });
-    return { close: rules.gate.close, providers };
+    const rows = this.backlog.list();
+    const backlog = { awaiting: rows.filter(x => x.status === 'awaiting-approval').map(x => ({ id: x.id, task: x.task, route: x.route, estimate: x.estimate ?? null, requester: x.requester, deadline: x.deadline ?? null })),
+      queued: rows.filter(x => x.status === 'queued').length, running: rows.filter(x => x.status === 'running').length };
+    return { close: rules.gate.close, providers, backlog };
   }
 
   backlogAdd(item: unknown, author: 'owner' | 'agent' = 'owner'): BacklogItem | { error: string } {

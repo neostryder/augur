@@ -2,7 +2,7 @@
 // selected limit. The arrow keys move between providers and limits; the selection follows the item, not the row, as figures change.
 import { allPlugins, type AppConfig, type HistoryRow, type Meter, type ProviderSnapshot } from '@augur/core';
 import { bar, box, center, spans, textWidth, wrap, type Key, type Rect, type Screen, type Spans, type Style } from '@augur/terminal';
-import { USAGE_TEXT, ago, errorText, money, notesParts, paceInfo, series, sevOf, statusLabel, tightest, until, windowed } from '@augur/view-model';
+import { BACKLOG_TEXT, USAGE_TEXT, ago, errorText, money, notesParts, paceInfo, series, sevOf, statusLabel, tightest, until, windowed, type AwaitingItem } from '@augur/view-model';
 import type { Ctx, Hint, Overlay, Page } from '../page.js';
 import { sevStyle, type Theme } from '../theme.js';
 
@@ -20,12 +20,13 @@ export class UsagePage implements Page {
   private top = 0;
   private gateClose = 10;
   private gates: Array<{ provider: string; state: 'open' | 'closed'; gap: number | null; window: string | null; labels: string[] }> = [];
+  private awaiting: AwaitingItem[] = [];
 
   async refresh(ctx: Ctx): Promise<void> {
     try {
       const result = await ctx.link.call('gate_status');
-      if (!('error' in result)) { this.gates = result.providers; this.gateClose = result.close; }
-    } catch { this.gates = []; }
+      if (!('error' in result)) { this.gates = result.providers; this.gateClose = result.close; this.awaiting = result.backlog?.awaiting ?? []; }
+    } catch { this.gates = []; this.awaiting = []; }
   }
 
   private enabled(config: AppConfig): string[] {
@@ -41,6 +42,12 @@ export class UsagePage implements Page {
       const pct = Math.round(t.m.usedPct!), sev = sevOf(t.m.usedPct!);
       const label = `${t.p.name}, ${t.m.label.charAt(0).toLowerCase()}${t.m.label.slice(1)}`;
       out.push({ draw: (s, x, y, ww) => spans(s, x, y, ww, [[`${pct}%`, { ...sevStyle(theme, sev), bold: true }], ['  '], [label, { bold: true }], ['  '], [until(t.m.resetsAt, now) || USAGE_TEXT.mostUsed, { dim: true }]]) });
+      out.push(blank);
+    }
+    if (this.awaiting.length) {
+      out.push(text(BACKLOG_TEXT.count(this.awaiting.length), { bold: true }));
+      for (const item of this.awaiting) out.push(text(`  ${item.id}  ${BACKLOG_TEXT.item(item)}`, { dim: true }));
+      out.push(text(BACKLOG_TEXT.hint, { dim: true }));
       out.push(blank);
     }
     const inner = w - 2;

@@ -297,7 +297,9 @@ describe('premium backlog release selection', () => {
     expect(e.sup.backlogRun().released).toEqual([]);
     if ('error' in added) return;
     expect(e.sup.backlogList('awaiting-approval')).toHaveLength(1);
+    expect(e.sup.gateStatus()).toMatchObject({ backlog: { awaiting: [{ id: added.id, requester: expect.any(String), route: expect.any(String) }], queued: 0, running: 0 } });
     expect(e.sup.backlogApprove(added.id)).toMatchObject({ status: 'queued' });
+    expect(e.sup.gateStatus()).toMatchObject({ backlog: { awaiting: [], queued: 1 } });
     expect(e.sup.backlogRun().released).toEqual([added.id]);
   });
 

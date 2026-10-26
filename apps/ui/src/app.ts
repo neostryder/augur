@@ -3,7 +3,7 @@ import { ACTIVITY_LABELS, DATA_TIER_LABELS, WEIGHT_LABELS, addModels, applyEdit,
 import * as core from './core';
 import type { HistoryRow } from './core';
 import { renderDashboard, tightest, updateTip, type DashboardModel } from './views/dashboard';
-import { BULK_FIELDS, RULES_TEXT, dialEndChoices, heldRows, localPage, parseCustom, parsePercents, pauseResets, pauseValue, planDialBack, previewBulk, validModelId, type BulkPreview, type DialBackPlan } from '@augur/view-model';
+import { BULK_FIELDS, RULES_TEXT, type AwaitingItem, dialEndChoices, heldRows, localPage, parseCustom, parsePercents, pauseResets, pauseValue, planDialBack, previewBulk, validModelId, type BulkPreview, type DialBackPlan } from '@augur/view-model';
 import { renderPair } from './views/pair';
 import { CUSTOM_EXAMPLE, PUSH_TEXT, renderSettings, type LoginUi, type SettingsModel } from './views/settings';
 import { addUnfound, applyDetection, fillRank, goStep, initialView, loadProfile, moveRank, noteAdded, openSetup, providerHasWindow, refreshPlan, renderSetup, runApply, selectStack, setConfirmed, setHold, setListAnswer, setPayAmount, setPayNone, setStrength, shiftStep, toggleListModel, togglePayProvider, useStrongFor, modelsOf, type SetupModel, type SetupTrack } from './views/setup';
@@ -83,6 +83,8 @@ export class App {
   private jobsTimer: ReturnType<typeof setInterval> | undefined;
   private stances: Record<string, string> = {};
   private gates: Array<{ provider: string; state: 'open' | 'closed'; gap: number | null; close: number; labels: string[] }> = [];
+  private awaiting: AwaitingItem[] = [];
+  private awaitingNote = '';
   private balancePage: BalanceModel = { report: null, error: '' };
   /** The machine open on the Local page, and the recent jobs a gateway served. */
   private localSel: string | null = null;
@@ -471,7 +473,7 @@ export class App {
       config: this.config, snapshot: this.snapshot, history: this.history, plugins: this.pluginMap(), busy: this.busy,
       twoColumns: this.twoColumns, expanded: this.expanded, dark: this.isDark(), shellKind: this.shell.kind, desktopWait: this.desktopWait, update: this.update,
       canDispatch: this.shell.dispatch !== undefined,
-      gates: this.gates,
+      gates: this.gates, awaiting: this.awaiting, awaitingNote: this.awaitingNote,
     };
   }
 
@@ -1283,11 +1285,11 @@ export class App {
   }
 
   private async loadGateStatus(): Promise<void> {
-    if (!this.shell.dispatch) { this.gates = []; return; }
+    if (!this.shell.dispatch) { this.gates = []; this.awaiting = []; return; }
     try {
-      const result = await this.augur<{ close: number; providers: Array<{ provider: string; state: 'open' | 'closed'; gap: number | null; labels: string[] }> } | { error: string }>(['gate', 'status', '--json']);
-      if (result.data && !('error' in result.data)) { const close = result.data.close; this.gates = result.data.providers.map(provider => ({ ...provider, close })); }
-    } catch { this.gates = []; }
+      const result = await this.augur<{ close: number; providers: Array<{ provider: string; state: 'open' | 'closed'; gap: number | null; labels: string[] }>; backlog?: { awaiting: AwaitingItem[] } } | { error: string }>(['gate', 'status', '--json']);
+      if (result.data && !('error' in result.data)) { const close = result.data.close; this.gates = result.data.providers.map(provider => ({ ...provider, close })); this.awaiting = result.data.backlog?.awaiting ?? []; }
+    } catch { this.gates = []; this.awaiting = []; }
   }
 
   private async loadRoutes(): Promise<void> {
@@ -1451,6 +1453,7 @@ export class App {
       case 'setup-again': await this.openInterview(false); break;
       case 'pair-alone': await this.openInterview(true); break;
       case 'retry-policy': await this.engine?.retryPolicy(); break;
+      case 'backlog-approve': { const r = await this.augur(['backlog', 'approve', t.dataset.backlog ?? '', '--yes']); this.awaitingNote = r.code === 0 ? '' : r.err || r.text || 'The approval did not go through.'; await this.loadGateStatus(); await this.render(); break; }
       case 'edit-accept': case 'edit-dismiss': await this.engine?.answerEdit(t.dataset.edit ?? '', t.dataset.action === 'edit-accept'); break;
       case 'rules': this.view = 'rules'; this.rules.showHistory = false; if (t.dataset.value) this.rules.filter = t.dataset.value as RulesFilter; await this.render(); void this.loadStances(); break;
       case 'rules-dial': this.rules.dialOpen = !this.rules.dialOpen; this.rules.dialPlan = null; this.rules.dialError = ''; await this.render(); break;

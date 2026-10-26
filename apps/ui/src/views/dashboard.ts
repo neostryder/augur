@@ -1,7 +1,8 @@
+import type { AwaitingItem } from '@augur/view-model';
 import type { AppConfig, Meter, ProviderPlugin, ProviderSnapshot, Snapshot } from '@augur/core';
 import type { UpdateState } from '../app';
 import { series, type HistoryRow } from '../core';
-import { USAGE_TEXT, errorText, localCard, notesParts, paceInfo, statusLabel, tightest as tightestMeter, windowed } from '@augur/view-model';
+import { BACKLOG_TEXT, USAGE_TEXT, errorText, localCard, notesParts, paceInfo, statusLabel, tightest as tightestMeter, windowed } from '@augur/view-model';
 import { ICON, ago, esc, money, sevOf, until, when } from '../util';
 import { chart } from './chart';
 import { localCardBody } from './local';
@@ -24,6 +25,10 @@ export interface DashboardModel {
   /** True where the app carries the dispatch service, which is what the Jobs page reads. */
   canDispatch?: boolean;
   gates?: Array<{ provider: string; state: 'open' | 'closed'; gap: number | null; window?: string | null; close: number; labels: string[] }>;
+  /** Premium tasks an agent added that wait for the owner's approval. */
+  awaiting?: AwaitingItem[];
+  /** Why the last approval failed, shown under the waiting items. */
+  awaitingNote?: string;
 }
 
 const WINDOWED = windowed;
@@ -166,6 +171,8 @@ export function renderDashboard(model: DashboardModel): string {
       <b>${esc(t.p.name)}, ${esc(t.m.label.charAt(0).toLowerCase() + t.m.label.slice(1))}</b><span>${esc(until(t.m.resetsAt)) || 'Most-used limit right now'}</span></div>
       ${sev ? `<span class="grow"></span><span class="sev ${sev}">${sev === 'crit' ? ICON.crit : ICON.warn}</span>` : ''}</div>`;
   }
+  for (const item of model.awaiting ?? []) html += `<div class="card rbanner held"><span class="grow">${esc(BACKLOG_TEXT.item(item))}</span><button class="btn small primary" data-action="backlog-approve" data-backlog="${esc(item.id)}">${BACKLOG_TEXT.approve}</button></div>`;
+  if (model.awaitingNote) html += `<div class="rnote" role="status">${esc(model.awaitingNote)}</div>`;
   html += `<div class="cards${model.twoColumns ? ' two' : ''}" id="cards">${enabled.map((p) => cardHtml(model, p.id)).join('')}</div>`;
   return html;
 }
