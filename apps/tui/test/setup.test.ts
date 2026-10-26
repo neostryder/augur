@@ -72,12 +72,33 @@ describe('the stack step', () => {
     expect(text).toContain('Several subscriptions');
     expect(text).toContain('API keys only');
     expect(text).toContain('Start from a profile file');
-    expect(text).toContain('Esc back');
+    expect(new SetupPage().hints()).toContainEqual(['Esc', 'Back']);
     const next = reduce(reduce(model, k('down')).model, k('enter')).model;
     expect(next.answers.stack).toBe('several');
     expect(next.answers.rank).toEqual(['claude']);
     expect(reduce(model, ch('3')).model.step).toBe('pace');
     expect(reduce(model, k('tab')).model.step).toBe('providers');
+  });
+
+  it('wraps the onboarding explanations and step notes instead of cutting them off', () => {
+    const lines = renderSetup(opened(), 128);
+    const form = lines.map((line) => line.slice(28, 88)).join(' ').replace(/\s+/g, ' ');
+    const steps = lines.map((line) => line.slice(0, 26)).join(' ').replace(/\s+/g, ' ');
+    expect(form).toContain('nothing else to balance.');
+    expect(form).toContain('You choose which ones to pace and the order Augur uses them in.');
+    expect(steps).toContain('A step you leave alone changes nothing.');
+    expect(lines.some((line) => line.slice(28, 88).startsWith('  else to balance.'))).toBe(true);
+    expect(lines.join(' ')).not.toContain('Up/Down');
+    expect(lines.every((line) => line.length <= 128)).toBe(true);
+  });
+
+  it('keeps every step label visible in a narrow terminal', () => {
+    const lines = renderSetup(opened(), 48);
+    const text = lines.join(' ').replace(/\s+/g, ' ');
+    expect(text).toContain('1 Stack');
+    expect(text).toContain('5 Done');
+    expect(lines.some((line) => line.startsWith('  has nothing else to balance.'))).toBe(true);
+    expect(lines.every((line) => line.length <= 48)).toBe(true);
   });
 
   it('rejects an invalid profile and leaves the answers and the plan as they were', () => {
@@ -267,7 +288,7 @@ describe('where the interview opens', () => {
     expect(text).toContain('API keys only');
     expect(text).toContain('Start from a profile file');
     expect(text).not.toContain('Start tracking');
-    expect(text).toContain('Esc back');
+    expect(new SetupPage().hints()).toContainEqual(['Esc', 'Back']);
     await t.app.key(k('escape'));
     expect(t.app.page.name).toBe('Usage');
     expect(t.calls.filter(([m]) => m === 'saveConfig' || m === 'finishSetup')).toHaveLength(0);

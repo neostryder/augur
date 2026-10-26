@@ -49,8 +49,6 @@ const CUSTOM_HOLD = 'This subscription has custom values from your current setup
 /** "1 change", "3 changes". */
 const changeCount = (n: number): string => `${n} change${n === 1 ? '' : 's'}`;
 
-export const SETUP_HELP = 'Up/Down move  Enter choose  Tab next step  1-5 step  u/d reorder  Esc back';
-
 export interface TuiTrack {
   id: string;
   name: string;
@@ -501,24 +499,34 @@ function beside(cols: string[][], widths: number[]): string[] {
   return out;
 }
 
-function stepColumn(model: TuiModel): string[] {
+function stepColumn(model: TuiModel, width: number): string[] {
   const lines = ['Steps'];
   SETUP_STEPS.forEach((s, i) => {
     const mark = stepTicked(model, s.id) ? 'ok' : String(i + 1);
     const prefix = model.step === s.id ? '*' : ' ';
-    lines.push(`${prefix} ${mark} ${s.title}`);
-    lines.push(`    ${stepNote(model, s.id)}`);
+    lines.push(...wrapLine(`${prefix} ${mark} ${s.title}`, width, '  '));
+    lines.push(...wrapLine(`    ${stepNote(model, s.id)}`, width));
   });
-  lines.push('A step you leave alone changes nothing.');
+  lines.push(...wrapLine('A step you leave alone changes nothing.', width));
   return lines;
 }
 
-function stepLine(model: TuiModel, width: number): string {
-  const text = SETUP_STEPS.map((s, i) => {
+function stepLine(model: TuiModel, width: number): string[] {
+  const labels = SETUP_STEPS.map((s, i) => {
     const label = `${i + 1} ${SHORT[s.id]}`;
     return model.step === s.id ? `[${label}]` : label;
-  }).join('  ');
-  return text.length > width ? text.slice(0, width) : text;
+  });
+  const rows: string[] = [];
+  let row = '';
+  for (const label of labels) {
+    const next = row ? `${row}  ${label}` : label;
+    if (next.length > width && row) {
+      rows.push(row);
+      row = label;
+    } else row = next;
+  }
+  if (row) rows.push(...linesOf(row, width));
+  return rows;
 }
 
 function formLines(model: TuiModel): string[] {
@@ -553,22 +561,29 @@ function linesOf(text: string, width: number): string[] {
   return out;
 }
 
+function wrapLine(text: string, width: number, continuation = ''): string[] {
+  if (text.length <= width) return [text];
+  const indent = text.match(/^\s*/)?.[0] ?? '';
+  const hanging = continuation || indent;
+  const available = Math.max(1, width - Math.max(indent.length, hanging.length));
+  return linesOf(text.slice(indent.length), available).map((line, i) => `${i === 0 ? indent : hanging}${line}`);
+}
+
 /** Lines for one frame. Wide terminals put the steps on the left. Narrow ones keep the summary above Apply. */
 export function renderSetup(model: TuiModel, width: number): string[] {
   const safe = clamp(model);
   const form = formLines(safe);
-  const help = SETUP_HELP.length > width ? SETUP_HELP.slice(0, width) : SETUP_HELP;
   if (width >= WIDE) {
-    const steps = stepColumn(safe);
+    const steps = stepColumn(safe, 26);
     const summary = width >= SUMMARY_COL ? ['What Augur will set', ...summaryLines(safe.plan).flatMap((g) => g.lines)] : [];
     const formW = Math.max(20, width - 28 - (summary.length ? 36 : 0) - (summary.length ? 4 : 2));
-    const cols = [steps, form.map((l) => l.length > formW ? l.slice(0, formW) : l)];
+    const cols = [steps, form.flatMap((l) => wrapLine(l, formW, '  '))];
     const widths = [26, formW];
-    if (summary.length) { cols.push(summary.map((l) => linesOf(l, 34)).flat()); widths.push(34); }
-    return [...beside(cols, widths), help];
+    if (summary.length) { cols.push(summary.flatMap((l) => wrapLine(l, 34, '  '))); widths.push(34); }
+    return beside(cols, widths);
   }
   const extra = model.step === 'review' ? [] : summaryLines(safe.plan).flatMap((g) => g.lines).map((l) => `  ${l}`);
-  return [stepLine(safe, width), ...[...form, ...extra].flatMap((l) => linesOf(l, width)), help];
+  return [...stepLine(safe, width), ...[...form, ...extra].flatMap((l) => wrapLine(l, width, '  '))];
 }
 
 function cycle<T>(list: readonly T[], cur: T | undefined, dir: -1 | 1): T {
