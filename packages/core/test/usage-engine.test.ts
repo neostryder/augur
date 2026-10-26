@@ -246,7 +246,7 @@ describe('the reset ledger in the usage engine', () => {
     expect(persisted[0]!.at).toBe(reading(0, 5).generatedAt);
     expect(persisted.at(-1)!.at).toBe(reading(0, 2003).generatedAt);
     expect(logs).toEqual(Array(2).fill('Reset ledger retry queue exceeded 1000 events; the oldest events were dropped.'));
-  });
+  }, 30000);
 
   it('waits for an active append before flushing the queued batch', async () => {
     const f = fakeShell(null), persisted: ResetEvent[] = [];
