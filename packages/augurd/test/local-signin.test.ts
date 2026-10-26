@@ -10,9 +10,9 @@ const home = () => { const d = mkdtempSync(join(tmpdir(), 'augur-signin-')); dir
 afterEach(() => { registerSignInFlow('claude', null); for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
 
 describe('local sign-in flows', () => {
-  it('add nothing when the home folder has no file', async () => {
+  it('add no local flows when the home folder has no file and keeps built-in Claude sign-in', async () => {
     expect(await loadLocalSignIn(home())).toEqual({ added: [], error: null });
-    expect(isSignInProvider('claude')).toBe(false);
+    expect(isSignInProvider('claude')).toBe(true);
   });
 
   it('register the flows the file exports, and skip an export that is not a flow', async () => {

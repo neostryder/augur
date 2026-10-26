@@ -42,6 +42,49 @@ function pasteFlow(): SignInFlow {
   };
 }
 
+describe('Augur sign-in to Claude', () => {
+  it('is available by default and starts a PKCE sign-in with only the usage scopes', async () => {
+    const { host } = fake(() => reply(500));
+    expect(signInProviders()).toEqual(['claude', 'codex']);
+    expect(isSignInProvider('claude')).toBe(true);
+    const { start, pending } = await beginLogin(host, 'claude');
+    const url = new URL(start.url);
+    expect(start.mode).toBe('paste');
+    expect(url.origin + url.pathname).toBe('https://claude.com/cai/oauth/authorize');
+    expect(url.searchParams.get('scope')).toBe('user:profile user:inference');
+    expect(url.searchParams.get('code_challenge_method')).toBe('S256');
+    expect(url.searchParams.get('code_challenge')).toBeTruthy();
+    expect(pending.data.verifier).toBeTruthy();
+    expect(start.url).not.toContain(pending.data.verifier);
+    expect(url.searchParams.get('state')).toBe(pending.data.state);
+  });
+
+  it('exchanges the code and stores only the refresh token in Augur\'s key store', async () => {
+    const { host, secrets, calls } = fake(() => reply(200, { access_token: 'access-1', refresh_token: 'refresh-1', expires_in: 3600, scope: 'user:profile user:inference' }));
+    const { pending } = await beginLogin(host, 'claude');
+    expect(await completeLogin(host, pending, 'one-time-code#' + pending.data.state)).toEqual({ done: true });
+    const body = JSON.parse(calls[0]!.body!);
+    expect(body).toMatchObject({ grant_type: 'authorization_code', code: 'one-time-code', client_id: '9d1c250a-e61b-44d9-88ed-5944d1962f5e' });
+    expect(body.code_verifier).toBe(pending.data.verifier);
+    const stored = JSON.parse(secrets.get(sessionSecretName('claude'))!);
+    expect(stored.refreshToken).toBe('refresh-1');
+    expect(JSON.stringify(stored)).not.toContain('access-1');
+    expect(await ownAccessToken(host, 'claude')).toBe('access-1');
+  });
+
+  it('rejects a code from another sign-in and a grant without usage scope', async () => {
+    const wrong = fake(() => reply(200));
+    const { pending } = await beginLogin(wrong.host, 'claude');
+    await expect(completeLogin(wrong.host, pending, 'code#not-the-state')).rejects.toThrow(/different sign-in/);
+    expect(wrong.calls).toHaveLength(0);
+
+    const narrow = fake(() => reply(200, { access_token: 'a', refresh_token: 'r', scope: 'user:inference' }));
+    const started = await beginLogin(narrow.host, 'claude');
+    await expect(completeLogin(narrow.host, started.pending, 'code#' + started.pending.data.state)).rejects.toThrow(/cannot read usage/);
+    expect(narrow.secrets.size).toBe(0);
+  });
+});
+
 describe('a provider with no flow registered', () => {
   it('is not signed in to, has no own session, and is left to its CLI login', async () => {
     registerSignInFlow('claude', null);

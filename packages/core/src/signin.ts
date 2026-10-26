@@ -1,9 +1,8 @@
 // Augur's own sign-in to a provider. The session lives in Augur's key store, apart from the provider CLIs' files, so the two never fight over one
-// single-use refresh token, and a computer with no CLI signed in (or no browser at all) can still meter. Each provider is a flow registered here:
-// Codex's is built in and uses OpenAI's device code, which Augur polls. Other flows are added with `registerSignInFlow`, and a provider with no
-// flow registered keeps reading the CLI's login.
+// single-use refresh token, and a computer with no CLI signed in (or no browser at all) can still meter. Claude's pasted-code flow and Codex's
+// device-code flow ship with Augur. Other flows may be added locally with `registerSignInFlow`.
 import type { Host, HttpResponse } from './types.js';
-import { json, num, obj } from './util.js';
+import { HttpError, json, num, obj } from './util.js';
 
 export type SignInProvider = 'claude' | 'codex';
 const KNOWN: readonly SignInProvider[] = ['claude', 'codex'];
@@ -37,6 +36,13 @@ export const signInProviders = (): SignInProvider[] => KNOWN.filter(p => flows.h
 export const isSignInProvider = (value: unknown): value is SignInProvider => typeof value === 'string' && (KNOWN as readonly string[]).includes(value) && flows.has(value as SignInProvider);
 
 const NAMES: Record<SignInProvider, string> = { claude: 'Claude', codex: 'Codex' };
+const CLAUDE = {
+  client: '9d1c250a-e61b-44d9-88ed-5944d1962f5e',
+  authorize: 'https://claude.com/cai/oauth/authorize',
+  redirect: 'https://platform.claude.com/oauth/code/callback',
+  token: 'https://platform.claude.com/v1/oauth/token',
+  scope: 'user:profile user:inference',
+};
 const CODEX = { client: 'app_EMoamEEZ73f0CkXaXp7hrann', issuer: 'https://auth.openai.com' };
 /** How long a started sign-in stays open, which is also how long a Codex device code lives. */
 export const LOGIN_TTL_MS = 15 * 60 * 1000;
@@ -145,6 +151,49 @@ export async function completeLogin(host: Host, pending: PendingLogin, input?: s
 }
 
 // ------------------------------------------------------------------ Codex, with OpenAI's device code
+
+// ------------------------------------------------------------------ Claude, with PKCE and a code pasted from any browser
+
+const claudeFlow: SignInFlow = {
+  async begin() {
+    const verifier = b64url(crypto.getRandomValues(new Uint8Array(32)));
+    const state = b64url(crypto.getRandomValues(new Uint8Array(32)));
+    const challenge = b64url(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))));
+    const query = form({ code: 'true', client_id: CLAUDE.client, response_type: 'code', redirect_uri: CLAUDE.redirect, scope: CLAUDE.scope,
+      code_challenge: challenge, code_challenge_method: 'S256', state });
+    return { mode: 'paste', url: `${CLAUDE.authorize}?${query}`, data: { verifier, state } };
+  },
+
+  async complete(host, data, input) {
+    const [code, state] = String(input ?? '').trim().split('#');
+    if (!code) throw Object.assign(new Error('Sign in again: paste the code the sign-in page showed.'), { retry: true });
+    if (state && state !== data.state) throw Object.assign(new Error('Sign in again: that code is from a different sign-in. Use the link Augur gave you most recently.'), { retry: true });
+    let tokens: Record<string, any>;
+    try {
+      tokens = obj(await json(host, { url: CLAUDE.token, method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ grant_type: 'authorization_code', code, state: data.state, redirect_uri: CLAUDE.redirect, client_id: CLAUDE.client, code_verifier: data.verifier }) }));
+    } catch (error) {
+      if (error instanceof HttpError && error.status >= 400 && error.status < 500) {
+        throw Object.assign(new Error('Sign in again: Claude refused that code. Each code works only once and expires soon after it is shown.'), { retry: true });
+      }
+      throw error;
+    }
+    const scopes = typeof tokens.scope === 'string' ? tokens.scope.split(/\s+/).filter(Boolean) : null;
+    if (scopes && !scopes.includes('user:profile')) throw new Error('Sign in again: Claude granted a sign-in that cannot read usage, so nothing was saved.');
+    if (typeof tokens.access_token !== 'string' || typeof tokens.refresh_token !== 'string') throw new Error('Could not finish the Claude sign-in: Claude sent back no tokens.');
+    return { done: true, session: { refreshToken: tokens.refresh_token, ...(scopes ? { scopes } : {}), plan: null },
+      access: { token: tokens.access_token, expiresInS: num(tokens.expires_in) ?? 3600 } };
+  },
+
+  async renew(host, session) {
+    const response = obj(await json(host, { url: CLAUDE.token, method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ grant_type: 'refresh_token', refresh_token: session.refreshToken, client_id: CLAUDE.client }) }));
+    if (typeof response.access_token !== 'string' || !response.access_token) return { access: { token: '' } };
+    return { access: { token: response.access_token, expiresInS: num(response.expires_in) ?? 3600 },
+      ...(typeof response.refresh_token === 'string' && response.refresh_token ? { refreshToken: response.refresh_token } : {}) };
+  },
+};
+registerSignInFlow('claude', claudeFlow);
 
 const codexFlow: SignInFlow = {
   async begin(host) {

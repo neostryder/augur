@@ -119,7 +119,7 @@ export interface EngineCommands {
   checkUpdate(): Promise<void>;
   /** Marks the update as installing, or back to available when the install failed. */
   setInstalling(on: boolean): Promise<void>;
-  /** Starts Augur's own sign-in to a provider that has one and returns the link to open on any device, and for Codex the code to enter there. */
+  /** Starts Augur's own sign-in to a provider that has one and returns the link to open on any device. */
   signInBegin(provider: string): Promise<LoginStart>;
   /** Finishes the sign-in `signInBegin` started. Claude takes the pasted code; Codex takes none and answers `done: false` until the code was approved. */
   signInComplete(id: string, input?: string): Promise<{ done: boolean }>;

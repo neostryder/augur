@@ -1,6 +1,6 @@
 // `augur login`: Augur's own sign-in to a provider, for a computer where the provider's CLI is not signed in, or has no browser to sign in with.
 // The link opens in any browser on any device. A paste flow shows a code to paste back here; a device flow shows a code to type there, and this command waits.
-// Codex is built in. Any other provider only has a sign-in when a local extension file registers one (see packages/augurd/src/local-signin.ts).
+// Claude and Codex sign-in are built in; local extension flows may add other provider sign-ins.
 import type { LoginStart } from '@augur/core';
 import { EXIT_CODES } from '@augur/dispatch-protocol';
 

@@ -180,7 +180,7 @@ Calls here run with an agent's reach, the same as the MCP server's, even though 
 
 ## What the page cannot do
 
-Signing in to claude.ai for limit resets and to the TypeSafe console for the Jev balance needs the window app, as it does in the terminal app. Augur's own sign-in to Codex works from the page, so a computer with no browser can be signed in from a phone. See [Signing in to Codex](../README.md#signing-in-to-codex).
+Signing in to claude.ai for limit resets and to the TypeSafe console for the Jev balance needs the window app, as it does in the terminal app. Augur's own Claude and Codex sign-ins work from the page, so a computer with no browser can be signed in from a phone. See [Signing in to Claude and Codex](../README.md#signing-in-to-claude-and-codex).
 
 ## Building it in
 

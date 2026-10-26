@@ -19,7 +19,7 @@ Augur shows how much of your AI plans and credits you have used, in one place: a
 
 | Provider | What you see | What it needs |
 | --- | --- | --- |
-| Claude | Current session, weekly limit, weekly limit per model, limit resets | The Claude Code app signed in on this computer with `claude` (a `claude setup-token` login cannot read usage), plus a one-time sign-in to claude.ai for the resets |
+| Claude | Current session, weekly limit, weekly limit per model, limit resets | Claude Code signed in on this computer or Augur's own sign-in, plus a one-time sign-in to claude.ai for the resets |
 | Codex | Weekly plan limit, limit resets available | The Codex CLI signed in on this computer or Augur's own sign-in |
 | Grok | Weekly SuperGrok limit | The Grok CLI signed in on this computer |
 | MiniMax | Coding plan: 5-hour and weekly text limits, video counts | An API key |
@@ -62,7 +62,7 @@ The macOS build carries its own copy of Node, so nothing else has to be installe
 
 Every release also carries `SHA256SUMS.txt`, with a checksum for each installer, `SHA256SUMS.txt.sig`, a signature of that list made with the same key the window app's updater trusts, and a bill of materials for the JavaScript and Rust dependencies. The install script and `augur update` refuse a list whose signature does not verify. The installers themselves are not signed, so compare a download against its line in that file before you run it: `Get-FileHash <file>` on Windows, `shasum -a 256 <file>` on macOS, `sha256sum <file>` on Linux.
 
-Augur opens setup the first time it starts. Providers that are already signed in on the computer are turned on for you. For the others, paste an API key on the provider's card in Settings and turn it on. The Grok card needs the Grok CLI signed in on this computer, and the Claude card needs Claude Code signed in here, and the Codex card needs the Codex CLI signed in here or Augur's own sign-in. Without any of them, turn on a provider that takes an API key, such as OpenRouter. Keys are stored in the operating system's keychain (Windows Credential Manager, the macOS Keychain, or the Secret Service on Linux), and each one is sent only to its own provider.
+Augur opens setup the first time it starts. Providers that are already signed in on the computer are turned on for you. For the others, paste an API key on the provider's card in Settings and turn it on. The Grok card needs the Grok CLI signed in on this computer; Claude and Codex can use their CLI login or Augur's own sign-in. Without any of them, turn on a provider that takes an API key, such as OpenRouter. Keys are stored in the operating system's keychain (Windows Credential Manager, the macOS Keychain, or the Secret Service on Linux), and each one is sent only to its own provider.
 
 Setup asks its questions in five steps, and it looks the same in the window app and the terminal app. First you pick what you pay for: Claude only, several subscriptions, API keys only, or a profile file saved on another computer. Then you confirm the providers Augur found, add any API service, and say how much of each subscription to hold back, which one to use first, and how much to spend on pay-per-use providers. On the review step you mark each model as strong or light and choose the models that write prose and give second opinions. A summary lists each setting your answers touch, and nothing is saved until you press Apply. A step you leave alone changes nothing. The last step tests each route that has a key and lists the models whose rules you still need to confirm. To change your answers later, choose Run setup again in Settings; it opens with your current settings filled in.
 
@@ -70,11 +70,19 @@ To see your TypeSafe balance, open Jev in settings and choose Sign in. Augur kee
 
 To count your Claude limit resets, open Claude in settings, turn on Read resets from claude.ai and choose Sign in. Augur keeps that session in its own window and uses it only to read your usage page, about every six hours. Without the sign-in, enter the count under Limit resets in hand.
 
-## Signing in to Codex
+## Signing in to Claude and Codex
 
-Augur can use the login the Codex CLI already has on this computer, or it can sign in to Codex itself. Signing Augur in is handy when the CLI isn't signed in here or the computer has no browser, like a home server that only meters. It also keeps Augur and the CLI from knocking each other out: a refresh token works only once, so when both renew the same login, whichever one renews second gets signed out.
+Augur can use the login already held by Claude Code or Codex, or keep its own separate session for either provider. This is useful on a computer without the provider CLI login and prevents Augur and the CLI from rotating the same single-use refresh token and signing each other out.
 
-Run `augur login codex`, open the link on any device within 15 minutes, and type in the short code. The command finishes as soon as you approve it. Your ChatGPT account has to allow sign-in with a device code, which is in its security settings, and on a workspace account only the workspace admin can turn that on. You can do the same thing from the Codex card in Settings, under Sign-in, in the window app or the [web app](#web-app-on-your-own-computer).
+For Claude, run `augur login claude`, open the link in a browser, sign in, and paste the code shown by Claude back into the terminal. The Claude card in Settings also has a Sign-in block. Augur requests only the `user:profile` and `user:inference` scopes used to read usage; it does not request permission to create API keys.
+
+```bash
+augur login claude    # prints a link, then asks for the code Claude shows
+augur login status    # which login Augur reads for each provider: its own, the CLI's, or none
+augur logout claude   # forgets Augur's own session and leaves the CLI's login alone
+```
+
+For Codex, run `augur login codex`, open the link on any device within 15 minutes, and type in the short code. The command finishes as soon as you approve it. Your ChatGPT account has to allow sign-in with a device code, which is in its security settings, and on a workspace account only the workspace admin can turn that on. You can do the same thing from the Codex card in Settings, under Sign-in, in the window app or the [web app](#web-app-on-your-own-computer).
 
 ```bash
 augur login codex     # prints a link and a code, then waits until you approve it
@@ -83,8 +91,6 @@ augur logout codex    # forgets Augur's own session and leaves the CLI's login a
 ```
 
 Augur keeps only the refresh token, in your operating system's key store (the Windows credential store, the macOS Keychain, or the Secret Service on Linux, or a file only you can read when none of those is available). Access tokens stay in memory. While Augur has its own session, it doesn't read or renew the CLI's login. Signing in or out takes the owner's token, so an agent working through the MCP server can't do either.
-
-Claude has no sign-in of its own in Augur, so Augur always reads the Claude Code login on this computer. A computer can add one in a file named `local-signin.mjs` in the Augur folder (`~/.augur`, or the folder `AUGUR_HOME` names). The file exports `signInFlows`, an object that maps a provider id to a flow with `begin`, `complete`, and `renew` functions, and the comment at the top of `packages/core/src/signin.ts` describes what each one must do. No Augur download includes the file, and an update never replaces it. The service loads it when it starts and logs which providers it added, or why it could not load the file. The Sign-in block in Settings, `augur login`, and `augur login status` show only the providers that have a flow, and `--stdin` applies only to a flow that asks for a pasted code.
 
 ## Using it
 
