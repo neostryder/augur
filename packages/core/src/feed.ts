@@ -6,12 +6,12 @@ import type { Alert } from './alerts.js';
  * alerts.json beside the export file, where the Claude Code mod reads it, and sends it to the paired phone inside the encrypted sync.
  * Dismissals come back as acks: lines in alerts-acks.jsonl from the mod, and a list on the phone's own relay channel.
  */
-export type AlertKind = 'percent' | 'pace' | 'reset' | 'idle' | 'balance' | 'refresh' | 'models' | 'rules' | 'update';
+export type AlertKind = 'percent' | 'pace' | 'reset' | 'idle' | 'balance' | 'refresh' | 'models' | 'rules' | 'update' | 'backlog';
 /** system is the computer's own notification, augur the bell, claude the Claude Code mod, phone a push to the paired phone. */
 export type Outlet = 'system' | 'augur' | 'claude' | 'phone';
 export type OutletConfig = Record<AlertKind, Record<Outlet, boolean>>;
 
-export const ALERT_KINDS: AlertKind[] = ['percent', 'pace', 'reset', 'idle', 'balance', 'refresh', 'models', 'rules', 'update'];
+export const ALERT_KINDS: AlertKind[] = ['percent', 'pace', 'reset', 'idle', 'balance', 'refresh', 'models', 'rules', 'update', 'backlog'];
 export const OUTLETS: Outlet[] = ['system', 'augur', 'claude', 'phone'];
 
 const DEFAULT_OUTLETS: Record<AlertKind, [boolean, boolean, boolean, boolean]> = {
@@ -24,6 +24,7 @@ const DEFAULT_OUTLETS: Record<AlertKind, [boolean, boolean, boolean, boolean]> =
   models: [true, true, false, false],
   rules: [true, true, true, true],
   update: [false, true, false, false],
+  backlog: [true, true, false, true],
 };
 
 export function defaultOutlets(): OutletConfig {

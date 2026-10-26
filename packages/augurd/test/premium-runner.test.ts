@@ -476,3 +476,22 @@ describe('premium backlog release selection', () => {
     expect(e.sup.backlogList('done')).toHaveLength(1);
   });
 });
+
+describe('premium notices for the owner', () => {
+  it('names a task that waits for approval and drops it once approved', () => {
+    const e = setup();
+    const added = e.sup.backlogAdd(item({ cwd: e.root, task: 'agent job' }), 'agent');
+    if ('error' in added) throw new Error(added.error);
+    expect(e.sup.premiumNotices()).toEqual([expect.objectContaining({ key: `await.${added.id}`, body: expect.stringContaining('agent job') })]);
+    e.sup.backlogApprove(added.id);
+    expect(e.sup.premiumNotices().filter(n => n.key.startsWith('await.'))).toEqual([]);
+  });
+
+  it('warns when a surplus window ends with budget unspent and nothing queued, and stays quiet when work is queued', () => {
+    const e = setup();
+    windowOpen(e);
+    expect(e.sup.premiumNotices()).toEqual([expect.objectContaining({ key: expect.stringMatching(/^window\.test\./), title: expect.stringContaining('about to expire') })]);
+    e.sup.backlogAdd(item({ cwd: e.root, estimate: 1 }));
+    expect(e.sup.premiumNotices()).toEqual([]);
+  });
+});
