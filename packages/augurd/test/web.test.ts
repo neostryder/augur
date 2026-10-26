@@ -125,6 +125,31 @@ describe('the web calls', () => {
     expect((await post({ method: 'constructor' })).status).toBe(400);
   });
 
+  it('passes a dispatch call to the service from this computer and refuses what is not one', async () => {
+    const seen: unknown[][] = [];
+    const server = new WebServer({ settings: { ...DEFAULT_CONFIG.web, port: 0 }, engine: () => null, token: () => TOKEN, staticDir: null, log: () => undefined,
+      dispatch: async (method, params) => { if (method === 'route_add') throw new Error(`No dispatch call named ${method}.`); seen.push([method, params]); return { ok: method }; } });
+    open.push(server);
+    await server.start();
+    const base = `http://127.0.0.1:${(server as unknown as { server: { address(): { port: number } } }).server.address().port}`;
+    const post = (body: unknown, headers: Record<string, string> = auth) => fetch(`${base}/api/dispatch`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
+    expect(await (await post({ method: 'pick', params: { activity: 'read_images' } })).json()).toEqual({ result: { ok: 'pick' } });
+    expect(seen).toEqual([['pick', { activity: 'read_images' }]]);
+    const refused = await post({ method: 'route_add', params: {} });
+    expect(refused.status).toBe(400);
+    expect(((await refused.json()) as { error: string }).error).toMatch(/No dispatch call/);
+    expect((await post({ params: {} })).status).toBe(400);
+    expect((await post({ method: 'pick' }, { Authorization: 'Bearer nope' })).status).toBe(401);
+    expect((await fetch(`${base}/api/dispatch`, { headers: auth })).status).toBe(405);
+    expect((await post({ method: 'pick' }, { ...auth, 'X-Forwarded-For': '203.0.113.9' })).status).toBe(403);
+  });
+
+  it('has no dispatch to offer when the service gives none', async () => {
+    const { base } = await serve();
+    const res = await fetch(`${base}/api/dispatch`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...auth }, body: JSON.stringify({ method: 'pick' }) });
+    expect(res.status).toBe(503);
+  });
+
   it('refuses a call that is not JSON, one from another origin, and a body that is too large', async () => {
     const { base, host } = await serve();
     const raw = (headers: Record<string, string>, body = '{}') => fetch(`${base}/api/call`, { method: 'POST', headers: { ...auth, ...headers }, body });

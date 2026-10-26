@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { balanceReport } from '@augur/dispatch-protocol';
+import { balanceReport, surplusWindowStatus } from '@augur/dispatch-protocol';
 import { emptyPolicy } from '@augur/core';
 import { BalancePage } from '../src/screens/balance.js';
+import { UsagePage } from '../src/screens/usage.js';
 import { pages } from '../src/index.js';
 import { NOW, k, setup } from './fixtures.js';
 
@@ -37,5 +38,27 @@ describe('balance page', () => {
     const { app } = open(report);
     await app.poll();
     expect(await app.key(k('down'))).toBe(true);
+  });
+});
+
+describe('usage gate row', () => {
+  it('shows the service surplus window wording', async () => {
+    const window = surplusWindowStatus({ open: true, spent: false, budgetLeft: 5, hoursLeft: 6, unused: 10 }, { hours: 12, open: 10 });
+    const usage = new UsagePage(), list = pages();
+    list[0] = usage;
+    const t = setup(undefined, { pages: list, answers: { gate_status: { close: 10, providers: [{ provider: 'claude', state: 'closed', gap: null, window, labels: ['claude/opus'], lastApproval: null }] } } });
+    await t.app.poll();
+    expect(t.draw(100, 30)).toContain(window);
+  });
+  it('lists premium tasks that wait for approval', async () => {
+    const usage = new UsagePage(), list = pages();
+    list[0] = usage;
+    const awaiting = [{ id: 'bk1', task: 'refactor the parser', route: 'claude/opus', estimate: 3, requester: 'agent-7', deadline: null }];
+    const t = setup(undefined, { pages: list, answers: { gate_status: { close: 10, providers: [], backlog: { awaiting, queued: 0, running: 0 } } } });
+    await t.app.poll();
+    const screen = t.draw(120, 30);
+    expect(screen).toContain('1 premium task waits for your approval');
+    expect(screen).toContain('bk1');
+    expect(screen).toContain('agent-7 wants claude/opus');
   });
 });

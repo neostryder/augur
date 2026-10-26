@@ -1,19 +1,23 @@
 // Ranks the models a task may use, and checks a job against the picks made for its caller. Pure.
-import { DATA_TIERS, pauseActive } from '@augur/core';
+import { DATA_TIERS, builtinProviders, pauseActive } from '@augur/core';
 import type { ActivityId, DataTier, PolicyFile, WeightLevel } from '@augur/core';
-import { boostFor, govern, listed, lookup, paceState, pacedProviders, reasonLine, resolveBalance } from './balance.js';
+import { boostFor, govern, listed, lookup, paceMeter, paceState, pacedProviders, reasonLine, resolveBalance, weeklyMeter } from './balance.js';
 import type { Depth, ProseSwitch } from './balance.js';
 import { seatsFor } from './seats.js';
 import type { Seats } from './seats.js';
-import { modelOwners, pressure, usageFactors } from './pace.js';
+import { ageMinutes, freshLimits, modelOwners, pressure, usageFactors } from './pace.js';
 import { LOCAL_PROVIDER, localId, localReading } from './fleet-pick.js';
 import type { UsageSnapshot } from './pace.js';
 
 export interface PickRequest {
   activity: ActivityId;
   dataTier: DataTier;
+  caller?: 'interactive' | 'automated';
+  gateState?: Record<string, boolean>;
+  surplusState?: Record<string, { open: boolean; spent: number; openedAt?: number; resetsAt?: string; stale?: boolean }>;
   /** The model the person named for this task. It is the only way an ask-first model becomes a candidate. */
   named?: string;
+  role?: string;
   /** How well each model fits the task, 0 to 1, judged by the caller. A model with no figure counts as 0.5. */
   fits?: Record<string, number>;
   /** How much the task weighs: routine, everyday, deep, or core. Left out, the activity decides. */
@@ -30,6 +34,20 @@ export interface PickRequest {
   snippet?: boolean;
   /** Picks already made per route label: over the last 24 hours and within the caller's session. Picks where the route was named are left out. The service counts them. */
   spent?: { day: Record<string, number>; session: Record<string, number> };
+}
+
+const labelPrefix = (model: string): string => model.split('/')[0] as string;
+
+/** Computes the next hysteresis state without changing persisted state. */
+export function gateEvaluate(state: Record<string, boolean>, usage: UsageSnapshot | null, settings: { premium: string[]; paceLift: string[]; open: number; close: number }, now = new Date()): { state: Record<string, boolean>; gaps: Record<string, number | null> } {
+  const next: Record<string, boolean> = {}, gaps: Record<string, number | null> = {};
+  for (const provider of new Set([...settings.premium, ...settings.paceLift].map(label => label.split('/')[0] as string))) {
+    const usageId = builtinProviders.find(p => p.labelPrefix === provider)?.id ?? provider;
+    const gap = paceGap(usage, usageId, now), wasOpen = state[provider] === true;
+    gaps[provider] = gap;
+    next[provider] = !settings.paceLift.some(label => label.startsWith(`${provider}/`)) || gap === null ? false : wasOpen ? gap >= settings.close : gap >= settings.open;
+  }
+  return { state: next, gaps };
 }
 
 export interface Ranked {
@@ -56,6 +74,44 @@ export interface PickResult {
   seats: Seats;
   /** Where the prose pace switch stands after this pick. */
   proseSwitch: ProseSwitch;
+  gateState: Record<string, boolean>;
+  gateGaps: Record<string, number | null>;
+  surplus: Record<string, { open: boolean; hoursLeft: number | null; unused: number; budgetLeft: number; spent: boolean; resetsAt: string | null; stale: boolean }>;
+}
+
+export function surplusEvaluate(state: PickRequest['surplusState'], usage: UsageSnapshot | null, settings: ReturnType<typeof import('./balance.js').resolveBalance>['gate']['surplus'], now = new Date()): PickResult['surplus'] {
+  const result: PickResult['surplus'] = {};
+  for (const provider of settings.countdown) {
+    const usageId = builtinProviders.find(p => p.labelPrefix === provider)?.id ?? provider;
+    const source = usage?.providers[usageId];
+    const isStale = !source || !!source.stale || ageMinutes(source, now) > freshLimits(source).ignoreMin;
+    const meter = weeklyMeter(source?.meters);
+    const meterReset = meter?.resetsAt && Number.isFinite(Date.parse(meter.resetsAt)) ? meter.resetsAt : null;
+    const old = state?.[provider], storedReset = old?.resetsAt ?? null;
+    const resetPassed = !!storedReset && Date.parse(storedReset) <= now.getTime();
+    const hoursLeft = meterReset && Date.parse(meterReset) > now.getTime() && !isStale ? (Date.parse(meterReset) - now.getTime()) / 3600000 : null;
+    const unused = meter && typeof meter.usedPct === 'number' ? Math.max(0, 100 - meter.usedPct) : 0;
+    const usable = !!meterReset && Date.parse(meterReset) > now.getTime() && !isStale;
+    const eligible = usable && settings.hours > 0 && (Date.parse(meterReset) - now.getTime()) / 3600000 <= settings.hours && unused >= settings.open;
+    const open = settings.hours > 0 && old?.open && !resetPassed ? (isStale || (usable && unused >= settings.close)) : eligible;
+    const resetsAt = old?.open && !resetPassed && storedReset ? storedReset : meterReset;
+    const budgetLeft = Math.max(0, unused - settings.margin - (old?.open && !resetPassed ? old.spent : 0));
+    result[provider] = { open, hoursLeft: resetsAt && Date.parse(resetsAt) > now.getTime() && !isStale ? (Date.parse(resetsAt) - now.getTime()) / 3600000 : null, unused, budgetLeft, spent: open && budgetLeft <= 0, resetsAt, stale: isStale };
+  }
+  return result;
+}
+
+/** The binding weekly window's elapsed share minus its used share, in percentage points. */
+export function paceGap(usage: UsageSnapshot | null, provider: string, now = new Date()): number | null {
+  const source = usage?.providers[provider];
+  if (!source || ageMinutes(source, now) > freshLimits(source).ignoreMin) return null;
+  const meters = (source.meters ?? []).filter(m => paceMeter(m) && m.windowKind === 'weekly' && m.resetsAt && typeof m.windowSeconds === 'number' && m.windowSeconds > 0);
+  if (!meters.length) return null;
+  const gaps = meters.map(m => {
+    const elapsed = 1 - Math.max(0, Math.min(1, (Date.parse(m.resetsAt as string) - now.getTime()) / 1000 / (m.windowSeconds as number)));
+    return elapsed * 100 - (m.usedPct as number);
+  });
+  return Math.round(Math.min(...gaps) * 10) / 10;
 }
 
 /** FNV-1a, so the same seed string always starts the generator at the same place. */
@@ -96,11 +152,17 @@ function drawFrom(pool: Ranked[], rnd: () => number): Ranked {
 /** Score is fit, times the weight of the activity's level, times the usage factor, times the tilt, times the boost. A model that fails a rule is listed as blocked with the reason. */
 export function rank(policy: PolicyFile, usage: UsageSnapshot | null, req: PickRequest, now = new Date()): PickResult {
   const press = pressure(policy, usage, now), notes: string[] = [];
+  const role = req.role ? policy.roles?.[req.role] : undefined;
+  if (req.role && !role) notes.push(`Unknown role ${req.role}.`);
+  const balance = resolveBalance((policy as { balance?: unknown }).balance), caller = req.caller ?? 'interactive';
+  const { state: gateState, gaps: gateGaps } = gateEvaluate(req.gateState ?? {}, usage, balance.gate, now);
+  const surplus = surplusEvaluate(req.surplusState, usage, balance.gate.surplus, now);
   if (!usage) notes.push('Augur usage file missing; usage not weighed.');
   const rows: Array<{ model: string; provider: string; level: WeightLevel }> = [], blocked: Blocked[] = [];
   for (const [provider, p] of Object.entries(policy.providers)) {
     for (const [model, m] of Object.entries(p.models)) {
       const paused = m.pause && pauseActive(m.pause, now) ? m.pause : null;
+      if (req.role && !role?.candidates.includes(model)) { blocked.push({ model, why: `not a candidate for role ${req.role}` }); continue; }
       let level = m.activities[req.activity], why: string | null = null;
       if (paused) {
         const w = paused.weights;
@@ -110,9 +172,10 @@ export function rank(policy: PolicyFile, usage: UsageSnapshot | null, req: PickR
       }
       if (m.status !== 'confirmed') why = `status ${m.status}`;
       else if (why) { /* paused */ }
-      else if (m.askFirst && model !== req.named) why = 'ask first: runs only when it is named';
+      else if ((m.askFirst || balance.gate.premium.includes(model)) && model !== req.named && !(caller === 'interactive' && balance.gate.paceLift.includes(model) && (gateState[labelPrefix(model)] || (surplus[labelPrefix(model)]?.open && !surplus[labelPrefix(model)]?.spent && !surplus[labelPrefix(model)]?.stale)))) why = 'ask first: runs only when it is named';
       else if (!level) why = `not permitted ${req.activity}`;
       else if (DATA_TIERS.indexOf(m.dataTier) < DATA_TIERS.indexOf(req.dataTier)) why = `cleared for ${m.dataTier} data, task is ${req.dataTier}`;
+      if (balance.gate.premium.includes(model) && caller === 'automated') why = 'premium models are not used for automated tasks';
       if (why) blocked.push({ model, why }); else rows.push({ model, provider, level: level as WeightLevel });
     }
   }
@@ -137,7 +200,7 @@ export function rank(policy: PolicyFile, usage: UsageSnapshot | null, req: PickR
     if (!read) continue;
     if (read.blocked) { rows.splice(rows.indexOf(r), 1); blocked.push({ model: r.model, why: read.blocked }); } else local.set(r.model, read);
   }
-  const rules = resolveBalance((policy as { balance?: unknown }).balance);
+  const rules = balance;
   const paced = rules.enabled ? new Set(pacedProviders(usage, rules, now)) : new Set<string>();
   const providerBoost = new Map<string, { boost: number; why: string }>();
   const { factors, scarcity } = usageFactors(policy, press, rows.map(r => r.model));
@@ -163,8 +226,8 @@ export function rank(policy: PolicyFile, usage: UsageSnapshot | null, req: PickR
   const pool = applyOdds(ranking, rules.draw.tail);
   const top = ranking[0];
   const named = req.named && ranking.some(r => r.model === req.named) ? req.named : null;
-  const canDraw = req.draw === true && req.best !== true && rules.draw.enabled && !named && !!top && top.score > 0 && pool.length > 0;
-  let pick = named ?? top?.model ?? null;
+  const canDraw = req.draw === true && req.best !== true && rules.draw.enabled && !role?.callerChooses && !named && !!top && top.score > 0 && pool.length > 0;
+  let pick = role?.callerChooses && !named ? null : named ?? top?.model ?? null;
   let drawn = false, seed: string | null = null;
   if (canDraw) {
     // node:crypto is not visible to the browser packages that compile this file.
@@ -178,7 +241,18 @@ export function rank(policy: PolicyFile, usage: UsageSnapshot | null, req: PickR
   const reason = drawn && chosen && top && chosen.model !== top.model
     ? reasonLine(top, next, governed, req.activity, { model: chosen.model, odds: chosen.odds })
     : reasonLine(chosen, next, governed, req.activity);
-  return { pick, drawn, seed, ranking, blocked, scarcity, unreviewed: policy.unreviewed, notes, depth: governed.depth, reason, seats: seatsFor(policy, ranking, pick, req.activity, now), proseSwitch: governed.proseSwitch };
+  for (const model of balance.gate.premium) {
+    const b = blocked.find(x => x.model === model && /ask first/.test(x.why));
+    if (b) b.why = `ask-first: owner approval required`;
+  }
+  for (const model of balance.gate.paceLift) {
+    const entry = Object.values(policy.providers).map(p => p.models[model]).find(Boolean);
+    if (caller === 'interactive' && model !== req.named && surplus[labelPrefix(model)]?.open && !surplus[labelPrefix(model)]?.spent && !surplus[labelPrefix(model)]?.stale && (entry?.askFirst || balance.gate.premium.includes(model)) && rows.some(r => r.model === model)) notes.push(`ask-first lifted: ${labelPrefix(model)} resets in ${Math.ceil(surplus[labelPrefix(model)]?.hoursLeft ?? 0)} hours with ${Math.floor(surplus[labelPrefix(model)]?.unused ?? 0)} points unused`);
+    else if (caller === 'interactive' && model !== req.named && gateState[labelPrefix(model)] && (entry?.askFirst || balance.gate.premium.includes(model)) && rows.some(r => r.model === model)) notes.push(`ask-first lifted: ${labelPrefix(model)} is ${Math.round(gateGaps[labelPrefix(model)] ?? 0)} points behind pace`);
+  }
+  const result: PickResult = { pick, drawn, seed, ranking, blocked, scarcity, unreviewed: policy.unreviewed, notes, depth: governed.depth, reason, seats: seatsFor(policy, ranking, pick, req.activity, now), proseSwitch: governed.proseSwitch, gateState, gateGaps, surplus };
+  Object.defineProperties(result, { gateState: { enumerable: false }, gateGaps: { enumerable: false } });
+  return result;
 }
 
 /**

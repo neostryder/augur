@@ -24,10 +24,12 @@ export const ACTIVITY_TEXT: Record<ActivityId, string> = {
   typed_decisions: 'A yes/no gate, a pick among fixed options, or a ranking.',
   read_images: 'Reading or describing images, screenshots or video frames.',
   generate_images: 'Creating or editing images.',
+  image_to_image: 'Transforming an input image into another image.',
   generate_video: 'Creating video.',
   speech: 'Transcribing or generating speech audio.',
   embed: 'Turning text into embedding vectors for search or comparison.',
   transcribe: 'Turning a recording of speech into text.',
+  moderate: 'Scoring text or an image for objectionable content, such as sexual, violent or hateful material, with a moderation classifier.',
   translate: 'Translating text from one language to another.',
   reverse_engineering: 'Taking apart a shipped program, package or web app, such as a binary, an APK, an Electron app or a website bundle, to learn what it does and how, with decompilers and runtime capture.',
 };

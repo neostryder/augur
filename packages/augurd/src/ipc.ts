@@ -58,22 +58,31 @@ export function rotateWebToken(dir: string): string {
 export type Role = 'owner' | 'agent';
 
 /** What an agent token may call. Everything else, including every request that records a person's word (a prompt, a pick answer, a grade label) and the engine's settings, is the owner's. */
-export const AGENT_METHODS: ReadonlySet<string> = new Set(['ping', 'submit', 'status', 'list', 'events', 'logs', 'result', 'cancel', 'pick', 'pressure', 'balance', 'resets', 'routes', 'route_add']);
+export const AGENT_METHODS: ReadonlySet<string> = new Set(['ping', 'submit', 'status', 'list', 'events', 'logs', 'result', 'cancel', 'pick', 'pressure', 'balance', 'gate_status', 'gate_report', 'resets', 'routes', 'route_add', 'prose_add', 'prose_list', 'prose_status', 'backlog_add', 'backlog_list', 'backlog_status']);
 
 /** A job request as an agent may make it: it cannot say a person is at the terminal or named the model, and it cannot waive the pick or quota checks. */
 export function attestAgentRequest(req: JobRequest): JobRequest {
-  const { named: _named, allow: _allow, ...rest } = req;
+  const { named: _named, allow: _allow, released: _released, ...rest } = req;
   const caller = { ...(rest.caller ?? { kind: 'mcp' as const }) };
   delete caller.interactive;
-  return { ...rest, caller };
+  return { ...rest, caller: { ...caller, intent: 'automated' } };
 }
+
+/** The calls the web server's dispatch endpoint passes on. They are the agent methods that run and read jobs, and nothing that edits routes or rules. */
+export const HTTP_DISPATCH_METHODS: ReadonlySet<string> = new Set(['submit', 'status', 'list', 'events', 'logs', 'result', 'cancel', 'pick', 'routes']);
 
 export class IpcServer {
   private server: net.Server | null = null;
   private sockets = new Set<net.Socket>();
   private readonly startedAt = Date.now();
   private engine: EngineLink | null = null;
-  constructor(private sup: Supervisor, private store: Store, private token: string, private routes: () => Record<string, RouteConfig> | null, private rates: () => RateCard = () => ({}), private routeFile: { read(): string | null; write(text: string): void } | null = null, private agentToken: string | null = null) {}
+  constructor(private sup: Supervisor, private store: Store, private token: string, private routes: () => Record<string, RouteConfig> | null, private rates: () => RateCard = () => ({}), private routeFile: { read(): string | null; write(text: string): void } | null = null, private agentToken: string | null = null, private aliasRefresh?: (label?: string) => Promise<unknown>) {}
+
+  /** A dispatch call from the web server. It runs as an agent, so the request cannot name a model or waive the pick, and only the methods in HTTP_DISPATCH_METHODS are served. */
+  async dispatch(method: string, params: unknown): Promise<unknown> {
+    if (!HTTP_DISPATCH_METHODS.has(method)) throw new Error(`No dispatch call named ${method}.`);
+    return this.handle(method as MethodName, params, 'agent');
+  }
 
   /** Serves the usage engine's methods from now on. Before this they are refused. */
   attachEngine(engine: EngineLink | null): void { this.engine = engine; }
@@ -109,7 +118,19 @@ export class IpcServer {
     if (role === 'agent' && !AGENT_METHODS.has(method)) throw new Error(`This caller may not use ${String(method)}. It is for the owner's terminal and app.`);
     switch (method) {
       case 'ping': return { pid: process.pid, version: PROTOCOL_VERSION, startedAt: this.startedAt };
-      case 'submit': return this.sup.submit(role === 'agent' ? attestAgentRequest(params as JobRequest) : params as JobRequest);
+      case 'submit': {
+        const request = params as JobRequest;
+        if (request?.released !== undefined) throw new Error('Only the service runner may set released.');
+        if (role === 'agent' && request?.allow?.includes('unpicked')) throw new Error('An agent cannot skip the pick check.');
+        return this.sup.submit(role === 'agent' ? attestAgentRequest(request) : request);
+      }
+      case 'alias_refresh': if (role !== 'owner') throw new Error('Alias refresh is for the owner.'); return this.aliasRefresh?.(typeof p.label === 'string' ? p.label : undefined) ?? { error: 'Alias refresh is unavailable.' };
+      case 'backlog_add': return this.sup.backlogAdd(p.item, role);
+      case 'backlog_approve': return this.sup.backlogApprove(String(p.id ?? ''));
+      case 'backlog_list': return this.sup.backlogList(typeof p.status === 'string' ? p.status : undefined);
+      case 'backlog_status': return this.sup.backlogStatus();
+      case 'backlog_run': return this.sup.backlogRun(p.dryRun === true);
+      case 'backlog_drop': return this.sup.backlogDrop(String(p.id ?? ''));
       case 'status': return this.store.get(String(p.id));
       case 'list': return this.store.list({ state: p.state as never, root: p.root as string | undefined, limit: p.limit as number | undefined });
       case 'conversations': return this.sup.conversations();
@@ -119,7 +140,7 @@ export class IpcServer {
       case 'result': return this.sup.result(String(p.id));
       case 'cancel': return this.sup.cancel(String(p.id));
       case 'apply': return this.sup.apply(String(p.id), p.check === true);
-      case 'pick': return this.sup.pick(params as never);
+      case 'pick': return this.sup.pick(role === 'agent' ? { ...(params as object), caller: 'automated' } as never : params as never);
       case 'human_prompt': return this.sup.humanPrompt(String(p.session ?? ''), String(p.text ?? ''));
       case 'pressure': return this.sup.pressure();
       case 'resets': return resetLedger(this.needEngine().api.state.resets, p);
@@ -128,8 +149,20 @@ export class IpcServer {
       case 'grade': return this.sup.grade(params as never);
       case 'grade_label': return this.sup.gradeLabel(String(p.id ?? ''), String(p.label ?? ''), typeof p.note === 'string' ? p.note : undefined);
       case 'grade_report': return this.sup.gradeReport(typeof p.rubric === 'string' ? p.rubric : undefined);
-      case 'balance': return this.sup.balance(typeof p.days === 'number' ? p.days : 7);
-      case 'routes': return Object.entries(this.routes() ?? {}).map(([name, r]) => ({ name, model: r.model, adapter: r.adapter, problem: this.sup.routeProblem(r as RouteConfig, name) }));
+      case 'prose_add': return this.sup.proseAdd(params, role === 'agent' && this.needEngine().api.state.config.agentApproval === 'all');
+      case 'prose_list': return this.sup.proseList(typeof p.status === 'string' ? p.status as never : undefined);
+      case 'prose_status': return this.sup.proseStatus();
+      case 'prose_run': {
+        const caller = p.caller;
+        if (!caller || typeof caller !== 'object' || (caller as { kind?: unknown }).kind !== 'cli' || typeof (caller as { label?: unknown }).label !== 'string') throw new Error('An owner CLI caller is required to run prose requests.');
+        return this.sup.proseRun(p.dryRun === true, false, caller as never);
+      }
+      case 'prose_approve': return this.sup.proseApprove(String(p.id ?? ''));
+      case 'balance': return this.sup.balance(typeof p.days === 'number' ? p.days : 7, role !== 'agent');
+      case 'gate_status': return this.sup.gateStatus();
+      case 'gate_report': return this.sup.gateReport();
+      case 'gate_record': return this.sup.gateRecord(params as { kind: string; route: string; scope: string; note?: string });
+      case 'routes': return Object.entries(this.routes() ?? {}).map(([name, r]) => ({ name, model: r.model, adapter: r.adapter, problem: this.sup.routeProblem(r as RouteConfig, name), capabilities: this.sup.routeCapabilities(r as RouteConfig) }));
       case 'route_add': return this.routeAdd(params);
       case 'engine_state': { const e = this.needEngine(); return { state: this.stateOf(p.keys as EngineKey[] | undefined), views: e.views.info() }; }
       case 'engine_call': return callEngine(this.needEngine().api, String(p.method ?? ''), Array.isArray(p.args) ? p.args : []);

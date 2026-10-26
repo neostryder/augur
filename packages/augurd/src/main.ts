@@ -3,11 +3,14 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeF
 import { dirname, join } from 'node:path';
 import { LayaBackend, ServerPool, ShadowBackend, createBackend, DEFAULT_SERVERS } from '@augur/decision';
 import type { DecisionBackend } from '@augur/decision';
-import { HOSTED, UsageEngine, registerBalanceSave } from '@augur/core';
+import { ACTIVITIES, HOSTED, UsageEngine, registerBalanceSave } from '@augur/core';
 import { upgradeBalance } from '@augur/dispatch-protocol';
 import { parseRates } from './accounting.js';
 import { enabledAdapters, loadLocalAdapters } from './adapters/index.js';
 import { loadConfig } from './config.js';
+import { refreshAliasFiles } from './alias-files.js';
+import type { AliasSmoke } from './alias-files.js';
+import { openRouterEndpoints, providerListings } from './alias-listings.js';
 import { DecisionLog } from './decisions.js';
 import { createEngineShell } from './engine-shell.js';
 import { IpcServer, ensureToken, webToken } from './ipc.js';
@@ -19,6 +22,20 @@ import { Store } from './store.js';
 import { Supervisor } from './supervisor.js';
 import { ViewHub } from './views.js';
 import { loadLocalSignIn } from './local-signin.js';
+import type { PolicyFile } from '@augur/core';
+import type { JobRequest, RouteConfig } from '@augur/dispatch-protocol';
+import type { SubmitResult } from './supervisor.js';
+
+const TEXT_SMOKE_ACTIVITIES = new Set(['write_code', 'review_code', 'research', 'reason_critique', 'draft_prose', 'summarize_extract', 'long_context', 'bulk_tagging', 'typed_decisions', 'moderate', 'translate', 'reverse_engineering']);
+
+export function singleFlight(run: (label?: string) => Promise<unknown>): (label?: string) => Promise<unknown> {
+  let active = false;
+  return async (label?: string) => {
+    if (active) return { error: 'An alias refresh is already running.' };
+    active = true;
+    try { return await run(label); } finally { active = false; }
+  };
+}
 
 registerBalanceSave(upgradeBalance);
 
@@ -35,7 +52,37 @@ export function buildDecision(config: ReturnType<typeof loadConfig>, dir: string
   return { primary, local };
 }
 
-export interface ServiceOptions { dir?: string; home?: string; pipe?: string; routesPath?: string; engine?: boolean }
+export interface ServiceOptions { dir?: string; home?: string; pipe?: string; routesPath?: string; engine?: boolean; scheduleAliasRefresh?: boolean }
+
+export function createAliasSmoke(deps: {
+  home: string; routes: () => Record<string, RouteConfig> | null; policy: () => PolicyFile | null;
+  submit: (request: JobRequest, route: RouteConfig) => SubmitResult; getJob: (id: string) => { state: string; reason?: string | null } | null;
+}): AliasSmoke {
+  return async (_provider, label, modelId) => {
+    const routeRows = deps.routes() ?? {}, routeName = Object.keys(routeRows).find(name => routeRows[name]?.model === label);
+    if (!routeName) return { status: 'untested', reason: 'no dispatch route' };
+    const current = routeRows[routeName]!;
+    if (current.adapter !== 'openai-api' && current.adapter !== 'anthropic-api') return { status: 'untested', reason: 'route cannot guarantee a no-tools run' };
+    const saved = deps.policy(), owner = Object.entries(saved?.providers ?? {}).find(([, provider]) => provider.models[label]), model = owner?.[1].models[label];
+    if (!model) return { status: 'untested', reason: 'model rule unavailable' };
+    const activity = Object.keys(model.activities).find(name => ACTIVITIES.includes(name as typeof ACTIVITIES[number]) && TEXT_SMOKE_ACTIVITIES.has(name));
+    if (!activity) return { status: 'untested', reason: `no text-prompt activity is permitted by the rule for ${label}` };
+    const route = { ...current, options: { ...current.options, model: modelId } };
+    // The service's own smoke job has no agent pick. IPC and MCP callers cannot set this bypass.
+    const submit = deps.submit({ route: routeName, activity: activity as typeof ACTIVITIES[number], dataTier: 'public', tools: 'none', output: 'text_only', cwd: deps.home,
+      prompt: { text: 'Reply with OK.' }, caller: { kind: 'other', label: 'alias refresh' }, noCharter: true, failover: false, allow: ['unpicked'] }, route);
+    if ('rejected' in submit) return { status: 'untested', reason: submit.rejected.reason };
+    const deadline = Date.now() + 120000;
+    while (Date.now() < deadline) {
+      const job = deps.getJob(submit.id);
+      if (job && ['completed', 'failed', 'cancelled', 'lost', 'artifact_validation_failed'].includes(job.state)) {
+        return job.state === 'completed' ? { status: 'succeeded' } : { status: 'failed', reason: job.reason ?? `smoke job ${job.state}` };
+      }
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+    return { status: 'failed', reason: 'smoke job timed out' };
+  };
+}
 
 /** Starts the usage engine and hands it to the control endpoint. A failure is logged and leaves the dispatch side running. */
 async function startEngine(server: IpcServer, log: (msg: string) => void): Promise<UsageEngine | null> {
@@ -67,11 +114,14 @@ export async function startService(opts: ServiceOptions = {}) {
   // With the engine here, the app's mode switch decides whether jobs run; without it, a running service runs them.
   let engine: UsageEngine | null = null;
   const jobsOff = () => engine && engine.state.config.dispatch?.runJobs !== true ? 'Augur is set to usage only, so it does not run jobs. Choose Also run jobs in its settings to turn them on.' : null;
-  const supervisor = new Supervisor({ rates, store, config, dir, home, adapters: enabledAdapters(config.adapters, local.adapters), ...(decision ? { decision } : {}), decisions, routes: () => routes.read(), policy: () => policy.read(), usage: () => usage.read(), jobsOff });
+  const supervisor = new Supervisor({ rates, store, config, dir, home, adapters: enabledAdapters(config.adapters, local.adapters), ...(decision ? { decision } : {}), decisions,
+    routes: () => routes.read(), policy: () => policy.read(), usage: () => usage.read(), jobsOff });
+  const smokeAlias = createAliasSmoke({ home, routes: () => routes.read(), policy: () => policy.read(), submit: (request, route) => supervisor.submit(request, route), getJob: id => store.get(id) });
+  const runAliasRefresh = singleFlight(async (label?: string) => refreshAliasFiles(home, providerListings, label, new Date(), smokeAlias, (provider, modelId) => provider === 'openrouter' ? openRouterEndpoints(modelId) : Promise.resolve(null)));
   const server = new IpcServer(supervisor, store, token, () => routes.read(), rates, {
     read: () => { try { return readFileSync(routesPath, 'utf8'); } catch { return null; } },
     write: (text: string) => { mkdirSync(dirname(routesPath), { recursive: true }); const tmp = `${routesPath}.tmp`; writeFileSync(tmp, text, 'utf8'); renameSync(tmp, routesPath); },
-  }, agentToken);
+  }, agentToken, runAliasRefresh);
   // The engine is ready before the endpoint opens, so no caller ever finds the service half started.
   const override = process.env.AUGURD_ENGINE === '0' ? false : process.env.AUGURD_ENGINE === '1' ? true : undefined;
   engine = (opts.engine ?? override ?? config.engine) ? await startEngine(server, log) : null;
@@ -81,7 +131,7 @@ export async function startService(opts: ServiceOptions = {}) {
   let web: WebServer | null = null;
   if (config.web.enabled) {
     ensureToken(dir, 'web-token');
-    web = new WebServer({ settings: config.web, engine: () => server.engineLink(), token: () => webToken(dir), staticDir: webDir(), log, dir });
+    web = new WebServer({ settings: config.web, engine: () => server.engineLink(), token: () => webToken(dir), staticDir: webDir(), log, dir, dispatch: (method, params) => server.dispatch(method, params) });
     try {
       const at = await web.start();
       log(`web app listening on ${at.tls ? 'https' : 'http'}://${at.host}:${at.port}`);
@@ -96,14 +146,31 @@ export async function startService(opts: ServiceOptions = {}) {
   // The balance report is written once a day, and the check runs hourly so a service left on across midnight still writes it.
   const balanceFile = () => { try { const r = supervisor.balance(7); if (!('error' in r)) { const file = writeDailyReport(home, r, new Date()); if (file) log(`balance report written to ${file}`); } } catch (e) { log(`balance report failed: ${(e as Error).message}`); } };
   const labelFile = () => { try { writeLabels(home, decisions.labels()); } catch (e) { log(`labels file failed: ${(e as Error).message}`); } };
-  const hourlyTasks = () => { balanceFile(); labelFile(); };
+  const hasAliasSeries = () => {
+    try {
+      const saved = JSON.parse(readFileSync(join(home, 'policy.json'), 'utf8')) as { providers?: Record<string, { models?: Record<string, { series?: unknown }> }> };
+      return Object.values(saved.providers ?? {}).some(provider => Object.values(provider.models ?? {}).some(model => !!model.series));
+    } catch { return false; }
+  };
+  const hourlyTasks = () => {
+    balanceFile(); labelFile();
+    if (config.aliasRefreshHours > 0 && opts.scheduleAliasRefresh !== false && hasAliasSeries()) {
+      let last = 0;
+      try { const state = JSON.parse(readFileSync(join(home, 'alias-refresh.json'), 'utf8')) as Record<string, { lastRefreshAt?: string }>; last = Math.max(0, ...Object.values(state).map(x => Date.parse(x.lastRefreshAt ?? '') || 0)); } catch { /* no alias refresh has run */ }
+      if (!last || Date.now() - last >= config.aliasRefreshHours * 3600000) void runAliasRefresh().catch(e => log(`alias refresh failed: ${(e as Error).message}`));
+    }
+  };
   hourlyTasks();
   const hourly = setInterval(hourlyTasks, 3600000);
+  // Premium notices (tasks waiting for approval, a surplus window ending unspent) reach the tray and the other outlets through the engine's feed.
+  const premiumNotices = () => { try { void engine?.setPremiumNotices(supervisor.premiumNotices()).catch(e => log(`premium notices failed: ${(e as Error).message}`)); } catch (e) { log(`premium notices failed: ${(e as Error).message}`); } };
+  const notices = setInterval(premiumNotices, 30000);
+  notices.unref();
   log('started');
   return {
     supervisor, store, config,
     engine, web,
-    async stop() { await web?.close(); engine?.stop(); clearInterval(timer); clearInterval(daily); clearInterval(hourly); await server.close(); await engine?.flush(); store.close(); log('stopped'); },
+    async stop() { await web?.close(); engine?.stop(); clearInterval(timer); clearInterval(daily); clearInterval(hourly); clearInterval(notices); await server.close(); await engine?.flush(); store.close(); log('stopped'); },
   };
 }
 

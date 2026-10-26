@@ -9,6 +9,15 @@ export interface FieldDoc { path: string; type: string; summary: string }
 export const BALANCE_FIELDS: readonly FieldDoc[] = [
   { path: 'profile', type: 'classic or neutral', summary: 'The starting rules the other settings sit on. Classic is the original rule set and is what an install with no profile uses. Neutral gives a tier only to Claude\'s own models, so pace moves work between Opus and Sonnet and leaves other routes alone. Both profiles boost providers with unused allowance.' },
   { path: 'enabled', type: 'true or false', summary: 'Switches the whole balance off, pace and the boost with it. Scores then come from fit, weights and usage alone.' },
+  { path: 'gate.premium', type: 'list of routes', summary: 'Routes that need owner approval for interactive picks and are unavailable to automated callers.' },
+  { path: 'gate.paceLift', type: 'list of routes', summary: 'Ask-first routes whose approval wait can lift for interactive callers while their provider is behind pace.' },
+  { path: 'gate.open', type: 'points', summary: 'The provider pace gap that opens its premium gate. 20 by default.' },
+  { path: 'gate.close', type: 'points', summary: 'The pace gap below which an open premium gate closes. 10 by default.' },
+  { path: 'gate.surplus.hours', type: 'hours', summary: 'How close a trusted provider reset must be for a surplus window to open. 12 by default; 0 disables windows.' },
+  { path: 'gate.surplus.open', type: 'points', summary: 'Unused allowance needed to open a surplus window. 10 by default.' },
+  { path: 'gate.surplus.close', type: 'points', summary: 'Unused allowance below which an open surplus window closes. 5 by default.' },
+  { path: 'gate.surplus.margin', type: 'points', summary: 'Allowance reserved from the surplus run budget. 5 by default.' },
+  { path: 'gate.surplus.countdown', type: 'provider ids', summary: 'Providers whose reset countdown can open a surplus window. Claude and Grok by default; Codex and Copilot are ignored. Grok and xai both resolve to xai.' },
   { path: 'boostFitFloor', type: 'number from 0 to 1', summary: 'The lowest caller fit that still gets the unused-allowance boost. A route the caller gave no fit for is boosted.' },
   { path: 'draw.enabled', type: 'true or false', summary: 'Draws each pick at random by its odds. Off, every pick takes the top score.' },
   { path: 'draw.tail', type: 'number from 0 to 1', summary: 'The share of the top score a route needs to stay in the draw. A route below it gets 0% odds and stays in the ranking.' },
@@ -25,6 +34,7 @@ export const BALANCE_FIELDS: readonly FieldDoc[] = [
   { path: 'tilt.core.light', type: 'number above 0', summary: 'The score multiplier for a light route on core work.' },
   { path: 'caps.<route>.perDay', type: 'count', summary: 'The most times this route can be picked in 24 hours. At the limit it is left out of picks unless a caller names it, and picks that named it do not count. 0 turns the limit off.' },
   { path: 'caps.<route>.perSession', type: 'count', summary: 'The most times this route can be picked in one caller session. Named picks do not count here either, and 0 turns the limit off.' },
+  { path: 'caps.<route>.parallel', type: 'count', summary: 'The most jobs this route runs at the same time, however many picks started them. A job over the limit waits in the queue until one finishes, and a named route is held to it too. 0 turns the limit off.' },
   { path: 'training.enabled', type: 'true or false', summary: 'Turns training mode on. A pick on a route in training.askTiers or training.askRoutes then waits for a person to confirm it or choose another route with augur pick-answer, and no job can run on it until then. Off by default.' },
   { path: 'training.agree', type: 'number from 0 to 1', summary: 'How often your answers must match the proposal, as a share of the recent ones, before a kind of work stops asking. A kind of work is an activity at one depth, such as write_code at deep. 0.9 by default.' },
   { path: 'training.window', type: 'number of 1 or more', summary: 'How many of the newest answers for a kind of work count toward its agreement share. 20 by default.' },
@@ -81,8 +91,8 @@ export function balancePaths(rules: object = DEFAULT_BALANCE): string[] {
     if (key && Object.keys(value).length === 0) out.add(`${path}.${key}`);
   };
   walk(rules, '');
-  // A cap has two limits, so an empty map still names both.
-  if (out.delete('caps.<route>')) { out.add('caps.<route>.perDay'); out.add('caps.<route>.perSession'); }
+  // A cap has three limits, so an empty map still names all of them.
+  if (out.delete('caps.<route>')) { out.add('caps.<route>.perDay'); out.add('caps.<route>.perSession'); out.add('caps.<route>.parallel'); }
   return [...out].sort();
 }
 
@@ -103,6 +113,7 @@ export function renderAdapterReference(): string {
       out.push(`| \`${o.key}\`${o.required ? ' (required)' : ''} | ${cell(kind)} | ${cell(o.help)} |`);
     }
     out.push('');
+    if (a.notes) out.push(a.notes, '');
   }
   return out.join('\n').trimEnd();
 }

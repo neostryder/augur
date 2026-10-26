@@ -1,6 +1,6 @@
 // The automatic balance: standing rules about which models suit which kind of work, turned into a tilt on each model's score. Pure.
 // `rank()` multiplies the tilt into the score it already computes, so the weights, pauses, ask-first, data tiers and the usage factor all still apply.
-import { ACTIVITIES } from '@augur/core';
+import { ACTIVITIES, builtinProviders } from '@augur/core';
 import type { ActivityId, PolicyFile } from '@augur/core';
 import { BOOST, PACE, ageMinutes, freshLimits, pressure } from './pace.js';
 import type { UsageSnapshot } from './pace.js';
@@ -43,6 +43,9 @@ export interface BalanceRules {
   profile: Profile;
   /** Switches the whole balance off. The pick then ranks on weights and usage alone. */
   enabled: boolean;
+  /** Premium routes wait for owner approval unless an interactive pace gate lifts ask-first. */
+  gate: { premium: string[]; paceLift: string[]; open: number; close: number; surplus: { hours: number; open: number; close: number; margin: number; countdown: string[] } };
+  notes?: string[];
   /** A route is boosted only when the caller fit is at or above this. No caller fit still counts. */
   boostFitFloor: number;
   /** Whether a caller that asks for a draw gets one, and the share of the top score a route must reach to stay in it. */
@@ -128,21 +131,22 @@ export interface TrainingRules {
 
 export const DEFAULT_TRAINING: TrainingRules = { enabled: false, agree: 0.9, window: 20, min: 10, spot: 10, askDepths: ['core'], askTiers: ['strong'], askRoutes: [] };
 
-/** Picks of a route that count against it: `perDay` over the last 24 hours, `perSession` within one caller session. 0 turns that limit off. */
-export interface RouteCap { perDay: number; perSession: number }
+/** Picks of a route that count against it: `perDay` over the last 24 hours, `perSession` within one caller session. `parallel` is the most jobs of the route that run at once, and the rest wait in the queue. 0 turns a limit off. */
+export interface RouteCap { perDay: number; perSession: number; parallel?: number }
 
 const DEEP: ActivityId[] = ['write_code', 'reason_critique', 'reverse_engineering'];
 
 export const DEFAULT_BALANCE: BalanceRules = {
   profile: 'classic',
   enabled: true,
+  gate: { premium: ['codex/sol', 'claude/opus', 'xai/grok', 'copilot/gpt-6.1-sol', 'copilot/claude-opus-5.5', 'copilot/grok-4.7', 'copilot/gemini-4-argon'], paceLift: ['codex/sol', 'xai/grok', 'claude/opus'], open: 20, close: 10, surplus: { hours: 12, open: 10, close: 5, margin: 5, countdown: ['claude', 'xai'] } },
   boostFitFloor: BOOST.fitFloor,
   draw: { enabled: true, tail: 0.25 },
   depth: Object.fromEntries(ACTIVITIES.map(a => [a, DEEP.includes(a) ? 'deep' : 'everyday'])) as Record<ActivityId, Depth>,
   tiers: {
     'claude/live': 'strong', 'claude/opus': 'strong', 'codex/sol': 'strong', 'xai/grok': 'strong',
     'copilot/claude-opus-5.5': 'strong', 'copilot/gpt-6.1-sol': 'strong', 'copilot/grok-4.7': 'strong',
-    'claude/claude-sonnet-5-5': 'light', 'claude/sonnet': 'light', 'codex/luna': 'light', 'minimax/m3': 'light', 'deepseek/v4.1-flash': 'light',
+    'claude/claude-sonnet-5-5': 'light', 'claude/sonnet': 'light', 'codex/luna': 'light', 'minimax/*m3*': 'light', 'deepseek/v4.1-flash': 'light',
     'copilot/claude-sonnet-5.5': 'light', 'copilot/gpt-6-luna': 'light', 'copilot/gemini-3.8-flash': 'light',
   },
   exclude: ['fable', 'astra'],
@@ -154,7 +158,7 @@ export const DEFAULT_BALANCE: BalanceRules = {
   claude: { provider: 'claude', band: CLAUDE_PACE.band, reserve: CLAUDE_PACE.reserve, hot: CLAUDE_PACE.hot, behind: CLAUDE_PACE.behind },
   fallback: { providers: ['copilot'], routes: { 'deepseek/v4.1-flash': ['write_code'] }, anthropic: ['copilot/claude-opus-5.5', 'copilot/claude-sonnet-5.5'], aim: 150, cap: 250, margin: 5 },
   prefer: {
-    'minimax/m3': { long_context: 1.6, summarize_extract: 1.4 },
+    'minimax/*m3*': { long_context: 1.6, summarize_extract: 1.4 },
     'codex/luna': { review_code: 1.2, research: 1.2 },
     'claude/claude-sonnet-5-5': { review_code: 1.2, research: 1.2 },
     'claude/sonnet': { review_code: 1.2, research: 1.2 },
@@ -163,7 +167,7 @@ export const DEFAULT_BALANCE: BalanceRules = {
     'xai/grok': { write_code: 1.1, review_code: 1.1, research: 1.1 },
   },
   seats: {
-    second: { models: ['minimax/m3'], skip: ['bulk_tagging', 'typed_decisions', 'speech', 'generate_images', 'generate_video', 'read_images'] },
+    second: { models: ['minimax/*m3*'], skip: ['bulk_tagging', 'typed_decisions', 'speech', 'generate_images', 'generate_video', 'read_images'] },
     web: { research: ['chatgpt/web', 'gemini/web'], generate_images: ['chatgpt/web', 'gemini/web'], read_images: ['gemini/web', 'chatgpt/web'], long_context: ['gemini/web'] },
     shadow: 'laya/laya',
     jev: { route: 'jev/jev-latest', activities: ['typed_decisions', 'bulk_tagging'], tilt: 3 },
@@ -235,7 +239,8 @@ export function resolveBalance(raw: unknown): BalanceRules {
   for (const [m, v] of Object.entries(rec(s.caps))) {
     if (v === null) { delete caps[m]; continue; }
     const o = rec(v), was = caps[m] ?? { perDay: 0, perSession: 0 };
-    caps[m] = { perDay: Math.floor(zeroUp(o.perDay, was.perDay)), perSession: Math.floor(zeroUp(o.perSession, was.perSession)) };
+    const parallel = Math.floor(zeroUp(o.parallel, was.parallel ?? 0));
+    caps[m] = { perDay: Math.floor(zeroUp(o.perDay, was.perDay)), perSession: Math.floor(zeroUp(o.perSession, was.perSession)), ...(parallel > 0 ? { parallel } : {}) };
   }
   const tr = rec(s.training), tdef = d.training;
   const training: TrainingRules = {
@@ -279,9 +284,13 @@ export function resolveBalance(raw: unknown): BalanceRules {
   }
   const steeredPace = pace[steered] as PaceRules;
   const draw = rec(s.draw);
-  return {
+  const gate = rec(s.gate), gateDefaults = d.gate;
+  const requestedCountdown = strings(rec(gate.surplus).countdown) ?? [...gateDefaults.surplus.countdown];
+  const countdown = [...new Set(requestedCountdown.map(id => builtinProviders.find(p => p.id.toLowerCase() === id.toLowerCase() || p.labelPrefix?.toLowerCase() === id.toLowerCase())?.labelPrefix ?? id).filter(id => !['codex', 'copilot'].includes(id.toLowerCase()) && !/^(codex|copilot)\//i.test(id)))];
+  const resolved: BalanceRules = {
     profile,
     enabled: typeof s.enabled === 'boolean' ? s.enabled : d.enabled,
+    gate: { premium: strings(gate.premium) ?? [...gateDefaults.premium], paceLift: (strings(gate.paceLift) ?? [...gateDefaults.paceLift]).filter(label => !label.toLowerCase().startsWith('copilot/')), open: zeroUp(gate.open, gateDefaults.open), close: zeroUp(gate.close, gateDefaults.close), surplus: { hours: zeroUp(rec(gate.surplus).hours, gateDefaults.surplus.hours), open: zeroUp(rec(gate.surplus).open, gateDefaults.surplus.open), close: zeroUp(rec(gate.surplus).close, gateDefaults.surplus.close), margin: zeroUp(rec(gate.surplus).margin, gateDefaults.surplus.margin), countdown } },
     boostFitFloor: unit(s.boostFitFloor, d.boostFitFloor),
     draw: { enabled: typeof draw.enabled === 'boolean' ? draw.enabled : d.draw.enabled, tail: unit(draw.tail, d.draw.tail) },
     depth, tiers, tilt, caps, training,
@@ -304,6 +313,11 @@ export function resolveBalance(raw: unknown): BalanceRules {
       jev: { route: typeof jev.route === 'string' && jev.route ? jev.route : d.seats.jev.route, activities: acts(jev.activities) ?? [...d.seats.jev.activities], tilt: num(jev.tilt, d.seats.jev.tilt) },
     },
   };
+  Object.defineProperty(resolved, 'notes', { value: [
+    ...((strings(gate.paceLift) ?? []).some(label => label.toLowerCase().startsWith('copilot/')) ? ['Copilot labels in gate.paceLift are ignored; Copilot premium models remain gated.'] : []),
+    ...((strings(rec(gate.surplus).countdown) ?? []).some(id => ['codex', 'copilot'].includes(id.toLowerCase()) || /^(codex|copilot)\//i.test(id)) ? ['Codex and Copilot countdown entries in gate.surplus.countdown are ignored.'] : []),
+  ], enumerable: false });
+  return resolved;
 }
 
 const plain = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -355,8 +369,8 @@ export interface PaceState extends ClaudeState { provider: string }
 
 const paceOf = (rules: BalanceRules, provider: string): PaceRules => rules.pace[provider] ?? DEFAULT_PACE_RULES;
 /** A session or weekly window with a numeric used percent. A meter scoped to one model is that model's own week, not the subscription. */
-const paceMeter = (m: { id?: string; usedPct?: number | null; windowKind?: string }): boolean =>
-  typeof m.usedPct === 'number' && (m.windowKind === 'session' || m.windowKind === 'weekly') && !/scoped/.test(m.id ?? '');
+export const paceMeter = (m: { id?: string; usedPct?: number | null; windowKind?: string }): boolean =>
+  typeof m.usedPct === 'number' && (m.windowKind === 'session' || m.windowKind === 'weekly') && !/scoped|^seven_day_/.test(m.id ?? '');
 
 /**
  * One provider's session (5-hour) and weekly windows. The stricter track wins: hot if either is hot, behind only when every known track is behind.
@@ -380,6 +394,12 @@ export function paceState(usage: UsageSnapshot | null, rules: BalanceRules, prov
   }
   const stance: ClaudeStance = !p ? 'on pace' : !tracks.length ? 'unknown' : tracks.some(t => t.ahead > pace.band) ? 'hot' : tracks.every(t => t.ahead < -pace.band) ? 'behind' : 'on pace';
   return { provider, stance, tracks, peak, atReserve: peak !== null && peak >= pace.reserve };
+}
+
+/** The selected weekly meter shared by pace and surplus window evaluation. */
+export function weeklyMeter<T extends { id?: string; usedPct?: number | null; windowKind?: string; resetsAt?: string | null; active?: boolean }>(meters: T[] | undefined): T | undefined {
+  return meters?.filter(m => paceMeter(m) && m.windowKind === 'weekly' && typeof m.resetsAt === 'string')
+    .sort((a, b) => Date.parse(a.resetsAt as string) - Date.parse(b.resetsAt as string))[0];
 }
 
 /** The steered provider's pace. Same result as `paceState` for `rules.claude.provider`. */

@@ -232,7 +232,7 @@ augur usage
 
 Here `luna` is a route you added on the Routes page. To add one, choose Add route, name it, pick the model it runs and the adapter that runs it (Codex CLI, Grok CLI, GitHub Copilot CLI, an OpenAI-style or Anthropic-style API, or fal video, among others), and fill in the options the form marks as required. Test route sends one word through it, so a bad path or a missing key shows up before an agent depends on the route.
 
-A run has to state its activity and data tier, and it has to follow a pick made for the same caller in the last hour. `--activity` takes one of `write_code`, `review_code`, `research`, `reason_critique`, `draft_prose`, `summarize_extract`, `long_context`, `bulk_tagging`, `typed_decisions`, `read_images`, `generate_images`, `generate_video`, `speech`, `embed`, `transcribe`, `translate` or `reverse_engineering`. `--data` takes `public`, `internal`, `sensitive` or `regulated`, and a model is only offered for data at or below the tier its rules allow. A caller is whatever asks: the `augur` command, an MCP client or a script. `augur --help` lists every command.
+A run has to state its activity and data tier, and it has to follow a pick made for the same caller in the last hour. You can skip the pick for a single run with `--allow unpicked`; an agent cannot. `--activity` takes one of `write_code`, `review_code`, `research`, `reason_critique`, `draft_prose`, `summarize_extract`, `long_context`, `bulk_tagging`, `typed_decisions`, `read_images`, `generate_images`, `image_to_image`, `generate_video`, `speech`, `embed`, `transcribe`, `moderate`, `translate` or `reverse_engineering`. `--data` takes `public`, `internal`, `sensitive` or `regulated`, and a model is only offered for data at or below the tier its rules allow. A caller is whatever asks: the `augur` command, an MCP client or a script. `augur --help` lists every command.
 
 A few options change what a run sends. When the service has a [charter folder](docs/configuring.md#standing-instructions-for-every-job), every prompt starts with its standing instructions, `--pack <names>` adds packs from it, and `--no-charter` leaves it out. `--conversation <name>` opens a conversation on a Grok or Codex route, and later runs with the same name resume that session, so `augur run grok --conversation parser --prompt "Now check the error paths" ...` picks up where the last run on `parser` stopped. `augur conversations` lists them and `--forget <name>` drops one. With Retry on failure turned on in the service settings, a job that fails on a provider limit, a harness that will not start or a read-only timeout runs again on its route's [fallback](docs/accounting.md#budgets-and-fallback-routes), and `--no-failover` keeps it where it is.
 
@@ -276,6 +276,8 @@ The pick is drawn by odds rather than always going to the top score. A route's o
 
 Copilot models, and DeepSeek when coding, are backups. They get a task only when no other route can take it, unless the model has its own wait rule. Copilot's Anthropic models are the exception once Claude reaches its reserve. Copilot's usage figures give its spend for the month. A pick mentions the spend once it passes $150 and drops Copilot at $250, except its Anthropic models while Claude is at its reserve. The `fallback` section of the `balance` rules changes these amounts.
 
+Sol, Opus and Grok are the priciest models, so they wait for you. By default they and their Copilot versions behave as ask-first models, and a pick lands on one only when you name it. Two things let them in unnamed. When Codex, Claude or Grok falls 20 points or more behind pace for the week, its premium model returns to your picks until the gap is back under 10. Claude and Grok also open a surplus window in the final 12 hours before their weekly reset if at least 10 points of the week are still unused. Neither applies to the Copilot versions. Automated callers never get these models, whether they say `--caller automated`, inherit `AUGUR_CALLER=automated` from the automated job they run inside, or come in through the MCP server. Work that can wait goes in the premium backlog with `augur backlog add`; the service runs your items, plus the agents' items you approve, once a window has room. `augur gate status` shows each provider's state, and the dashboard and the terminal app show it under that provider's usage. Settings, the ledger and every command are covered in [docs/configuring.md](docs/configuring.md#the-premium-gate).
+
 A pick can name more than the top model. Most tasks get a second opinion from MiniMax when its data tier allows it, and small tasks such as tagging, typed decisions and speech do not. Research and image tasks name a free web route, ChatGPT or Gemini, together with the steps: create `~/.augur/web/<kind of work>-<date and time>/`, write the task to `brief.md` there, give that file to the route in the browser, and save what it returns as `result.md` beside it. The caller does that, because Augur does not drive a browser. Jev is first for typed decisions and tagging. The local model is named as a shadow beside a pick made by a reasoning model, so the two answers can be compared. The `seats` section of the `balance` rules changes any of these.
 
 `augur balance` prints what the router is doing. Each paced provider that needs attention gets its own row, hot first, then those with missing figures, then those behind: its stance, how much of each window is used against how much has passed, the boost, and its rough odds of taking a coding task. Providers on pace share one group, and those with no usage window are named under Not paced. After that come Copilot's spend for the month, how each provider is treated, where each kind of work goes now, and what the last days of picks were, including each pick that went to Copilot with the month's spend at that moment. `--days` sets how many days of picks it covers. The service writes the same report to `~/.augur/balance` once a day, as a JSON file and a text file. The window app shows it on a Balance tab beside Jobs, Routes and Service, and the terminal app on a Balance page. The report only reads; nothing in it changes a rule.
@@ -306,6 +308,41 @@ The last line registers a logon task named Augur Laya that serves the model at `
 `augur grade bug-report --task @task.txt --candidate @report.md` scores the candidate against `~/.augur/rubrics/bug-report.json` and prints a score for each dimension. Grades stay in shadow mode until `augur label` has recorded enough agreement for the rubric's stakes. [docs/grading.md](docs/grading.md) has the rubric fields and the thresholds.
 
 The Jev gateway is a System One server on `127.0.0.1:8020` that holds the TypeSafe key for other programs and keeps `sensitive` and `regulated` requests on Laya. [docs/jev-gateway.md](docs/jev-gateway.md) explains how to build and configure it, and how a client falls back when it is down.
+
+### Prose requests
+
+Agents and scripts can queue writing requests instead of running each one on its own, and the service sends them to one prose route in batches. `augur prose add` adds a request, from a JSON file or from flags:
+
+```bash
+augur prose add --file request.json
+augur prose add --requester docs --repo augur --target docs/mcp.md --kind write --surface doc --audience "MCP client authors" --voice plain --fact "augur_prose_list lists requests" --fact "MCP clients cannot run a batch" --data public
+augur prose list --status drafted
+augur prose status
+augur prose run --dry-run
+augur prose approve <id>
+```
+
+A request names who asked it (`--requester`), a repo label, the file it is for or `new`, its kind (`write`, `rewrite`, `review`, or `sweep-edit`), its surface (`README`, `changelog`, `ui-strings`, `post`, `doc`, or `other`), the audience, and the voice. `--fact`, `--must-include`, and `--must-avoid` can each be given more than once, and a fact added with `--fact` is recorded with `CLI request` as its source. `--context-file` adds a file's text as the context before the passage. A rewrite or a review needs the text it works on in `--current-text`. `--urgency` is `normal` or `urgent`, and `--data` sets the data tier, `internal` when left out. A JSON file takes the same fields by their JSON names (`mustInclude`, `currentText`, `dataTier`, and so on), plus `limits` with `length` and `format`, facts that carry their own `source`, and `context` with `before`, `after`, `outline`, `samples`, and `glossary`.
+
+`augur prose list` prints each request's id, status, repo, and target, `--status` keeps one status (`queued`, `awaiting-approval`, `running`, `drafted`, or `failed`), and `--json` prints the whole requests with their drafts. `augur prose status` counts the requests in each status, gives the age of the oldest normal request in the queue, and says whether a batch is due. A batch is due once 10 normal requests are queued or the oldest has waited 24 hours, and [docs/configuring.md](docs/configuring.md#prose-requests) has the settings that change both. `augur prose run` submits the batch in the background and prints its batch ID, then `status` and `list` show how it is going. `--dry-run` says how many requests would run and starts nothing.
+
+An urgent request waits in `awaiting-approval` until you run `augur prose approve <id>`, and approved urgent requests then go out together at the next run, apart from the normal batch and whether or not it is due. `run` and `approve` are owner commands: the agent token cannot call them, and the MCP server has no tools for them. MCP clients add, list and check requests with `augur_prose_add`, `augur_prose_list`, and `augur_prose_status`.
+
+### Model series and roles
+
+Give a model a series and Augur tells you when its provider lists a newer release. Set up a role and the picks made for it come only from the models you put in it.
+
+```bash
+augur alias set openrouter/deepseek-flash --kind llm --pattern "deepseek/deepseek-v*-flash"
+augur alias refresh
+augur alias list
+augur alias accept <offer id>
+augur roles set reviewer --activity review_code --candidates claude/claude-sonnet-5-5,openrouter/deepseek-flash --caller-chooses
+augur pick --role reviewer --activity review_code --data internal
+augur pick --role reviewer --model openrouter/deepseek-flash --activity review_code --data internal
+```
+
+Once a day by default, the service looks for a newer model matching each series and records it as an offer, and it never swaps a model by itself. An offer fails if a pinned host no longer serves the new model or the new model takes fewer kinds of input, and on an API route the new model also has to answer a short test prompt. `augur alias accept` moves the matching routes to the new model and queues its id as an edit you accept in Model rules, and `augur alias reject` drops the offer. Edits from `augur alias set`, `augur roles set` and `augur roles remove` wait in Model rules in the same way. When a role lets the caller choose, the first pick lists the candidates your rules allow and the second records the one named with `--model`. [docs/configuring.md](docs/configuring.md#model-series-and-roles) has the checks, the offer statuses, the files, and which providers can be refreshed.
 
 ## Phone app
 

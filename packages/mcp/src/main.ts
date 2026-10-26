@@ -17,6 +17,7 @@ const read = (name: string): string | null => { try { return readFileSync(join(a
 const tools = createTools({
   call, opts: { dir, role: 'agent' as const, ...(process.env.AUGURD_PIPE ? { pipe: process.env.AUGURD_PIPE } : {}) },
   policyText: () => read('policy.json'), usageText: () => read('usage.json'), inboxText: () => read(INBOX_FILE), editStateText: () => read(RESULTS_FILE),
+  aliasStateText: () => read('alias-refresh.json'), aliasInboxText: () => read('alias-inbox.jsonl'), aliasFlagsText: () => read('alias-flags.json'),
   appendInbox: (lines) => appendPolicyEdits(lines),
   session: `mcp-${randomUUID()}`, cwd: process.cwd(),
 });

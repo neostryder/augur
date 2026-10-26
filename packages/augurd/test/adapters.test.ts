@@ -92,6 +92,10 @@ describe('command lines', () => {
     expect(small.args).toContain('--safe-mode');
     expect(small.promptArgs).toEqual([1]);
     expect(hermesExec.plan(req({ tools: 'full' }), r, ctx('hi')).args).toContain('--yolo');
+    const hosted = hermesExec.plan(req({ tools: 'read' }), route('hermes-exec', { model: 'z-ai/glm-5.3-flash', provider: 'openrouter', effort: 'medium', command: 'C:/h/hermes.exe' }), ctx('hi')).args;
+    expect(hosted.slice(0, 4)).toEqual(['-z', 'hi', '-m', 'z-ai/glm-5.3-flash']);
+    expect(hosted.join(' ')).toContain('--provider openrouter --reasoning medium');
+    expect(small.args).not.toContain('--provider');
     const big = hermesExec.plan(req(), r, ctx('x'.repeat(13000)));
     expect(big.files?.[0]?.name).toBe('task.md');
     expect(big.args[1]).toMatch(/^Read the file at .*task\.md in full/);
@@ -104,6 +108,10 @@ describe('command lines', () => {
     const rd = grokExec.plan(req({ tools: 'read' }), r, ctx('go'));
     expect(rd.args).toEqual(expect.arrayContaining(['--allow', 'Read', '--deny', 'Edit']));
     expect(rd.args).not.toContain('--always-approve');
+    const none = grokExec.plan(req({ tools: 'none' }), r, ctx('go'));
+    expect(none.args).toEqual(expect.arrayContaining(['--deny', 'Read', '--deny', 'Grep', '--deny', 'Edit', '--deny', 'Bash(*)']));
+    expect(none.args).not.toContain('--always-approve');
+    expect(none.args).not.toContain('--allow');
     expect(w.args).not.toContain('--session-id');
     expect(w.args).not.toContain('--resume');
     const resumeCtx = ctx('go', 'C:/jobs/j1');
@@ -343,7 +351,23 @@ describe('an API connector', () => {
       expect(m.seen[0]).toMatchObject({ url: '/embeddings', body: { model: 'x', input: ['a query', 'a document'] } });
       const file = join(e.dir, 'jobs', id, 'vectors.json');
       expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ model: 'embed-small', dimensions: 3, vectors: [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]] });
-      expect(e.sup.result(id)?.answer).toBe(`Embedded 2 inputs, 3 numbers each. The vectors are in ${file}.`);
+      expect(JSON.parse(e.sup.result(id)?.answer ?? '')).toEqual({ model: 'embed-small', dimensions: 3, vectors: [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]] });
+    });
+    it('embeds a JSON array of strings as one batch, in order, before the text files', async () => {
+      const m = await mock(() => ({ json: { model: 'embed-small', data: [{ embedding: [1] }, { embedding: [2] }, { embedding: [3] }] } }));
+      const e = env(); route(e, m.url, { mode: 'embeddings' });
+      writeFileSync(join(e.root, 'doc.txt'), 'a file');
+      const id = submitOk(e.sup, { ...textReq('chat', JSON.stringify(['one', 'two'])), activity: 'embed', cwd: e.root, attach: ['doc.txt'] });
+      await terminal(e.sup, e.store, id);
+      expect(m.seen[0]).toMatchObject({ body: { input: ['one', 'two', 'a file'] } });
+      expect(JSON.parse(e.sup.result(id)?.answer ?? '').vectors).toEqual([[1], [2], [3]]);
+    });
+    it('refuses an embed batch of more than 256 inputs', async () => {
+      const m = await mock(() => ({ json: { data: [{ embedding: [1] }] } }));
+      const e = env(); route(e, m.url, { mode: 'embeddings' });
+      const id = submitOk(e.sup, { ...textReq('chat', JSON.stringify(Array.from({ length: 257 }, (_, i) => `t${i}`))), activity: 'embed', cwd: e.root });
+      expect(await terminal(e.sup, e.store, id)).toMatchObject({ state: 'failed' });
+      expect(m.seen).toHaveLength(0);
     });
 
     it('sends one audio file to the transcription endpoint', async () => {
@@ -357,6 +381,16 @@ describe('an API connector', () => {
       expect(m.seen[0]!.headers['content-type']).toMatch(/^multipart\/form-data/);
       expect(m.seen[0]!.raw).toContain('filename="clip.wav"');
       expect(m.seen[0]!.raw).toContain('names: Eru');
+    });
+
+    it('sends the prompt, text files and images to the moderations endpoint and returns the flags with the raw scores', async () => {
+      const m = await mock(() => ({ json: { model: 'omni-moderation-latest', results: [{ flagged: true, categories: { sexual: false, violence: true }, category_scores: { sexual: 0.21, violence: 0.93 }, category_applied_input_types: { sexual: ['image'], violence: ['text'] } }] } }));
+      const e = env(); route(e, m.url, { mode: 'moderation' });
+      writeFileSync(join(e.root, 'note.txt'), 'a note'); writeFileSync(join(e.root, 'shot.png'), png);
+      const id = submitOk(e.sup, { ...textReq('chat', 'a caption'), activity: 'moderate', cwd: e.root, attach: ['note.txt', 'shot.png'] });
+      expect((await terminal(e.sup, e.store, id)).state).toBe('completed');
+      expect(m.seen[0]).toMatchObject({ url: '/moderations', body: { model: 'x', input: [{ type: 'text', text: 'a caption' }, { type: 'text', text: 'a note' }, { type: 'image_url', image_url: { url: `data:image/png;base64,${png.toString('base64')}` } }] } });
+      expect(JSON.parse(e.sup.result(id)?.answer ?? '')).toEqual({ model: 'omni-moderation-latest', flagged: true, categories: { sexual: false, violence: true }, scores: { sexual: 0.21, violence: 0.93 }, appliedTo: { sexual: ['image'], violence: ['text'] } });
     });
 
     it('refuses an attachment or prompt file that reaches outside the allowed folders through a link', async () => {
@@ -398,6 +432,10 @@ describe('an API connector', () => {
       expect(e.sup.submit({ ...textReq('chat'), activity: 'embed', cwd: e.root })).toMatchObject({ rejected: { reason: expect.stringContaining('mode is embeddings') } });
       route(e, 'http://127.0.0.1:9', { mode: 'transcribe' });
       expect(e.sup.submit({ ...textReq('chat'), activity: 'transcribe', cwd: e.root })).toMatchObject({ rejected: { reason: expect.stringContaining('exactly one audio file') } });
+      route(e, 'http://127.0.0.1:9');
+      expect(e.sup.submit({ ...textReq('chat'), activity: 'moderate', cwd: e.root })).toMatchObject({ rejected: { reason: expect.stringContaining('mode is moderation') } });
+      route(e, 'http://127.0.0.1:9', { mode: 'moderation' });
+      expect(e.sup.submit({ ...textReq('chat'), activity: 'research', cwd: e.root })).toMatchObject({ rejected: { reason: expect.stringContaining('only the moderate activity') } });
       expect(openaiApi.validate({ model: 'a/b', adapter: 'openai-api', options: { baseUrl: 'https://x/v1', model: 'm', apiKeyEnv: 'K', mode: 'speak' } })).toMatch(/mode must be/);
     });
   });

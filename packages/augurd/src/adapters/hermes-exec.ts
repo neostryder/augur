@@ -19,7 +19,7 @@ function command(route: RouteConfig): { command: string; prefix: string[] } | nu
 
 /**
  * Hermes Agent, one-shot (`hermes -z`). The answer is on standard output and usage comes from `--usage-file`.
- * Route options: `model`, `command`, `envAllow` (extra environment names the harness needs).
+ * Route options: `model`, `provider` (Hermes provider id, such as openrouter; absent keeps Hermes's own default), `effort` (reasoning level), `command`, `envAllow` (extra environment names the harness needs).
  */
 export const hermesExec: Adapter = {
   id: 'hermes-exec', transport: 'exec',
@@ -42,6 +42,9 @@ export const hermesExec: Adapter = {
     }
     const args = [...exe.prefix, '-z', message, '-m', optStr(route.options, 'model') as string, '--usage-file', join(ctx.jobDir, 'usage.json')];
     const promptArgs = [exe.prefix.length + 1];
+    const provider = optStr(route.options, 'provider'), effort = optStr(route.options, 'effort');
+    if (provider) args.push('--provider', provider);
+    if (effort) args.push('--reasoning', effort);
     if (request.tools === 'read') args.push('--safe-mode'); else if (request.tools === 'full') args.push('--yolo');
     return { command: exe.command, args, cwd: request.cwd, env: {}, stdin: null, files, promptArgs };
   },

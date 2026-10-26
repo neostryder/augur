@@ -5,12 +5,14 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES, feedFor } from '@augur/core';
+import type { AliasRefreshResult } from '@augur/core';
 import type { ActivityId, DataTier, EngineState, OutputMode, ProviderAdded } from '@augur/core';
-import { EXIT_CODES, TOOL_TIERS, describeFigure, exitCodeForState, isTerminal, renderReport, renderResets, seatLines } from '@augur/dispatch-protocol';
-import type { Conversation, Depth, JobRecord, JobRequest, ToolTier } from '@augur/dispatch-protocol';
+import { EXIT_CODES, TOOL_TIERS, describeCapabilities, describeFigure, exitCodeForState, isTerminal, renderReport, renderResets, seatLines } from '@augur/dispatch-protocol';
+import type { Conversation, Depth, JobRecord, JobRequest, ProseAddParams, ProseStatus, ToolTier } from '@augur/dispatch-protocol';
 import { STATUS_TEXT, duration, servedText, statusLine } from '@augur/view-model';
 import { bridge, stdioBridge } from './bridge.js';
 import { SERVICE_VERSION, ServiceError, call, configLines, dataDir, disableLogin, enableLogin, ensureToken, loadConfig, loginState, rotateWebToken, setConfigValue, startViaLogin, webAddresses, webCertFingerprint } from '@augur/augurd';
+import { appendPolicyEdits, augurHome, readAliasFlags, readAliasOffers, settleAliasOffer } from '@augur/augurd';
 import { subagentHook } from './claude-hook.js';
 import { KEY_HELP, keyCmd } from './key.js';
 import { LOGIN_HELP, loginCmd } from './signin.js';
@@ -31,6 +33,7 @@ augur run <route> --prompt-file <file|-> | --prompt <text> [options]
   --expect-file <f>  file the job must leave in the working directory
   --timeout <s>      wall time limit in seconds
   --named            the route was named for this task by the person
+  --caller <kind>    interactive or automated (default: AUGUR_CALLER or interactive; inside a job always automated)
   --allow <checks>   skip checks, comma separated: unpicked, exhausted (each use is recorded with the job)
   --no-failover      no fallback route at submit and no retry after a failure
   --pack <names>     charter packs, comma separated
@@ -48,16 +51,34 @@ augur result <job>                    prints that job's answer, or the last retr
 augur logs <job> [--stderr] [--follow]
 augur cancel <job>
 augur apply <job> [--check]
-augur pick (--task <description> | --activity <a> --data <tier>) [--depth routine|everyday|deep|core] [--named <model>] [--fit <model>=<0-1>,...] [--best] [--snippet]   a route drawn by its odds; --best takes the top score, --snippet marks a one-sentence draft
-augur pick-preview (--task <description> | --activity <a> --data <tier>) [--depth routine|everyday|deep|core] [--named <model>] [--fit <model>=<0-1>,...] [--snippet]   every route's score and odds; no draw is made and nothing is recorded
+augur pick (--task <description> | --activity <a> --data <tier>) [--depth routine|everyday|deep|core] [--named <model>] [--fit <model>=<0-1>,...] [--caller <kind>] [--best] [--snippet]   a route drawn by its odds; --best takes the top score, --snippet marks a one-sentence draft
+augur pick-preview (--task <description> | --activity <a> --data <tier>) [--depth routine|everyday|deep|core] [--named <model>] [--fit <model>=<0-1>,...] [--caller <kind>] [--snippet]   every route's score and odds; no draw is made and nothing is recorded
 augur pick-answer <pick id> --model <route> [--why <text>]     records the route a person chose for a proposed pick and clears that route for jobs
+augur alias list | init | refresh [--label <label>] | accept <offer id> | reject <offer id> | set <label> --kind <llm|image|speech|embed> --pattern <glob>
+augur roles | set <name> --activity <activity> --candidates <labels> [--caller-chooses] | remove <name>
 augur pressure
 augur resets [--provider <id>] [--limit <n>]   reset events and summary
 augur balance [--days <n>]            where each kind of work goes now, each provider's pace and boost, Copilot's spend and the last days' picks
+augur gate status | report | record --kind approved --route <label> --scope this|task|session [--note <text>]
+augur backlog add (--file <item.json> | --requester <name> --repo <path> --task <text> (--prompt <text> | --prompt-file <file>) --activity <a> --data <tier> --route <label> --cwd <dir> --tools <tier> --output <mode> [--deadline <date>])
+  --prompt-file <file>  prompt text from a file; resolved from the current directory
+  --deadline <date>     ISO deadline for the item
+  --estimate <points>  points of the provider's weekly allowance, 0 to 100 (default 1)
+augur backlog list [--status awaiting-approval|queued|running|done|failed|cancelled|expired]
+augur backlog status                 counts, items that fit open window budgets, and next window expected
+augur backlog run [--dry-run]         release eligible items; --dry-run only lists candidates
+augur backlog drop <id>
+augur backlog approve <id> [--yes]   show an agent-added item; with --yes, approve it
+gate record logs an approval granted elsewhere; it grants no permission
 augur label <pick or job id> --brief met|partly|missed [--note <text>]     record how a job's report met its brief, beside the pick in the decision log
 augur label <grade id> --grade agree|high|low [--note <text>]     record whether a grade was right, too high or too low
 augur grade <rubric> --task <text|@file> --candidate <text|@file> [--reference <text|@file>] [--tier <tier>]   score a candidate answer on each dimension of a rubric in ~/.augur/rubrics; the grade is recorded and its use follows the rubric's stakes
 augur grade --report [<rubric>]       each rubric's labelled grades, agreement, and the mode it has earned
+augur prose add (--file <item.json> | --requester <name> --repo <label> --target <path|new> --kind <kind> --surface <surface> --audience <text> --voice <name> [--fact <text>] [--context-file <file>] [--urgency normal|urgent] [--must-include <terms>] [--must-avoid <terms>] [--current-text <text>] [--data <tier>])
+augur prose list [--status queued|awaiting-approval|running|drafted|failed]
+augur prose status
+augur prose run [--dry-run]
+augur prose approve <id>
 augur usage                             tokens and cost per route, each labelled reported, derived or imputed
 augur note-prompt --session <id>     tell the service a person sent the message on standard input; it keeps only the models named
 augur routes
@@ -79,9 +100,9 @@ augur service enable | disable    start the service at each login (systemd on Li
 Every command takes --json. Exit codes: 0 completed, 1 usage, 2 rejected, 3 needs approval, 4 failed, 5 artifact check failed, 6 cancelled, 7 lost, 124 wait timed out.`;
 
 interface Parsed { cmd: string[]; flags: Map<string, string | true>; /** Values of the flags that may be given more than once, in order. */ repeated: Map<string, string[]> }
-const REPEATABLE = new Set(['attach']);
+const REPEATABLE = new Set(['attach', 'fact', 'must-include', 'must-avoid']);
 export function parse(argv: string[]): Parsed {
-  const cmd: string[] = [], flags = new Map<string, string | true>(), repeated = new Map<string, string[]>(), boolean = new Set(['json', 'wait', 'named', 'follow', 'stderr', 'help', 'if-idle', 'no-failover', 'no-charter', 'urgent', 'waybar', 'all', 'force', 'stdin', 'dry-run', 'no-key', 'best', 'snippet', 'report']);
+  const cmd: string[] = [], flags = new Map<string, string | true>(), repeated = new Map<string, string[]>(), boolean = new Set(['json', 'wait', 'named', 'follow', 'stderr', 'help', 'if-idle', 'no-failover', 'no-charter', 'urgent', 'waybar', 'all', 'force', 'stdin', 'dry-run', 'no-key', 'best', 'snippet', 'report', 'can-land-later', 'caller-chooses', 'untested', 'yes']);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] as string;
     if (a === '-') { cmd.push(a); continue; }
@@ -118,6 +139,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
   try {
     switch (cmd) {
       case 'run': return await run(rest, p, io, opts, say, opt, json);
+      case 'backlog': return await backlogCmd(rest, p, io, opts, say, opt);
       case 'jobs': {
         const list = await call('list', { state: opt('state') as never, root: opt('root'), limit: opt('limit') ? Number(opt('limit')) : 25 }, opts);
         say(list.map(describe).join('\n') || 'No jobs.', list); return 0;
@@ -177,7 +199,24 @@ export async function main(argv: string[], io: Io): Promise<number> {
         const dims = Object.entries(r.dims).map(([k, d]) => `  ${k.padEnd(20)} ${d.score.toFixed(2)}${d.spread > 0.2 ? `  (orders differ by ${d.spread.toFixed(2)})` : ''}`);
         say([`Grade ${r.id}: overall ${r.overall.toFixed(2)} on ${r.rubric} v${r.version} (${r.tier} tier, ${r.backend}). Mode ${r.mode}${r.verdict ? `, verdict ${r.verdict}` : ''}${r.audit ? ', flagged for a spot check' : ''}.`, ...dims].join(String.fromCharCode(10)), r); return 0;
       }
+      case 'prose': {
+        const action = rest[0];
+        if (action === 'add') {
+          let item: unknown;
+          if (opt('file')) { try { item = JSON.parse(readFileSync(resolve(io.cwd, opt('file') as string), 'utf8')); } catch { throw new ServiceError('usage', 'Cannot read prose item JSON.'); } }
+          else { const facts = p.repeated.get('fact') ?? (opt('fact') ? [opt('fact') as string] : []); let context: Record<string, unknown> = {}; if (opt('context-file')) { try { context = { before: readFileSync(resolve(io.cwd, opt('context-file') as string), 'utf8') }; } catch { throw new ServiceError('usage', 'Cannot read prose context file.'); } } const dataTier = opt('data'); if (dataTier && !DATA_TIERS.includes(dataTier as DataTier)) throw new ServiceError('usage', `--data is one of ${DATA_TIERS.join(', ')}.`); item = { requester: opt('requester'), repo: opt('repo'), target: opt('target'), kind: opt('kind'), surface: opt('surface'), audience: opt('audience'), voice: opt('voice'), urgency: opt('urgency'), currentText: opt('current-text'), dataTier, mustInclude: p.repeated.get('must-include') ?? (opt('must-include') ? [opt('must-include') as string] : []), mustAvoid: p.repeated.get('must-avoid') ?? (opt('must-avoid') ? [opt('must-avoid') as string] : []), facts: facts.map(text => ({ text, source: 'CLI request' })), context }; }
+          const r = await call('prose_add', item as ProseAddParams, opts); if ('error' in (r as object)) { io.err(`${(r as { error: string }).error}\n`); return EXIT_CODES.usage; }
+          say(`Added prose item ${(r as { id: string }).id}.`, r); return 0;
+        }
+        if (action === 'list') { const filter = opt('status'); if (filter && !['queued', 'awaiting-approval', 'running', 'drafted', 'failed'].includes(filter)) throw new ServiceError('usage', 'Unknown prose status filter.'); const r = await call('prose_list', filter ? { status: filter as ProseStatus } : undefined, opts); say((r as Array<{ id: string; status: string; repo: string; target: string }>).map(x => `${x.id}  ${x.status}  ${x.repo}  ${x.target}`).join('\n') || 'No prose items.', r); return 0; }
+        if (action === 'status') { const r = await call('prose_status', undefined, opts); const x = r as { counts: Record<string, number>; oldestAgeMs: number | null; due: boolean }; say(`${Object.entries(x.counts).map(([k, v]) => `${k}: ${v}`).join(', ')}; oldest ${x.oldestAgeMs === null ? 'none' : `${Math.floor(x.oldestAgeMs / 3600000)}h`}; ${x.due ? 'run due' : 'not due'}.`, r); return 0; }
+        if (action === 'run') { const r = await call('prose_run', { dryRun: p.flags.has('dry-run'), caller: { kind: 'cli', label: 'prose-queue', ...(io.interactive ? { interactive: true } : {}) } }, opts); const x = r as { started?: boolean; batchId?: string; reason?: string }; say(x.started ? `Started prose batch ${x.batchId ?? ''}.` : x.reason ?? 'No prose batch started.', r); return 0; }
+        if (action === 'approve') { const r = await call('prose_approve', { id: need(rest[1], 'prose item id') }, opts); if ('error' in (r as object)) { io.err(`${(r as { error: string }).error}\n`); return EXIT_CODES.usage; } say(`Approved ${(r as { id: string }).id}.`, r); return 0; }
+        throw new ServiceError('usage', 'Use augur prose add, list, status, run or approve.');
+      }
       case 'pick': return await pickCmd(io, opts, say, opt, n => p.flags.has(n));
+      case 'alias': return await aliasCmd(rest, io, opts, opt, p.flags.has('untested'), say, json);
+      case 'roles': return await rolesCmd(rest, io, opt, say, json, n => p.flags.has(n));
       case 'pick-preview': return await pickCmd(io, opts, say, opt, n => p.flags.has(n), true);
       case 'resets': {
         const limit = opt('limit') === undefined ? undefined : Number(opt('limit'));
@@ -189,6 +228,24 @@ export async function main(argv: string[], io: Io): Promise<number> {
         const r = await call('balance', opt('days') ? { days: Number(opt('days')) } : undefined, opts);
         if ('error' in r) { io.err(r.error + String.fromCharCode(10)); return EXIT_CODES.failed; }
         say(renderReport(r).join(String.fromCharCode(10)), r); return 0;
+      }
+      case 'gate': {
+        if (rest[0] === 'status') {
+          const r = await call('gate_status', undefined, opts);
+          if ('error' in r) { io.err(r.error + String.fromCharCode(10)); return EXIT_CODES.failed; }
+          say([...r.providers.map(x => `${x.provider}: ${x.state}, ${x.gap === null ? 'no weekly window' : `${x.gap} points behind pace`}${x.window ? `; ${x.window}` : ''}; gated ${x.labels.join(', ')}${x.lastApproval ? `; approved ${x.lastApproval}` : ''}`), ...(r.backlog?.awaiting.length ? [`${r.backlog.awaiting.length} premium ${r.backlog.awaiting.length === 1 ? 'task waits' : 'tasks wait'} for your approval: ${r.backlog.awaiting.map(x => x.id).join(', ')}`] : [])].join(String.fromCharCode(10)) || 'No premium gates.', r); return 0;
+        }
+        if (rest[0] === 'report') {
+          const r = await call('gate_report', undefined, opts);
+          if ('error' in r) { io.err(r.error + String.fromCharCode(10)); return EXIT_CODES.failed; }
+          say(JSON.stringify(r, null, 2), r); return 0;
+        }
+        if (rest[0] === 'record') {
+          const r = await call('gate_record', { kind: opt('kind') ?? '', route: opt('route') ?? '', scope: opt('scope') ?? '', ...(opt('note') ? { note: opt('note') as string } : {}) }, opts);
+          if ('error' in r) { io.err(r.error + String.fromCharCode(10)); return EXIT_CODES.usage; }
+          say(`Recorded an approval already granted elsewhere for ${opt('route')} (${opt('scope')}); this does not grant permission.`, r); return 0;
+        }
+        io.err('Use augur gate status, report or record.' + String.fromCharCode(10)); return EXIT_CODES.usage;
       }
       case 'label': {
         if (opt('grade')) {
@@ -237,7 +294,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
         return webCmd(rest, say, { settings, token: () => ensureToken(opts.dir, 'web-token'), rotate: () => rotateWebToken(opts.dir), addresses: () => webAddresses(settings), fingerprint: () => webCertFingerprint(opts.dir) }, io.err);
       }
       case 'claude': return await claudeCmd(rest, io, opts, say);
-      case 'routes': { const r = await call('routes', undefined, opts); say(r.map(x => `${x.name.padEnd(14)} ${x.model.padEnd(16)} ${x.adapter}${x.problem ? `   cannot run: ${x.problem}` : ''}`).join('\n') || 'No routes.', r); return 0; }
+      case 'routes': { const r = await call('routes', undefined, opts); say(r.map(x => `${x.name.padEnd(14)} ${x.model.padEnd(16)} ${x.adapter}   ${describeCapabilities(x.capabilities)}${x.problem ? `   cannot run: ${x.problem}` : ''}`).join('\n') || 'No routes.', r); return 0; }
       case 'test': return await testCmd(need(rest[0], 'route'), p, io, opts, say, json);
       case 'config': {
         if (rest[0] === 'set') {
@@ -353,6 +410,72 @@ async function claudeCmd(rest: string[], io: Io, opts: Opts, say: Say): Promise<
 
 function need(v: string | undefined, what: string): string { if (!v) throw new Error(`Missing ${what}.`); return v; }
 
+function readOwnerPolicy(home = augurHome()): Record<string, unknown> | null {
+  try { const value: unknown = JSON.parse(readFileSync(join(home, 'policy.json'), 'utf8')); return typeof value === 'object' && value !== null ? value as Record<string, unknown> : null; } catch { return null; }
+}
+
+function ownerEdit(field: string, provider: string, model: string, value: unknown, home = augurHome()): void {
+  const at = new Date().toISOString();
+  const id = `${at}-${process.pid}-${Math.random().toString(16).slice(2)}`;
+  appendPolicyEdits(JSON.stringify({ id, at, by: 'augur owner', provider, model, field, value }) + '\n', home);
+}
+
+async function aliasCmd(rest: string[], io: Io, opts: Opts, opt: (n: string) => string | undefined, untested: boolean, say: (h: string, d: unknown) => void, json: boolean): Promise<number> {
+  const home = augurHome(io.env), action = rest[0], policy = readOwnerPolicy(home);
+  const providers = policy && typeof policy.providers === 'object' && policy.providers !== null ? policy.providers as Record<string, Record<string, unknown>> : {};
+  const models = Object.entries(providers).flatMap(([provider, p]) => Object.entries((p.models ?? {}) as Record<string, Record<string, unknown>>).map(([label, model]) => ({ provider, label, model })));
+  if (action === 'list') {
+    const state = (() => { try { return JSON.parse(readFileSync(join(home, 'alias-refresh.json'), 'utf8')) as Record<string, unknown>; } catch { return {}; } })();
+    const offers = readAliasOffers(home), flags = readAliasFlags(home);
+    const rows = models.filter(x => x.model.series).map(x => ({ label: x.label, provider: x.provider, id: x.model.id, series: x.model.series, refresh: state[x.label] ?? null, offer: offers.find(o => o.label === x.label) ?? null, flag: flags.find(f => f.label === x.label) ?? null }));
+    say(rows.map(x => `${x.label}  ${JSON.stringify(x.series)}  ${String(x.id)}  refresh=${JSON.stringify(x.refresh)}  offer=${JSON.stringify(x.offer)}  flag=${JSON.stringify(x.flag)}`).join('\n') || 'No aliases.', { aliases: rows }); return 0;
+  }
+  if (action === 'init') {
+    const rows = models.map(x => ({ label: x.label, kind: 'llm', pattern: String(x.model.id ?? '').replace(/\d+(?:\.\d+)*/g, '*') }));
+    say(rows.map(x => `${x.label} --kind ${x.kind} --pattern ${x.pattern}`).join('\n') || 'No models.', { proposed: rows, written: false }); return 0;
+  }
+  if (action === 'set') {
+    const label = need(rest[1], 'label'), found = models.filter(x => x.label === label);
+    const kind = opt('kind'), pattern = opt('pattern');
+    if (found.length !== 1 || !['llm', 'image', 'speech', 'embed'].includes(kind ?? '') || !pattern || pattern.length > 200 || !/^[A-Za-z0-9._/:*?-]+$/.test(pattern)) { io.err('Give an existing label, --kind llm|image|speech|embed, and a glob --pattern using letters, digits, dot, dash, underscore, slash, colon, * and ?.\n'); return EXIT_CODES.usage; }
+    ownerEdit('series', found[0]!.provider, label, { kind, pattern }, home);
+    say(`Series edit for ${label} is waiting for owner acceptance.`, { label, kind, pattern, status: 'needs-owner' }); return 0;
+  }
+  if (action === 'refresh') {
+    const result = await call('alias_refresh', { ...(opt('label') ? { label: opt('label') } : {}) }, opts) as AliasRefreshResult;
+    say(`Alias refresh completed: ${result.offers.length} offer(s), ${result.flags.length} embedding flag(s).${result.noListing.length ? ` No listing: ${result.noListing.join(', ')}.` : ''}`, result); return 0;
+  }
+  if (action === 'accept' || action === 'reject') {
+    const result = settleAliasOffer(home, need(rest[1], 'offer id'), action === 'accept', new Date(), dataDir(io.env), untested);
+    if (!result.ok) { io.err(result.error + '\n'); return EXIT_CODES.failed; }
+    say(action === 'accept' ? `Alias offer queued for the app: ${result.offer.label}; it applies within a minute.${result.warnings?.length ? ` ${result.warnings.join('. ')}.` : ''}` : `Alias offer rejected: ${result.offer.label}.`, result); return 0;
+  }
+  io.err('Use augur alias list, init, refresh, accept <offer id>, reject <offer id>, or set <label> --kind <kind> --pattern <glob>.\n'); return EXIT_CODES.usage;
+}
+
+async function rolesCmd(rest: string[], io: Io, opt: (n: string) => string | undefined, say: (h: string, d: unknown) => void, json: boolean, flag: (n: string) => boolean): Promise<number> {
+  const home = augurHome(io.env), action = rest[0], policy = readOwnerPolicy(home), roles = policy && typeof policy.roles === 'object' && policy.roles !== null ? policy.roles as Record<string, Record<string, unknown>> : {};
+  if (!action) {
+    const rows = Object.entries(roles).map(([name, role]) => ({ name, activity: role.activity, callerChooses: role.callerChooses, candidates: ((role.candidates as string[]) ?? []).map(label => {
+      const model = Object.values((policy?.providers ?? {}) as Record<string, Record<string, unknown>>).map(p => (p.models as Record<string, Record<string, unknown>>)[label]).find(Boolean);
+      return { label, tier: model?.dataTier ?? 'unknown', pause: model?.pause ?? null, askFirst: model?.askFirst === true };
+    }) }));
+    say(rows.map(r => `${r.name} (${String(r.activity)}): ${JSON.stringify(r.candidates)}${r.callerChooses ? ' caller chooses' : ''}`).join('\n') || 'No roles.', { roles: rows }); return 0;
+  }
+  if (action === 'set') {
+    const name = need(rest[1], 'role name'), activity = opt('activity'), candidates = (opt('candidates') ?? '').split(',').map(x => x.trim()).filter(Boolean);
+    if (!activity || !ACTIVITIES.includes(activity as ActivityId) || !candidates.length) { io.err('Give --activity and comma-separated --candidates labels.\n'); return EXIT_CODES.usage; }
+    ownerEdit('role', '', name, { activity, candidates, callerChooses: flag('caller-chooses') }, home);
+    say(`Role edit for ${name} is waiting for owner acceptance.`, { name, activity, candidates, callerChooses: flag('caller-chooses'), status: 'needs-owner' }); return 0;
+  }
+  if (action === 'remove') {
+    const name = need(rest[1], 'role name');
+    ownerEdit('role', '', name, null, home);
+    say(`Role removal for ${name} is waiting for owner acceptance.`, { name, status: 'needs-owner' }); return 0;
+  }
+  io.err('Use augur roles, set <name>, or remove <name>.\n'); return EXIT_CODES.usage;
+}
+
 async function conversationsCmd(p: Parsed, io: Io, opts: Opts, say: (h: string, d: unknown) => void, opt: (n: string) => string | undefined, json: boolean): Promise<number> {
   const name = opt('forget');
   if (name) {
@@ -367,7 +490,73 @@ async function conversationsCmd(p: Parsed, io: Io, opts: Opts, say: (h: string, 
 const conversationLine = (c: Conversation) => `${c.name}  ${c.route}  ${c.adapter}  ${c.turns}  ${new Date(c.lastUsedAt).toISOString().slice(0, 19)}Z`;
 type Opts = { dir: string; pipe?: string };
 
+/** Best effort: a job's environment carries markers the service wrote. A process that clears them still holds the owner token, which is outside this trust model. */
+function runsInsideJob(io: Io): boolean { return !!io.env.AUGUR_IN_JOB || !!io.env.AUGUR_JOB_ID || io.env.AUGUR_CALLER === 'automated'; }
+
+async function backlogCmd(rest: string[], p: Parsed, io: Io, opts: Opts, say: (h: string, d: unknown) => void, opt: (n: string) => string | undefined): Promise<number> {
+  const action = rest[0];
+  // Best effort: a process that clears its environment still holds the owner token, which is outside this trust model.
+  const insideJob = runsInsideJob(io);
+  if (insideJob && (action === 'run' || action === 'drop' || action === 'approve')) { io.err(`augur backlog ${action} is for the owner's own terminal, not for a job.
+`); return EXIT_CODES.usage; }
+  if (action === 'add') {
+    let item: unknown;
+    if (opt('file')) {
+      try { item = JSON.parse(readFileSync(resolve(io.cwd, opt('file') as string), 'utf8')); } catch { io.err('The backlog item file could not be read as JSON.\n'); return EXIT_CODES.usage; }
+    } else {
+      const required = ['requester', 'repo', 'task', 'activity', 'data', 'route', 'cwd', 'tools', 'output'];
+      const missing = required.filter(k => opt(k) === undefined);
+      if ((!opt('prompt') && !opt('prompt-file')) || (opt('prompt') && opt('prompt-file')) || missing.length) { io.err(`Give ${missing.map(k => `--${k}`).join(', ')}${missing.length ? ' and ' : ''}exactly one of --prompt and --prompt-file.\n`); return EXIT_CODES.usage; }
+      let prompt: { text?: string; file?: string };
+      if (opt('prompt-file')) prompt = { file: resolve(io.cwd, opt('prompt-file') as string) }; else prompt = { text: opt('prompt') as string };
+      item = Object.fromEntries([...required.map(k => [k, k === 'cwd' ? resolve(io.cwd, opt(k) as string) : opt(k)]), ['prompt', prompt], ...(opt('estimate') ? [['estimate', Number(opt('estimate'))]] : []), ...(opt('deadline') ? [['deadline', opt('deadline')]] : [])]);
+    }
+    const r = await call('backlog_add', { item }, insideJob ? { ...opts, role: 'agent' } : opts);
+    if ('error' in (r as object)) { io.err(`${(r as { error: string }).error}\n`); return EXIT_CODES.usage; }
+    say(`Added backlog item ${(r as { id: string }).id}${insideJob ? ' as agent; it awaits owner approval' : ''}.`, r); return 0;
+  }
+  if (action === 'list') {
+    const r = await call('backlog_list', opt('status') ? { status: opt('status') } : undefined, opts);
+    say((r as Array<Record<string, unknown>>).map(backlogLine).join('\n') || 'No backlog items.', r); return 0;
+  }
+  if (action === 'status') {
+    const r = await call('backlog_status', undefined, opts);
+    const status = r as { counts: unknown; items: Array<Record<string, unknown>>; fitting: unknown; nextWindow: unknown };
+    say(`${JSON.stringify(status.counts)}\n${status.items.map(backlogLine).join('\n') || 'No backlog items.'}\nFitting: ${JSON.stringify(status.fitting)}\nNext window: ${JSON.stringify(status.nextWindow)}`, r as unknown); return 0;
+  }
+  if (action === 'run') {
+    const r = await call('backlog_run', { dryRun: p.flags.has('dry-run') }, opts);
+    const x = r as { candidates: string[]; released: string[]; wouldExpire?: string[]; wouldFail?: Array<{ id: string; reason: string }>; wouldHold?: Array<{ id: string; reason: string }> };
+    say(p.flags.has('dry-run') ? `Would release: ${x.candidates.join(', ') || 'none'}. Would hold: ${x.wouldHold?.map(row => `${row.id} (${row.reason})`).join(', ') || 'none'}. Would expire: ${x.wouldExpire?.join(', ') || 'none'}. Would fail: ${x.wouldFail?.map(row => `${row.id} (${row.reason})`).join(', ') || 'none'}.` : `Released: ${x.released.join(', ') || 'none'}.`, r); return 0;
+  }
+  if (action === 'drop') {
+    const r = await call('backlog_drop', { id: need(rest[1], 'backlog item id') }, opts);
+    say((r as { dropped: boolean }).dropped ? `Dropped ${rest[1]}.` : `No backlog item ${rest[1]}.`, r); return (r as { dropped: boolean }).dropped ? 0 : EXIT_CODES.usage;
+  }
+  if (action === 'approve') {
+    const before = await call('backlog_list', undefined, opts) as Array<Record<string, unknown>>;
+    const pending = before.find(x => x.id === rest[1]);
+    if (!p.flags.has('yes')) {
+      if (!pending) { io.err(`No backlog item ${rest[1]}.\n`); return EXIT_CODES.usage; }
+      const text = (pending.prompt as { text?: string } | undefined)?.text;
+      say(`${backlogLine(pending)}${text === undefined ? '' : `\nPrompt text: ${text.length > 600 ? `${text.slice(0, 600)}... (${text.length} chars)` : text}`}\nRun again with --yes to approve.`, pending); return 0;
+    }
+    const r = await call('backlog_approve', { id: need(rest[1], 'backlog item id') }, opts);
+    if ('error' in (r as object)) { io.err(`${(r as { error: string }).error}\n`); return EXIT_CODES.usage; }
+    say(`Approved backlog item:\n${backlogLine(r as Record<string, unknown>)}`, r); return 0;
+  }
+  io.err('Use augur backlog add, list, status, run, approve or drop.\n'); return EXIT_CODES.usage;
+}
+
+function backlogLine(x: Record<string, unknown>): string {
+  const prompt = x.prompt as { file?: string; text?: string } | undefined;
+  const source = prompt?.file ? `file ${prompt.file}` : `inline ${prompt?.text?.length ?? 0} chars`;
+  const log = Array.isArray(x.statusLog) ? (x.statusLog as Array<{ at?: string; status?: string; note?: string }>).slice(-5).map(row => `${row.at ?? ''} ${row.status ?? ''} ${row.note ?? ''}`).join(' | ') : '';
+  return `${x.id}  ${x.author}  ${x.status}  ${x.route}  activity=${x.activity} requester=${x.requester} repo=${x.repo}  data=${x.data} tools=${x.tools} output=${x.output} cwd=${x.cwd} prompt=${source} estimate=${x.estimate ?? 1} deadline=${x.deadline ?? 'none'}  ${x.task}${log ? `\nStatus log: ${log}` : ''}`;
+}
+
 async function run(rest: string[], p: Parsed, io: Io, opts: Opts, say: (h: string, d: unknown) => void, opt: (n: string) => string | undefined, json: boolean): Promise<number> {
+  if (p.flags.has('released')) { io.err('--released is set only by the service runner.\n'); return EXIT_CODES.usage; }
   const route = need(rest[0], 'route');
   const pf = opt('prompt-file'), text = opt('prompt');
   if ((pf === undefined) === (text === undefined)) { io.err('Give the prompt with --prompt <text> or --prompt-file <file|->.\n'); return EXIT_CODES.usage; }
@@ -385,12 +574,15 @@ async function run(rest: string[], p: Parsed, io: Io, opts: Opts, say: (h: strin
   const packs = opt('pack')?.split(',').map(s => s.trim()).filter(Boolean);
   // An attachment path is relative to where the person is standing, so it is made absolute here.
   const attach = (p.repeated.get('attach') ?? []).map(f => resolve(io.cwd, f));
+  const caller = runsInsideJob(io) ? 'automated' : opt('caller') ?? io.env.AUGUR_CALLER ?? 'interactive';
+  if (caller !== 'interactive' && caller !== 'automated') { io.err('--caller is interactive or automated.\n'); return EXIT_CODES.usage; }
+  if (runsInsideJob(io) && allow.includes('unpicked')) { io.err('--allow unpicked is for the owner\'s own terminal, not for a job.\n'); return EXIT_CODES.usage; }
   const req: JobRequest = {
     route, activity: activity as ActivityId, dataTier: dataTier as DataTier, tools: tools as ToolTier, output: output as OutputMode, cwd: resolve(io.cwd, opt('cwd') ?? '.'),
     prompt: { text: promptText as string },
     ...(opt('expect-file') ? { expectFile: opt('expect-file') as string } : {}), ...(opt('timeout') ? { timeoutS: Number(opt('timeout')) } : {}),
     ...(p.flags.has('named') ? { named: true } : {}), ...(attach.length ? { attach } : {}), ...(p.flags.has('urgent') ? { urgent: true } : {}),
-    caller: { kind: parentId ? 'job' : 'cli', ...(parentId ? { label: parentId } : {}), ...(io.env.CLAUDE_CODE_SESSION_ID ? { session: io.env.CLAUDE_CODE_SESSION_ID } : {}), ...(io.interactive ? { interactive: true } : {}) },
+    caller: { kind: parentId ? 'job' : 'cli', intent: caller, ...(parentId ? { label: parentId } : {}), ...(io.env.CLAUDE_CODE_SESSION_ID ? { session: io.env.CLAUDE_CODE_SESSION_ID } : {}), ...(io.interactive ? { interactive: true } : {}) },
     ...(allow.length ? { allow } : {}), ...(p.flags.has('no-failover') ? { failover: false } : {}),
     ...(packs?.length ? { packs } : {}), ...(p.flags.has('no-charter') ? { noCharter: true } : {}), ...(opt('conversation') ? { conversation: opt('conversation') } : {}),
     ...(parentId ? { parent: { jobId: parentId, rootJobId: io.env.AUGUR_ROOT_JOB_ID ?? parentId, depth: 0 } } : {}),
@@ -441,15 +633,19 @@ async function pickCmd(io: Io, opts: Opts, say: (h: string, d: unknown) => void,
     if (!model || !Number.isFinite(n) || n < 0 || n > 1) { io.err('--fit takes model=number pairs with each number from 0 to 1.' + String.fromCharCode(10)); return EXIT_CODES.usage; }
     fits[model] = n;
   }
-  const r = await call('pick', { ...(activity ? { activity: activity as ActivityId } : {}), ...(dataTier ? { dataTier: dataTier as DataTier } : {}), ...(task ? { task } : {}),
-    ...(opt('named') ? { named: opt('named') as string } : {}), ...(depth ? { depth: depth as Depth } : {}), fits, ...(flag('best') ? { best: true } : {}), ...(flag('snippet') ? { snippet: true } : {}), ...(preview ? { preview: true } : {}), ...(io.env.CLAUDE_CODE_SESSION_ID ? { session: io.env.CLAUDE_CODE_SESSION_ID } : {}) }, opts);
+  const caller = runsInsideJob(io) ? 'automated' : opt('caller') ?? io.env.AUGUR_CALLER ?? 'interactive';
+  if (caller !== 'interactive' && caller !== 'automated') { io.err('--caller is interactive or automated.' + String.fromCharCode(10)); return EXIT_CODES.usage; }
+  const r = await call('pick', { caller, ...(activity ? { activity: activity as ActivityId } : {}), ...(dataTier ? { dataTier: dataTier as DataTier } : {}), ...(task ? { task } : {}),
+    ...(opt('role') ? { role: opt('role') } : {}),
+    ...((opt('model') ?? opt('named')) ? { named: (opt('model') ?? opt('named')) as string } : {}), ...(depth ? { depth: depth as Depth } : {}), fits, ...(flag('best') ? { best: true } : {}), ...(flag('snippet') ? { snippet: true } : {}), ...(preview ? { preview: true } : {}), ...(io.env.CLAUDE_CODE_SESSION_ID ? { session: io.env.CLAUDE_CODE_SESSION_ID } : {}) }, opts);
   if ('error' in r) { io.err(r.error + String.fromCharCode(10)); return EXIT_CODES.failed; }
   const lines = r.ranking.map(x => `  ${x.model.padEnd(22)} ${x.score.toFixed(2)}   fit ${x.fit.toFixed(2)} x ${x.level} ${x.weight.toFixed(2)} x usage ${x.usage.toFixed(2)}   odds ${Math.round((x.odds ?? 0) * 100)}%   routes ${(r.routes[x.model] ?? []).join(', ') || 'none'}`);
   for (const b of r.blocked) lines.push(`  ${b.model.padEnd(22)} --     ${b.why}`);
   const nl = String.fromCharCode(10);
   const note = preview ? `${nl}preview: no draw made` : '';
   const ask = r.proposal && r.proposal.mode !== 'auto' ? `${nl}Proposal ${r.pickId ?? ''}: ${r.proposal.reason}. No job can run on this pick yet. Ask the person which route to use, then record it with augur pick-answer <pick id> --model <route>.` : '';
-  say(r.pick ? `Pick: ${r.pick}   (${r.activity}, ${r.dataTier} data; scarcity ${r.scarcity}${r.decision ? `; ${r.decision.backend}` : ''})${note}${ask}${nl}${[r.reason, ...seatLines(r.seats)].join(nl)}${nl}${lines.join(nl)}` : `No model is permitted ${r.activity} on ${r.dataTier} data.${note}${nl}${lines.join(nl)}`, r);
+  const callerChoice = opt('role') && !opt('model') && !opt('named') ? `This role is caller-chosen. Choose one with --model from: ${r.ranking.map(x => x.model).join(', ') || 'no permitted candidates'}.` : '';
+  say(r.pick ? `Pick: ${r.pick}   (${r.activity}, ${r.dataTier} data; scarcity ${r.scarcity}${r.decision ? `; ${r.decision.backend}` : ''})${note}${ask}${nl}${[r.reason, ...seatLines(r.seats)].join(nl)}${nl}${lines.join(nl)}` : callerChoice || `No model is permitted ${r.activity} on ${r.dataTier} data.${note}${nl}${lines.join(nl)}`, r);
   return r.pick ? 0 : EXIT_CODES.rejected;
 }
 

@@ -12,7 +12,7 @@ const CAPS: AdapterCapabilities = { permissionRequests: false, sessions: false, 
 /**
  * A bare model over HTTP: one prompt in, one text answer out, no tools and no files. It runs as a job like any other, so it can be timed out and cancelled.
  * Route options: `baseUrl`, `model`, `keySource` (`env`, the default, or `store`), `apiKeyEnv` (the environment variable that holds the key, for `env`), `maxTokens`, `timeoutS`,
- * `mode` (`chat`, the default, `embeddings` or `transcribe`; the last two are for an OpenAI-style endpoint and its embed and transcribe activities), `maxImageMb` and `maxAudioMb`,
+ * `mode` (`chat`, the default, `embeddings`, `transcribe` or `moderation`; the last three are for an OpenAI-style endpoint and its embed, transcribe and moderate activities), `maxImageMb` and `maxAudioMb`,
  * `headersJson` (extra request headers, never secrets), `requestClass` (`cogitator` sends the job's priority class, `none` or nothing sends none) and `maxInput` (the largest prompt, in characters, the supervisor accepts).
  */
 /** Names a route may not set as a plain header: they carry credentials, and a credential belongs in the key store. */
@@ -35,8 +35,8 @@ export function requestClass(request: JobRequest): 'low' | 'normal' {
   return request.urgent === true || (request.caller.kind === 'cli' && request.caller.interactive === true) ? 'normal' : 'low';
 }
 
-const MODES = ['chat', 'embeddings', 'transcribe'];
-const KINDS: Record<string, AttachmentKind[]> = { chat: ['text', 'image'], embeddings: ['text'], transcribe: ['audio'] };
+const MODES = ['chat', 'embeddings', 'transcribe', 'moderation'];
+const KINDS: Record<string, AttachmentKind[]> = { chat: ['text', 'image'], embeddings: ['text'], transcribe: ['audio'], moderation: ['text', 'image'] };
 
 /** The gateway's `x-cogitator-*` headers as the fields a job record keeps. */
 export function servedOf(h: Record<string, string>): Served {
@@ -57,7 +57,7 @@ function make(id: string, shape: 'openai' | 'anthropic'): Adapter {
       if (source !== 'env' && source !== 'store') return 'keySource must be env or store';
       if (source === 'env' && !optStr(route.options, 'apiKeyEnv')) return 'route option apiKeyEnv (the environment variable that holds the key) is required';
       const mode = optStr(route.options, 'mode');
-      if (mode !== undefined && !MODES.includes(mode)) return 'mode must be chat, embeddings or transcribe';
+      if (mode !== undefined && !MODES.includes(mode)) return 'mode must be chat, embeddings, transcribe or moderation';
       if (mode !== undefined && mode !== 'chat' && shape === 'anthropic') return 'an Anthropic-style route can only chat';
       for (const k of ['maxImageMb', 'maxAudioMb']) { const v = route.options?.[k]; if (v !== undefined && !(typeof v === 'number' && v > 0)) return `${k} must be a number of megabytes above zero`; }
       const headers = optStr(route.options, 'headersJson');
@@ -69,10 +69,11 @@ function make(id: string, shape: 'openai' | 'anthropic'): Adapter {
       return null;
     },
     plan(request: JobRequest, route: RouteConfig, ctx: PlanContext): LaunchPlan {
-      if (request.tools !== 'read' || request.output !== 'text_only') throw new Error('an API route returns text only. Use tools read and output text_only.');
+      if ((request.tools !== 'read' && request.tools !== 'none') || request.output !== 'text_only') throw new Error('an API route returns text only. Use tools none or read and output text_only.');
       const mode = optStr(route.options, 'mode') ?? 'chat', files = ctx.attachments ?? [];
       if (request.activity === 'embed' !== (mode === 'embeddings')) throw new Error(mode === 'embeddings' ? 'an embeddings route takes only the embed activity.' : 'the embed activity needs a route whose mode is embeddings.');
       if (request.activity === 'transcribe' !== (mode === 'transcribe')) throw new Error(mode === 'transcribe' ? 'a transcribe route takes only the transcribe activity.' : 'the transcribe activity needs a route whose mode is transcribe.');
+      if (request.activity === 'moderate' !== (mode === 'moderation')) throw new Error(mode === 'moderation' ? 'a moderation route takes only the moderate activity.' : 'the moderate activity needs a route whose mode is moderation.');
       if (mode === 'transcribe' && files.filter(f => f.kind === 'audio').length !== 1) throw new Error('transcribe takes exactly one audio file.');
       const o = route.options, headers = { ...(optStr(o, 'requestClass') === 'cogitator' ? { 'x-cogitator-class': requestClass(request) } : {}), ...JSON.parse(optStr(o, 'headersJson') ?? '{}') as Record<string, string> };
       const args = [SCRIPT, '--shape', shape, '--url', optStr(o, 'baseUrl') as string, '--model', optStr(o, 'model') as string,

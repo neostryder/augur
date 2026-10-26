@@ -3,8 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { BalanceReport } from '@augur/dispatch-protocol';
-import { writeDailyReport, writeLabels } from '../src/balance-files.js';
+import { appendGate, gateTotals, readGate, writeDailyReport, writeLabels } from '../src/balance-files.js';
 import { DecisionLog } from '../src/decisions.js';
+import { makeEnv } from './harness.js';
 
 const dirs: string[] = [];
 afterEach(() => { while (dirs.length) rmSync(dirs.pop()!, { recursive: true, force: true }); });
@@ -76,5 +77,27 @@ describe('the labels file', () => {
     expect(writeLabels(home, rows)).toBe(false);
     expect(readFileSync(join(home, 'balance', 'labels.jsonl'), 'utf8')).toBe('{"pick":"p1","brief":null}\n');
     expect(writeLabels(home, [{ pick: 'p1', brief: 'met' }])).toBe(true);
+  });
+});
+
+describe('the premium gate ledger', () => {
+  it('appends events and totals', () => {
+    const home = tmp();
+    appendGate(home, { at: '2026-10-20T00:00:00.000Z', kind: 'approved', label: 'codex/sol', provider: 'codex', caller: 'owner', gap: 22, scope: 'task', note: 'reviewed' });
+    appendGate(home, { at: '2026-10-20T00:01:00.000Z', kind: 'ran', label: 'codex/sol', provider: 'codex', caller: 'interactive', gap: 22, cost: 1.25, activity: 'write_code' });
+    appendGate(home, { at: '2026-10-20T00:02:00.000Z', kind: 'lower-ran', label: 'codex/luna', provider: 'codex', caller: 'interactive', gap: 22, cost: 0.25, activity: 'write_code' });
+    expect(readGate(home)).toHaveLength(3);
+    expect(gateTotals(readGate(home))).toEqual({ counts: { approved: 1, ran: 1, 'lower-ran': 1 }, costs: { write_code: { premium: 1.25, lower: 0.25 } } });
+  });
+
+  it('writes gate events without recording request task text', async () => {
+    const e = makeEnv();
+    try {
+      const path = join(e.home, 'policy.json'), policy = JSON.parse(readFileSync(path, 'utf8'));
+      policy.balance = { gate: { premium: ['test/fake'], paceLift: [], open: 20, close: 10 } };
+      writeFileSync(path, JSON.stringify(policy));
+      await e.sup.pick({ activity: 'write_code', dataTier: 'internal', task: 'private task text that must not be logged' });
+      expect(readFileSync(join(e.home, 'gate-ledger.jsonl'), 'utf8')).not.toContain('private task text');
+    } finally { e.dispose(); }
   });
 });

@@ -19,6 +19,7 @@ function policy(): PolicyFile {
   } };
   const p = emptyPolicy(); importPolicy(p, openRules(rules), now);
   for (const [id, provider] of Object.entries(p.providers)) for (const label of Object.keys(provider.models)) setField(p, fieldPath(id, label, 'status'), 'confirmed', 'test', now);
+  p.balance = { gate: { premium: [], paceLift: [] } };
   return buildPolicyFile(p, [{ id: 'grok', name: 'grok', metered: true }, { id: 'cogitator', name: 'Cogitator', metered: false }], now);
 }
 

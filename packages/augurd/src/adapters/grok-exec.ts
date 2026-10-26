@@ -27,7 +27,7 @@ export const grokExec: Adapter = {
   plan(request: JobRequest, route: RouteConfig, ctx: PlanContext): LaunchPlan {
     const exe = command(route) as { command: string; prefix: string[] };
     const promptPath = join(ctx.jobDir, 'prompt.md');
-    const turns = optNum(route.options, 'maxTurns') ?? (request.tools === 'read' ? 60 : 400);
+    const turns = optNum(route.options, 'maxTurns') ?? (request.tools === 'read' || request.tools === 'none' ? 60 : 400);
     const args = [...exe.prefix];
     if (ctx.resume?.fresh) {
       if (!ctx.resume.id) throw new Error(`conversation ${ctx.resume.name} needs a session id`);
@@ -37,7 +37,8 @@ export const grokExec: Adapter = {
       args.push('--resume', ctx.resume.id);
     }
     args.push('--prompt-file', promptPath, '-m', optStr(route.options, 'model') as string, '--output-format', 'json', '--cwd', request.cwd);
-    if (request.tools === 'read') args.push('--max-turns', String(turns), '--allow', 'Read', '--allow', 'Grep', '--deny', 'Edit', '--deny', 'Bash(*)');
+    if (request.tools === 'none') args.push('--max-turns', String(turns), '--deny', 'Read', '--deny', 'Grep', '--deny', 'Edit', '--deny', 'Bash(*)');
+    else if (request.tools === 'read') args.push('--max-turns', String(turns), '--allow', 'Read', '--allow', 'Grep', '--deny', 'Edit', '--deny', 'Bash(*)');
     else args.push('--always-approve', '--max-turns', String(turns));
     const effort = optStr(route.options, 'effort');
     if (effort) args.push('--reasoning-effort', effort);

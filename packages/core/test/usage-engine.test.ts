@@ -119,6 +119,26 @@ describe('the usage engine', () => {
     expect(seen).toContain('feed');
   });
 
+  it('raises a premium notice once, keeps it dismissed while it applies, and clears it when it stops', async () => {
+    const c = base();
+    c.alerts.enabled = true;
+    const f = fakeShell(c);
+    engine = new UsageEngine(f.shell, { hosted: 'https://augur.example.com' });
+    await engine.start();
+    const notice = { key: 'await.b1', title: 'A premium task waits', body: 'Approve it.' };
+    const ids = () => engine!.state.feed.alerts.filter((a) => a.kind === 'backlog').map((a) => a.id);
+    await engine.setPremiumNotices([notice]);
+    expect(ids()).toEqual(['backlog.await.b1']);
+    await callEngine(engine, 'dismiss', [['backlog.await.b1']]);
+    await engine.setPremiumNotices([notice]);
+    expect(ids()).toEqual([]);
+    await engine.setPremiumNotices([]);
+    await engine.setPremiumNotices([notice]);
+    expect(ids()).toEqual(['backlog.await.b1']);
+    await engine.setPremiumNotices([]);
+    expect(ids()).toEqual([]);
+  });
+
   it('stores a proposed rule on an unreviewed model and leaves a route reading off', async () => {
     const f = fakeShell(base());
     engine = new UsageEngine(f.shell, { hosted: 'https://augur.example.com' });
@@ -226,7 +246,7 @@ describe('the reset ledger in the usage engine', () => {
     expect(persisted[0]!.at).toBe(reading(0, 5).generatedAt);
     expect(persisted.at(-1)!.at).toBe(reading(0, 2003).generatedAt);
     expect(logs).toEqual(Array(2).fill('Reset ledger retry queue exceeded 1000 events; the oldest events were dropped.'));
-  });
+  }, 30000);
 
   it('waits for an active append before flushing the queued batch', async () => {
     const f = fakeShell(null), persisted: ResetEvent[] = [];

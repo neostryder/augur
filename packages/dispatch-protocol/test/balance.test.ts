@@ -22,7 +22,7 @@ const NO_PREFER = Object.fromEntries(Object.keys(DEFAULT_BALANCE.prefer).map(m =
 function policy(balance?: Record<string, unknown>): PolicyFile {
   const p = emptyPolicy(); importPolicy(p, openRules(RULES), now);
   for (const [id, provider] of Object.entries(p.providers)) for (const label of Object.keys(provider.models)) setField(p, fieldPath(id, label, 'status'), 'confirmed', 'test', now);
-  p.balance = { prefer: NO_PREFER, ...balance };
+  p.balance = { gate: { premium: [], paceLift: [] }, prefer: NO_PREFER, ...balance };
   return buildPolicyFile(p, Object.keys(p.providers).map(id => ({ id, name: id, metered: true })), now);
 }
 const order = (r: ReturnType<typeof rank>) => r.ranking.map(x => x.model);
@@ -192,6 +192,7 @@ const BACKUPS = { providers: {
 function backupPolicy(): PolicyFile {
   const p = emptyPolicy(); importPolicy(p, openRules(BACKUPS), now);
   for (const [id, provider] of Object.entries(p.providers)) for (const label of Object.keys(provider.models)) setField(p, fieldPath(id, label, 'status'), 'confirmed', 'test', now);
+  p.balance = { gate: { premium: [], paceLift: [] } };
   return buildPolicyFile(p, Object.keys(p.providers).map(id => ({ id, name: id, metered: true })), now);
 }
 const full = (o: { claude?: number; codex?: number; spend?: number } = {}) => ({ providers: {
@@ -272,11 +273,25 @@ const SEATS = { providers: {
 function seatPolicy(balance?: Record<string, unknown>): PolicyFile {
   const p = emptyPolicy(); importPolicy(p, openRules(SEATS), now);
   for (const [id, provider] of Object.entries(p.providers)) for (const label of Object.keys(provider.models)) setField(p, fieldPath(id, label, 'status'), 'confirmed', 'test', now);
-  p.balance = { prefer: NO_PREFER, ...balance };
+  p.balance = { gate: { premium: [], paceLift: [] }, prefer: NO_PREFER, ...balance };
   return buildPolicyFile(p, Object.keys(p.providers).map(id => ({ id, name: id, metered: true })), now);
 }
 const seat = (activity: 'write_code' | 'research' | 'typed_decisions' | 'generate_images', tier: 'public' | 'internal' = 'internal', balance?: Record<string, unknown>) =>
   rank(seatPolicy(balance), null, { activity, dataTier: tier }, now);
+
+describe('the shipped rules for MiniMax', () => {
+  // The live model sync swapped MiniMax-M3 for MiniMax-M3.1-Flash, so the rules have to keep matching under either label.
+  it.each([['minimax/m3', 'MiniMax-M3'], ['minimax/MiniMax-M3', 'MiniMax-M3'], ['minimax/MiniMax-M3.1-Flash', 'MiniMax-M3.1-Flash']])('reach the model labelled %s', (label, id) => {
+    const rules = { providers: { ...SEATS.providers, minimax: { ...SEATS.providers.minimax, models: { [label]: { id, rule: { activities: all } } } } } };
+    const p = emptyPolicy(); importPolicy(p, openRules(rules), now);
+    for (const [pid, provider] of Object.entries(p.providers)) for (const l of Object.keys(provider.models)) setField(p, fieldPath(pid, l, 'status'), 'confirmed', 'test', now);
+    p.balance = {};
+    const file = buildPolicyFile(p, Object.keys(p.providers).map(pid => ({ id: pid, name: pid, metered: true })), now);
+    const research = rank(file, null, { activity: 'research', dataTier: 'internal' }, now);
+    expect(research.ranking.find(x => x.model === label)?.tilt).toBe(1.15);
+    expect(rank(file, null, { activity: 'write_code', dataTier: 'internal' }, now).seats.second).toMatchObject({ model: label });
+  });
+});
 
 describe('the seats beside a pick', () => {
   it('add a second opinion from MiniMax on a task that is not small', () => {

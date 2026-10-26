@@ -4,7 +4,7 @@ import type { ModelEntry, PolicyConfig } from './policy.js';
 import { fieldPath, newProvider, setField } from './policy.js';
 
 /** `created` is when the provider released or first listed the model, where it says. */
-export interface ListedModel { id: string; name?: string; created?: string }
+export interface ListedModel { id: string; name?: string; created?: string; inputModalities?: string[]; endpoints?: string[] }
 export type ListMode = 'auto' | 'catalog';
 
 /** Each provider's last model list, kept apart from the config since a marketplace list runs to over a thousand entries. */
