@@ -12,7 +12,7 @@ optdepends=('libnotify: desktop notices for alerts through notify-send'
             'systemd: containment of jobs in user scopes, and the service starting at login')
 conflicts=('augur-bin')
 source=("${pkgname}-${pkgver}.tar.gz::${url}/releases/download/v${pkgver}/augur-terminal-${pkgver}.tar.gz")
-sha256sums=('a1b55a6f60914a18ba8353c72a82e519dc41d959ecee60870ee07ab5a6bd4e4b')
+sha256sums=('f2f63ce2f34df7454d7ba4bdbd15cb85a7e8619a7d29bbfcf011c5f7c400d9b9')
 
 package() {
   cd "${srcdir}/augur-terminal-${pkgver}"
