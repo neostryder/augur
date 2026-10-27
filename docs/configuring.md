@@ -8,6 +8,7 @@ The app covers most of this. The Rules page says what each model may do, the Rou
 | --- | --- | --- |
 | Rules for every model, and the balance overrides | `policy` inside `config.json` in the app's settings folder. Augur writes it out to `policy.json` in `~/.augur` each time a rule changes. | The Rules page, the `augur_policy_edit` tool for models and balance settings, `augur alias set` and `augur roles` for series and roles, and by hand |
 | Providers, where their keys come from, custom providers, alerts, and `agentApproval` | `config.json` in the app's settings folder | Settings, or by hand. `agentApproval` is set on the window app's Service page, or under Service on the terminal app's Dispatch page |
+| Keys, when the key store is the file | `secrets.json` in the app's settings folder | `augur key set`, or by hand. [Where keys are kept](#where-keys-are-kept) has the details |
 | Routes | `dispatch/routes.json` in `~/.augur` | The Routes page, `augur provider add`, the `augur_route_add` tool for a new route, or by hand |
 | Service settings | Listed by `augur config` | The Service page |
 | Standing instructions for jobs, the charter | The `charter` folder in `~/.augur`, or the folder `runner.charterDir` names | By hand. [Standing instructions for every job](#standing-instructions-for-every-job) has the layout |
@@ -173,6 +174,27 @@ A route joins a model to the program or API that runs it. The Routes page has an
 The route's key, `deepseek` here, is the name an agent passes to `augur run`. It starts with a lowercase letter and holds only lowercase letters, digits, `-` and `_`. `model` is the route label the rules use, so that model must be on the Rules page and confirmed before the route runs anything. `adapter` is one of the adapters below, and `options` holds its settings. A route can also have `notes`, `delegation`, a `budget` (`per` is `day`, `week` or `month`, with a limit in `usd`, `jobs` or both) and a `fallback` list of other route names to try when it cannot take a job. With the service's `runner.failover` setting on, a job that fails on the route can also run again on that list, as [Budgets and fallback routes](accounting.md#budgets-and-fallback-routes) describes.
 
 An API route never holds its key. It either names an environment variable or reads the operating system's key store, which the Routes page fills. `augur key set <route>` fills the same store from a hidden prompt, from an environment variable you set in your own terminal (`--env <NAME>`) or from standard input (`--stdin`). `augur key status <route>` says whether a key is there without printing it. The command refuses a key typed after the route name, so a key never lands in shell history or in a chat. When the route has a `baseUrl`, `augur key set` names its host in the prompt and again once the key is saved, so you can check where the key will be sent.
+
+### Where keys are kept
+
+The key store is the operating system's: the Windows credential store, the macOS Keychain, or the Secret Service on Linux. Where none of those answers, the key falls back to a file only your own user can read.
+
+| | |
+| --- | --- |
+| The file | `secrets.json` in the settings folder, beside `config.json` |
+| The file's mode | `0600`, inside a `0700` folder. On Windows the folder's ACL applies instead |
+| What is in it | The key in plain text, under a name like `dispatch.my_route`. The file is the key store, so it holds every stored key and nothing else |
+| How it is written | Whole file each time, through a temporary file and a rename, so a write that is interrupted never leaves a half-written store |
+
+Set `AUGUR_KEYSTORE=file` to use that file on every computer, not only where no keychain service answers. The variable applies to the app, the service, and the `augur key` commands, so set it in the environment each of them runs in.
+
+```bash
+export AUGUR_KEYSTORE=file
+augur key set my_route    # the key goes to secrets.json
+augur key status my_route # my_route: a key is stored
+```
+
+The key is in plain text, so the file's mode is the only thing keeping it private. A key in the file store is not encrypted, and it is not protected by the operating system's credential store. Keep the file out of backups and out of any folder another user can read, and remember that `secrets.json` in the settings folder is the store, so it is as sensitive as the keys it holds.
 
 <!-- adapter-reference:start -->
 
