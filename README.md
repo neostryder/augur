@@ -92,6 +92,8 @@ augur logout codex    # forgets Augur's own session and leaves the CLI's login a
 
 Augur keeps only the refresh token, in your operating system's key store (the Windows credential store, the macOS Keychain, or the Secret Service on Linux, or a file only you can read when none of those is available). Access tokens stay in memory. While Augur has its own session, it doesn't read or renew the CLI's login. Signing in or out takes the owner's token, so an agent working through the MCP server can't do either.
 
+Set `AUGUR_KEYSTORE=file` to keep every key in the file store instead of the operating system's, on a computer with no keychain service, or when you want the keys in one place you can see. The file is `secrets.json` in the settings folder, written with mode `0600` inside a `0700` folder, and it holds the key in plain text, so only your own user can read it. [Configuring Augur](docs/configuring.md#where-keys-are-kept) has the details.
+
 ## Using it
 
 Click the icon to open the panel. The ring on the icon shows your most-used limit, and its color turns amber at 75% and red at 90%. Hover over it for one line per provider without opening the panel. Ctrl+Super+U opens and closes the panel from any app (Super is the Windows key, or Command on a Mac), and settings can change or turn off that shortcut. The panel also opens by itself each time Augur starts; turn off Open the panel at launch in settings to keep it in the tray until you open it.
