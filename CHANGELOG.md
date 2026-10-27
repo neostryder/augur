@@ -4,6 +4,8 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+## [1.15.0] - 2026-10-27
+
 ### Added
 
 - [Visible] [Security] **`AUGUR_KEYSTORE=file` keeps every key in a file on any computer.** The key store is the operating system's -- the Windows credential store, the macOS Keychain, or the Secret Service on Linux -- and falls back to a file only where none of those answers. Setting the variable uses that file everywhere, which is what a computer with no keychain service needs, and it holds the key in plain text, so the file is written with mode `0600` inside a `0700` folder and its whole contents replaced through a temporary file and a rename. [Where keys are kept](docs/configuring.md#where-keys-are-kept) has the details.
