@@ -4,6 +4,12 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+## [1.15.1] - 2026-10-28
+
+### Fixed
+
+- [Visible] [Providers] **`augur_route_add` checks for a duplicate model only within the route's own provider.** A Copilot model can now share an id with a Codex model and still get its route. A route for a model the same provider already holds is still held for you.
+
 ## [1.15.0] - 2026-10-27
 
 ### Added
