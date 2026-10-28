@@ -137,4 +137,11 @@ describe('route_add', () => {
     expect(JSON.parse(readFileSync(routesPath, 'utf8')).routes.second).toBeUndefined();
     expect(Object.keys(engine.state.config.policy?.providers.acme?.models ?? {})).toEqual(['acme/fast']);
   });
+  it('does not treat a model id held under another provider as already in the rules', async () => {
+    const { engine, add } = await boot();
+    expect((await add(good)).ok).toBe(true);
+    const other = await add({ name: 'beta', adapter: 'codex-exec', provider: 'beta', model: { label: 'slow', id: 'fast-1', name: 'Slow' } });
+    expect(other.ok, other.text).toBe(true);
+    expect(Object.keys(engine.state.config.policy?.providers.beta?.models ?? {})).toEqual(['beta/slow']);
+  });
 });
