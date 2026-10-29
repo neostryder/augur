@@ -1,10 +1,12 @@
 // The fleet reading: which machines Cogitator serves from, how full their memory is, and where each role's chain is being served.
 import { obj, num } from './util.js';
 import type { Snapshot } from './types.js';
+import { readCogitatorKnowledge } from './cogitator-catalog.js';
+import type { CogitatorKnowledge } from './cogitator-catalog.js';
 
 export type FleetModelState = 'ready' | 'busy' | 'installed' | string;
 
-export interface FleetModel {
+export interface FleetModel extends CogitatorKnowledge {
   id: string;
   state: FleetModelState;
   memoryMb: number;
@@ -30,7 +32,7 @@ export interface FleetMachine {
   models: FleetModel[];
 }
 
-export interface FleetRole {
+export interface FleetRole extends CogitatorKnowledge {
   name: string;
   /** The links in order, each a model id with `@machine` when it runs on a peer. */
   chain: string[];
@@ -61,17 +63,18 @@ export interface CompactFleet {
 export const PRESSURE_FREE_FRACTION = 0.1;
 export const PRESSURE_FREE_MB = 2048;
 
-function readModels(ledger: Record<string, any>): FleetModel[] {
+function readModels(ledger: Record<string, any>, body: unknown): FleetModel[] {
   const rows = Array.isArray(ledger.models) ? ledger.models : [];
   return rows.map(obj).filter(row => typeof row.id === 'string').map(row => ({
     id: String(row.id), state: typeof row.state === 'string' ? row.state : 'installed', memoryMb: num(row.memory_mb) ?? 0, idleSecs: num(row.idle_secs),
-    yielded: Array.isArray(row.yielded) ? row.yielded.filter((v: unknown): v is string => typeof v === 'string') : [] }));
+    yielded: Array.isArray(row.yielded) ? row.yielded.filter((v: unknown): v is string => typeof v === 'string') : [],
+    ...readCogitatorKnowledge(body, row.id, false, row) }));
 }
 
-function readMachine(name: string, self: boolean, up: boolean, error: string | null, checkedSecsAgo: number | null, ledger: Record<string, any>): FleetMachine {
+function readMachine(name: string, self: boolean, up: boolean, error: string | null, checkedSecsAgo: number | null, ledger: Record<string, any>, body: unknown): FleetMachine {
   const budgetMb = num(ledger.budget_mb), usedMb = num(ledger.used_mb), freeMb = num(ledger.free_mb);
   const pressure = freeMb !== null && budgetMb !== null && freeMb < Math.min(PRESSURE_FREE_MB, budgetMb * PRESSURE_FREE_FRACTION);
-  return { name, self, up, error, checkedSecsAgo, budgetMb, usedMb, freeMb, pressure, models: readModels(ledger) };
+  return { name, self, up, error, checkedSecsAgo, budgetMb, usedMb, freeMb, pressure, models: readModels(ledger, body) };
 }
 
 /** Whether a chain link can serve now: its machine is up and the machine lists the model. A machine that reports no models cannot be checked, so it counts as able. */
@@ -88,19 +91,21 @@ function linkAvailable(link: string, self: string, machines: Map<string, FleetMa
 export function readFleet(body: unknown): FleetReading {
   const doc = obj(body), me = obj(doc.self);
   const selfName = typeof me.name === 'string' && me.name ? me.name : 'this machine';
-  const machines: FleetMachine[] = [readMachine(selfName, true, true, null, 0, obj(me.ledger))];
+  const machines: FleetMachine[] = [readMachine(selfName, true, true, null, 0, obj(me.ledger), body)];
   for (const raw of Array.isArray(doc.peers) ? doc.peers : []) {
     const peer = obj(raw);
     if (typeof peer.name !== 'string' || !peer.name) continue;
-    machines.push(readMachine(peer.name, false, peer.up !== false, typeof peer.error === 'string' ? peer.error : null, num(peer.checked_secs_ago), obj(peer.ledger)));
+    machines.push(readMachine(peer.name, false, peer.up !== false, typeof peer.error === 'string' ? peer.error : null, num(peer.checked_secs_ago), obj(peer.ledger), body));
   }
   const byName = new Map(machines.map(m => [m.name, m]));
-  const roles: FleetRole[] = (Array.isArray(me.roles) ? me.roles : []).map(obj).filter(row => typeof row.name === 'string').map(row => {
+  const roleRows = me.roles ?? obj(doc.catalog).roles ?? doc.roles;
+  const roles: FleetRole[] = (Array.isArray(roleRows) ? roleRows : []).map(obj).filter(row => typeof row.name === 'string').map(row => {
     const chain = (Array.isArray(row.chain) ? row.chain : []).filter((v: unknown): v is string => typeof v === 'string');
     const found = chain.map(link => linkAvailable(link, selfName, byName));
     const at = found.findIndex(link => link.ok);
     return { name: String(row.name), chain, refusesDegrade: row.refuses_degrade === true, servingIndex: at < 0 ? null : at,
-      servingMachine: at < 0 ? null : found[at]!.machine, servingModel: at < 0 ? null : found[at]!.model, degraded: at > 0 };
+      servingMachine: at < 0 ? null : found[at]!.machine, servingModel: at < 0 ? null : found[at]!.model, degraded: at > 0,
+      ...readCogitatorKnowledge(body, row.name, true, row) };
   });
   return { self: selfName, machines, roles };
 }
@@ -112,7 +117,7 @@ export function compactFleet(fleet: FleetReading): CompactFleet {
 
 /** The fleet of a snapshot, as the Cogitator provider last read it, with the age of that reading. Null when the provider is off or has never answered. */
 export function fleetOf(snap: Snapshot | null | undefined): { fleet: FleetReading; fetchedAt: string; stale: boolean } | null {
-  const p = snap?.providers.cogitator;
+  const p = snap?.providers?.cogitator;
   const fleet = obj(p?.notes).fleet as FleetReading | undefined;
   return p && fleet && p.fetchedAt ? { fleet, fetchedAt: p.fetchedAt, stale: p.stale } : null;
 }

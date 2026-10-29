@@ -2,6 +2,7 @@ import type { ProviderPlugin } from '../types.js';
 import { HttpError, json } from '../util.js';
 import { readFleet } from '../fleet.js';
 import { keyMayGoTo } from '../net.js';
+import { fleetCatalog } from '../cogitator-catalog.js';
 
 export const DEFAULT_BASE = 'http://127.0.0.1:8470';
 
@@ -19,6 +20,11 @@ export const cogitator: ProviderPlugin = {
   id: 'cogitator', name: 'Cogitator', needsLocalLogin: false, links: {},
   // The fleet changes when a machine sleeps or a model loads, so it is read often; a gateway that is off shows once, not as a loop.
   refreshSeconds: 30,
+  modelListMode: 'catalog',
+  async listModels(host, settings) {
+    const result = await cogitator.fetch(host, settings);
+    return fleetCatalog(result.notes!.fleet as ReturnType<typeof readFleet>).map(entry => ({ id: entry.id, name: entry.id }));
+  },
   fields: [{ key: 'manageKey', label: 'Manage key', kind: 'secret', required: true, help: 'A Cogitator key with the manage scope. It reads the machines and roles; the routes use a separate infer key.' },
     { key: 'baseUrl', label: 'Gateway address', kind: 'text', placeholder: DEFAULT_BASE, help: `Leave empty for ${DEFAULT_BASE}. Another machine on the home network goes here, such as http://eru:8470.` }],
   async fetch(host, settings) {

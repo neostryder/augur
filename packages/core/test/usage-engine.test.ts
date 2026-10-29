@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { callEngine, defaultConfig, detectResets, fieldPath, migrateConfig, setField, UsageEngine } from '../src/index.js';
+import { callEngine, defaultConfig, detectResets, emptyPolicy, fieldPath, migrateConfig, newProvider, setField, UsageEngine } from '../src/index.js';
 import type { AppConfig, EngineKey, EngineShell, ProposedRule, ResetEvent, Snapshot } from '../src/index.js';
 
 function fakeShell(saved: AppConfig | null) {
@@ -43,6 +43,21 @@ let engine: UsageEngine | null = null;
 afterEach(() => { engine?.stop(); engine = null; vi.useRealTimers(); });
 
 describe('the usage engine', () => {
+  it('keeps Cogitator discoveries as offers even if an older configuration requests automatic imports', async () => {
+    const config = base();
+    config.providers.find(provider => provider.id === 'cogitator')!.enabled = true;
+    config.policy = emptyPolicy();
+    config.policy.providers.cogitator = { ...newProvider(), listMode: 'auto' };
+    const f = fakeShell(config);
+    f.secrets.set('cogitator.manageKey', 'test-manage');
+    f.shell.host.http = async () => ({ status: 200, headers: {}, body: JSON.stringify({ self: { name: 'eru', ledger: { models: [{ id: 'laya' }] } } }) });
+    engine = new UsageEngine(f.shell, { hosted: 'https://augur.example.com' });
+    await engine.start();
+    await engine.listModels('cogitator');
+    expect(engine.state.catalog.cogitator?.models.map(model => model.id)).toEqual(['laya']);
+    expect(engine.state.config.policy?.providers.cogitator?.models).toEqual({});
+  });
+
   it('waits on first run until setup finishes, then saves and refreshes', async () => {
     const f = fakeShell(null);
     engine = new UsageEngine(f.shell, { hosted: 'https://augur.example.com' });
