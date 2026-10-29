@@ -288,6 +288,7 @@ describe('an API connector', () => {
     await terminal(e.sup, e.store, urgent);
     expect(m.seen.map(r => r.headers['x-cogitator-class'])).toEqual(['low', 'normal', 'normal']);
     expect(m.seen.every(r => r.headers['x-team'] === 'home')).toBe(true);
+    expect(m.seen.every(r => r.headers['x-cogitator-source'] === 'augur' && r.headers['x-augur-route'] === 'chat' && r.headers['x-cogitator-activity'] === textReq('chat').activity)).toBe(true);
     route({ headersJson: JSON.stringify({ Authorization: 'Bearer x' }) });
     expect(e.sup.submit({ ...textReq('chat'), cwd: e.root })).toMatchObject({ rejected: { reason: expect.stringContaining('key store') } });
     route({ requestClass: 'other' });

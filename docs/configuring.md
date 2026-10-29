@@ -289,7 +289,7 @@ Sends one prompt to a chat completions, embeddings, or transcription endpoint an
 | `maxTokens` | number | Most tokens the answer may use. Defaults to 4096. |
 | `timeoutS` | number | Defaults to 900. |
 | `headersJson` | json | A JSON object of request headers sent with every call. Credentials do not belong here; keep keys in the key store. |
-| `requestClass` | none, cogitator | none sends nothing. cogitator sends x-cogitator-class with every call: low for background jobs, normal for a person typing at a terminal or a job marked urgent. |
+| `requestClass` | none, cogitator | none sends nothing. cogitator sends x-cogitator-source (augur), x-augur-route, x-cogitator-activity and x-cogitator-class with every call. The class is low for background jobs, normal for a person typing at a terminal or a job marked urgent. |
 | `maxInput` | number | The most characters of prompt, with any text attachments, the route takes. A bigger job is refused and goes to the route fallback, and is never cut. Leave empty for no limit. |
 | `maxImageMb` | number | The largest image attachment in megabytes. Defaults to 10. |
 | `maxAudioMb` | number | The largest audio attachment in megabytes. Defaults to 25. |
@@ -309,7 +309,7 @@ Sends one prompt to a messages endpoint and returns the text. No tools. Text fil
 | `maxTokens` | number | Most tokens the answer may use. Defaults to 4096. |
 | `timeoutS` | number | Defaults to 900. |
 | `headersJson` | json | A JSON object of request headers sent with every call. Credentials do not belong here; keep keys in the key store. |
-| `requestClass` | none, cogitator | none sends nothing. cogitator sends x-cogitator-class with every call: low for background jobs, normal for a person typing at a terminal or a job marked urgent. |
+| `requestClass` | none, cogitator | none sends nothing. cogitator sends x-cogitator-source (augur), x-augur-route, x-cogitator-activity and x-cogitator-class with every call. The class is low for background jobs, normal for a person typing at a terminal or a job marked urgent. |
 | `maxInput` | number | The most characters of prompt, with any text attachments, the route takes. A bigger job is refused and goes to the route fallback, and is never cut. Leave empty for no limit. |
 | `maxImageMb` | number | The largest image attachment in megabytes. Defaults to 10. |
 | `maxAudioMb` | number | The largest audio attachment in megabytes. Defaults to 25. |
