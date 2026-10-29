@@ -6,6 +6,7 @@ import { call } from '../../augurd/src/client.js';
 import { JOBHOST, ROUTES, makeEnv } from '../../augurd/test/harness.js';
 import type { Env } from '../../augurd/test/harness.js';
 import { main, parse } from '../src/cli.js';
+import { readFleet } from '@augur/core';
 
 vi.setConfig({ testTimeout: 90000 });
 const cleanup: Array<() => Promise<void> | void> = [];
@@ -77,6 +78,32 @@ async function boot(extra: Record<string, unknown> = {}) {
   };
   return { e, run, pipe };
 }
+
+describe('augur models', () => {
+  it('prints live uses, role chains, and offers as text and JSON without editing rules', async () => {
+    const { e, pipe } = await boot();
+    const fleet = readFleet({ self: { name: 'eru', ledger: { models: [{ id: 'laya', uses: ['live tagging'] }] }, roles: [{ name: 'judge', chain: ['laya'] }] } });
+    const policyPath = join(e.home, 'policy.json'), before = readFileSync(policyPath, 'utf8');
+    writeFileSync(join(e.home, 'usage.json'), JSON.stringify({ providers: { cogitator: { fetchedAt: '2026-10-29T12:00:00Z', stale: true, notes: { fleet } } } }));
+    let out = '';
+    const io = { out: (text: string) => { out += text; }, err: () => {}, stdin: () => '', env: { ...process.env, AUGUR_HOME: e.home, AUGURD_DATA: e.dir, AUGURD_PIPE: pipe }, cwd: e.root };
+    expect(await main(['models'], io)).toBe(0);
+    expect(out).toContain('live tagging'); expect(out).toContain('chain: laya'); expect(out).toContain('(stale)');
+    expect(out).toContain('augur models accept judge');
+    out = '';
+    expect(await main(['models', '--json'], io)).toBe(0);
+    const data = JSON.parse(out);
+    expect(data.cogitator.map((entry: { id: string }) => entry.id)).toEqual(['laya', 'judge']);
+    expect(data.offers.map((entry: { id: string }) => entry.id)).toEqual(['laya', 'judge']);
+    expect(readFileSync(policyPath, 'utf8')).toBe(before);
+  });
+
+  it('refuses acceptance from inside a job before calling the service', async () => {
+    let err = '';
+    const code = await main(['models', 'accept', 'laya'], { out: () => {}, err: text => { err += text; }, stdin: () => '', env: { AUGUR_IN_JOB: '1' }, cwd: process.cwd() });
+    expect(code).toBe(2); expect(err).toContain('Only the owner');
+  });
+});
 
 describe('augur run', () => {
   it('rejects a released flag from the command line', async () => {

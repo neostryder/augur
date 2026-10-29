@@ -228,6 +228,7 @@ export class IpcServer {
     const offer = fleetOffers(reading.fleet, models, Object.values(this.routes() ?? {}).map(route => route.model)).find(item => item.id === id);
     if (!offer) return this.refused(['No current Cogitator offer has that id.']);
     const model = { label: offer.model, id };
+    if (Object.entries(engine.state.config.policy?.providers ?? {}).some(([provider, policy]) => provider !== 'cogitator' && Object.hasOwn(policy.models, model.label))) return this.refused(['The offered label already belongs to another provider. Choose its label in the app.']);
     const problems = routeAddShapeProblems({ name, model });
     if (problems.length) return this.refused(problems);
     if (!offer.missingRoute || offer.kind === 'image generation' || !offer.kind) {

@@ -4,6 +4,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { buildServer } from '../src/server.js';
 import { createTools } from '../src/tools.js';
 import type { McpDeps } from '../src/tools.js';
+import { readFleet } from '@augur/core';
 
 const POLICY = JSON.stringify({ providers: { codex: { models: {
   'codex/luna': { status: 'confirmed', cost: 'cheap', dataTier: 'internal', activities: ['write_code'] },
@@ -40,6 +41,31 @@ describe('models', () => {
     const r = await createTools(deps({}, [], null)).models();
     expect(r.isError).toBe(true);
     expect(r.text).toContain('policy.json was not found');
+  });
+
+  it('shows live uses, chains, and owner offers without writing or accepting anything', async () => {
+    const calls: Calls[] = [];
+    const d = deps({ routes: [{ ...ROUTES[0], name: 'judge', model: 'cogitator/judge' }] }, calls, JSON.stringify({ providers: { cogitator: { models: { 'cogitator/judge': { id: 'judge', status: 'confirmed', activities: {} }, 'cogitator/describe': { id: 'describe', status: 'unreviewed' } } } } }));
+    const fetchedAt = '2026-10-29T12:00:00Z';
+    d.usageText = () => JSON.stringify({ providers: { cogitator: { fetchedAt, stale: true, notes: { fleet: readFleet({ self: { name: 'eru', ledger: { models: [{ id: 'laya', uses: ['live tagging'], strengths: 'Live strength.', limits: 'Live limit.' }] }, roles: [{ name: 'judge', chain: ['laya'], uses: ['live judgment'] }, { name: 'describe', chain: ['laya'] }] } }) } } } });
+    const result = await createTools(d).models();
+    expect(result.text).toContain('live tagging'); expect(result.text).toContain('live judgment');
+    expect(result.text).toContain('chain: laya'); expect(result.text).toContain('(stale)');
+    expect(result.text).toContain('augur models accept laya');
+    const data = result.data as { models: Array<{ model: string; uses: string[] }>; cogitator: unknown[]; offers: Array<{ id: string; missingModel: boolean; missingRoute: boolean }> };
+    expect(data.models.find(entry => entry.model === 'cogitator/judge')?.uses).toEqual(['live judgment']);
+    expect(data.offers.map(offer => offer.id)).toEqual(['laya', 'describe']);
+    expect(data.offers.find(offer => offer.id === 'describe')).toMatchObject({ missingModel: false, missingRoute: true });
+    expect(calls).toEqual([{ method: 'routes', params: undefined }]);
+  });
+
+  it('lists a fleet before any rules exist and leaves unknown uses unspecified', async () => {
+    const d = deps({ routes: [] }, [], null);
+    d.usageText = () => JSON.stringify({ providers: { cogitator: { fetchedAt: '2026-10-29T12:00:00Z', notes: { fleet: readFleet({ self: { ledger: { models: [{ id: 'unknown' }] } } }) } } } });
+    const result = await createTools(d).models();
+    expect(result.isError).toBeUndefined();
+    expect(result.text).toContain('uses unknown');
+    expect(result.data?.offers).toHaveLength(1);
   });
 });
 

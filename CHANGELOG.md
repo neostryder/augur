@@ -4,6 +4,10 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+### Added
+
+- [Visible] [Providers] **Cogitator entries have a shared catalog of uses, strengths, limits, sizes, and activity fits.** Live management fields override the shipped descriptions. `augur models` and `augur_models` show live roles, chains, entries, and offers for missing rules or routes. Only the owner can accept an offer with `augur models accept`; new entries stay unreviewed, and routes never receive a key from the catalog. Seeded activity strengths fill unset rules while explicit blocks, data clearance, fleet availability, cold loads, and memory pressure still apply.
+
 ### Changed
 
 - [Visible] [Providers] **Cogitator can tell Augur's calls apart.** A route with `requestClass` set to `cogitator` now sends `x-cogitator-source: augur`, along with the route name, the activity and the priority class, so Cogitator's Activity tab can label the call as coming through Augur.

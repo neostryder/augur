@@ -26,6 +26,23 @@ The idle alert fires for a provider that Augur spends in full when all of its we
 
 Idle time counts back through usage history to the last reading at or above the percent, so a window that has not started counts as idle. The alert waits while the provider's last read failed, its figures are stale, or its status page reports a problem. It names the provider, its usage, the hours idle, and the hours until the reset, repeats at most once a day, and clears when usage climbs past the percent, the window ends, or the provider stops reading ok. Out of the box it goes to the bell and Claude Code, and not to your computer's notifications or a phone's push.
 
+## Cogitator catalog
+
+`augur models` and the read-only `augur_models` tool show live Cogitator entries and roles, their uses, strengths, limits, and the roles' ordered chains. Both report the reading time and whether the provider marked it stale. The catalog in `packages/core/src/cogitator-catalog.ts` supplies descriptions for the known Gemmas, the reasoning distill, Apple on-device text, embeddings, transcription, diarization, Laya, prose rewriting, prompt guarding, and image generation. Sizes without a reported parameter count stay unknown. Augur never invents a chain or treats a seed as proof that an entry is installed.
+
+The reader currently calls `GET /api/v1/hosts`. It includes machine inventories even when their memory ledger is absent, and accepts `uses`, `strengths`, and `limits` on inventory or ledger entries and roles, or in top-level or nested `catalog` lists. `readCogitatorKnowledge` isolates the metadata shape so a separate management catalog endpoint can use the same merge. Each valid live field overrides its seed; absent or malformed fields retain the seed, and an empty live use list clears the seeded uses. Live roles supply their chains. The full descriptions and chains stay out of the compact phone reading.
+
+A live entry without rules or a route appears as an offer in the CLI and MCP output. Offers are computed from the current reading and configuration rather than stored as series swaps. Listing an offer writes nothing. Cogitator's list stays available for manual selection in Model rules even if a previous configuration chose automatic imports. The owner accepts an offer with:
+
+```bash
+augur models accept judge --name local-judge
+augur key set local-judge
+```
+
+Acceptance requires a non-stale reading no older than two hours and rechecks that the entry is still offered. Only the owner token can accept; no MCP tool accepts an offer. A new entry starts unreviewed with no proposed rule changes. A new route uses the configured gateway address, `requestClass: cogitator`, and the key store, with no key copied into a route or rule. Embedding entries use `embeddings` mode, transcription and diarization use `transcribe`, prompt guards use `moderation`, and text and vision use `chat`. The `judge` role also gets `maxInput: 24000`. Existing routes are never overwritten. Acceptance preserves an existing entry's rules and review status when only its route is missing. Image generators and unknown kinds are added for review without a route because the catalog does not establish their API endpoint; the owner configures a compatible route in the app.
+
+For a confirmed Cogitator entry, a seeded activity strength fills only an activity that neither the entry nor the provider has set. An explicit strength or null block wins, as do pauses, ask-first, data clearance, and the fleet gates. Catalog defaults and explicit blocks remain distinct on policy export and import. The uncensored Gemma is capped at internal data, and a live role whose chain includes it is excluded from sensitive and regulated picks even if another link is serving. Laya's seed does not grant regulated clearance; the owner must set that clearance. Cold and pressure factors still multiply the score by 0.7 and 0.8 respectively, and unavailable machines or roles still block a pick.
+
 ## Models and route labels
 
 Every model has a route label of the form `<provider>/<model>`, such as `codex/sol` or `claude/claude-sonnet-5-5`. The rules, the balance and `routes.json` all refer to models by label. A label also holds the model id the provider expects, so the label itself can be shorter or friendlier than the id.

@@ -3,8 +3,8 @@
 // check, claim that a person named a model, or turn a rule off.
 import { call as serviceCall } from '@augur/augurd/client';
 import type { ClientOptions } from '@augur/augurd/client';
-import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES, balanceField, balanceSegments, checkEdit, editKind, isBalanceField, parseEditState, parseInbox, previewEdits } from '@augur/core';
-import type { ActivityId, DataTier, OutputMode, PolicyEdit, PolicyFile } from '@augur/core';
+import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES, balanceField, balanceSegments, checkEdit, cogitatorEntry, editKind, fleetCatalog, fleetOf, fleetOffers, isBalanceField, parseEditState, parseInbox, previewEdits } from '@augur/core';
+import type { ActivityId, DataTier, OutputMode, PolicyEdit, PolicyFile, Snapshot } from '@augur/core';
 import { TOOL_TIERS, checkBalanceSetting, describeCapabilities, isTerminal, rank, renderReport, renderResets, routeAddShapeProblems, seatLines } from '@augur/dispatch-protocol';
 import type { JobRecord, JobRequest, ProseAddParams, ProseQueueStatus, ProseStatus, ToolTier, UsageSnapshot } from '@augur/dispatch-protocol';
 
@@ -71,9 +71,10 @@ export function createTools(d: McpDeps) {
 
   async function models(): Promise<ToolResult> {
     const text = d.policyText();
-    if (!text) return fail('policy.json was not found. Augur writes it when a rule is saved, so open Augur and confirm the rules for your models first.');
+    const reading = fleetOf(parseJsonObject(d.usageText?.() ?? null) as unknown as Snapshot);
+    if (!text && !reading) return fail('policy.json was not found. Augur writes it when a rule is saved, so open Augur and confirm the rules for your models first.');
     let file: unknown;
-    try { file = JSON.parse(text); } catch { return fail('policy.json is not valid JSON.'); }
+    try { file = JSON.parse(text ?? '{}'); } catch { return fail('policy.json is not valid JSON.'); }
     const providers = isObj(file) && isObj(file.providers) ? file.providers : {};
     const routes = await d.call('routes', undefined, d.opts).catch(() => null);
     const rows: Array<Record<string, unknown>> = [];
@@ -82,14 +83,24 @@ export function createTools(d: McpDeps) {
       for (const [label, m] of Object.entries(p.models)) {
         if (!isObj(m)) continue;
         const pause = isObj(m.pause) && typeof m.pause.until === 'string' && Date.parse(m.pause.until) > Date.now() ? m.pause : null;
-        rows.push({ model: label, provider: pid, status: m.status, cost: m.cost, dataTier: m.dataTier, askFirst: m.askFirst === true, output: m.output, sandbox: m.sandbox === true,
+        const knowledge = pid === 'cogitator' ? cogitatorEntry(String(m.id ?? label.slice('cogitator/'.length))) : undefined;
+        rows.push({ model: label, id: m.id, provider: pid, status: m.status, cost: m.cost, dataTier: m.dataTier, askFirst: m.askFirst === true, output: m.output, sandbox: m.sandbox === true,
+          ...(knowledge ? { uses: knowledge.uses, strengths: knowledge.strengths, limits: knowledge.limits } : {}),
           activities: m.activities, paused: pause ? { until: pause.until, weightsChanged: isObj(pause.weights) } : null,
           routes: (routes ?? []).filter(r => r.model === label).map(r => ({ name: r.name, canRun: r.problem === null, problem: r.problem, capabilities: r.capabilities })) });
       }
     }
     const usable = rows.filter(r => r.status === 'confirmed' && !(isObj(r.paused) && r.paused.weightsChanged !== true));
+    const catalog = reading ? fleetCatalog(reading.fleet) : [];
+    for (const row of rows.filter(row => row.provider === 'cogitator')) {
+      const knowledge = catalog.find(entry => entry.id === row.id);
+      if (knowledge) Object.assign(row, { uses: knowledge.uses, strengths: knowledge.strengths, limits: knowledge.limits });
+    }
+    const offers = reading ? fleetOffers(reading.fleet, rows.filter(row => row.provider === 'cogitator').map(row => ({ label: String(row.model), id: String(row.id) })), (routes ?? []).map(route => route.model)) : [];
     const lines = rows.map(r => `${String(r.model).padEnd(24)} ${String(r.status).padEnd(10)} cost ${String(r.cost).padEnd(9)} data up to ${r.dataTier}${r.askFirst ? ', ask first' : ''}${r.paused ? ', paused' : ''}${(r.routes as unknown[]).length ? '' : ', no route'}`);
-    return { text: `${usable.length} of ${rows.length} models can take jobs now.\n${lines.join('\n')}`, data: { models: rows } };
+    const fleetLines = catalog.map(entry => `${entry.label} (${entry.role ? 'role' : 'model'}): ${(entry.uses ?? []).join(', ') || 'uses unknown'}${entry.chain ? `; chain: ${entry.chain.join(' -> ')}` : ''}; ${entry.strengths ?? 'strengths unknown'} ${entry.limits ?? 'limits unknown'}`);
+    const offerLines = offers.map(offer => `Offer: ${offer.id}. The owner can accept with augur models accept ${offer.id}; new entries require confirmation in Model rules.`);
+    return { text: `${usable.length} of ${rows.length} models can take jobs now.\n${[...lines, ...(reading ? [`Cogitator fleet read ${reading.fetchedAt}${reading.stale ? ' (stale)' : ''}:`, ...fleetLines, ...offerLines] : [])].join('\n')}`, data: { models: rows, cogitator: catalog, offers, fleetFetchedAt: reading?.fetchedAt ?? null, fleetStale: reading?.stale ?? null } };
   }
 
   async function aliases(): Promise<ToolResult> {
