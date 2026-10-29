@@ -62,8 +62,8 @@ export function cogitatorEntry(id: string, role = false): CogitatorCatalogEntry 
 export function readCogitatorKnowledge(body: unknown, id: string, role = false, row: unknown = {}): CogitatorKnowledge {
   const doc = obj(body), catalog = obj(doc.catalog ?? doc), rows = catalog[role ? 'roles' : 'models'];
   const listed = Array.isArray(rows) ? rows.map(obj).find(item => (role ? item.name ?? item.id : item.id) === id) : undefined;
-  const ledgers = [obj(obj(doc.self).ledger), ...(Array.isArray(doc.peers) ? doc.peers.map(peer => obj(obj(peer).ledger)) : [])];
-  const sightings = role ? [] : ledgers.flatMap(ledger => Array.isArray(ledger.models) ? ledger.models.map(obj).filter(item => item.id === id) : []);
+  const machines = [obj(doc.self), ...(Array.isArray(doc.peers) ? doc.peers.map(obj) : [])];
+  const sightings = role ? [] : machines.flatMap(machine => [machine.models, obj(machine.ledger).models].flatMap(rows => Array.isArray(rows) ? rows.map(obj).filter(item => item.id === id) : []));
   const seed = cogitatorEntry(id, role), knowledge: CogitatorKnowledge = {};
   for (const source of [seed, ...sightings, listed, obj(row)]) {
     if (!source) continue;
