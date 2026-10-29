@@ -95,7 +95,7 @@ augur claude hook subagent           the plugin's pick-before-subagent hook: rea
 augur test <route> [--wait]          send a fixed one-word prompt through a route to check it works
 augur config [--json]                 the service's settings and what each is now
 augur config set <setting> <value>    change one; a running service needs augur service stop then start to read it
-augur service status | start | stop [--if-idle]     --if-idle stops the service only when no job is running, so an upgrade never cuts one off
+augur service status | start | stop [--if-idle | --wait [--timeout <s>]]     --if-idle stops the service only when no job is running, so an upgrade never cuts one off; --wait names the running jobs, waits for them to end, then stops
 augur service enable | disable    start the service at each login (systemd on Linux, launchd on macOS), or stop that
 Every command takes --json. Exit codes: 0 completed, 1 usage, 2 rejected, 3 needs approval, 4 failed, 5 artifact check failed, 6 cancelled, 7 lost, 124 wait timed out.`;
 
@@ -305,7 +305,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
         const lines = configLines(opts.dir);
         say(lines.map(l => `${l.key.padEnd(20)} ${l.value.padEnd(24)} ${l.value === l.default ? '' : `(default ${l.default}) `}${l.weakens ? '[lowers checks] ' : ''}${l.label}`).join('\n'), lines); return 0;
       }
-      case 'service': return await service(rest[0], io, opts, json, p.flags.has('if-idle'));
+      case 'service': return await service(rest[0], io, opts, json, p.flags.has('if-idle'), p.flags.has('wait'), opt('timeout') ? Number(opt('timeout')) : 0);
       // The window app's link to the engine; it runs until the app closes its input.
       case 'bridge': return await bridge(stdioBridge(io.env), opts, opt('app-exe'));
       default: io.err(`Unknown command ${cmd}.\n${HELP}\n`); return EXIT_CODES.usage;
@@ -745,7 +745,7 @@ async function restartService(io: Io, opts: Opts): Promise<string> {
   return 'Restarted. Jobs that were running kept going.';
 }
 
-async function service(action: string | undefined, io: Io, opts: Opts, json: boolean, ifIdle = false): Promise<number> {
+async function service(action: string | undefined, io: Io, opts: Opts, json: boolean, ifIdle = false, wait = false, timeoutS = 0): Promise<number> {
   const say = (text: string, data: unknown) => io.out(json ? JSON.stringify(data) + '\n' : text + '\n');
   if (action === 'status') {
     const login = loginState(), atLogin = !login.supported ? '.' : login.enabled ? ', and starts at login.' : '. To start it at login, run augur service enable.';
@@ -766,6 +766,19 @@ async function service(action: string | undefined, io: Io, opts: Opts, json: boo
   if (action === 'stop') {
     try {
       const r = await call('ping', undefined, { ...opts, timeoutMs: 2000 });
+      if (wait) {
+        // Names what is holding the service, then waits for those jobs to end. A job that ends during the wait drops off the list.
+        const deadline = timeoutS > 0 ? Date.now() + timeoutS * 1000 : Infinity;
+        let noted = 0;
+        for (;;) {
+          const busy = (await call('list', { limit: 500 }, opts)).filter(j => !isTerminal(j.state));
+          if (!busy.length) break;
+          const lines = busy.map(j => `  ${j.id}  ${j.route}  ${j.activity}  started ${new Date(j.startedAt ?? j.createdAt).toISOString()}  by ${j.caller?.kind ?? 'unknown'}`);
+          if (Date.now() >= deadline) { say(`Still waiting on ${busy.length} job${busy.length === 1 ? '' : 's'} after ${timeoutS}s. The service was left running:\n${lines.join('\n')}`, { stopping: false, running: busy.length, jobs: busy.map(j => j.id) }); return EXIT_CODES.wait_timeout; }
+          if (Date.now() - noted >= 30_000) { io.err(`Waiting for ${busy.length} job${busy.length === 1 ? '' : 's'} to finish before stopping augurd:\n${lines.join('\n')}\n`); noted = Date.now(); }
+          await sleep(5000);
+        }
+      }
       if (ifIdle) {
         const busy = (await call('list', { limit: 500 }, opts)).filter(j => !isTerminal(j.state));
         if (busy.length) { say(`${busy.length} job${busy.length === 1 ? ' is' : 's are'} still running. The service was left running.`, { stopping: false, running: busy.length }); return EXIT_CODES.failed; }

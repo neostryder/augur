@@ -4,6 +4,10 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+### Changed
+
+- [Visible] [Platform] **The installer waits for running jobs instead of stopping.** `augur service stop --wait` lists each job that holds the service (id, route, activity, start time, caller), waits for them to end, then stops the service. The Windows installer uses it, so an update starts by itself once the jobs finish. It gives up after two hours and names the jobs still running.
+
 ## [1.15.1] - 2026-10-28
 
 ### Fixed
