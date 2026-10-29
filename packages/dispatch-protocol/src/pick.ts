@@ -321,7 +321,7 @@ export function matchNamedModels(policy: PolicyFile, text: string): string[] {
 /** One message a person typed, reduced to the models it named. The text itself is not kept. */
 export interface PromptRecord { at: number; session: string; models: string[] }
 
-export const NAMED_PROMPT_WINDOW = 3;
+export const NAMED_PROMPT_WINDOW = 10;
 export const NAMED_MAX_AGE_MIN = 360;
 
 export type NamedCheck = { ok: true; via: 'interactive' | 'prompt' } | { ok: false; reason: string };
