@@ -63,18 +63,22 @@ export interface CompactFleet {
 export const PRESSURE_FREE_FRACTION = 0.1;
 export const PRESSURE_FREE_MB = 2048;
 
-function readModels(ledger: Record<string, any>, body: unknown): FleetModel[] {
-  const rows = Array.isArray(ledger.models) ? ledger.models : [];
+function readModels(ledger: Record<string, any>, body: unknown, inventory: unknown): FleetModel[] {
+  const rows = Array.isArray(ledger.models) ? [...ledger.models] : [];
+  for (const item of Array.isArray(inventory) ? inventory : []) {
+    const row = typeof item === 'string' ? { id: item } : obj(item);
+    if (!rows.some(item => obj(item).id === row.id)) rows.push(row);
+  }
   return rows.map(obj).filter(row => typeof row.id === 'string').map(row => ({
     id: String(row.id), state: typeof row.state === 'string' ? row.state : 'installed', memoryMb: num(row.memory_mb) ?? 0, idleSecs: num(row.idle_secs),
     yielded: Array.isArray(row.yielded) ? row.yielded.filter((v: unknown): v is string => typeof v === 'string') : [],
     ...readCogitatorKnowledge(body, row.id, false, row) }));
 }
 
-function readMachine(name: string, self: boolean, up: boolean, error: string | null, checkedSecsAgo: number | null, ledger: Record<string, any>, body: unknown): FleetMachine {
+function readMachine(name: string, self: boolean, up: boolean, error: string | null, checkedSecsAgo: number | null, ledger: Record<string, any>, body: unknown, inventory: unknown): FleetMachine {
   const budgetMb = num(ledger.budget_mb), usedMb = num(ledger.used_mb), freeMb = num(ledger.free_mb);
   const pressure = freeMb !== null && budgetMb !== null && freeMb < Math.min(PRESSURE_FREE_MB, budgetMb * PRESSURE_FREE_FRACTION);
-  return { name, self, up, error, checkedSecsAgo, budgetMb, usedMb, freeMb, pressure, models: readModels(ledger, body) };
+  return { name, self, up, error, checkedSecsAgo, budgetMb, usedMb, freeMb, pressure, models: readModels(ledger, body, inventory) };
 }
 
 /** Whether a chain link can serve now: its machine is up and the machine lists the model. A machine that reports no models cannot be checked, so it counts as able. */
@@ -91,11 +95,11 @@ function linkAvailable(link: string, self: string, machines: Map<string, FleetMa
 export function readFleet(body: unknown): FleetReading {
   const doc = obj(body), me = obj(doc.self);
   const selfName = typeof me.name === 'string' && me.name ? me.name : 'this machine';
-  const machines: FleetMachine[] = [readMachine(selfName, true, true, null, 0, obj(me.ledger), body)];
+  const machines: FleetMachine[] = [readMachine(selfName, true, true, null, 0, obj(me.ledger), body, me.models)];
   for (const raw of Array.isArray(doc.peers) ? doc.peers : []) {
     const peer = obj(raw);
     if (typeof peer.name !== 'string' || !peer.name) continue;
-    machines.push(readMachine(peer.name, false, peer.up !== false, typeof peer.error === 'string' ? peer.error : null, num(peer.checked_secs_ago), obj(peer.ledger), body));
+    machines.push(readMachine(peer.name, false, peer.up !== false, typeof peer.error === 'string' ? peer.error : null, num(peer.checked_secs_ago), obj(peer.ledger), body, peer.models));
   }
   const byName = new Map(machines.map(m => [m.name, m]));
   const roleRows = me.roles ?? obj(doc.catalog).roles ?? doc.roles;

@@ -46,6 +46,14 @@ describe('the Cogitator catalog', () => {
     expect(fleetCatalog(fleet).find(entry => entry.id === 'gemma-4-12b')?.uses).toEqual(['live image reading']);
   });
 
+  it('includes inventory entries when a machine has no ledger and keeps ledger state when both list an entry', () => {
+    const fleet = readFleet({ self: { name: 'eru', models: ['laya', 'embeddinggemma-2'], ledger: { models: [{ id: 'laya', state: 'ready' }] } },
+      peers: [{ name: 'bilbo', up: false, ledger: null, models: [{ id: 'apple-foundation', uses: ['live on-device text'] }] }] });
+    expect(fleet.machines[0]!.models.map(entry => [entry.id, entry.state])).toEqual([['laya', 'ready'], ['embeddinggemma-2', 'installed']]);
+    expect(fleet.machines[1]!.models[0]).toMatchObject({ id: 'apple-foundation', state: 'installed', uses: ['live on-device text'] });
+    expect(fleetOffers(fleet, [], []).map(entry => entry.id)).toEqual(['laya', 'embeddinggemma-2', 'apple-foundation']);
+  });
+
   it('deduplicates machines and offers only live entries missing a rule or route without changing inputs', () => {
     const fleet = readFleet(hosts), before = structuredClone(fleet);
     const models = [{ label: 'cogitator/custom-vision', id: 'gemma-4-12b' }, { label: 'cogitator/judge', id: 'judge' }];
