@@ -77,7 +77,7 @@ export function evaluate(request: JobRequest, input: RuleInput): Decision {
     if (override) level = override;
   }
   const gate = resolveBalance(policy.balance).gate;
-  if (gate.premium.includes(route.model) && request.caller.intent === 'automated' && request.released !== true) return no('ask_first', 'Premium models are not used for automated tasks.');
+  if (gate.premium.includes(route.model) && request.caller.intent === 'automated' && request.released !== true && request.named !== true) return no('ask_first', 'Premium models are not used for automated tasks.');
   // Only the service's owner-approved backlog release satisfies ask-first for a premium label.
   if ((model.askFirst || gate.premium.includes(route.model)) && !request.named && !(request.released === true && gate.premium.includes(route.model)) && !(request.caller.intent !== 'automated' && request.premiumGateLift && gate.paceLift.includes(route.model))) return no('ask_first', `${route.model} runs only when it is named for the task.`);
   if (!level) return no('activity_not_permitted', `${route.model} is not permitted to ${request.activity}.`);
