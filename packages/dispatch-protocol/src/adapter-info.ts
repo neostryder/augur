@@ -33,7 +33,7 @@ const ambient: OptionSpec = { key: 'ambient', label: 'Harness context', kind: 'c
 
 const apiExtras: OptionSpec[] = [
   { key: 'headersJson', label: 'Extra headers', kind: 'json', help: 'A JSON object of request headers sent with every call. Credentials do not belong here; keep keys in the key store.', placeholder: '{"x-team": "home"}' },
-  { key: 'requestClass', label: 'Priority class', kind: 'choice', choices: ['none', 'cogitator'], help: 'none sends nothing. cogitator sends x-cogitator-class with every call: low for background jobs, normal for a person typing at a terminal or a job marked urgent.' },
+  { key: 'requestClass', label: 'Priority class', kind: 'choice', choices: ['none', 'cogitator'], help: 'none sends nothing. cogitator sends x-cogitator-source (augur), x-augur-route, x-cogitator-activity and x-cogitator-class with every call. The class is low for background jobs, normal for a person typing at a terminal or a job marked urgent.' },
   { key: 'maxInput', label: 'Largest prompt', kind: 'number', help: 'The most characters of prompt, with any text attachments, the route takes. A bigger job is refused and goes to the route fallback, and is never cut. Leave empty for no limit.' },
   { key: 'maxImageMb', label: 'Largest image', kind: 'number', help: 'The largest image attachment in megabytes. Defaults to 10.' },
   { key: 'maxAudioMb', label: 'Largest audio file', kind: 'number', help: 'The largest audio attachment in megabytes. Defaults to 25.' }];

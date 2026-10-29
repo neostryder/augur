@@ -6,6 +6,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Changed
 
+- [Visible] [Providers] **Cogitator can tell Augur's calls apart.** A route with `requestClass` set to `cogitator` now sends `x-cogitator-source: augur`, along with the route name, the activity and the priority class, so Cogitator's Activity tab can label the call as coming through Augur.
 - [Visible] [Platform] **The installer waits for running jobs instead of stopping.** `augur service stop --wait` lists each job that holds the service (id, route, activity, start time, caller), waits for them to end, then stops the service. The Windows installer uses it, so an update starts by itself once the jobs finish. It gives up after two hours and names the jobs still running.
 
 ## [1.15.1] - 2026-10-28
