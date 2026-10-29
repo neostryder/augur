@@ -37,7 +37,7 @@ export function buildServer(tools: Tools, version: string): McpServer {
 
   server.registerTool('augur_models', {
     title: 'List models', annotations: readOnly,
-    description: 'Lists every model in the rules with its status, cost, the most sensitive data it may see, whether it is paused, and the routes that reach it. Only confirmed models that are not paused can take jobs.',
+    description: 'Lists every model in the rules with its status, cost, the most sensitive data it may see, whether it is paused, and the routes that reach it. Includes live Cogitator roles, chains, uses, strengths, limits, and offers that only the owner can accept. Only confirmed models that are not paused can take jobs.',
   }, async () => out(await tools.models()));
 
   server.registerTool('augur_prose_add', { title: 'Add prose request', description: 'Adds a prose request to Augur queue.', inputSchema: { item: z.record(z.string(), z.unknown()) } }, async ({ item }) => out(await tools.proseAdd(item)));

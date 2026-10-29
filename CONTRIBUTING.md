@@ -43,6 +43,8 @@ The prose queue's tests are in `packages/augurd/test/prose-queue.test.ts`, and `
 
 The alias tests in `packages/augurd/test/alias-*.test.ts` and `packages/core/test/aliases.test.ts` use fake listings and a fake smoke job in temporary folders, so they never reach the network, run a model, or touch the real `~/.augur`. New alias tests keep to that.
 
+The Cogitator catalog lives in `packages/core/src/cogitator-catalog.ts`, and `readCogitatorKnowledge` isolates the management metadata shape. Its tests in `packages/core/test/cogitator-catalog.test.ts` use fake fleet replies; the pick tests are in `packages/dispatch-protocol/test/fleet-pick.test.ts`, and owner acceptance tests are in `packages/augurd/test/route-add.test.ts`. Catalog changes keep explicit activity blocks, review status, data clearance, and the compact phone reading intact. The CLI and MCP tests cover descriptions and offers without reaching a gateway.
+
 If you changed Laya, also run `python -m unittest discover -s packages/laya/tests`.
 
 Add a line under `[Unreleased]` in `CHANGELOG.md`. Start it with `[Visible]` when a user would notice the change and `[Internal]` when not, then the kind: Providers, UI, Alerts, Sync, Platform, Security or Docs.

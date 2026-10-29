@@ -4,9 +4,9 @@ import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES, feedFor } from '@augur/core';
+import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES, feedFor, fleetCatalog, fleetOf, fleetOffers } from '@augur/core';
 import type { AliasRefreshResult } from '@augur/core';
-import type { ActivityId, DataTier, EngineState, OutputMode, ProviderAdded } from '@augur/core';
+import type { ActivityId, DataTier, EngineState, OutputMode, ProviderAdded, Snapshot } from '@augur/core';
 import { EXIT_CODES, TOOL_TIERS, describeCapabilities, describeFigure, exitCodeForState, isTerminal, renderReport, renderResets, seatLines } from '@augur/dispatch-protocol';
 import type { Conversation, Depth, JobRecord, JobRequest, ProseAddParams, ProseStatus, ToolTier } from '@augur/dispatch-protocol';
 import { STATUS_TEXT, duration, servedText, statusLine } from '@augur/view-model';
@@ -82,6 +82,7 @@ augur prose approve <id>
 augur usage                             tokens and cost per route, each labelled reported, derived or imputed
 augur note-prompt --session <id>     tell the service a person sent the message on standard input; it keeps only the models named
 augur routes
+augur models [accept <id> [--name <route>]]   Cogitator uses and offers; only the owner can accept
 augur refresh                         read every provider's usage now
 augur alerts [dismiss <id>|--all]     list the alerts, or dismiss one or all of them
 augur update [--force]                install the newest version, for a copy the macOS install script put in place
@@ -295,6 +296,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
       }
       case 'claude': return await claudeCmd(rest, io, opts, say);
       case 'routes': { const r = await call('routes', undefined, opts); say(r.map(x => `${x.name.padEnd(14)} ${x.model.padEnd(16)} ${x.adapter}   ${describeCapabilities(x.capabilities)}${x.problem ? `   cannot run: ${x.problem}` : ''}`).join('\n') || 'No routes.', r); return 0; }
+      case 'models': return await modelsCmd(rest, io, opts, opt, say);
       case 'test': return await testCmd(need(rest[0], 'route'), p, io, opts, say, json);
       case 'config': {
         if (rest[0] === 'set') {
@@ -412,6 +414,28 @@ function need(v: string | undefined, what: string): string { if (!v) throw new E
 
 function readOwnerPolicy(home = augurHome()): Record<string, unknown> | null {
   try { const value: unknown = JSON.parse(readFileSync(join(home, 'policy.json'), 'utf8')); return typeof value === 'object' && value !== null ? value as Record<string, unknown> : null; } catch { return null; }
+}
+
+async function modelsCmd(rest: string[], io: Io, opts: Opts, opt: (n: string) => string | undefined, say: Say): Promise<number> {
+  if (rest[0] === 'accept') {
+    if (runsInsideJob(io)) { io.err('Only the owner can accept a Cogitator offer.\n'); return EXIT_CODES.rejected; }
+    const id = need(rest[1], 'Cogitator id'), name = opt('name') ?? `cogitator-${id.toLowerCase().replace(/[^a-z0-9_-]/g, '-')}`;
+    const result = await call('fleet_accept', { id, name }, opts);
+    say(result.text, result); return result.ok ? EXIT_CODES.completed : EXIT_CODES.rejected;
+  }
+  if (rest.length && rest[0] !== 'list') { io.err('Use augur models or augur models accept <id> [--name <route>].\n'); return EXIT_CODES.usage; }
+  const home = augurHome(io.env), policy = readOwnerPolicy(home);
+  let snapshot: Snapshot | null = null;
+  try { snapshot = JSON.parse(readFileSync(join(home, 'usage.json'), 'utf8')) as Snapshot; } catch { /* no reading yet */ }
+  const reading = fleetOf(snapshot);
+  if (!reading) { say('No Cogitator fleet reading. Enable Cogitator in Settings and refresh.', { cogitator: [], offers: [] }); return EXIT_CODES.completed; }
+  const routes = await call('routes', undefined, opts);
+  const providers = policy?.providers as Record<string, { models?: Record<string, { id: string }> }> | undefined;
+  const models = Object.entries(providers?.cogitator?.models ?? {}).map(([label, model]) => ({ label, id: model.id }));
+  const catalog = fleetCatalog(reading.fleet), offers = fleetOffers(reading.fleet, models, routes.map(route => route.model));
+  const lines = catalog.map(entry => `${entry.label} (${entry.role ? 'role' : 'model'}): ${(entry.uses ?? []).join(', ') || 'uses unknown'}${entry.chain ? `; chain: ${entry.chain.join(' -> ')}` : ''}; ${entry.strengths ?? 'strengths unknown'} ${entry.limits ?? 'limits unknown'}`);
+  say([`Cogitator fleet read ${reading.fetchedAt}${reading.stale ? ' (stale)' : ''}:`, ...lines, ...offers.map(offer => `Offer: ${offer.id}. Accept with augur models accept ${offer.id}; new entries require confirmation in Model rules.`)].join('\n'), { cogitator: catalog, offers, fetchedAt: reading.fetchedAt, stale: reading.stale });
+  return EXIT_CODES.completed;
 }
 
 function ownerEdit(field: string, provider: string, model: string, value: unknown, home = augurHome()): void {

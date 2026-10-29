@@ -135,6 +135,15 @@ describe('Cogitator offers', () => {
     expect(readFileSync(routesPath, 'utf8')).toBe(original);
     expect(engine.state.config.policy!.providers.cogitator!.models['cogitator/laya']!.status).toBe('unreviewed');
   });
+
+  it('refuses a label that belongs to another provider before adding an entry or a route', async () => {
+    const { engine, routesPath, accept } = await boot();
+    await engine.addProvider({ provider: 'other', name: 'Other', models: [{ label: 'cogitator/laya', id: 'other-entry' }] });
+    fleet(engine);
+    expect((await accept('laya')).ok).toBe(false);
+    expect(existsSync(routesPath)).toBe(false);
+    expect(engine.state.config.policy!.providers.cogitator).toBeUndefined();
+  });
 });
 
 describe('route_add', () => {
