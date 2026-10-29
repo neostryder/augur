@@ -2,11 +2,13 @@
 ; It is stopped only when no job is running, since a job's process tree also runs from these files.
 !macro AugurStopService
   IfFileExists "$INSTDIR\service\augur.cmd" 0 augur_skip_stop
-    nsExec::ExecToStack '"$INSTDIR\service\augur.cmd" service stop --if-idle'
+    ; It names the running jobs and waits for them to end (up to two hours), so the install goes on by itself once they finish.
+    DetailPrint "Waiting for Augur's running jobs to finish before updating..."
+    nsExec::ExecToStack '"$INSTDIR\service\augur.cmd" service stop --wait --timeout 7200'
     Pop $0
     Pop $1
     StrCmp $0 "0" augur_stopped
-    MessageBox MB_ICONEXCLAMATION|MB_OK "Augur is running a job, so this cannot replace its files yet. Let the job finish, or cancel it with: augur cancel <job>. Then run this again."
+    MessageBox MB_ICONEXCLAMATION|MB_OK "Augur is still running these jobs after two hours, so the update cannot replace its files:$\r$\n$\r$\n$1$\r$\n$\r$\nCancel them with augur cancel <job>, then run the update again."
     Abort
   augur_stopped:
     ; With no job running, the only processes left on augur-node.exe are MCP servers that open Claude sessions started. They run from the same file and
