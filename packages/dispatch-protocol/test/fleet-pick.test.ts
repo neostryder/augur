@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { openRules } from './open-rules.js';
-import { buildPolicyFile, emptyPolicy, fieldPath, importPolicy, readFleet, setField } from '@augur/core';
+import { addModels, buildPolicyFile, emptyPolicy, fieldPath, importPolicy, newProvider, readFleet, setField } from '@augur/core';
 import type { PolicyFile } from '@augur/core';
 import { COLD_FACTOR, PRESSURE_FACTOR, localReading, rank } from '../src/index.js';
 import type { UsageSnapshot } from '../src/index.js';
@@ -87,5 +87,38 @@ describe('the fleet in the pick', () => {
   it('leaves hosted routes alone', () => {
     const r = pick(usage(hosts({ summarize: 'installed', eruFree: 500 })));
     expect(r.ranking.find(x => x.model === 'xai/grok')!.usage).toBe(1);
+  });
+
+  it('ranks catalog strengths through the fleet nudges and preserves the review, pause, and data gates', () => {
+    const stored = emptyPolicy();
+    stored.providers.cogitator = newProvider();
+    stored.providers.cogitator.defaults = { dataTier: 'internal', askFirst: false, cost: 'free' };
+    addModels(stored, 'cogitator', [{ label: 'cogitator/laya', id: 'laya' }], 'manual', now);
+    const meta = [{ id: 'cogitator', name: 'Cogitator', metered: false }];
+    const fleet = usage({ self: { name: 'eru', ledger: { budget_mb: 16000, free_mb: 500, models: [model('laya', 'installed')] } } });
+    const req = { activity: 'typed_decisions', dataTier: 'internal' } as const;
+    expect(rank(buildPolicyFile(stored, meta), fleet, req, now).blocked).toContainEqual({ model: 'cogitator/laya', why: 'status unreviewed' });
+    const entry = stored.providers.cogitator.models['cogitator/laya']!;
+    entry.status = 'confirmed';
+    const result = rank(buildPolicyFile(stored, meta), fleet, req, now);
+    expect(result.ranking[0]).toMatchObject({ model: 'cogitator/laya', level: 'preferred', weight: 2.5 });
+    expect(result.ranking[0]!.usage).toBeCloseTo(COLD_FACTOR * PRESSURE_FACTOR, 3);
+    expect(result.ranking[0]!.score).toBeCloseTo(0.5 * 2.5 * COLD_FACTOR * PRESSURE_FACTOR, 3);
+    expect(rank(buildPolicyFile(stored, meta), fleet, { ...req, dataTier: 'regulated' }, now).blocked[0]!.why).toContain('cleared for internal');
+    entry.rule.pause = { until: '2026-10-12T12:00:00Z' };
+    expect(rank(buildPolicyFile(stored, meta), fleet, req, now).blocked[0]!.why).toContain('paused until');
+    entry.rule.pause = null;
+    entry.rule.activities = { typed_decisions: null };
+    expect(rank(buildPolicyFile(stored, meta), fleet, req, now).blocked[0]!.why).toBe('not permitted typed_decisions');
+    entry.rule.activities = { typed_decisions: 'occasional' };
+    expect(rank(buildPolicyFile(stored, meta), fleet, req, now).ranking[0]!.level).toBe('occasional');
+    expect(rank(buildPolicyFile(stored, meta), { providers: { cogitator: { stale: true, error: 'Could not reach Cogitator.' } } }, req, now).blocked[0]!.why).toBe('Cogitator is not reachable');
+  });
+
+  it('limits a role with an uncensored fallback to internal data even when an earlier link serves', () => {
+    const fleet = usage({ self: { name: 'eru', ledger: { models: [model('gemma-4-12b', 'ready'), model('gemma-4-12b-uncensored', 'installed')] }, roles: [{ name: 'summarize', chain: ['gemma-4-12b', 'gemma-4-12b-uncensored'] }] } });
+    const result = rank(policy(), fleet, { activity: 'summarize_extract', dataTier: 'regulated' }, now);
+    expect(result.blocked).toContainEqual({ model: 'cogitator/summarize', why: 'gemma-4-12b-uncensored is limited to internal data' });
+    expect(rank(policy(), fleet, { activity: 'summarize_extract', dataTier: 'internal' }, now).ranking.some(row => row.model === 'cogitator/summarize')).toBe(true);
   });
 });

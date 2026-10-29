@@ -196,7 +196,7 @@ export function rank(policy: PolicyFile, usage: UsageSnapshot | null, req: PickR
   const local = new Map<string, { factor: number; why: string }>();
   for (const r of [...rows]) {
     if (r.provider !== LOCAL_PROVIDER) continue;
-    const id = localId(policy, r.model), read = id ? localReading(usage, id, now) : null;
+    const id = localId(policy, r.model), read = id ? localReading(usage, id, now, req.dataTier) : null;
     if (!read) continue;
     if (read.blocked) { rows.splice(rows.indexOf(r), 1); blocked.push({ model: r.model, why: read.blocked }); } else local.set(r.model, read);
   }
