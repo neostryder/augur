@@ -650,7 +650,7 @@ export class UsageEngine implements EngineApi {
       try {
         const models = await plugin.listModels(this.shell.host, pc.settings);
         this.state.catalog[plugin.id] = { fetchedAt, models, error: null };
-        const mode = policy.providers[plugin.id]?.listMode ?? plugin.modelListMode ?? 'auto';
+        const mode = plugin.id === 'cogitator' ? 'catalog' : policy.providers[plugin.id]?.listMode ?? plugin.modelListMode ?? 'auto';
         if (mode === 'auto') added.push(...syncModelList(policy, plugin.id, plugin.labelPrefix ?? plugin.id, models));
       } catch (error) {
         this.state.catalog[plugin.id] = { fetchedAt, models: this.state.catalog[plugin.id]?.models ?? [], error: error instanceof Error ? error.message : String(error) };

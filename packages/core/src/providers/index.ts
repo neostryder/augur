@@ -9,5 +9,6 @@ import { copilot } from './copilot.js';
 import { cogitator } from './cogitator.js';
 
 export { claude, codex, grok, minimax, openrouter, fal, jev, copilot, cogitator };
+export { baseOf as cogitatorBase } from './cogitator.js';
 export { openrouterDef } from './openrouter.def.js';
 export const builtinProviders = [claude, codex, grok, minimax, openrouter, fal, jev, copilot, cogitator];

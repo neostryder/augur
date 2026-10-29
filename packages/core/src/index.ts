@@ -10,6 +10,7 @@ export * from './alerts.js';
 export * from './config.js';
 export * from './providers/index.js';
 export * from './fleet.js';
+export * from './cogitator-catalog.js';
 export * from './net.js';
 export * from './private-terms.js';
 export * from './changelog.js';

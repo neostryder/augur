@@ -2,6 +2,7 @@
 // Stored in AppConfig.policy, resolved per model, and written to policy.json beside the usage export.
 
 import { obj } from './util.js';
+import { cogitatorEntry } from './cogitator-catalog.js';
 
 export const ACTIVITIES = ['write_code', 'review_code', 'research', 'reason_critique', 'draft_prose', 'summarize_extract', 'long_context',
   'bulk_tagging', 'typed_decisions', 'read_images', 'generate_images', 'image_to_image', 'generate_video', 'speech', 'embed', 'transcribe', 'moderate', 'translate', 'reverse_engineering'] as const;
@@ -297,6 +298,9 @@ export interface ResolvedModel {
   status: ModelStatus;
   source: ModelEntry['source'];
   activities: Partial<Record<ActivityId, WeightLevel>>;
+  /** Catalog fallbacks and explicit blocks stay distinct when a policy export is imported again. */
+  catalogActivities?: ActivityId[];
+  blockedActivities?: ActivityId[];
   dataTier: DataTier;
   askFirst: boolean;
   output: OutputMode;
@@ -320,10 +324,14 @@ export function resolveModel(provider: string, defaults: Rule, model: ModelEntry
     if (defaults[field] !== undefined) { inherited.push(field); return defaults[field] as (typeof FALLBACK)[K]; }
     return FALLBACK[field];
   };
-  const activities: Partial<Record<ActivityId, WeightLevel>> = {};
+  const activities: Partial<Record<ActivityId, WeightLevel>> = {}, catalogActivities: ActivityId[] = [], blockedActivities: ActivityId[] = [];
+  const catalog = provider === 'cogitator' ? cogitatorEntry(model.id) : undefined;
   for (const a of ACTIVITIES) {
     const own = model.rule.activities?.[a];
-    const level = own !== undefined ? own : defaults.activities?.[a];
+    const explicit = own !== undefined ? own : defaults.activities?.[a];
+    const level = explicit !== undefined ? explicit : catalog?.activities[a];
+    if (level && explicit === undefined) catalogActivities.push(a);
+    if (provider === 'cogitator' && explicit === null) blockedActivities.push(a);
     if (own === undefined && defaults.activities?.[a] !== undefined) inherited.push(`activities.${a}`);
     if (level) activities[a] = level;
   }
@@ -332,8 +340,10 @@ export function resolveModel(provider: string, defaults: Rule, model: ModelEntry
     if (model.rule.dataHandling && k in model.rule.dataHandling) (dataHandling as Record<string, unknown>)[k] = model.rule.dataHandling[k];
     else if (defaults.dataHandling && k in defaults.dataHandling) { (dataHandling as Record<string, unknown>)[k] = defaults.dataHandling[k]; inherited.push(`dataHandling.${k}`); }
   }
+  const requestedTier = pick('dataTier'), dataTier = catalog?.maxDataTier && DATA_TIERS.indexOf(requestedTier) > DATA_TIERS.indexOf(catalog.maxDataTier) ? catalog.maxDataTier : requestedTier;
   return { provider, id: model.id, name: model.name, status: model.status, source: model.source, activities,
-    dataTier: pick('dataTier'), askFirst: pick('askFirst'), output: pick('output'), sandbox: pick('sandbox'), effort: pick('effort'),
+    ...(catalogActivities.length ? { catalogActivities } : {}), ...(blockedActivities.length ? { blockedActivities } : {}),
+    dataTier, askFirst: pick('askFirst'), output: pick('output'), sandbox: pick('sandbox'), effort: pick('effort'),
     cost: pick('cost'), pause: pick('pause'), dataHandling, useAfter: [...pick('useAfter')], notes: pick('notes'), inherited, ...(model.series ? { series: model.series } : {}) };
 }
 
@@ -401,9 +411,13 @@ export function policyFromFile(data: unknown, now = new Date()): PolicyConfig {
       }
       if (Object.keys(ownHandling).length) rule.dataHandling = ownHandling;
       for (const [act, level] of Object.entries(obj(m.activities))) {
+        if (Array.isArray(m.catalogActivities) && m.catalogActivities.includes(act)) continue;
         const name = `activities.${act}`;
         if (inherited.has(name) && (!(act in defaultActivities) || same(defaultActivities[act], level))) defaultActivities[act] = level;
         else activities[act] = level;
+      }
+      for (const act of Array.isArray(m.blockedActivities) ? m.blockedActivities : []) {
+        if (inherited.has(`activities.${act}`)) defaultActivities[act] = null; else activities[act] = null;
       }
       rule.activities = activities;
       models[label] = { id: m.id, name: m.name, source: m.source, status: m.status, firstSeen: now.toISOString(), rule };
