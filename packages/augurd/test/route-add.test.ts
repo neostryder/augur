@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { UsageEngine } from '@augur/core';
+import { UsageEngine, readFleet } from '@augur/core';
 import type { AppConfig, EngineShell } from '@augur/core';
 import type { RouteAddParams } from '@augur/dispatch-protocol';
 import { call } from '../src/client.js';
@@ -38,9 +38,9 @@ async function boot(approval?: 'all' | 'none') {
     next.agentApproval = approval;
     await engine.saveConfig(next);
   }
-  const sup = { knownAdapters: () => ['codex-exec'], proseAdd: (raw: Record<string, unknown>, hold: boolean) => ({ ...raw, status: hold ? 'awaiting-approval' : 'queued' }) } as unknown as Supervisor;
+  const sup = { knownAdapters: () => ['codex-exec', 'openai-api'], proseAdd: (raw: Record<string, unknown>, hold: boolean) => ({ ...raw, status: hold ? 'awaiting-approval' : 'queued' }) } as unknown as Supervisor;
   const token = 'k'.repeat(64);
-  const server = new IpcServer(sup, {} as never, token, () => null, () => ({}), {
+  const server = new IpcServer(sup, {} as never, token, () => { try { return JSON.parse(readFileSync(routesPath, 'utf8')).routes ?? {}; } catch { return null; } }, () => ({}), {
     read: () => { try { return readFileSync(routesPath, 'utf8'); } catch { return null; } },
     write: (text: string) => writeFileSync(routesPath, text),
   }, 'a'.repeat(64));
@@ -50,10 +50,92 @@ async function boot(approval?: 'all' | 'none') {
   stops.push(async () => { engine.stop(); await server.close(); rmSync(root, { recursive: true, force: true }); });
   const add = (params: RouteAddParams) => call('route_add', params, { pipe, token });
   const agentProseAdd = (params: Record<string, unknown>) => call('prose_add', params as never, { pipe, token: 'a'.repeat(64), role: 'agent' });
-  return { engine, routesPath, add, agentProseAdd };
+  const accept = (id: string, name = 'local', agent = false) => call('fleet_accept', { id, name }, { pipe, token: agent ? 'a'.repeat(64) : token, ...(agent ? { role: 'agent' as const } : {}) });
+  return { engine, routesPath, add, agentProseAdd, accept };
 }
 
 const good = { name: 'acme', adapter: 'codex-exec', provider: 'acme', model: { label: 'fast', id: 'fast-1', name: 'Fast' } };
+
+function fleet(engine: UsageEngine, fetchedAt = new Date().toISOString(), stale = false) {
+  engine.state.snapshot = { schema: 1, generatedAt: fetchedAt, providers: { cogitator: { id: 'cogitator', name: 'Cogitator', ok: !stale, stale, fetchedAt, error: null, meters: [], money: [],
+    notes: { fleet: readFleet({ self: { name: 'eru', ledger: { models: [{ id: 'laya' }, { id: 'embeddinggemma-2' }, { id: 'qwen3-asr-1.7b' }, { id: 'comfyui' }, { id: 'unknown' }] }, roles: [{ name: 'judge', chain: ['laya'] }] } }) } } } };
+}
+
+describe('Cogitator offers', () => {
+  it('requires owner acceptance and a current live sighting before writing anything', async () => {
+    const { engine, routesPath, accept } = await boot();
+    expect((await accept('laya')).ok).toBe(false);
+    fleet(engine);
+    await expect(accept('laya', 'local', true)).rejects.toThrow('for the owner');
+    expect((await accept('not-listed')).ok).toBe(false);
+    expect(existsSync(routesPath)).toBe(false);
+    expect(engine.state.config.policy?.providers.cogitator).toBeUndefined();
+    fleet(engine, new Date(Date.now() - 3 * 3600000).toISOString());
+    expect((await accept('laya')).ok).toBe(false);
+    fleet(engine, new Date().toISOString(), true);
+    expect((await accept('laya')).ok).toBe(false);
+  });
+
+  it('adds an unreviewed entry and a route without a key after the owner accepts', async () => {
+    const { engine, routesPath, accept } = await boot('all');
+    fleet(engine);
+    const result = await accept('judge');
+    expect(result.ok, result.text).toBe(true);
+    const entry = engine.state.config.policy!.providers.cogitator!.models['cogitator/judge']!;
+    expect(entry.status).toBe('unreviewed'); expect(entry.rule).toEqual({});
+    expect(JSON.parse(readFileSync(routesPath, 'utf8')).routes.local).toEqual({ model: 'cogitator/judge', adapter: 'openai-api', options: { baseUrl: 'http://127.0.0.1:8470/v1', model: 'judge', keySource: 'store', requestClass: 'cogitator', mode: 'chat', maxInput: 24000 } });
+    expect(result.text).toContain('augur key set local');
+    expect((await accept('judge', 'another-local')).ok).toBe(false);
+  });
+
+  it('uses the configured gateway and the request mode for the entry kind', async () => {
+    const { engine, routesPath, accept } = await boot();
+    const config = structuredClone(engine.state.config);
+    config.providers.find(provider => provider.id === 'cogitator')!.settings.baseUrl = 'http://eru:8470';
+    await engine.saveConfig(config);
+    fleet(engine);
+    expect((await accept('embeddinggemma-2', 'embed-local')).ok).toBe(true);
+    expect((await accept('qwen3-asr-1.7b', 'listen-local')).ok).toBe(true);
+    const routes = JSON.parse(readFileSync(routesPath, 'utf8')).routes;
+    expect(routes['embed-local'].options).toMatchObject({ baseUrl: 'http://eru:8470/v1', mode: 'embeddings' });
+    expect(routes['listen-local'].options.mode).toBe('transcribe');
+  });
+
+  it('does not overwrite an existing route and preserves a known entry when adding its missing route', async () => {
+    const { engine, routesPath, accept } = await boot();
+    await engine.addProvider({ provider: 'cogitator', name: 'Cogitator', models: [{ label: 'cogitator/decision', id: 'laya' }] });
+    engine.state.config.policy!.providers.cogitator!.models['cogitator/decision']!.status = 'confirmed';
+    const beforeModel = structuredClone(engine.state.config.policy!.providers.cogitator!.models['cogitator/decision']);
+    const original = JSON.stringify({ keep: true, routes: { local: { model: 'keep/model', adapter: 'codex-exec', options: {} } } });
+    writeFileSync(routesPath, original);
+    fleet(engine);
+    expect((await accept('laya')).ok).toBe(false);
+    expect(readFileSync(routesPath, 'utf8')).toBe(original);
+    expect((await accept('laya', 'new-local')).ok).toBe(true);
+    expect(engine.state.config.policy!.providers.cogitator!.models['cogitator/decision']).toEqual(beforeModel);
+    expect(JSON.parse(readFileSync(routesPath, 'utf8')).routes['new-local'].model).toBe('cogitator/decision');
+  });
+
+  it('accepts image and unknown entries for review without inventing an API route', async () => {
+    const { engine, routesPath, accept } = await boot();
+    fleet(engine);
+    expect((await accept('comfyui')).ok).toBe(true);
+    expect((await accept('unknown')).ok).toBe(true);
+    expect(existsSync(routesPath)).toBe(false);
+    expect(engine.state.config.policy!.providers.cogitator!.models['cogitator/comfyui']!.status).toBe('unreviewed');
+    expect(engine.state.config.policy!.providers.cogitator!.models['cogitator/unknown']!.status).toBe('unreviewed');
+  });
+
+  it('adds only the missing entry when a route already uses its label', async () => {
+    const { engine, routesPath, accept } = await boot();
+    const original = JSON.stringify({ routes: { decision: { model: 'cogitator/laya', adapter: 'openai-api', options: { model: 'laya' } } } });
+    writeFileSync(routesPath, original);
+    fleet(engine);
+    expect((await accept('laya')).ok).toBe(true);
+    expect(readFileSync(routesPath, 'utf8')).toBe(original);
+    expect(engine.state.config.policy!.providers.cogitator!.models['cogitator/laya']!.status).toBe('unreviewed');
+  });
+});
 
 describe('route_add', () => {
   it('holds agent prose additions when agentApproval is all', async () => {

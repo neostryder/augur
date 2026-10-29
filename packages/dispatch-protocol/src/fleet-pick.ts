@@ -1,5 +1,7 @@
 // How the live Cogitator fleet reading bears on a pick. Pure. A local route has no usage meter, so its usage factor stays 1; the reading gates and nudges instead.
 import type { FleetMachine, FleetReading, PolicyFile } from '@augur/core';
+import { DATA_TIERS, cogitatorEntry } from '@augur/core';
+import type { DataTier } from '@augur/core';
 import { PACE } from './pace.js';
 import type { UsageSnapshot } from './pace.js';
 
@@ -49,10 +51,16 @@ function place(fleet: FleetReading, id: string): { machine: FleetMachine | null;
 }
 
 /** What the fleet reading says about one local model of the rules, by the id the gateway knows it as. Null when the reading is silent about it. */
-export function localReading(usage: UsageSnapshot | null, id: string, now = new Date()): LocalReading | null {
+export function localReading(usage: UsageSnapshot | null, id: string, now = new Date(), dataTier?: DataTier): LocalReading | null {
   const read = readingOf(usage, now);
   if (!read) return null;
   if ('gone' in read) return { blocked: read.gone, factor: 1, why: '' };
+  const role = read.fleet.roles.find(item => item.name === id);
+  const links = role ? role.chain.map(link => link.split('@')[0]!) : [id];
+  for (const link of links) {
+    const tier = cogitatorEntry(link)?.maxDataTier;
+    if (tier && dataTier && DATA_TIERS.indexOf(dataTier) > DATA_TIERS.indexOf(tier)) return { blocked: `${link} is limited to ${tier} data`, factor: 1, why: '' };
+  }
   const at = place(read.fleet, id);
   if (!at) return null;
   if ('down' in at) return { blocked: at.down, factor: 1, why: '' };

@@ -93,6 +93,8 @@ export interface Methods {
   routes: { params: undefined; result: Array<{ name: string; model: string; adapter: string; problem: string | null; capabilities: RouteCapabilities }> };
   /** Adds one route and, optionally, its model. The model stays unreviewed. An existing route name is refused and nothing is written. */
   route_add: { params: RouteAddParams; result: RouteAddAnswer };
+  /** The owner's acceptance of a live Cogitator offer. New entries still require review. */
+  fleet_accept: { params: { id: string; name: string }; result: RouteAddAnswer };
   /** Tokens and cost of recent jobs and totals per route, each figure labelled reported, derived or imputed. */
   accounting: { params: { limit?: number }; result: AccountingAnswer };
   /** The usage engine's state, whole or only the keys named. Refused when the engine is not running in this service. */

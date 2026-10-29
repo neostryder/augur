@@ -5,9 +5,9 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'n
 import { userInfo } from 'node:os';
 import net from 'node:net';
 import { dirname, join } from 'node:path';
-import { PROTOCOL_VERSION, planRouteAdd, resetLedger } from '@augur/dispatch-protocol';
+import { PROTOCOL_VERSION, planRouteAdd, resetLedger, routeAddShapeProblems } from '@augur/dispatch-protocol';
 import type { EngineEvent, JobRequest, MethodName, RateCard, RouteAddAnswer, RouteConfig, RpcRequest, RpcResponse, ViewHello, ViewReply } from '@augur/dispatch-protocol';
-import { DEFAULT_APPROVAL, RULES_ONLY_PROVIDERS, allPlugins, callEngine, type EngineApi, type EngineKey, type EngineState, type ProviderAddition } from '@augur/core';
+import { DEFAULT_APPROVAL, RULES_ONLY_PROVIDERS, allPlugins, callEngine, cogitatorBase, fleetOf, fleetOffers, type EngineApi, type EngineKey, type EngineState, type ProviderAddition } from '@augur/core';
 import { buildAccounting } from './accounting.js';
 import type { Store } from './store.js';
 import type { Supervisor } from './supervisor.js';
@@ -164,6 +164,7 @@ export class IpcServer {
       case 'gate_record': return this.sup.gateRecord(params as { kind: string; route: string; scope: string; note?: string });
       case 'routes': return Object.entries(this.routes() ?? {}).map(([name, r]) => ({ name, model: r.model, adapter: r.adapter, problem: this.sup.routeProblem(r as RouteConfig, name), capabilities: this.sup.routeCapabilities(r as RouteConfig) }));
       case 'route_add': return this.routeAdd(params);
+      case 'fleet_accept': return this.fleetAccept(String(p.id ?? ''), String(p.name ?? ''));
       case 'engine_state': { const e = this.needEngine(); return { state: this.stateOf(p.keys as EngineKey[] | undefined), views: e.views.info() }; }
       case 'engine_call': return callEngine(this.needEngine().api, String(p.method ?? ''), Array.isArray(p.args) ? p.args : []);
       case 'accounting': { const limit = Math.min(Math.max(Number(p.limit ?? 100), 1), 500); return buildAccounting(this.store.list({ limit: 500 }), this.routes(), this.rates(), limit); }
@@ -219,8 +220,28 @@ export class IpcServer {
     return parts.join(' ');
   }
 
+  private async fleetAccept(id: string, name: string): Promise<RouteAddAnswer> {
+    const engine = this.needEngine().api, reading = fleetOf(engine.state.snapshot);
+    if (!reading || reading.stale || !Number.isFinite(Date.parse(reading.fetchedAt)) || Date.now() - Date.parse(reading.fetchedAt) > 120 * 60000) return this.refused(['Refresh the Cogitator fleet before accepting an offer.']);
+    const provider = engine.state.config.policy?.providers.cogitator;
+    const models = Object.entries(provider?.models ?? {}).map(([label, model]) => ({ label, id: model.id }));
+    const offer = fleetOffers(reading.fleet, models, Object.values(this.routes() ?? {}).map(route => route.model)).find(item => item.id === id);
+    if (!offer) return this.refused(['No current Cogitator offer has that id.']);
+    const model = { label: offer.model, id };
+    const problems = routeAddShapeProblems({ name, model });
+    if (problems.length) return this.refused(problems);
+    if (!offer.missingRoute || offer.kind === 'image generation' || !offer.kind) {
+      const added = await engine.addProvider({ provider: 'cogitator', name: 'Cogitator', models: [model] });
+      return { ok: true, model: model.label, text: `${added.added.length ? 'Added' : 'Kept'} ${model.label}. New entries stay unreviewed until confirmed in Model rules.${offer.missingRoute ? ' Configure a compatible route in the app; its endpoint is not established by the catalog.' : ''}` };
+    }
+    const settings = engine.state.config.providers.find(item => item.id === 'cogitator')?.settings ?? {};
+    const mode = offer.kind === 'embedding' ? 'embeddings' : offer.kind === 'speech-to-text' || offer.kind === 'diarization' ? 'transcribe' : offer.kind === 'guard' ? 'moderation' : 'chat';
+    return this.routeAdd({ name, provider: 'cogitator', adapter: 'openai-api', model,
+      options: { baseUrl: `${cogitatorBase(settings)}/v1`, model: id, keySource: 'store', requestClass: 'cogitator', mode, ...(id === 'judge' ? { maxInput: 24000 } : {}) } }, true);
+  }
+
   /** Checks the whole request, then writes the route. A problem or an approval hold writes nothing. */
-  private async routeAdd(params: unknown): Promise<RouteAddAnswer> {
+  private async routeAdd(params: unknown, ownerOffer = false): Promise<RouteAddAnswer> {
     const input = isObj(params) ? params : {};
     const names = this.routeNames();
     if ('error' in names) return this.refused([names.error]);
@@ -228,12 +249,12 @@ export class IpcServer {
     const planned = planRouteAdd(input, { existingRoutes: names.names, knownAdapters: new Set(this.sup.knownAdapters()), providerKind: id => this.providerKind(id) });
     if ('problems' in planned) return this.refused(planned.problems);
     const approval = engine.api.state.config.agentApproval ?? DEFAULT_APPROVAL;
-    if (approval === 'all') return { ok: false, held: true, text: 'Nothing was written. The approval setting holds every agent edit, so this route was not added. The owner can add it in the app.' };
+    if (approval === 'all' && !ownerOffer) return { ok: false, held: true, text: 'Nothing was written. The approval setting holds every agent edit, so this route was not added. The owner can add it in the app.' };
     const plan = planned.plan;
     // A route that points at a model the rules already hold would borrow that model's review, so the owner adds it.
     const label = plan.model?.label ?? plan.entry.model;
     const known = Object.entries(engine.api.state.config.policy?.providers ?? {}).some(([id, p]) => Object.hasOwn(p.models, label) || (plan.model !== null && id === plan.provider && Object.values(p.models).some(m => m.id === plan.model!.id)));
-    if (known) return { ok: false, held: true, text: `Nothing was written. The model ${label} is already in the rules, so a route for it needs the owner. The owner can add it in the app.` };
+    if (known && !ownerOffer) return { ok: false, held: true, text: `Nothing was written. The model ${label} is already in the rules, so a route for it needs the owner. The owner can add it in the app.` };
     let added: string[] = [];
     if (plan.model || plan.custom) {
       const addition: ProviderAddition = { provider: plan.provider, name: plan.provider, ...(plan.model ? { models: [plan.model] } : {}), ...(plan.custom ? { custom: plan.custom, usageOff: true as const } : {}) };
