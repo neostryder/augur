@@ -9,6 +9,7 @@ import {
   type BulkPreview, type DialBackPlan, type HeldRow, type RulesFilter,
 } from '@augur/view-model';
 import { ICON, ago, esc } from '../util';
+import { NODE_TEXT, type NodeState } from '@augur/view-model';
 
 export type { HeldRow, RulesFilter };
 
@@ -18,6 +19,10 @@ function heldCards(rows: HeldRow[]): string {
 }
 
 export interface RulesModel {
+  mode?: 'list' | 'node';
+  node?: NodeState;
+  nodeGhost?: string;
+  nodeNote?: string;
   config: AppConfig;
   /** Changes agents asked for that wait for the owner's yes. */
   held: HeldRow[];
@@ -117,7 +122,7 @@ function control(id: string, path: string, kind: string, options: string[]): str
 }
 
 /** Checkboxes for the other models this one waits on. The provider of each checked model is used up in full before this model is picked. */
-function waitRows(m: RulesModel, pid: string, model: string, own: string[] | undefined, inherited: string[] | undefined): string {
+export function waitRows(m: RulesModel, pid: string, model: string, own: string[] | undefined, inherited: string[] | undefined): string {
   const path = fieldPath(pid, model, 'useAfter'), on = new Set(own ?? inherited ?? []);
   const others = Object.entries(policyOf(m).providers).flatMap(([id, p]) => Object.entries(p.models).filter(([label, x]) => label !== model && x.status !== 'hidden').map(([label, x]) => ({ id, label, name: x.name ?? x.id })));
   const boxes = others.map((x) => `<label class="wait"><input type="checkbox" data-wait="${esc(path)}" value="${esc(x.label)}" ${on.has(x.label) ? 'checked' : ''}> ${esc(x.name)} <span class="desc">${esc(x.label)}</span></label>`).join('');
@@ -129,7 +134,7 @@ function row(label: string, id: string, input: string, help = ''): string {
   return `<div class="row"><label class="name" for="${esc(id)}">${esc(label)}${help ? `<span class="desc">${esc(help)}</span>` : ''}</label>${input}</div>`;
 }
 
-function enumSelect(pid: string, model: string | null, field: string, values: readonly string[], labels: Record<string, string>, own: unknown, inherited: unknown, unset: string): string {
+export function enumSelect(pid: string, model: string | null, field: string, values: readonly string[], labels: Record<string, string>, own: unknown, inherited: unknown, unset: string): string {
   const id = `r-${field}`;
   // A provider has nothing to inherit, so its unset value is the plain default and shows as that option instead of a duplicate of it.
   const fallback = values.find((v) => (labels[v] ?? v) === unset) ?? '';
@@ -140,13 +145,13 @@ function enumSelect(pid: string, model: string | null, field: string, values: re
   return control(id, fieldPath(pid, model, field), 'enum', [first, ...rest]);
 }
 
-function boolSelect(pid: string, model: string | null, field: string, own: boolean | undefined, inherited: boolean | undefined): string {
+export function boolSelect(pid: string, model: string | null, field: string, own: boolean | undefined, inherited: boolean | undefined): string {
   const cur = own === undefined ? (model === null ? 'no' : '') : own ? 'yes' : 'no', yn = (b: boolean | undefined) => (b ? 'Yes' : 'No');
   const rest = [opt('yes', 'Yes', cur), opt('no', 'No', cur)];
   return control(`r-${field}`, fieldPath(pid, model, field), 'bool', model === null ? rest : [opt('', `Default (${yn(inherited)})`, cur), ...rest]);
 }
 
-function activityRows(pid: string, model: string | null, rule: Rule, defaults: Rule): string {
+export function activityRows(pid: string, model: string | null, rule: Rule, defaults: Rule): string {
   return ACTIVITIES.map((a) => {
     const own = rule.activities?.[a], inherited = defaults.activities?.[a], cur = own === undefined ? '' : own === null ? 'none' : own;
     const first = model === null ? opt('', RULES_TEXT.notAllowed, cur) : opt('', `Default (${inherited ? WEIGHT_LABELS[inherited] : RULES_TEXT.notAllowed})`, cur);
@@ -156,7 +161,7 @@ function activityRows(pid: string, model: string | null, rule: Rule, defaults: R
 }
 
 /** Each part of the data handling is its own field, so a model can set one and inherit the rest from its provider. */
-function handlingRows(pid: string, model: string | null, own: Rule['dataHandling'], inherited: Rule['dataHandling']): string {
+export function handlingRows(pid: string, model: string | null, own: Rule['dataHandling'], inherited: Rule['dataHandling']): string {
   const text = (key: 'hostCountry' | 'pinnedHost', label: string, placeholder: string) => {
     const mine = own?.[key], theirs = model !== null ? inherited?.[key] : undefined;
     const hint = model !== null && theirs ? `Default (${theirs})` : placeholder;
@@ -171,7 +176,7 @@ function handlingRows(pid: string, model: string | null, own: Rule['dataHandling
   return text('hostCountry', RULES_TEXT.hostCountry, 'US') + tri('retainsPrompts', RULES_TEXT.retains) + tri('trainsOnPrompts', RULES_TEXT.trains) + text('pinnedHost', RULES_TEXT.pinnedHost, 'None');
 }
 
-function pauseRows(m: RulesModel, pid: string, model: string | null, own: Rule['pause'], inherited: Rule['pause']): string {
+export function pauseRows(m: RulesModel, pid: string, model: string | null, own: Rule['pause'], inherited: Rule['pause']): string {
   const path = fieldPath(pid, model, 'pause'), { meters, blocked } = pauseResets(m.snapshot, pid);
   const known = m.snapshot?.providers[pid]?.meters ?? [];
   const shown = own ?? (model !== null ? inherited : null), active = pauseActive(shown);
@@ -323,7 +328,7 @@ export function renderRules(m: RulesModel): string {
   let html = `<div class="rules-page ${m.sel ? 'has-sel' : ''}"><header class="top">
     <button class="icon" data-action="${m.showHistory ? 'rules-history' : 'back'}" title="${m.showHistory ? 'Back to the rules' : 'Back to usage'}" aria-label="${m.showHistory ? 'Back to the rules' : 'Back to usage'}">${ICON.back}</button>
     <div><h1>${m.showHistory ? RULES_TEXT.historyTitle : RULES_TEXT.title}</h1><div class="sub">${m.showHistory ? RULES_TEXT.historySub : RULES_TEXT.sub}</div></div><span class="grow"></span>
-    ${m.showHistory ? '' : `<button class="btn small" data-action="rules-dial">Dial back</button><button class="btn small" data-action="rules-history">History</button>`}</header>`;
+    ${m.showHistory ? '' : `<div class="seg" role="group" aria-label="${NODE_TEXT.node}"><button data-action="rules-view" data-value="list" class="${m.mode !== 'node' ? 'on' : ''}" aria-pressed="${m.mode !== 'node'}" title="${NODE_TEXT.list}">${NODE_TEXT.list}</button><button data-action="rules-view" data-value="node" class="${m.mode === 'node' ? 'on' : ''}" aria-pressed="${m.mode === 'node'}" title="${NODE_TEXT.node}">${NODE_TEXT.node}</button></div><button class="btn small" data-action="rules-dial">Dial back</button><button class="btn small" data-action="rules-history">History</button>`}</header>`;
   if (m.dialOpen && !m.showHistory) html += dialCard(m);
   if (m.showHistory) return html + historyView(m) + '</div>';
   if (m.policyError) html += `<div class="card rbanner bad"><span class="grow"><b>${RULES_TEXT.policyFailed}</b> ${RULES_TEXT.policyOlder} ${esc(m.policyError)}</span><button class="btn small" data-action="retry-policy">Try again</button></div>`;
@@ -331,6 +336,7 @@ export function renderRules(m: RulesModel): string {
   html += heldCards(m.held);
   if (pending) html += `<div class="card rbanner"><span class="grow">${RULES_TEXT.pending(pending)}</span>
     ${m.filter === 'needs' ? '' : '<button class="btn small" data-rfilter="needs">Show them</button>'}</div>`;
+  if (m.mode === 'node') return html + '<augur-node-view></augur-node-view></div>';
   html += `<div class="rtools"><input type="search" id="r-query" data-rules-query value="${esc(m.query)}" placeholder="Search models" spellcheck="false">
     <div class="seg" role="radiogroup" aria-label="Filter">${RULE_FILTERS.map(([v, label]) =>
       `<button role="radio" aria-checked="${v === m.filter}" class="${v === m.filter ? 'on' : ''}" data-rfilter="${v}">${esc(label)}</button>`).join('')}</div></div>`;

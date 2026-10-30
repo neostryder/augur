@@ -45,6 +45,8 @@ The alias tests in `packages/augurd/test/alias-*.test.ts` and `packages/core/tes
 
 The Cogitator catalog lives in `packages/core/src/cogitator-catalog.ts`, and `readCogitatorKnowledge` isolates the management metadata shape. Its tests in `packages/core/test/cogitator-catalog.test.ts` use fake fleet replies; the pick tests are in `packages/dispatch-protocol/test/fleet-pick.test.ts`, and owner acceptance tests are in `packages/augurd/test/route-add.test.ts`. Catalog changes keep explicit activity blocks, review status, data clearance, and the compact phone reading intact. The CLI and MCP tests cover descriptions and offers without reaching a gateway.
 
+The node view uses the pick preview from dispatch-protocol. Its pure logic and wording live in the view-model package, and the window app renders the gauge and tabs. Tests cover shares, gates, drag detents, slug collisions, and the existing rule paths.
+
 If you changed Laya, also run `python -m unittest discover -s packages/laya/tests`.
 
 Add a line under `[Unreleased]` in `CHANGELOG.md`. Start it with `[Visible]` when a user would notice the change and `[Internal]` when not, then the kind: Providers, UI, Alerts, Sync, Platform, Security or Docs.

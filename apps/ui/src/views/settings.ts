@@ -3,6 +3,7 @@ import type { AlertKind, AppConfig, ClaudeStatus, Outlet, Platform, ProviderPlug
 import type { UpdateState } from '../app';
 import { ICON, esc } from '../util';
 import { ALERT_TEXT, CLAUDE_TEXT, COMPUTER_TEXT, CUSTOM_TEXT, KIND_LABELS, LOGIN_TEXT, PHONE_TEXT, PROVIDER_TEXT, REFRESH_CHOICES, STARTER_RULES_TEXT, refreshDefault } from '@augur/view-model';
+import { NODE_TEXT } from '@augur/view-model';
 import { classifierChooser, modeChooser } from './service';
 
 export { ALERT_TEXT, CLAUDE_TEXT, CUSTOM_EXAMPLE, KIND_LABELS, STARTER_RULES_TEXT } from '@augur/view-model';
@@ -187,6 +188,10 @@ function providerCard(m: SettingsModel, pid: string): string {
       detail += `<div class="field"><label>${PROVIDER_TEXT.show}</label><div class="metersel">${items.map((x) =>
         `<label><input type="checkbox" data-meter-vis="${esc(pid)}|${esc(x.id)}" ${hidden.includes(x.id) ? '' : 'checked'}>${esc(x.label)}</label>`).join('')}</div></div>`;
     }
+    if (pid === 'claude-api') {
+      const reading = m.snapshot?.providers[pid];
+      detail += `<div class="field"><p class="help">${NODE_TEXT.claudeApiHelp}</p><button class="btn small" data-action="provider-test" data-value="claude-api" title="${NODE_TEXT.testKey}" ${m.secrets.has('claude-api.apiKey') ? '' : 'disabled'}>${NODE_TEXT.testKey}</button>${reading ? `<p role="status" class="${reading.ok ? 'saved' : 'bad-json'}">${reading.ok ? NODE_TEXT.keyOk : NODE_TEXT.keyFailed}</p>` : ''}</div>`;
+    }
     detail += refreshRow(m, pid, plugin);
     detail += `<div class="row"><label class="name" for="c-${pid}">${PROVIDER_TEXT.color}</label><input type="color" id="c-${pid}" data-color="${esc(pid)}" value="${esc(color)}">
       <button class="btn small" data-color-reset="${esc(pid)}">${PROVIDER_TEXT.colorDefault}</button></div>`;
@@ -227,6 +232,8 @@ export function renderSettings(m: SettingsModel): string {
   html += `<h2 class="sec">Appearance</h2><div class="card">
     <div class="row"><label class="name">Theme</label>${seg('theme', c.layout.theme, [['system', 'System'], ['light', 'Light'], ['dark', 'Dark']])}</div>
     <div class="row"><label class="name">Columns<span class="desc">Auto uses two columns only when one column would run past the bottom of the screen.</span></label>${seg('columns', String(c.layout.columns), [['auto', 'Auto'], ['1', 'One'], ['2', 'Two']])}</div></div>`;
+
+  html += `<h2 class="sec">${NODE_TEXT.node}</h2><div class="card"><p class="help">${NODE_TEXT.effectHelp}</p>${(['sheen', 'animation', 'ticks'] as const).map(effect => `<div class="row"><label class="name" for="nv-effect-${effect}">${NODE_TEXT[effect]}</label><input id="nv-effect-${effect}" type="checkbox" data-node-effect="${effect}" ${c.layout.nodeView?.[effect] !== false ? 'checked' : ''} title="${NODE_TEXT.effectHelp}"></div>`).join('')}</div>`;
 
   if (m.push && m.sync?.channel) html += phoneAlerts(m);
   else html += `<h2 class="sec">Alerts</h2><div class="card">
