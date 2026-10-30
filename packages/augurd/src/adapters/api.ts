@@ -85,6 +85,7 @@ function make(id: string, shape: 'openai' | 'anthropic'): Adapter {
         ...(optStr(o, 'keySource') === 'store'
           ? ['--key-name', routeSecretName(request.route), '--key-file', keyFilePath(), ...(keyFileOnly() ? ['--key-file-only'] : [])]
           : ['--key-env', optStr(o, 'apiKeyEnv') as string]),
+        ...(shape === 'anthropic' && route.model.startsWith('claude-api/') && new URL(optStr(o, 'baseUrl') as string).origin === 'https://api.anthropic.com' ? ['--fallback-key-name', 'claude-api.apiKey', ...(optStr(o, 'keySource') !== 'store' ? ['--key-file', keyFilePath(), ...(keyFileOnly() ? ['--key-file-only'] : [])] : [])] : []),
         ...(headers ? ['--headers-json', JSON.stringify(headers)] : []),
         ...(mode !== 'chat' ? ['--mode', mode] : []), ...(files.length ? ['--attachments-json', JSON.stringify(files.map(f => ({ path: f.path, kind: f.kind })))] : []),
         ...(mode === 'embeddings' ? ['--result-file', join(ctx.jobDir, 'vectors.json')] : []),

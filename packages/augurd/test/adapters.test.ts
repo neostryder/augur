@@ -84,6 +84,18 @@ describe('what each harness prints, read from real captured output', () => {
 });
 
 describe('command lines', () => {
+  it('keeps route keys first and limits the Claude API fallback to its own host', () => {
+    for (const name of ['claude-api-opus', 'claude-api-sonnet', 'claude-api-haiku']) {
+      const request = req({ route: name, tools: 'none', output: 'text_only' });
+      const route = { model: 'claude-api/sonnet', adapter: 'anthropic-api', options: { baseUrl: 'https://api.anthropic.com', model: 'fixture-model', keySource: 'store' } };
+      const plan = anthropicApi.plan(request, route, ctx('hello'));
+      expect(plan.args).toContain(routeSecretName(name));
+      expect(plan.args).toContain('claude-api.apiKey');
+      expect(anthropicApi.plan(request, { ...route, options: { ...route.options, baseUrl: 'https://other.example.com' } }, ctx('hello')).args).not.toContain('claude-api.apiKey');
+      expect(anthropicApi.plan(request, { ...route, model: 'other/sonnet' }, ctx('hello')).args).not.toContain('claude-api.apiKey');
+      expect(openaiApi.plan(request, { ...route, adapter: 'openai-api' }, ctx('hello')).args).not.toContain('claude-api.apiKey');
+    }
+  });
   const route = (adapter: string, options: Record<string, string | number | boolean>) => ({ model: 'x/y', adapter, options });
   it('hermes: prompt after -z, tier flags, and a long prompt handed over as a file', () => {
     const r = route('hermes-exec', { model: 'gpt-6-luna', command: 'C:/h/hermes.exe' });

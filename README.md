@@ -266,6 +266,8 @@ A route is local when its model is listed under the cogitator provider in the ru
 
 `augur run --attach <file>` sends a file with the prompt on an API route, and the option can be repeated. A text file is added to the prompt and counts toward `maxInput`, an image goes to a model that reads images, and one audio file goes to the transcription endpoint on a `transcribe` job. A route in `embeddings` mode takes only `embed` jobs and saves the vectors to `vectors.json` in the job folder. `--urgent` marks a job as wanted now, so the gateway gives it normal priority. Each job a gateway serves records the machine, the model, the chain link and whether that link was a fallback, and the Jobs page, the terminal app's job view, and `augur jobs` show it as, for example, "Served by: bilbo, link 2, a fallback".
 
+Model rules has List and Node views. The node view previews one activity as a donut, and its Weight, Data, and Behavior tabs edit the same rules as the list. Rule changes records each edit and lets you undo it.
+
 ### Who classifies tasks
 
 `augur pick --task "..."` can work out the activity and data tier from a description. The setup screen and the Service page ask who does that.
