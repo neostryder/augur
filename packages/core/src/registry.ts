@@ -21,7 +21,7 @@ export function allPlugins(config: AppConfig): ProviderPlugin[] {
 
 /** Every provider the rules page lists: the ones Augur reads usage for, then the rules-only ones. */
 export function policyProviders(config: AppConfig): Array<{ id: string; name: string; metered: boolean }> {
-  const metered = allPlugins(config).map((p) => ({ id: p.id, name: p.name, metered: true }));
+  const metered = allPlugins(config).map((p) => ({ id: p.id, name: p.name, metered: !p.rulesOnly }));
   const rulesOnly = [...RULES_ONLY_PROVIDERS, ...(config.rulesOnly ?? [])];
   return [...metered, ...rulesOnly.filter((r, i) => !metered.some((m) => m.id === r.id) && rulesOnly.findIndex((x) => x.id === r.id) === i).map(({ id, name }) => ({ id, name, metered: false }))];
 }
