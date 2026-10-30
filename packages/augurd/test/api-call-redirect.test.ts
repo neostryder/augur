@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { spawn } from 'node:child_process';
+import { mkdtempSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 
@@ -25,6 +28,24 @@ function runCall(port: number, shape: string): Promise<{ code: number | null; er
 }
 
 describe('api-call', () => {
+  it('uses the stored provider key only when the route key is missing', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'augur-api-key-test-')), file = join(dir, 'secrets.json');
+    writeFileSync(file, JSON.stringify({ 'claude-api.apiKey': 'provider-fixture' }));
+    const headers: string[] = [];
+    const port = await listen((req, res) => { headers.push(String(req.headers['x-api-key'])); res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"content":[{"type":"text","text":"done"}]}'); });
+    const call = (key: string | undefined): Promise<{ code: number | null; output: string }> => new Promise((resolve, reject) => {
+      const env = { ...process.env }; delete env.TEST_API_KEY; if (key) env.TEST_API_KEY = key;
+      const child = spawn(process.execPath, [SCRIPT, '--shape', 'anthropic', '--url', `http://127.0.0.1:${port}`, '--model', 'm', '--key-env', 'TEST_API_KEY', '--fallback-key-name', 'claude-api.apiKey', '--key-file', file, '--key-file-only'], { env, windowsHide: true });
+      let output = ''; child.stdout.on('data', chunk => { output += String(chunk); }); child.stderr.on('data', chunk => { output += String(chunk); }); child.on('error', reject); child.on('close', code => resolve({ code, output })); child.stdin.end('hello');
+    });
+    try {
+      for (const key of ['route-fixture', undefined]) {
+        const result = await call(key); expect(result.code).toBe(0); expect(result.output).not.toContain('provider-fixture'); expect(result.output).not.toContain('route-fixture');
+      }
+      expect(headers).toEqual(['route-fixture', 'provider-fixture']);
+    } finally { unlinkSync(file); rmdirSync(dir); }
+  }, 30000);
+
   it('does not follow a redirect, so a key header never reaches another host', async () => {
     let elsewhere = 0;
     const other = await listen((_req, res) => { elsewhere++; res.end('{}'); });

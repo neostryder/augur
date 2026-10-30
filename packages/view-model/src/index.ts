@@ -4,6 +4,7 @@ export * from './usage.js';
 export * from './alerts.js';
 export * from './settings.js';
 export * from './rules.js';
+export * from './node-view.js';
 export * from './rules-bulk.js';
 export * from './dial-back.js';
 export * from './dispatch.js';

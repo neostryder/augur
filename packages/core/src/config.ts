@@ -38,6 +38,7 @@ export function migrateConfig(value: unknown): AppConfig {
   return { schema: 1, providers, custom,
     layout: { theme: ['system', 'light', 'dark'].includes(layout.theme) ? layout.theme : 'system',
       columns: ['auto', 1, 2].includes(layout.columns) ? layout.columns : 'auto',
+      nodeView: { sheen: obj(layout.nodeView).sheen !== false, animation: obj(layout.nodeView).animation !== false, ticks: obj(layout.nodeView).ticks !== false },
       hiddenMeters: obj(layout.hiddenMeters), collapsed: Array.isArray(layout.collapsed) ? layout.collapsed.filter((id: unknown) => typeof id === 'string') : [] },
     alerts: { enabled: alerts.enabled === true, pctThresholds: Array.isArray(alerts.pctThresholds) ? alerts.pctThresholds.filter((n: unknown) => typeof n === 'number' && n >= 0 && n <= 100) : defaults.alerts.pctThresholds,
       paceRatio: { session: ratio(pace.session, defaults.alerts.paceRatio.session), weekly: ratio(pace.weekly, defaults.alerts.paceRatio.weekly), other: ratio(pace.other, defaults.alerts.paceRatio.other) },

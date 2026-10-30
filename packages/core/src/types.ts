@@ -153,6 +153,7 @@ export interface ProviderPlugin {
   links: ProviderLinks;
   /** Needs a CLI login on this computer, so it cannot run from the PWA alone. */
   needsLocalLogin: boolean;
+  rulesOnly?: boolean;
   fields: FieldSpec[];
   /** First-run setup calls this to preselect providers already signed in on this computer. */
   detect?(host: Host): Promise<boolean>;
@@ -201,6 +202,7 @@ export interface AlertConfig {
 export interface LayoutConfig {
   theme: 'system' | 'light' | 'dark';
   columns: 'auto' | 1 | 2;
+  nodeView?: { sheen: boolean; animation: boolean; ticks: boolean };
   /** Meter ids hidden per provider. */
   hiddenMeters: Record<string, string[]>;
   collapsed: string[];

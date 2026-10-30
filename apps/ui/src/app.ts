@@ -1,4 +1,6 @@
 import Sortable from 'sortablejs';
+import { NODE_TEXT, clearedFor, copyMix, initialNodeState, nodeCatalog, stepActivity, suggestedThree, type NodeState } from '@augur/view-model';
+import { registerNodeView, type NodeModel } from './views/node-view';
 import { ACTIVITY_LABELS, DATA_TIER_LABELS, WEIGHT_LABELS, addModels, applyEdit, emptyEditState, emptyPolicy, mergePolicy, policyDigest, setField, setFieldMany, setModelStatus, undoChange, type AppConfig, type DataTier, type EditState, type ModelCatalog, type ModelEntry, type ProviderPlugin, type Shell, type Snapshot, feedFor, feedFromUsage, type AlertKind, type Outlet, type PushStatus, type ClaudeStatus } from '@augur/core';
 import * as core from './core';
 import type { HistoryRow } from './core';
@@ -102,6 +104,9 @@ export class App {
   private hotkeyError = '';
   private catalog: ModelCatalog = {};
   private listing = new Set<string>();
+  private nodeState = initialNodeState();
+  private rulesMode: 'list' | 'node' = 'list';
+  private nodeNote = '';
   private rules: { sel: RulesModel['sel']; query: string; filter: RulesFilter; open: Set<string>; picked: Set<string>; showHistory: boolean; addError: string; note: string; bulkTier: string; bulkField: string; bulkValue: string; preview: BulkPreview | null; dialOpen: boolean; dialEnd: string; dialCustom: string; dialPlan: DialBackPlan | null; dialError: string; pauseMode: 'off' | 'weights'; pauseWeights: Record<string, string> } =
     { sel: null, query: '', filter: 'all', open: new Set(), picked: new Set(), showHistory: false, addError: '', note: '', bulkTier: '', bulkField: 'cost', bulkValue: '', preview: null, dialOpen: false, dialEnd: '', dialCustom: '', dialPlan: null, dialError: '', pauseMode: 'off', pauseWeights: {} };
 
@@ -493,11 +498,12 @@ export class App {
 
   private rulesModel(): RulesModel {
     return { config: this.config, held: heldRows(this.editState), providers: core.policyProviders(this.config), stances: this.stances, plugins: this.pluginMap(), snapshot: this.snapshot,
-      dark: document.documentElement.dataset.theme === 'dark', policyError: this.policyError, catalog: this.catalog, listing: this.listing, canList: this.shell.kind === 'desktop', ...this.rules };
+      dark: document.documentElement.dataset.theme === 'dark', policyError: this.policyError, mode: this.rulesMode, node: this.nodeState, nodeNote: this.nodeNote, catalog: this.catalog, listing: this.listing, canList: this.shell.kind === 'desktop', ...this.rules };
   }
 
   private async render(): Promise<void> {
     this.ensureStrip();
+    const expandedNodeDetails = [...this.root.querySelectorAll<HTMLDetailsElement>('augur-node-view details[open]')].map(detail => detail.dataset.nodeDetails);
     const active = document.activeElement as HTMLInputElement | null, focusId = active?.id, caret = active?.selectionStart ?? null;
     if (this.view === 'dashboard') {
       await this.chooseColumns();
@@ -521,6 +527,8 @@ export class App {
       // The desktop popup opens at its two-column width so the list and the open model's rules sit side by side.
       this.twoColumns = this.shell.kind === 'desktop';
       this.root.innerHTML = renderRules(this.rulesModel());
+      const node = this.root.querySelector<HTMLElement & { model: NodeModel }>('augur-node-view');
+      if (node) { registerNodeView(); node.model = this.rulesModel() as NodeModel; }
     } else if (this.view === 'pair' && this.firstRun) {
       this.twoColumns = false;
       this.root.innerHTML = renderPair({ scanError: this.scanError, ...iosState() });
@@ -531,6 +539,7 @@ export class App {
       this.twoColumns = false;
       this.root.innerHTML = renderSettings(this.settingsModel());
     }
+    for (const key of expandedNodeDetails) { const detail = this.root.querySelector<HTMLDetailsElement>(`augur-node-view [data-node-details="${key}"]`); if (detail) detail.open = true; }
     if (focusId) {
       const el = document.getElementById(focusId) as HTMLInputElement | null;
       el?.focus();
@@ -555,7 +564,7 @@ export class App {
   private async sizePopup(): Promise<void> {
     if (this.shell.kind !== 'desktop') return;
     const h = Math.ceil(this.root.getBoundingClientRect().height + (this.strip?.getBoundingClientRect().height ?? 0) + (this.linkNote?.getBoundingClientRect().height ?? 0));
-    const w = this.view === 'setup' ? SETUP_W : this.twoColumns ? TWO_COL : ONE_COL;
+    const w = this.view === 'rules' && this.rulesMode === 'node' ? 1280 : this.view === 'setup' ? SETUP_W : this.twoColumns ? TWO_COL : ONE_COL;
     if (this.shell.setPopupSize) await this.shell.setPopupSize(w, h).catch(() => undefined);
     else await this.shell.setPopupHeight?.(h).catch(() => undefined);
   }
@@ -932,6 +941,7 @@ export class App {
   }
 
   private wireEvents(): void {
+    this.wireNodeView();
     this.root.addEventListener('click', (e) => void this.onClick(e));
     this.root.addEventListener('change', (e) => void this.onChange(e));
     this.root.addEventListener('input', (e) => {
@@ -966,7 +976,58 @@ export class App {
       if (e.key === 'F5') { e.preventDefault(); void this.refresh(true); }
     });
     this.root.addEventListener('mousemove', (e) => this.onHover(e));
+    this.root.addEventListener('focusin', (event) => { if ((event.target as Element).closest('[data-node-tip]')) this.onHover({ target: event.target } as MouseEvent); });
+    this.root.addEventListener('focusout', () => { this.tip.style.opacity = '0'; });
     this.root.addEventListener('mouseleave', () => { this.tip.style.opacity = '0'; });
+  }
+
+  private wireNodeView(): void {
+    this.root.addEventListener('node-state', (event) => { this.nodeState = { ...this.nodeState, ...(event as CustomEvent<Partial<NodeState>>).detail }; });
+    this.root.addEventListener('node-select', (event) => { this.rules.sel = (event as CustomEvent<RulesModel['sel']>).detail; });
+    this.root.addEventListener('node-edit', (event) => {
+      const { path, value } = (event as CustomEvent<{ path: string; value: unknown }>).detail;
+      const [provider, label] = path.split('|');
+      if (provider && label) this.rules.sel = { provider, model: label };
+      setField(this.config.policy ??= emptyPolicy(), path, value, this.device);
+      void this.saveRules();
+    });
+    this.root.addEventListener('node-add', (event) => { void this.addNodeModels([(event as CustomEvent<{ label: string }>).detail.label]); });
+    this.root.addEventListener('node-suggest', () => {
+      const items = suggestedThree(nodeCatalog(this.config, this.catalog, this.snapshot), this.nodeState.activity, this.nodeState.dataTier);
+      void this.addNodeModels(items.map(item => item.label));
+    });
+    this.root.addEventListener('node-copy', (event) => {
+      const source = (event as CustomEvent<{ activity: NodeState['activity'] }>).detail.activity, policy = this.config.policy ??= emptyPolicy();
+      for (const change of copyMix(this.config, source, this.nodeState.activity)) setField(policy, change.path, change.value, this.device);
+      void this.saveRules();
+    });
+    document.addEventListener('keydown', (event) => {
+      if (this.view !== 'rules' || this.rulesMode !== 'node' || this.rules.showHistory) return;
+      const target = event.target as HTMLElement;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault(); event.stopImmediatePropagation(); this.nodeState.switching = true;
+        void this.render().then(() => this.root.querySelector<HTMLElement>('#nv-activity-search')?.focus()); return;
+      }
+      if (!target.closest('input,textarea,select,[contenteditable="true"]') && (event.key === '[' || event.key === ']')) {
+        event.preventDefault(); const activity = stepActivity(this.nodeState.activity, event.key === '[' ? -1 : 1);
+        const node = this.root.querySelector<HTMLElement & { activity: NodeState['activity'] }>('augur-node-view');
+        if (node) node.activity = activity;
+      }
+    }, { capture: true });
+  }
+
+  private async addNodeModels(labels: string[]): Promise<void> {
+    const items = nodeCatalog(this.config, this.catalog, this.snapshot), policy = this.config.policy ??= emptyPolicy();
+    this.nodeNote = '';
+    for (const label of labels) {
+      const item = items.find(row => row.label === label);
+      if (!item) continue;
+      if (!clearedFor(item.tier, this.nodeState.dataTier)) { this.nodeNote = NODE_TEXT.refuseTier; continue; }
+      if (!item.exists) addModels(policy, item.provider, [{ label: item.label, id: item.id, name: item.name }], 'manual');
+      setField(policy, `${item.provider}|${item.label}|activities.${this.nodeState.activity}`, 'normal', this.device);
+      this.rules.sel = { provider: item.provider, model: item.label };
+    }
+    await this.saveRules();
   }
 
   private provider(pid: string) {
@@ -1396,6 +1457,7 @@ export class App {
   }
 
   private async onClick(e: MouseEvent): Promise<void> {
+    this.tip.style.opacity = '0';
     const t = (e.target as HTMLElement).closest<HTMLElement>('[data-action],[data-open],[data-collapse],[data-meter],[data-secret-save],[data-secret-del],[data-set],[data-open-provider],[data-color-reset],[data-signin],[data-rsel],[data-rprov],[data-rfilter],[data-status],[data-bulk],[data-undo],[data-add-model],[data-pause-clear],[data-list-now],[data-job],[data-route],[data-dial],[data-provider-kind]');
     if (!t) return;
     if (this.view === 'setup' && await this.onSetupClick(t)) return;
@@ -1456,6 +1518,8 @@ export class App {
       case 'backlog-approve': { const r = await this.augur(['backlog', 'approve', t.dataset.backlog ?? '', '--yes']); this.awaitingNote = r.code === 0 ? '' : r.err || r.text || 'The approval did not go through.'; await this.loadGateStatus(); await this.render(); break; }
       case 'edit-accept': case 'edit-dismiss': await this.engine?.answerEdit(t.dataset.edit ?? '', t.dataset.action === 'edit-accept'); break;
       case 'rules': this.view = 'rules'; this.rules.showHistory = false; if (t.dataset.value) this.rules.filter = t.dataset.value as RulesFilter; await this.render(); void this.loadStances(); break;
+      case 'rules-view': this.rulesMode = t.dataset.value === 'node' ? 'node' : 'list'; await this.render(); break;
+      case 'provider-test': await this.refresh(true, [t.dataset.value!]); break;
       case 'rules-dial': this.rules.dialOpen = !this.rules.dialOpen; this.rules.dialPlan = null; this.rules.dialError = ''; await this.render(); break;
       case 'rules-history': this.rules.showHistory = !this.rules.showHistory; await this.render(); break;
       case 'back': this.leaveJobs(); this.view = 'dashboard'; await this.render(); break;
@@ -1883,6 +1947,7 @@ export class App {
     const d = t.dataset;
     if (this.view === 'rules' && await this.onRulesChange(t)) return;
     if (this.view === 'routes' && this.onRouteField(t)) return;
+    if (d.nodeEffect) { this.config.layout.nodeView = { sheen: true, animation: true, ticks: true, ...this.config.layout.nodeView, [d.nodeEffect]: t.checked }; await this.saveConfig(false); return; }
     if (this.view === 'service' && await this.onServiceField(t)) return;
     if (this.view === 'setup' && this.setup && await this.onSetupChange(t)) return;
     if (d.toggle) {
@@ -1943,6 +2008,15 @@ export class App {
     const sparkEl = target.closest?.('svg[data-spark]') as SVGElement | null;
     const chartEl = target.closest?.('svg[data-chart]') as SVGElement | null;
     const tip = this.tip;
+    const nodeTip = target.closest<HTMLElement>('[data-node-tip]');
+    if (nodeTip) {
+      tip.textContent = nodeTip.dataset.nodeTip ?? ''; tip.classList.add('rich', 'node-tip');
+      const bounds = nodeTip.getBoundingClientRect();
+      tip.style.left = Math.max(6, Math.min(bounds.left, innerWidth - tip.offsetWidth - 6)) + 'px';
+      tip.style.top = Math.max(6, Math.min(bounds.bottom + 8, innerHeight - tip.offsetHeight - 6)) + 'px';
+      tip.style.opacity = '1'; return;
+    }
+    tip.classList.remove('node-tip');
     const updateEl = target.closest?.('[data-update]') as HTMLElement | null;
     if (updateEl) {
       tip.innerHTML = updateTip(this.update);
