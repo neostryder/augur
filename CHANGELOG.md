@@ -4,6 +4,8 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+## [1.16.0] - 2026-10-31
+
 ### Added
 
 - [Visible] [Providers] **Cogitator entries share one catalog of uses, strengths, limits, sizes, and activity fits.** Live management fields override the shipped descriptions. `augur models` and `augur_models` show live roles, chains, entries, and offers for missing rules or routes. Only the owner can accept an offer with `augur models accept`. New entries stay unreviewed, and routes never receive a key from the catalog. Seeded activity strengths fill unset rules, while explicit blocks, data clearance, fleet availability, cold loads, and memory pressure still apply.
