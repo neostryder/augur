@@ -1,4 +1,5 @@
 import './styles.css';
+import './node-view.css';
 import { App } from './app';
 import { pickShell } from './shells';
 

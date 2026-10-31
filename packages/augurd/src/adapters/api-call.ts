@@ -42,7 +42,8 @@ function storedKey(name: string): string | null {
   return read('secret-tool', ['lookup', 'service', 'augur', 'username', name]) || fromFile(name);
 }
 
-const key = keyName ? storedKey(keyName) : process.env[keyEnv as string];
+const fallbackKeyName = opt('--fallback-key-name');
+const key = (keyName ? storedKey(keyName) : process.env[keyEnv as string]) || (fallbackKeyName ? storedKey(fallbackKeyName) : null);
 if (!key) { console.error(keyName ? 'no key is stored for this route in the key store' : `environment variable ${keyEnv} is not set for this job`); process.exit(65); }
 
 let promptText = '';
