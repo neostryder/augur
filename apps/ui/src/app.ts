@@ -22,6 +22,7 @@ import { renderTrayIcon } from './trayicon';
 import qrcode from 'qrcode-generator';
 import { HOSTED } from './hosted';
 import { attachPullToRefresh } from './pull-refresh';
+import { heightAtWidth } from './measure';
 import { isApprovalLevel, acceptPairing, applySharedConfig, askDesktop, mergeSynced, parsePairing, isNewerSnapshot, pullPhoneState, pullRules, pullSnapshot, pushPhoneState, pushRules, type PhoneState, FeedKeeper, type Raise, tooltip } from '@augur/core';
 import { acceptPairingFromUrl, pairingQuestion, replacesPairing } from './pairing';
 import { connectEngine } from './engine-link';
@@ -549,7 +550,8 @@ export class App {
     const maxH = (await this.shell.maxPopupHeight?.().catch(() => 0)) || screen.availHeight - 40;
     this.twoColumns = false;
     draw();
-    if (this.root.getBoundingClientRect().height > maxH) { this.twoColumns = true; draw(); }
+    // Measured at the one-column width: the window may still be at the two-column width, where the same cards come out shorter and the choice would flip on every refresh.
+    if (heightAtWidth(this.root, ONE_COL) > maxH) { this.twoColumns = true; draw(); }
   }
 
   private async sizePopup(): Promise<void> {
