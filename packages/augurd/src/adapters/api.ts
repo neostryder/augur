@@ -80,6 +80,8 @@ function make(id: string, shape: 'openai' | 'anthropic'): Adapter {
       if (request.activity === 'transcribe' !== (mode === 'transcribe')) throw new Error(mode === 'transcribe' ? 'a transcribe route takes only the transcribe activity.' : 'the transcribe activity needs a route whose mode is transcribe.');
       if (request.activity === 'moderate' !== (mode === 'moderation')) throw new Error(mode === 'moderation' ? 'a moderation route takes only the moderate activity.' : 'the moderate activity needs a route whose mode is moderation.');
       if (mode === 'transcribe' && files.filter(f => f.kind === 'audio').length !== 1) throw new Error('transcribe takes exactly one audio file.');
+      const baseUrl = optStr(route.options, 'baseUrl');
+      if (!baseUrl || !keyMayGoTo(baseUrl)) throw new Error(`route_base_url_invalid: ${request.route}, baseUrl`);
       const o = route.options, headers = { ...(optStr(o, 'requestClass') === 'cogitator' ? cogitatorHeaders(request) : {}), ...JSON.parse(optStr(o, 'headersJson') ?? '{}') as Record<string, string> };
       const args = [SCRIPT, '--shape', shape, '--url', optStr(o, 'baseUrl') as string, '--model', optStr(o, 'model') as string,
         ...(optStr(o, 'keySource') === 'store'

@@ -31,18 +31,19 @@ describe('api-call', () => {
   it('uses the stored provider key only when the route key is missing', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'augur-api-key-test-')), file = join(dir, 'secrets.json');
     writeFileSync(file, JSON.stringify({ 'claude-api.apiKey': 'provider-fixture' }));
-    const headers: string[] = [];
-    const port = await listen((req, res) => { headers.push(String(req.headers['x-api-key'])); res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"content":[{"type":"text","text":"done"}]}'); });
+    const headers: string[] = [], paths: string[] = [];
+    const port = await listen((req, res) => { paths.push(req.url!); headers.push(String(req.headers['x-api-key'])); res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"content":[{"type":"text","text":"done"}]}'); });
     const call = (key: string | undefined): Promise<{ code: number | null; output: string }> => new Promise((resolve, reject) => {
       const env = { ...process.env }; delete env.TEST_API_KEY; if (key) env.TEST_API_KEY = key;
-      const child = spawn(process.execPath, [SCRIPT, '--shape', 'anthropic', '--url', `http://127.0.0.1:${port}`, '--model', 'm', '--key-env', 'TEST_API_KEY', '--fallback-key-name', 'claude-api.apiKey', '--key-file', file, '--key-file-only'], { env, windowsHide: true });
+      const child = spawn(process.execPath, [SCRIPT, '--shape', 'anthropic', '--url', `http://127.0.0.1:${port}/v1`, '--model', 'm', ...(key === 'store' ? ['--key-name', 'dispatch.missing'] : ['--key-env', 'TEST_API_KEY']), '--fallback-key-name', 'claude-api.apiKey', '--key-file', file, '--key-file-only'], { env, windowsHide: true });
       let output = ''; child.stdout.on('data', chunk => { output += String(chunk); }); child.stderr.on('data', chunk => { output += String(chunk); }); child.on('error', reject); child.on('close', code => resolve({ code, output })); child.stdin.end('hello');
     });
     try {
-      for (const key of ['route-fixture', undefined]) {
+      for (const key of ['route-fixture', undefined, 'store']) {
         const result = await call(key); expect(result.code).toBe(0); expect(result.output).not.toContain('provider-fixture'); expect(result.output).not.toContain('route-fixture');
       }
-      expect(headers).toEqual(['route-fixture', 'provider-fixture']);
+      expect(headers).toEqual(['route-fixture', 'provider-fixture', 'provider-fixture']);
+      expect(paths).toEqual(['/v1/messages', '/v1/messages', '/v1/messages']);
     } finally { unlinkSync(file); rmdirSync(dir); }
   }, 30000);
 
