@@ -161,6 +161,54 @@ pub(crate) fn save_pin(app: &tauri::AppHandle) -> Result<(), String> {
     std::fs::rename(&temp, &path).map_err(|e| e.to_string())
 }
 
+fn autostart_path(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|dir| dir.join("autostart"))
+}
+
+/// What the last Start at login choice was: Some(true) on, Some(false) off, None when it was never made.
+fn read_autostart_choice(path: &std::path::Path) -> Option<bool> {
+    match std::fs::read_to_string(path).ok()?.trim() {
+        "on" => Some(true),
+        "off" => Some(false),
+        _ => None,
+    }
+}
+
+fn write_autostart_choice(path: &std::path::Path, on: bool) -> Result<(), String> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(path, if on { "on" } else { "off" }).map_err(|e| e.to_string())
+}
+
+/// Records the Start at login choice so a later launch can put the login entry back.
+pub(crate) fn remember_autostart(app: &tauri::AppHandle, on: bool) -> Result<(), String> {
+    let path = autostart_path(app).ok_or("Config folder unavailable")?;
+    write_autostart_choice(&path, on)
+}
+
+/// A reinstall that does not go through the updater removes the login entry (Windows reads the entry from the
+/// registry), so a launch with the choice on and no entry writes it again. A launch that finds the entry
+/// present and no recorded choice records it, so installs made before the choice was kept are covered too.
+fn restore_autostart(app: &tauri::AppHandle) {
+    let Some(path) = autostart_path(app) else {
+        return;
+    };
+    let enabled = app.autolaunch().is_enabled().unwrap_or(false);
+    match read_autostart_choice(&path) {
+        Some(true) if !enabled => {
+            let _ = app.autolaunch().enable();
+        }
+        None if enabled => {
+            let _ = write_autostart_choice(&path, true);
+        }
+        _ => {}
+    }
+}
+
 /// Saves the dragged spot once the drag has been still for half a second.
 fn save_pin_soon(app: &tauri::AppHandle) {
     let ticket = app
@@ -424,6 +472,7 @@ pub fn run() {
             commands::hide_popup,
             commands::show_popup,
             commands::popup_pinned,
+            commands::remember_autostart,
             commands::set_popup_pinned,
             commands::start_popup_drag,
             commands::package_manager,
@@ -434,6 +483,7 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             load_pin(app.handle());
+            restore_autostart(app.handle());
             let autostart_item = CheckMenuItem::with_id(
                 app,
                 "autostart",
@@ -482,7 +532,9 @@ pub fn run() {
                             } else {
                                 app.autolaunch().enable()
                             };
-                            let _ = autostart_item.set_checked(result.is_ok() != enabled);
+                            let now = result.is_ok() != enabled;
+                            let _ = autostart_item.set_checked(now);
+                            let _ = remember_autostart(app, now);
                         }
                     }
                     "quit" => app.exit(0),
@@ -578,7 +630,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::clamp_into;
+    use super::{clamp_into, read_autostart_choice, write_autostart_choice};
 
     #[test]
     fn a_spot_on_screen_stays_put() {
@@ -610,5 +662,19 @@ mod tests {
             clamp_into((3700, 10), (400, 560), (1920, 0), (1920, 1040)),
             (3440, 10)
         );
+    }
+
+    #[test]
+    fn the_start_at_login_choice_is_kept_between_runs() {
+        let dir = std::env::temp_dir().join(format!("augur-autostart-{}", std::process::id()));
+        let file = dir.join("autostart");
+        assert_eq!(read_autostart_choice(&file), None);
+        write_autostart_choice(&file, true).unwrap();
+        assert_eq!(read_autostart_choice(&file), Some(true));
+        write_autostart_choice(&file, false).unwrap();
+        assert_eq!(read_autostart_choice(&file), Some(false));
+        std::fs::write(&file, "garbage").unwrap();
+        assert_eq!(read_autostart_choice(&file), None);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -85,6 +85,10 @@ pub async fn web_session_sign_in(app: tauri::AppHandle, site: String) -> Result<
     )
     .title(spec.title)
     .inner_size(520.0, 760.0)
+    // The tray popup hides the moment this window takes focus, and Windows then often leaves a new window behind the
+    // browser the user was in. Staying on top keeps the sign-in in front through the identity provider's pages.
+    .always_on_top(true)
+    .focused(true)
     .build()
     .map_err(|e| e.to_string())?;
     // Signing in can take a while, with a Cloudflare check first, so the account page is read again every
@@ -98,6 +102,7 @@ pub async fn web_session_sign_in(app: tauri::AppHandle, site: String) -> Result<
     tauri::async_runtime::spawn(async move {
         let started = Instant::now();
         let mut seen_off_site = false;
+        let mut settled = 0;
         while started.elapsed() < WATCH_FOR {
             tokio::time::sleep(WATCH_EVERY).await;
             let Some(signin) = watcher.get_webview_window(&format!("signin-{watched}")) else {
@@ -106,9 +111,17 @@ pub async fn web_session_sign_in(app: tauri::AppHandle, site: String) -> Result<
             if let (Some(home), Ok(current)) = (home.as_ref(), signin.url()) {
                 if current.host_str() != home.host_str() {
                     seen_off_site = true;
+                    settled = 0;
                     continue;
                 }
+                // A redirect chain after the identity provider passes through several pages on the site, so the
+                // window has to stay on a post-sign-in page for two checks in a row before the account page is read.
                 if !landed_after_sign_in(&current, seen_off_site) {
+                    settled = 0;
+                    continue;
+                }
+                settled += 1;
+                if settled < 2 {
                     continue;
                 }
             }
@@ -200,6 +213,8 @@ async fn read_site(
     .inner_size(1024.0, 768.0)
     .decorations(false)
     .focused(false)
+    // Never takes focus, so a reading made while the sign-in window is open does not pull it away from the user.
+    .focusable(false)
     .skip_taskbar(true)
     .initialization_script(spec.script)
     .on_navigation(move |target| {

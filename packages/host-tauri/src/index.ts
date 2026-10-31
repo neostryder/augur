@@ -79,7 +79,7 @@ export function createTauriShell(): Shell {
       return { send: (line: string) => invoke<void>('engine_send', { line }) };
     },
     getAutostart: () => isEnabled(),
-    setAutostart: (on: boolean) => on ? enable() : disable(),
+    setAutostart: async (on: boolean) => { await (on ? enable() : disable()); await invoke<void>('remember_autostart', { on }); },
     setHotkey: (accelerator: string | null) => invoke<void>('set_hotkey', { accelerator }),
     appVersion: () => getVersion(),
     openSignIn: (site: string) => invoke<void>('web_session_sign_in', { site }),

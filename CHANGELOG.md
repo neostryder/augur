@@ -16,6 +16,8 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 ### Fixed
 
 - [Visible] [UI] **With Columns set to Auto, the tray panel no longer switches between one and two columns on every refresh.** Auto measured card height at the window's current width, so in the wide two-column window the cards measured short enough for one column, and in the narrow one-column window they measured tall enough for two. Card height is now always measured at the one-column width, and the layout changes only when the cards stop fitting on the screen.
+- [Visible] [Platform] **Start at login now stays on after updating Augur with the Windows installer.** Running the installer by hand, rather than the in-app updater, removed the Windows login entry, so Augur stopped launching at sign-in while the setting still showed as on. Augur now saves the choice in its settings folder and puts the entry back at each start if Windows no longer has it, and it also remembers turning the setting off from the panel or the tray menu.
+- [Visible] [UI] **The sign-in window for Jev (TypeSafe) and Claude now opens on top and takes focus.** It could end up behind the browser or other windows during Google sign-in. The off-screen window that reads the account page in the background can no longer take focus, so a reading does not pull focus away from the sign-in window.
 
 ## [1.15.1] - 2026-10-28
 
