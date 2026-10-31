@@ -13,6 +13,7 @@ export interface NodeState {
   switching: boolean;
   search: string;
   query: string;
+  candidate?: string;
 }
 
 export const initialNodeState = (): NodeState => ({ activity: 'write_code', dataTier: 'internal', tab: 'weight', switching: false, search: '', query: '' });
@@ -36,6 +37,12 @@ export function roundShares(scores: readonly number[]): number[] {
   const raw = clean.map(score => score / sum * 100), shares = raw.map(Math.floor);
   const order = raw.map((value, index) => ({ index, remainder: value - shares[index]! })).sort((a, b) => b.remainder - a.remainder || a.index - b.index);
   for (const item of order.slice(0, 100 - shares.reduce((total, share) => total + share, 0))) shares[item.index]!++;
+  const positive = clean.filter(score => score > 0).length;
+  if (positive > 100) return raw;
+  for (let i = 0; i < shares.length; i++) if (clean[i]! > 0 && shares[i] === 0) {
+    const largest = shares.indexOf(Math.max(...shares));
+    shares[largest]!--; shares[i] = 1;
+  }
   return shares;
 }
 
@@ -115,6 +122,16 @@ export function nodeCatalog(config: AppConfig, catalog: ModelCatalog, snapshot: 
 }
 
 export const clearedFor = (tier: DataTier, required: DataTier): boolean => DATA_TIERS.indexOf(tier) >= DATA_TIERS.indexOf(required);
+
+export function nodeAddReason(config: AppConfig, snapshot: Snapshot | null, item: NodeCatalogItem, activity: ActivityId, tier: DataTier): string {
+  if (!clearedFor(item.tier, tier)) return NODE_TEXT.refuseTier;
+  if (!item.exists) return nodeMix(previewCatalog(config, item, activity), snapshot, activity, tier).find(row => row.provider === item.provider && row.label === item.label)?.reason ?? 'node_add_refused';
+  const rules = config.policy?.providers[item.provider], own = rules?.models[item.label]?.rule.activities?.[activity];
+  const explicit = own !== undefined ? own : rules?.defaults.activities?.[activity];
+  const current = nodeMix(config, snapshot, activity, tier).find(row => row.provider === item.provider && row.label === item.label);
+  if (current?.resolved.activities[activity] !== undefined || explicit === null) return current?.reason || 'node_level_present';
+  return nodeMix(previewLevel(config, item.provider, item.label, activity, 'normal'), snapshot, activity, tier).find(row => row.provider === item.provider && row.label === item.label)?.reason ?? 'node_add_refused';
+}
 
 export function suggestedThree(items: NodeCatalogItem[], activity: ActivityId, tier: DataTier): NodeCatalogItem[] {
   return items.filter(item => item.activities[activity] && clearedFor(item.tier, tier)).sort((a, b) => WEIGHT_LEVELS.indexOf(b.activities[activity]!) - WEIGHT_LEVELS.indexOf(a.activities[activity]!) || a.label.localeCompare(b.label)).slice(0, 3);
@@ -211,9 +228,12 @@ export function previewCatalog(config: AppConfig, item: NodeCatalogItem, activit
 }
 
 export function copyMix(config: AppConfig, source: ActivityId, target: ActivityId): Array<{ path: string; value: WeightLevel | null }> {
-  return Object.entries(config.policy?.providers ?? {}).flatMap(([provider, rules]) => Object.entries(rules.models).filter(([, entry]) => entry.status !== 'hidden').map(([label, entry]) => ({
-    path: `${provider}|${label}|activities.${target}`, value: resolveModel(provider, rules.defaults, entry).activities[source] ?? null,
-  })));
+  return Object.entries(config.policy?.providers ?? {}).flatMap(([provider, rules]) => Object.entries(rules.models).flatMap(([label, entry]) => {
+    if (entry.status === 'hidden') return [];
+    const own = entry.rule.activities?.[source], explicit = own !== undefined ? own : rules.defaults.activities?.[source];
+    const value = explicit === null ? null : resolveModel(provider, rules.defaults, entry).activities[source];
+    return value === undefined ? [] : [{ path: `${provider}|${label}|activities.${target}`, value }];
+  }));
 }
 
 export function nodeTooltip(row: NodeRow): string {

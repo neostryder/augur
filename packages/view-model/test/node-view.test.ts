@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ACTIVITIES, buildPolicyFile, emptyPolicy, fieldPath, migrateConfig, policyProviders, setField, undoChange, type AppConfig, type ModelEntry, type Rule, type Snapshot } from '@augur/core';
 import { rank } from '@augur/dispatch-protocol';
-import { clearedFor, copyMix, dragLevel, nodeActivityLabel, nodeCatalog, nodeMix, nodeSlug, previewCatalog, previewLevel, roundShares, stepActivity, suggestedThree } from '../src/node-view.js';
+import { clearedFor, copyMix, dragLevel, nodeActivityLabel, nodeCatalog, nodeMix, nodeSlug, nodeTooltip, previewCatalog, previewLevel, roundShares, stepActivity, suggestedThree } from '../src/node-view.js';
 
 const now = new Date('2026-10-29T12:00:00Z');
 const entry = (id: string, rule: Rule = {}, status: ModelEntry['status'] = 'confirmed'): ModelEntry => ({ id, status, source: 'manual', firstSeen: now.toISOString(), rule });
@@ -144,5 +144,46 @@ describe('node controls and catalog', () => {
     expect(clearedFor('sensitive', 'regulated')).toBe(false);
     expect(clearedFor('regulated', 'sensitive')).toBe(true);
     expect(suggestedThree(catalog, 'embed', 'public')).toEqual([]);
+  });
+});
+
+describe('node regression cases', () => {
+  it('keeps positive scores visible when whole percentages round to zero', () => {
+    expect(roundShares([10000, 1])).toEqual([99, 1]);
+    const c = config();
+    c.policy!.balance = { profile: 'neutral', depth: { write_code: 'everyday' }, tiers: { 'demo/terra': 'strong', 'demo/luna': 'light', 'demo/sonnet': 'light' }, tilt: { everyday: { strong: 0.001, light: 1 } } };
+    const rows = nodeMix(c, null, 'write_code', 'internal', now);
+    const small = rows.find(row => row.label === 'demo/terra')!;
+    expect(small.ranked!.score).toBeGreaterThan(0);
+    expect(small.ranked!.score / rows.reduce((sum, row) => sum + (row.ranked?.score ?? 0), 0) * 100).toBeLessThan(0.5);
+    for (const row of rows) if ((row.ranked?.score ?? 0) > 0) expect(row.share).toBeGreaterThan(0);
+  });
+
+  it('leaves target inheritance alone when the source has no level', () => {
+    const c = config();
+    expect(copyMix(c, 'embed', 'write_code')).toEqual([]);
+  });
+});
+
+describe('catalog inputs and tooltip factors', () => {
+  it('combines listed and fleet entries without duplicate installed ids', () => {
+    const c = config();
+    const fleet = { self: 'desk', machines: [{ name: 'desk', models: [{ id: 'gemma-4-12b', strengths: 'live strengths', limits: 'live limits' }] }], roles: [] };
+    const snapshot = { providers: { cogitator: { notes: { fleet } } } } as unknown as Snapshot;
+    const rows = nodeCatalog(c, { demo: { fetchedAt: '', models: [{ id: 'gpt-6.1-terra' }, { id: 'listed', name: 'Listed entry' }] }, cogitator: { fetchedAt: '', models: [{ id: 'gemma-4-12b' }] } }, snapshot);
+    expect(rows.filter(row => row.id === 'gpt-6.1-terra')).toHaveLength(1);
+    expect(rows.find(row => row.id === 'listed')).toMatchObject({ name: 'Listed entry', exists: false });
+    expect(rows.filter(row => row.id === 'gemma-4-12b')).toHaveLength(1);
+    expect(rows.find(row => row.id === 'gemma-4-12b')).toMatchObject({ description: 'live strengths', limits: 'live limits', exists: false });
+    expect(rows.find(row => row.id === 'gemma-4-12b')?.activities.summarize_extract).toBe('often');
+  });
+
+  it('explains score factors and a blocked row without inventing a score', () => {
+    const c = config(), rows = nodeMix(c, null, 'write_code', 'internal', now), row = rows[0]!;
+    expect(nodeTooltip(row)).toContain(`${row.ranked!.weight} x ${row.ranked!.fit.toFixed(2)} x ${row.ranked!.usage.toFixed(2)}`);
+    expect(nodeTooltip(row)).toContain(`Share ${row.share}%`);
+    c.policy!.providers.demo!.models[row.label]!.rule.askFirst = true;
+    const blocked = nodeMix(c, null, 'write_code', 'internal', now).find(item => item.label === row.label)!;
+    expect(nodeTooltip(blocked)).toContain(blocked.reason); expect(nodeTooltip(blocked)).toContain('0%');
   });
 });

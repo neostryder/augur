@@ -89,7 +89,7 @@ export interface ProviderPolicy {
 }
 
 /** `at` is the wall-clock time of the edit. `stamp` is its hybrid logical clock stamp, which orders edits across devices; changes saved before stamps existed have none. */
-export interface PolicyChange { at: string; device: string; path: string; from: unknown; to: unknown; stamp?: string }
+export interface PolicyChange { at: string; device: string; path: string; from: unknown; to: unknown; stamp?: string; changes?: PolicyChange[]; fromNull?: boolean }
 
 export interface PolicyConfig {
   /** Keyed by provider id. Models are keyed by their `<provider>/<model>` route label. */
@@ -216,7 +216,7 @@ export function setField(policy: PolicyConfig, path: string, value: unknown, dev
   setAt(policy, path, value);
   const stamp = nextStamp(policy, device, now);
   policy.stamps[path] = stamp;
-  policy.history.push({ at: stampTime(stamp), stamp, device, path, from: from ?? null, to: value ?? null });
+  policy.history.push({ at: stampTime(stamp), stamp, device, path, from: from ?? null, to: value ?? null, ...(from === null ? { fromNull: true } : {}) });
   if (policy.history.length > HISTORY_LIMIT) policy.history.splice(0, policy.history.length - HISTORY_LIMIT);
 }
 
@@ -225,9 +225,22 @@ export function setFieldMany(policy: PolicyConfig, provider: string, models: str
   for (const model of models) setField(policy, fieldPath(provider, model, field), value, device, now);
 }
 
+export function batchPolicyChanges(policy: PolicyConfig, change: () => void): void {
+  const previous = policy.history;
+  policy.history = [];
+  try { change(); }
+  finally {
+    const changes = policy.history;
+    policy.history = previous;
+    if (changes.length) policy.history.push(changes.length === 1 ? changes[0]! : { ...changes[0]!, changes });
+    if (policy.history.length > HISTORY_LIMIT) policy.history.splice(0, policy.history.length - HISTORY_LIMIT);
+  }
+}
+
 /** Reverts one history entry by writing its old value back, as a new change of its own. */
 export function undoChange(policy: PolicyConfig, change: PolicyChange, device: string, now = new Date()): void {
-  setField(policy, change.path, change.from ?? undefined, device, now);
+  if (change.changes) { batchPolicyChanges(policy, () => { for (const item of [...change.changes!].reverse()) undoChange(policy, item, device, now); }); return; }
+  setField(policy, change.path, change.fromNull ? null : change.from ?? undefined, device, now);
 }
 
 /** Copies the proposal fields and drops a pause, notes, a hold rule and anything else. The model is still unreviewed. */
@@ -491,7 +504,7 @@ export function migratePolicy(value: unknown): PolicyConfig {
   if (typeof s.clock === 'string' && /^\d{4}-\d\d-\d\dT[\d:.]+Z(~\d+~.*)?$/.test(s.clock)) policy.clock = s.clock;
   if (Array.isArray(s.history)) for (const c of s.history) {
     const e = obj(c);
-    if (typeof e.at === 'string' && typeof e.path === 'string' && typeof e.device === 'string') policy.history.push({ at: e.at, device: e.device, path: e.path, from: e.from ?? null, to: e.to ?? null, ...(typeof e.stamp === 'string' ? { stamp: e.stamp } : {}) });
+    if (typeof e.at === 'string' && typeof e.path === 'string' && typeof e.device === 'string') policy.history.push({ at: e.at, device: e.device, path: e.path, from: e.from ?? null, to: e.to ?? null, ...(typeof e.stamp === 'string' ? { stamp: e.stamp } : {}), ...(Array.isArray(e.changes) ? { changes: migratePolicy({ history: e.changes }).history } : {}), ...(e.fromNull === true ? { fromNull: true } : {}) });
   }
   policy.history.splice(0, Math.max(0, policy.history.length - HISTORY_LIMIT));
   if (s.balance && typeof s.balance === 'object' && !Array.isArray(s.balance)) policy.balance = s.balance as Record<string, unknown>;
