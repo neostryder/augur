@@ -16,6 +16,7 @@ export interface SettingsModel {
   plugins: Map<string, ProviderPlugin>;
   snapshot: Snapshot | null;
   secrets: Set<string>;
+  keyTests?: Record<string, boolean | undefined>;
   shellKind: 'desktop' | 'pwa';
   autostart: boolean | null;
   openProvider: string | null;
@@ -189,8 +190,8 @@ function providerCard(m: SettingsModel, pid: string): string {
         `<label><input type="checkbox" data-meter-vis="${esc(pid)}|${esc(x.id)}" ${hidden.includes(x.id) ? '' : 'checked'}>${esc(x.label)}</label>`).join('')}</div></div>`;
     }
     if (pid === 'claude-api') {
-      const reading = m.snapshot?.providers[pid];
-      detail += `<div class="field"><p class="help">${NODE_TEXT.claudeApiHelp}</p><button class="btn small" data-action="provider-test" data-value="claude-api" title="${NODE_TEXT.testKey}" ${m.secrets.has('claude-api.apiKey') ? '' : 'disabled'}>${NODE_TEXT.testKey}</button>${reading ? `<p role="status" class="${reading.ok ? 'saved' : 'bad-json'}">${reading.ok ? NODE_TEXT.keyOk : NODE_TEXT.keyFailed}</p>` : ''}</div>`;
+      const tested = m.keyTests?.[pid];
+      detail += `<div class="field"><p class="help">${NODE_TEXT.claudeApiHelp}</p><button class="btn small" data-action="provider-test" data-value="claude-api" title="${NODE_TEXT.testKey}" ${m.secrets.has('claude-api.apiKey') ? '' : 'disabled'}>${NODE_TEXT.testKey}</button>${tested !== undefined ? `<p role="status" class="${tested ? 'saved' : 'bad-json'}">${tested ? NODE_TEXT.keyOk : NODE_TEXT.keyFailed}</p>` : ''}</div>`;
     }
     detail += refreshRow(m, pid, plugin);
     detail += `<div class="row"><label class="name" for="c-${pid}">${PROVIDER_TEXT.color}</label><input type="color" id="c-${pid}" data-color="${esc(pid)}" value="${esc(color)}">

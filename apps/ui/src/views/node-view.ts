@@ -1,10 +1,10 @@
 import { ACTIVITIES, ACTIVITY_LABELS, COST_TIERS, DATA_TIERS, DATA_TIER_LABELS, WEIGHT_LABELS, WEIGHT_LEVELS, WEIGHTS, fieldPath, pauseActive, type ActivityId, type DataTier } from '@augur/core';
-import { COST_LABELS, NODE_TEXT as T, OUTPUT_LABELS, RULES_TEXT, STATUS_LABELS, clearedFor, dragLevel, nodeActivityLabel, nodeCatalog, nodeMix, nodeTooltip as math, pauseResets, previewCatalog, previewLevel, suggestedThree, statusText, type NodeRow, type NodeState } from '@augur/view-model';
+import { COST_LABELS, NODE_TEXT as T, OUTPUT_LABELS, RULES_TEXT, STATUS_LABELS, clearedFor, dragLevel, nodeActivityLabel, nodeAddReason, nodeCatalog, nodeMix, nodeTooltip as math, pauseResets, previewCatalog, previewLevel, suggestedThree, statusText, type NodeRow, type NodeState } from '@augur/view-model';
 import { activityRows, boolSelect, enumSelect, handlingRows, pauseRows, waitRows, type RulesModel } from './rules';
 import { esc } from '../util';
 
 export interface NodeModel extends RulesModel { node: NodeState }
-const tip = (text: string): string => `title="${esc(text)}" data-node-tip="${esc(text)}"`;
+const tip = (text: string): string => `data-node-tip="${esc(text)}"`;
 const lock = '<svg class="nv-lock" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="2"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/><circle cx="8" cy="10.5" r=".8"/></svg>';
 const nodeId = (value: string): string => [...value].map(char => char.codePointAt(0)!.toString(16)).join('-');
 const point = (radius: number, angle: number): [number, number] => [440 + radius * Math.sin(angle * Math.PI / 180), 372 - radius * Math.cos(angle * Math.PI / 180)];
@@ -22,15 +22,15 @@ function indicators(row: NodeRow, x: number, y: number): string {
 }
 
 function ring(m: NodeModel, rows: NodeRow[], selected: NodeRow | undefined, mini = false): string {
-  const mix = rows.filter(row => row.share > 0), sum = mix.reduce((total, row) => total + row.ranked!.score, 0);
+  const mix = rows.filter(row => row.share > 0), sum = mix.reduce((total, row) => total + row.share, 0), focus = mix.find(row => row === selected) ?? mix[0];
   let angle = 0;
   const slices = mix.map(row => {
-    const sweep = row.ranked!.score / sum * 360, start = angle, end = angle + sweep; angle = end;
+    const sweep = row.share / sum * 360, start = angle, end = angle + sweep; angle = end;
     const middle = (start + end) / 2, [x, initialY] = point(248, middle), right = middle < 180, lx = x + (right ? 8 : -8), on = row.label === selected?.label;
     const y = right && lx > 620 && initialY < 245 ? 245 : initialY;
     const attrs = `data-node-select="${esc(row.label)}" data-provider="${esc(row.provider)}"`;
     const [hx, hy] = point(189, start + Math.min(22, sweep / 2));
-    return `<g class="nv-slice ${on ? 'on' : ''} ${row.label === m.nodeGhost ? 'ghost' : ''}"><path id="nv-slice-${nodeId(row.label)}" d="${sector(start + Math.min(.8, sweep / 4), end - Math.min(.8, sweep / 4))}" fill="${m.config.layout.nodeView?.sheen === false ? 'var(--accent)' : on ? 'url(#nv-selected)' : 'url(#nv-blue)'}" ${attrs} tabindex="0" role="button" aria-label="${esc(math(row))}" ${tip(math(row))}/>${mini ? '' : `<g class="nv-label" id="nv-label-${nodeId(row.label)}" ${attrs} tabindex="0" role="button" aria-label="${esc(math(row))}" ${tip(math(row))}><path d="M${point(221, middle)}L${right ? lx - 6 : lx + 6},${y - 4}" stroke="var(--line)"/><text x="${lx}" y="${y}" text-anchor="${right ? 'start' : 'end'}">${esc(row.slug)} <tspan fill="var(--focus)">${row.share}%</tspan></text>${indicators(row, right ? lx : lx - 60, y + 13)}${row.tag ? `<text class="nv-tag" x="${lx}" y="${y + 30}" text-anchor="${right ? 'start' : 'end'}">${esc(row.tag)}</text>` : ''}</g><circle class="nv-edge" cx="${hx}" cy="${hy}" r="6" id="nv-edge-${nodeId(row.label)}" data-node-edge="${esc(row.label)}" data-provider="${esc(row.provider)}" tabindex="0" role="slider" aria-label="${esc(`${row.slug}: ${T.level}`)}" aria-valuemin="1" aria-valuemax="5" aria-valuenow="${WEIGHT_LEVELS.indexOf(row.ranked!.level) + 1}" aria-valuetext="${WEIGHT_LABELS[row.ranked!.level]}" ${tip(T.dragHelp)}/>${on ? `<text class="nv-drag-label" x="${hx - 10}" y="${hy - 25}" text-anchor="end">${T.dragCue}</text>` : ''}`}</g>`;
+    return `<g class="nv-slice ${on ? 'on' : ''} ${row.label === m.nodeGhost ? 'ghost' : ''}"><path id="nv-slice-${nodeId(row.label)}" d="${sector(start + Math.min(.8, sweep / 4), end - Math.min(.8, sweep / 4))}" fill="${m.config.layout.nodeView?.sheen === false ? 'var(--accent)' : on ? 'url(#nv-selected)' : 'url(#nv-blue)'}" ${attrs} tabindex="${row === focus ? 0 : -1}" role="button" aria-label="${esc(math(row))}" ${tip(math(row))}/>${mini ? '' : `<g class="nv-label" id="nv-label-${nodeId(row.label)}" ${attrs} aria-label="${esc(math(row))}" ${tip(math(row))}><path d="M${point(221, middle)}L${right ? lx - 6 : lx + 6},${y - 4}" stroke="var(--line)"/><text x="${lx}" y="${y}" text-anchor="${right ? 'start' : 'end'}">${esc(row.slug)} <tspan fill="var(--focus)">${row.share}%</tspan></text>${indicators(row, right ? lx : lx - 60, y + 13)}${row.tag ? `<text class="nv-tag" x="${lx}" y="${y + 30}" text-anchor="${right ? 'start' : 'end'}">${esc(row.tag)}</text>` : ''}</g><circle class="nv-edge" cx="${hx}" cy="${hy}" r="6" id="nv-edge-${nodeId(row.label)}" data-node-edge="${esc(row.label)}" data-provider="${esc(row.provider)}" tabindex="${row === focus ? 0 : -1}" role="slider" aria-label="${esc(`${row.slug}: ${T.level}`)}" aria-valuemin="1" aria-valuemax="5" aria-valuenow="${WEIGHT_LEVELS.indexOf(row.ranked!.level) + 1}" aria-valuetext="${WEIGHT_LABELS[row.ranked!.level]}" ${tip(T.dragHelp)}/>${on ? `<text class="nv-drag-label" x="${hx - 10}" y="${hy - 25}" text-anchor="end">${T.dragCue}</text>` : ''}`}</g>`;
   }).join('');
   const ticks = m.config.layout.nodeView?.ticks === false || mini ? '' : Array.from({ length: 100 }, (_, i) => `<path d="M${point(201, i * 3.6)}L${point(i % 10 ? 208 : 216, i * 3.6)}" stroke="${i % 10 ? 'var(--line)' : 'var(--muted)'}"/>`).join('');
   return `<svg class="nv-ring" viewBox="${mini ? '230 162 420 420' : '0 0 880 744'}" aria-label="${esc(ACTIVITY_LABELS[m.node.activity])}" role="group"><defs><radialGradient id="nv-blue" gradientUnits="userSpaceOnUse" cx="440" cy="372" r="194"><stop offset=".83" stop-color="#245a9f"/><stop offset="1" stop-color="#5d9be3"/></radialGradient><radialGradient id="nv-selected" gradientUnits="userSpaceOnUse" cx="440" cy="372" r="194"><stop offset=".83" stop-color="#2f78d6"/><stop offset="1" stop-color="#9cc7f4"/></radialGradient></defs><g class="nv-bezel" fill="none"><circle cx="440" cy="372" r="220" stroke="var(--line)"/>${ticks}${!mini && m.config.layout.nodeView?.ticks !== false ? [0, 25, 50, 75].map((value, index) => { const [x, y] = point(142, index * 90); return `<text class="nv-scale" x="${x}" y="${y + 3}" text-anchor="middle">${value}</text>`; }).join('') : ''}<circle cx="440" cy="372" r="155" stroke="var(--line)"/><circle cx="440" cy="372" r="176" stroke="var(--line)" stroke-width="22"/></g>${slices}<g class="nv-center"><text x="440" y="360" text-anchor="middle" class="nv-number">${mini ? '' : mix.length}</text><text x="440" y="386" text-anchor="middle">${mini ? '' : T.inMix}</text><text x="440" y="419" text-anchor="middle" class="nv-subtle">${mini ? '' : `${T.sum} ${sum ? 100 : 0}%`}</text></g><g class="nv-phone-center"><text x="440" y="330" text-anchor="middle">${esc(selected?.slug ?? '')}</text><text x="440" y="385" text-anchor="middle" class="nv-number">${selected?.share ?? 0}%</text><text x="440" y="411" text-anchor="middle">${esc(ACTIVITY_LABELS[m.node.activity])}</text></g></svg>`;
@@ -41,7 +41,8 @@ function editButton(path: string, value: string, label: string, on: boolean, hel
 }
 
 function weightPanel(m: NodeModel, selected: NodeRow): string {
-  const { provider, label, resolved } = selected, activity = m.node.activity, level = selected.ranked?.level ?? resolved.activities[activity] ?? 'normal';
+  const { provider, label, resolved } = selected, activity = m.node.activity, level = selected.ranked?.level ?? resolved.activities[activity] ?? null;
+  const index = level === null ? -1 : WEIGHT_LEVELS.indexOf(level);
   const path = fieldPath(provider, label, `activities.${activity}`);
   const stops = WEIGHT_LEVELS.map(value => nodeMix(previewLevel(m.config, provider, label, activity, value), m.snapshot, activity, m.node.dataTier).find(row => row.label === label)?.share ?? 0);
   const heat = ACTIVITIES.map(id => {
@@ -49,7 +50,7 @@ function weightPanel(m: NodeModel, selected: NodeRow): string {
     const why = row ? nodeActivityLabel(row, id, m.catalog) : T.notInMix;
     return `<button class="nv-heat ${activity === id ? 'on' : ''}" data-node-activity="${id}" ${tip(row?.reason || ACTIVITY_LABELS[id])}><span>${ACTIVITY_LABELS[id]}</span><span class="nv-dots">${WEIGHT_LEVELS.map((_, i) => `<i class="${own && i <= WEIGHT_LEVELS.indexOf(own) ? 'on' : ''}"></i>`).join('')}</span><small>${esc(why)}</small></button>`;
   }).join('');
-  return `<section><h3>${T.level} / ${ACTIVITY_LABELS[activity]}</h3><div class="nv-level"><output style="left:${Math.max(12, Math.min(88, WEIGHT_LEVELS.indexOf(level) * 25))}%">${WEIGHT_LABELS[level]} x${WEIGHTS[level]}</output><input id="nv-level" type="range" min="0" max="4" step="1" value="${WEIGHT_LEVELS.indexOf(level)}" style="--nv-stop:${WEIGHT_LEVELS.indexOf(level) * 25}%" data-node-level="${esc(path)}" aria-label="${esc(T.levelHelp)}" ${tip(T.levelHelp)}><div class="nv-detents" aria-hidden="true">${WEIGHT_LEVELS.map(() => '<i></i>').join('')}</div><div class="nv-stops">${WEIGHT_LEVELS.map((value, i) => `<button data-node-edit="${esc(path)}" data-value="${value}" class="${level === value ? 'on' : ''}" ${tip(T.levelHelp)}>${WEIGHT_LABELS[value]}<small>${stops[i]}%</small></button>`).join('')}</div></div><p class="nv-note">${esc(T.stopHelp)}</p></section><section><h3>${T.allActivities} / ${esc(selected.slug)}</h3><div class="nv-heat-strip">${heat}</div></section><details data-node-details="weight"><summary ${tip(T.advanced)}>${T.advanced}</summary>${activityRows(provider, label, selected.entry.rule, m.config.policy!.providers[provider]!.defaults)}</details>`;
+  return `<section><h3>${T.level} / ${ACTIVITY_LABELS[activity]}</h3><div class="nv-level"><output style="left:${Math.max(12, Math.min(88, index * 25))}%">${level === null ? T.notAllowed : `${WEIGHT_LABELS[level]} x${WEIGHTS[level]}`}</output><input id="nv-level" type="range" min="${level === null ? -1 : 0}" max="4" step="1" value="${index}" style="--nv-stop:${Math.max(0, index) * 25}%" data-node-level="${esc(path)}" aria-label="${esc(`${selected.slug}: ${T.level}`)}" aria-valuetext="${level === null ? T.notAllowed : WEIGHT_LABELS[level]}" ${tip(T.levelHelp)}><div class="nv-detents" aria-hidden="true">${WEIGHT_LEVELS.map(() => '<i></i>').join('')}</div><div class="nv-stops">${WEIGHT_LEVELS.map((value, i) => `<button data-node-edit="${esc(path)}" data-value="${value}" class="${level === value ? 'on' : ''}" ${tip(T.levelHelp)}>${WEIGHT_LABELS[value]}<small>${stops[i]}%</small></button>`).join('')}</div></div><p class="nv-note">${esc(T.stopHelp)}</p></section><section><h3>${T.allActivities} / ${esc(selected.slug)}</h3><div class="nv-heat-strip">${heat}</div></section><details data-node-details="weight"><summary ${tip(T.advanced)}>${T.advanced}</summary>${activityRows(provider, label, selected.entry.rule, m.config.policy!.providers[provider]!.defaults)}</details>`;
 }
 
 function dataPanel(m: NodeModel, selected: NodeRow): string {
@@ -68,7 +69,7 @@ const field = (label: string, input: string, help: string): string => `<div clas
 function panel(m: NodeModel, selected: NodeRow | undefined): string {
   if (!selected) return `<aside class="nv-panel"><p class="nv-note">${T.selectionHelp}</p></aside>`;
   const status = fieldPath(selected.provider, selected.label, 'status');
-  return `<aside class="nv-panel" aria-label="${esc(selected.label)}"><div class="nv-grabber"></div><header class="nv-panel-head"><h2>${esc(selected.slug)}</h2><span class="chip">${STATUS_LABELS[selected.entry.status]}</span><p>${esc(selected.label)}. ${selected.share}% / ${ACTIVITY_LABELS[m.node.activity]}</p></header><div class="nv-tabs" role="tablist" aria-label="${RULES_TEXT.title}">${(['weight', 'data', 'behavior'] as const).map(tab => `<button id="nv-tab-${tab}" role="tab" aria-selected="${m.node.tab === tab}" aria-controls="nv-tab-panel" data-node-tab="${tab}" ${tip(tab === 'weight' ? T.levelHelp : tab === 'data' ? T.tierHelp : T.behaviorHelp)}>${T[tab]}${tab === 'data' ? `<small>${DATA_TIER_LABELS[selected.resolved.dataTier]}</small>` : ''}</button>`).join('')}</div><div class="nv-panel-body" id="nv-tab-panel" role="tabpanel" aria-labelledby="nv-tab-${m.node.tab}">${m.node.tab === 'weight' ? weightPanel(m, selected) : m.node.tab === 'data' ? dataPanel(m, selected) : behaviorPanel(m, selected)}<div class="nv-status"><button class="btn small nv-phone-dial" data-action="rules-dial">${RULES_TEXT.dialTitle}</button><p>${esc(statusText(m.config.policy!, selected.provider, selected.entry))}</p>${selected.entry.status !== 'confirmed' && selected.entry.status !== 'hidden' ? `<button class="btn small primary" data-status="${esc(status)}" data-value="confirmed" ${tip(RULES_TEXT.confirm)}>${RULES_TEXT.confirm}</button>` : ''}<button class="btn small" data-status="${esc(status)}" data-value="${selected.entry.status === 'hidden' ? 'unreviewed' : 'hidden'}" ${tip(RULES_TEXT.hide)}>${selected.entry.status === 'hidden' ? RULES_TEXT.show : RULES_TEXT.hide}</button></div></div></aside>`;
+  return `<aside class="nv-panel" aria-label="${esc(selected.label)}"><div class="nv-grabber"></div><header class="nv-panel-head"><h2>${esc(selected.slug)}</h2><span class="chip">${STATUS_LABELS[selected.entry.status]}</span><p>${esc(selected.label)}. ${selected.share}% / ${ACTIVITY_LABELS[m.node.activity]}</p></header><div class="nv-tabs" role="tablist" aria-label="${RULES_TEXT.title}">${(['weight', 'data', 'behavior'] as const).map(tab => `<button id="nv-tab-${tab}" role="tab" tabindex="${m.node.tab === tab ? 0 : -1}" aria-selected="${m.node.tab === tab}" aria-controls="nv-tab-panel" data-node-tab="${tab}" ${tip(tab === 'weight' ? T.levelHelp : tab === 'data' ? T.tierHelp : T.behaviorHelp)}>${T[tab]}${tab === 'data' ? `<small>${DATA_TIER_LABELS[selected.resolved.dataTier]}</small>` : ''}</button>`).join('')}</div><div class="nv-panel-body" id="nv-tab-panel" role="tabpanel" aria-labelledby="nv-tab-${m.node.tab}">${m.node.tab === 'weight' ? weightPanel(m, selected) : m.node.tab === 'data' ? dataPanel(m, selected) : behaviorPanel(m, selected)}<div class="nv-status"><button class="btn small nv-phone-dial" data-action="rules-dial">${RULES_TEXT.dialTitle}</button><p>${esc(statusText(m.config.policy!, selected.provider, selected.entry))}</p>${selected.entry.status !== 'confirmed' && selected.entry.status !== 'hidden' ? `<button class="btn small primary" data-status="${esc(status)}" data-value="confirmed" ${tip(RULES_TEXT.confirm)}>${RULES_TEXT.confirm}</button>` : ''}<button class="btn small" data-status="${esc(status)}" data-value="${selected.entry.status === 'hidden' ? 'unreviewed' : 'hidden'}" ${tip(RULES_TEXT.hide)}>${selected.entry.status === 'hidden' ? RULES_TEXT.show : RULES_TEXT.hide}</button></div></div></aside>`;
 }
 
 function switcher(m: NodeModel): string {
@@ -85,9 +86,9 @@ function switcher(m: NodeModel): string {
 export function renderNodeView(m: NodeModel): string {
   const rows = nodeMix(m.config, m.snapshot, m.node.activity, m.node.dataTier), selected = rows.find(row => row.provider === m.sel?.provider && row.label === m.sel.model) ?? rows.find(row => row.share > 0) ?? rows[0];
   const active = rows.filter(row => row.share > 0), out = rows.filter(row => row.share === 0);
-  const items = nodeCatalog(m.config, m.catalog, m.snapshot).filter(item => !active.some(row => row.label === item.label) && `${item.name} ${item.description}`.toLowerCase().includes(m.node.query.toLowerCase()));
-  const suggests = suggestedThree(nodeCatalog(m.config, m.catalog, m.snapshot), m.node.activity, m.node.dataTier);
-  return `<div class="nv-layout ${m.config.layout.nodeView?.animation === false ? 'nv-still' : ''} ${m.config.layout.nodeView?.sheen === false ? 'nv-flat' : ''}" data-node-drop><main class="nv-stage"><div class="nv-heading"><button id="nv-activity" class="nv-activity" data-node-switch="open" ${tip(T.switchHelp)}>${ACTIVITY_LABELS[m.node.activity]} <span>v</span></button><label class="nv-gate">${T.dataGate}<select id="nv-gate" data-node-gate ${tip(T.tierHelp)}>${DATA_TIERS.map(tier => `<option value="${tier}" ${tier === m.node.dataTier ? 'selected' : ''}>${DATA_TIER_LABELS[tier]}</option>`).join('')}</select></label><div class="nv-activity-chips">${ACTIVITIES.map(activity => `<button id="nv-quick-${activity}" data-node-activity="${activity}" class="${activity === m.node.activity ? 'on' : ''}" aria-pressed="${activity === m.node.activity}" ${tip(T.switchHelp)}>${ACTIVITY_LABELS[activity]}</button>`).join('')}</div><button class="nv-phone-search" data-node-switch="open" aria-label="${T.searchActivities}" ${tip(T.switchHelp)}><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="6.5" cy="6.5" r="4"/><path d="m9.5 9.5 4 4"/></svg></button></div><div class="nv-gauge" data-node-drop>${ring(m, rows, selected)}${selected?.ranked ? `<div class="nv-math" ${tip(T.mathHelp)}><b>${esc(selected.slug)} <span>${selected.share}%</span></b><div class="nv-factors"><span><b>${selected.ranked.weight}</b><small>${T.level}</small></span><i>x</i><span><b>${selected.ranked.fit.toFixed(2)}</b><small>${T.fit}</small></span><i>x</i><span><b>${selected.ranked.usage.toFixed(2)}</b><small>${T.usage}</small></span></div><p>${DATA_TIER_LABELS[selected.resolved.dataTier]} <span>${COST_LABELS[selected.resolved.cost]}</span></p>${selected.ranked.tilt !== 1 || selected.ranked.boost !== 1 ? `<small>${T.balance}: ${selected.ranked.tilt} x ${selected.ranked.boost}</small>` : ''}<small class="nv-pin-note">${T.pinHelp}</small></div>` : ''}${!active.length ? `<div class="nv-empty"><h2>${T.emptyTitle}</h2><p>${T.emptyHelp}</p><button class="btn primary" data-node-suggest ${suggests.length ? '' : 'disabled'} ${tip(suggests.map(item => item.name).join(', ') || T.noSuggestions)}>${T.suggested}</button><label>${T.copy}<select id="nv-copy" data-node-copy ${tip(T.copy)}><option value="">${T.activity}</option>${ACTIVITIES.filter(activity => activity !== m.node.activity).map(activity => `<option value="${activity}">${ACTIVITY_LABELS[activity]}</option>`).join('')}</select></label></div>` : ''}</div><div class="nv-chips" role="group" aria-label="${T.inMix}">${rows.map(row => `<button id="nv-chip-${nodeId(row.label)}" class="${row.label === selected?.label ? 'on' : ''}" data-node-select="${esc(row.label)}" data-provider="${esc(row.provider)}" ${tip(math(row))}><b>${esc(row.slug)}</b>${row.tag ? `<small>${esc(row.tag)}</small>` : ''}<span>${row.share}%</span><span class="nv-sr">${esc(row.reason)}</span></button>`).join('')}</div><div class="nv-legend"><span>${T.level} <i class="nv-sample-dots"></i></span><span>${T.highestTier} <i class="nv-sample-bars"></i></span><small>${T.dragHelp}</small></div><p class="nv-touch-hint">${T.touchHelp}</p><p class="nv-preview ${m.nodeNote ? 'nv-feedback' : ''}" role="status">${esc(m.nodeNote || T.preview)}</p><section class="nv-tray"><header><h3>${T.catalog}</h3><input id="nv-catalog-search" type="search" aria-label="${T.searchCatalog}" placeholder="${T.searchCatalog}" data-node-query value="${esc(m.node.query)}" ${tip(T.addHelp)}></header><div class="nv-catalog">${items.map(item => `<button id="nv-catalog-${nodeId(item.label)}" draggable="true" data-node-add="${esc(item.label)}" class="nv-candidate" ${tip(`${item.description} ${item.limits} ${clearedFor(item.tier, m.node.dataTier) ? T.addHelp : T.refuseTier}`)}><b>${esc(item.name)}</b><small>${esc(item.description || item.provider)}</small><span>${DATA_TIER_LABELS[item.tier]}</span></button>`).join('')}</div></section><section class="nv-out"><h3>${T.out}</h3>${out.map(row => `<button id="nv-out-${nodeId(row.label)}" data-node-select="${esc(row.label)}" data-provider="${esc(row.provider)}" ${tip(row.reason)}><b>${esc(row.slug)}</b>${row.tag ? `<small>${esc(row.tag)}</small>` : ''}<span>${esc(row.reason)}</span><em>0%</em></button>`).join('')}</section></main>${panel(m, selected)}</div>${switcher(m)}`;
+  const items = nodeCatalog(m.config, m.catalog, m.snapshot).filter(item => !nodeAddReason(m.config, m.snapshot, item, m.node.activity, m.node.dataTier) && `${item.name} ${item.description}`.toLowerCase().includes(m.node.query.toLowerCase()));
+  const suggests = suggestedThree(nodeCatalog(m.config, m.catalog, m.snapshot).filter(item => !nodeAddReason(m.config, m.snapshot, item, m.node.activity, m.node.dataTier)), m.node.activity, m.node.dataTier);
+  return `<main class="nv-layout ${m.config.layout.nodeView?.animation === false ? 'nv-still' : ''} ${m.config.layout.nodeView?.sheen === false ? 'nv-flat' : ''}" data-node-drop><div class="nv-stage"><div class="nv-heading"><button id="nv-activity" class="nv-activity" data-node-switch="open" ${tip(T.switchHelp)}>${ACTIVITY_LABELS[m.node.activity]} <span>v</span></button><label class="nv-gate">${T.dataGate}<select id="nv-gate" data-node-gate ${tip(T.tierHelp)}>${DATA_TIERS.map(tier => `<option value="${tier}" ${tier === m.node.dataTier ? 'selected' : ''}>${DATA_TIER_LABELS[tier]}</option>`).join('')}</select></label><div class="nv-activity-chips">${ACTIVITIES.map(activity => `<button id="nv-quick-${activity}" data-node-activity="${activity}" class="${activity === m.node.activity ? 'on' : ''}" aria-pressed="${activity === m.node.activity}" ${tip(T.switchHelp)}>${ACTIVITY_LABELS[activity]}</button>`).join('')}</div><button class="nv-phone-search" data-node-switch="open" aria-label="${T.searchActivities}" ${tip(T.switchHelp)}><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="6.5" cy="6.5" r="4"/><path d="m9.5 9.5 4 4"/></svg></button></div><div class="nv-gauge" data-node-drop>${ring(m, rows, selected)}${selected?.ranked ? `<div class="nv-math" ${tip(T.mathHelp)}><b>${esc(selected.slug)} <span>${selected.share}%</span></b><div class="nv-factors"><span><b>${selected.ranked.weight}</b><small>${T.level}</small></span><i>x</i><span><b>${selected.ranked.fit.toFixed(2)}</b><small>${T.fit}</small></span><i>x</i><span><b>${selected.ranked.usage.toFixed(2)}</b><small>${T.usage}</small></span></div><p>${DATA_TIER_LABELS[selected.resolved.dataTier]} <span>${COST_LABELS[selected.resolved.cost]}</span></p>${selected.ranked.tilt !== 1 || selected.ranked.boost !== 1 ? `<small>${T.balance}: ${selected.ranked.tilt} x ${selected.ranked.boost}</small>` : ''}<small class="nv-pin-note">${T.pinHelp}</small></div>` : ''}${!active.length ? `<div class="nv-empty"><h2>${T.emptyTitle}</h2><p>${T.emptyHelp}</p><button class="btn primary" data-node-suggest ${suggests.length ? '' : 'disabled'} ${tip(suggests.map(item => item.name).join(', ') || T.noSuggestions)}>${T.suggested}</button><label>${T.copy}<select id="nv-copy" data-node-copy ${tip(T.copy)}><option value="">${T.activity}</option>${ACTIVITIES.filter(activity => activity !== m.node.activity).map(activity => `<option value="${activity}">${ACTIVITY_LABELS[activity]}</option>`).join('')}</select></label></div>` : ''}</div><div class="nv-chips" role="group" aria-label="${T.inMix}">${active.map(row => `<button id="nv-chip-${nodeId(row.label)}" class="${row.label === selected?.label ? 'on' : ''}" data-node-select="${esc(row.label)}" data-provider="${esc(row.provider)}" ${tip(math(row))}><b>${esc(row.slug)}</b>${row.tag ? `<small>${esc(row.tag)}</small>` : ''}<span>${row.share}%</span><span class="nv-sr">${esc(row.reason)}</span></button>`).join('')}</div><div class="nv-legend"><span>${T.level} <i class="nv-sample-dots"></i></span><span>${T.highestTier} <i class="nv-sample-bars"></i></span><small>${T.dragHelp}</small></div><p class="nv-touch-hint">${T.touchHelp}</p><p class="nv-preview ${m.nodeNote ? 'nv-feedback' : ''}" role="status">${esc(m.nodeNote || T.preview)}</p><section class="nv-tray"><header><h3>${T.catalog}</h3><input id="nv-catalog-search" type="search" aria-label="${T.searchCatalog}" placeholder="${T.searchCatalog}" data-node-query value="${esc(m.node.query)}" ${tip(T.addHelp)}></header><div class="nv-catalog">${items.map(item => `<button id="nv-catalog-${nodeId(item.label)}" draggable="true" data-node-add="${esc(item.label)}" aria-pressed="${m.node.candidate === item.label}" class="nv-candidate" ${tip(`${item.description} ${item.limits} ${clearedFor(item.tier, m.node.dataTier) ? T.addHelp : T.refuseTier}`)}><b>${esc(item.name)}</b><small>${esc(item.description || item.provider)}</small><span>${DATA_TIER_LABELS[item.tier]}</span></button>`).join('')}</div><button class="btn small" data-node-confirm-add ${m.node.candidate && items.some(item => item.label === m.node.candidate) ? '' : 'disabled'}>node_catalog_add</button></section><section class="nv-out"><h3>${T.out}</h3>${out.map(row => `<button id="nv-out-${nodeId(row.label)}" data-node-select="${esc(row.label)}" data-provider="${esc(row.provider)}" ${tip(row.reason)}><b>${esc(row.slug)}</b>${row.tag ? `<small>${esc(row.tag)}</small>` : ''}<span>${esc(row.reason)}</span><em>0%</em></button>`).join('')}</section></div>${panel(m, selected)}</main>${switcher(m)}`;
 }
 
 export function registerNodeView(): void {
@@ -98,12 +99,21 @@ export function registerNodeView(): void {
     private stopDrag: (() => void) | null = null;
     private stopHold: (() => void) | null = null;
     private held = false;
+    private suppressClick = false;
+    private editTimer: ReturnType<typeof setTimeout> | undefined;
+    private pendingEdit: { path: string; value: unknown } | null = null;
+    private rangeKeyboard = false;
+    private switchFocus: HTMLElement | null = null;
     set model(value: NodeModel) {
       if (!value.sel?.model) {
         const rows = nodeMix(value.config, value.snapshot, value.node.activity, value.node.dataTier), row = rows.find(row => row.share > 0) ?? rows[0];
-        if (row) { value.sel = { provider: row.provider, model: row.label }; this.emit('node-select', value.sel); }
+        if (row) value = { ...value, sel: { provider: row.provider, model: row.label } };
       }
       this.current = value; this.draw();
+    }
+    openSwitcher(): void {
+      this.switchFocus = document.activeElement as HTMLElement | null;
+      this.state({ switching: true }); this.querySelector<HTMLInputElement>('#nv-activity-search')?.focus();
     }
     set activity(value: ActivityId) { this.state({ activity: value }); }
     private emit(name: string, detail: unknown): void { this.dispatchEvent(new CustomEvent(name, { detail, bubbles: true })); }
@@ -120,9 +130,9 @@ export function registerNodeView(): void {
         }
       }
       for (const control of this.querySelectorAll<HTMLElement>('button,input,select,textarea,summary')) {
-        if (!control.dataset.nodeTip) { const text = control.getAttribute('aria-label') || control.closest('label,.row,.nv-field')?.textContent?.trim() || control.textContent?.trim() || T.advanced; control.dataset.nodeTip = text; control.title = text; }
+        if (!control.dataset.nodeTip) { const text = control.getAttribute('aria-label') || control.closest('label,.row,.nv-field')?.textContent?.trim() || control.textContent?.trim() || T.advanced; control.dataset.nodeTip = text; }
       }
-      if (id) { const next = this.querySelector<HTMLInputElement>(`#${id}`); if (next) next.focus(); else if (!this.current.node.switching) this.querySelector<HTMLElement>('#nv-activity')?.focus(); if (caret !== null && caret !== undefined && next?.type === 'search') next.setSelectionRange(caret, caret); }
+      if (id) { const next = this.querySelector<HTMLInputElement>(`#${id}`); if (next) next.focus(); else if (!this.current.node.switching) this.focusActivity(); if (caret !== null && caret !== undefined && next?.type === 'search') next.setSelectionRange(caret, caret); }
     }
     connectedCallback(): void {
       this.addEventListener('click', this.onNodeClick);
@@ -135,15 +145,38 @@ export function registerNodeView(): void {
       this.addEventListener('drop', this.drop);
       this.addEventListener('dragend', this.dragend);
     }
-    disconnectedCallback(): void { this.stopDrag?.(); this.stopHold?.(); }
-    private state(patch: Partial<NodeState>): void { this.current.node = { ...this.current.node, ...patch }; this.emit('node-state', patch); this.draw(); }
+    disconnectedCallback(): void { this.stopDrag?.(); this.stopHold?.(); this.flushEdit(); }
+    private focusActivity(): void { this.querySelector<HTMLElement>(matchMedia('(max-width: 719px)').matches ? '.nv-phone-search' : '#nv-activity')?.focus(); }
+    private state(patch: Partial<NodeState>): void {
+      if (patch.activity || patch.tab || patch.dataTier) this.flushEdit();
+      if (patch.activity) { this.current.nodeNote = undefined; this.dragged = null; this.current.nodeGhost = undefined; }
+      this.current.node = { ...this.current.node, ...patch }; this.emit('node-state', patch);
+      if (Object.keys(patch).every(key => key === 'switching' || key === 'search')) {
+        this.querySelector('.nv-switch-backdrop')?.remove(); this.insertAdjacentHTML('beforeend', switcher(this.current));
+        if (this.current.node.switching) this.querySelector<HTMLInputElement>('#nv-activity-search')?.focus();
+        else if (this.switchFocus && this.contains(this.switchFocus) && this.switchFocus.getClientRects().length) this.switchFocus.focus(); else this.focusActivity();
+      } else this.draw();
+    }
+    private flushEdit = (): void => {
+      clearTimeout(this.editTimer); const edit = this.pendingEdit; this.pendingEdit = null;
+      if (edit) this.emit('node-edit', edit);
+    };
+    private queueEdit(path: string, value: unknown): void {
+      if (this.pendingEdit && this.pendingEdit.path !== path) this.flushEdit();
+      this.pendingEdit = { path, value }; clearTimeout(this.editTimer);
+      const [provider, label] = path.split('|') as [string, string];
+      this.current = { ...this.current, config: previewLevel(this.current.config, provider, label, this.current.node.activity, value as typeof WEIGHT_LEVELS[number]) };
+      this.editTimer = setTimeout(this.flushEdit, 350);
+    }
     private onNodeClick = (event: MouseEvent): void => {
-      if (this.held) { this.held = false; event.preventDefault(); event.stopPropagation(); return; }
+      if (this.suppressClick && event.detail > 0) { this.suppressClick = false; event.preventDefault(); event.stopPropagation(); return; }
       const element = (event.target as Element).closest<HTMLElement>('button,[data-node-select]');
       if (!element) return;
       const d = element.dataset;
+      if (d.nodeSelect || d.nodeEdit) this.flushEdit();
       if (d.nodeTab) this.state({ tab: d.nodeTab as NodeState['tab'] });
-      if (d.nodeSwitch) { this.state({ switching: d.nodeSwitch === 'open' }); this.querySelector<HTMLInputElement>('#nv-activity-search')?.focus(); }
+      if (d.nodeSwitch === 'open') this.openSwitcher();
+      if (d.nodeSwitch === 'close') this.state({ switching: false });
       if (d.nodeActivity) this.state({ activity: d.nodeActivity as ActivityId, switching: false });
       if (d.nodeSelect) { this.current.sel = { provider: d.provider!, model: d.nodeSelect }; this.emit('node-select', this.current.sel); this.draw(); }
       if (d.nodeEdit) this.emit('node-edit', { path: d.nodeEdit, value: d.value });
@@ -153,7 +186,8 @@ export function registerNodeView(): void {
         const until = d.nodePause === 'hour' ? new Date(now.getTime() + 3600000).toISOString() : d.nodePause === 'tomorrow' ? tomorrow.toISOString() : meter?.resetsAt;
         if (until) this.emit('node-edit', { path: d.path, value: { until, weights: null, ...(d.nodePause === 'reset' && meter ? { meter: meter.id } : {}) } });
       }
-      if (d.nodeAdd) this.emit('node-add', { label: d.nodeAdd });
+      if (d.nodeAdd) this.state({ candidate: d.nodeAdd });
+      if (d.nodeConfirmAdd !== undefined && this.current.node.candidate) this.emit('node-add', { label: this.current.node.candidate });
       if (d.nodeSuggest !== undefined) this.emit('node-suggest', {});
     };
     private input = (event: Event): void => {
@@ -161,9 +195,11 @@ export function registerNodeView(): void {
       if (input.dataset.nodeSearch !== undefined) this.state({ search: input.value });
       if (input.dataset.nodeQuery !== undefined) this.state({ query: input.value });
       if (input.dataset.nodeLevel) {
+        if (Number(input.value) < 0) return;
         const [provider, label] = input.dataset.nodeLevel.split('|') as [string, string], level = WEIGHT_LEVELS[Number(input.value)]!;
         const rows = nodeMix(previewLevel(this.current.config, provider, label, this.current.node.activity, level), this.current.snapshot, this.current.node.activity, this.current.node.dataTier);
         const row = rows.find(item => item.label === label);
+        input.setAttribute('aria-valuetext', WEIGHT_LABELS[level]);
         input.style.setProperty('--nv-stop', `${Number(input.value) * 25}%`);
         const output = this.querySelector('output'); if (output) { output.textContent = `${WEIGHT_LABELS[level]} x${WEIGHTS[level]} / ${row?.share ?? 0}%`; (output as HTMLElement).style.left = `${Math.max(12, Math.min(88, Number(input.value) * 25))}%`; }
         this.querySelector('.nv-gauge .nv-ring')!.outerHTML = ring(this.current, rows, row);
@@ -173,50 +209,58 @@ export function registerNodeView(): void {
       const input = event.target as HTMLInputElement, d = input.dataset;
       if (d.nodeGate !== undefined) this.state({ dataTier: input.value as DataTier });
       if (d.nodeCopy !== undefined && input.value) this.emit('node-copy', { activity: input.value });
-      if (d.nodeLevel) this.emit('node-edit', { path: d.nodeLevel, value: WEIGHT_LEVELS[Number(input.value)] });
+      if (d.nodeLevel) { const value = WEIGHT_LEVELS[Number(input.value)] ?? null; if (this.rangeKeyboard) this.queueEdit(d.nodeLevel, value); else this.emit('node-edit', { path: d.nodeLevel, value }); }
       if (d.nodeSeries) { const pattern = this.querySelector<HTMLInputElement>('#nv-series-pattern')!.value.trim(), kind = this.querySelector<HTMLSelectElement>('#nv-series-kind')!.value; this.emit('node-edit', { path: fieldPath(d.provider!, d.nodeSeries, 'series'), value: pattern ? { kind, pattern } : undefined }); }
     };
     private key = (event: KeyboardEvent): void => {
       const target = event.target as HTMLElement;
-      if (event.key === 'Escape' && this.current.node.switching) { event.preventDefault(); event.stopPropagation(); this.state({ switching: false }); this.querySelector<HTMLElement>('[data-node-switch]')?.focus(); }
+      if (event.key === 'Escape' && this.stopDrag) { event.preventDefault(); event.stopPropagation(); this.stopDrag(); return; }
+      if (event.key === 'Escape' && this.current.node.switching) { event.preventDefault(); event.stopPropagation(); this.state({ switching: false }); }
       if (target.matches('[data-node-tab]') && ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
         event.preventDefault(); const tabs = ['weight', 'data', 'behavior'] as const, at = tabs.indexOf(this.current.node.tab), next = event.key === 'Home' ? 0 : event.key === 'End' ? 2 : (at + (event.key === 'ArrowLeft' ? 2 : 1)) % 3;
         this.state({ tab: tabs[next]! }); this.querySelector<HTMLElement>(`#nv-tab-${tabs[next]}`)?.focus();
       }
+      if (target.matches('[data-node-level]') && ['ArrowLeft', 'ArrowDown', 'ArrowRight', 'ArrowUp', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)) this.rangeKeyboard = true;
       const edge = target.closest<HTMLElement>('[data-node-edge]');
       if (edge && ['ArrowLeft', 'ArrowDown', 'ArrowRight', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
         event.preventDefault(); const level = Number(edge.getAttribute('aria-valuenow')) - 1;
         const value = event.key === 'Home' ? WEIGHT_LEVELS[0] : event.key === 'End' ? WEIGHT_LEVELS[4] : WEIGHT_LEVELS[Math.max(0, Math.min(4, level + (event.key === 'ArrowLeft' || event.key === 'ArrowDown' ? -1 : 1)))];
-        this.emit('node-edit', { path: fieldPath(edge.dataset.provider!, edge.dataset.nodeEdge!, `activities.${this.current.node.activity}`), value });
+        this.queueEdit(fieldPath(edge.dataset.provider!, edge.dataset.nodeEdge!, `activities.${this.current.node.activity}`), value); this.draw();
+      }
+      if (target.matches('path[data-node-select]') && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) {
+        event.preventDefault(); this.flushEdit();
+        const slices = [...this.querySelectorAll<SVGElement>('path[data-node-select]')], at = slices.indexOf(target as unknown as SVGElement);
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? slices.length - 1 : (at + (event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 1) + slices.length) % slices.length;
+        const slice = slices[next]!; this.current.sel = { provider: slice.dataset.provider!, model: slice.dataset.nodeSelect! }; this.emit('node-select', this.current.sel); this.draw(); this.querySelector<HTMLElement>(`#${slice.id}`)?.focus();
       }
       if (target.matches('path[data-node-select],g[data-node-select]') && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); target.dispatchEvent(new MouseEvent('click', { bubbles: true })); }
       if (this.current.node.switching && event.key === 'Tab') {
-        const controls = [...this.querySelectorAll<HTMLElement>('.nv-switch input,.nv-switch button')], first = controls[0], last = controls.at(-1);
+        const controls = [...this.querySelectorAll<HTMLElement>('.nv-switch input:not(:disabled),.nv-switch button:not(:disabled),.nv-switch select:not(:disabled)')].filter(control => control.getClientRects().length > 0), first = controls[0], last = controls.at(-1);
         if (event.shiftKey && target === first) { event.preventDefault(); last?.focus(); } else if (!event.shiftKey && target === last) { event.preventDefault(); first?.focus(); }
       }
     };
     private pointer = (event: PointerEvent): void => {
       const edge = (event.target as Element).closest<HTMLElement>('[data-node-edge]');
-      this.stopHold?.(); this.held = false;
+      this.stopHold?.(); this.held = false; this.suppressClick = false; this.rangeKeyboard = false; this.flushEdit();
       if (!edge) {
         const slice = (event.target as Element).closest<HTMLElement>('[data-node-select]');
-        if (!slice) return;
+        if (!slice || event.pointerType === 'mouse') return;
         const timer = setTimeout(() => {
           this.held = true; const width = Math.min(300, innerWidth - 24), left = Math.max(12, Math.min(event.clientX - width / 2, innerWidth - width - 12)), top = Math.max(12, Math.min(event.clientY - 100, innerHeight - 140));
           this.insertAdjacentHTML('beforeend', `<div class="nv-touch-tip" role="tooltip" style="width:${width}px;left:${left}px;top:${top}px">${esc(slice.dataset.nodeTip ?? slice.getAttribute('aria-label') ?? '')}</div>`);
         }, 400);
-        const stop = () => { clearTimeout(timer); this.querySelector('.nv-touch-tip')?.remove(); document.removeEventListener('pointerup', stop); document.removeEventListener('pointercancel', stop); this.stopHold = null; };
-        this.stopHold = stop; document.addEventListener('pointerup', stop, { once: true }); document.addEventListener('pointercancel', stop, { once: true }); return;
+        const stop = (up?: Event) => { clearTimeout(timer); this.suppressClick = this.held && up?.type === 'pointerup' && this.contains(up.target as Node); this.held = false; setTimeout(() => { this.suppressClick = false; }, 0); this.querySelector('.nv-touch-tip')?.remove(); document.removeEventListener('pointerup', stop); document.removeEventListener('pointercancel', stop); window.removeEventListener('blur', stop); this.stopHold = null; };
+        this.stopHold = stop; window.addEventListener('blur', stop, { once: true }); document.addEventListener('pointerup', stop, { once: true }); document.addEventListener('pointercancel', stop, { once: true }); return;
       }
       event.preventDefault(); const original = this.current.config, label = edge.dataset.nodeEdge!, provider = edge.dataset.provider!, activity = this.current.node.activity;
       const row = nodeMix(original, this.current.snapshot, activity, this.current.node.dataTier).find(item => item.label === label)!;
       const start = row.ranked?.level ?? row.resolved.activities[activity] ?? 'normal', x = event.clientX, y = event.clientY;
-      let value = start;
-      const move = (next: PointerEvent) => { value = dragLevel(start, (next.clientX - x) - (next.clientY - y)); this.current = { ...this.current, config: previewLevel(original, provider, label, activity, value), sel: { provider, model: label } }; this.draw(); };
-      const stop = () => { document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up); document.removeEventListener('pointercancel', cancel); this.stopDrag = null; };
-      const up = () => { stop(); this.current.config = original; this.emit('node-edit', { path: fieldPath(provider, label, `activities.${activity}`), value }); };
+      let value = start, moved = false;
+      const move = (next: PointerEvent) => { moved ||= next.clientX !== x || next.clientY !== y; value = dragLevel(start, (next.clientX - x) - (next.clientY - y)); this.current = { ...this.current, config: previewLevel(original, provider, label, activity, value), sel: { provider, model: label } }; this.draw(); };
+      const stop = () => { document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up); document.removeEventListener('pointercancel', cancel); window.removeEventListener('blur', cancel); this.stopDrag = null; };
+      const up = () => { stop(); this.current.config = original; if (moved && value !== start) this.emit('node-edit', { path: fieldPath(provider, label, `activities.${activity}`), value }); };
       const cancel = () => { stop(); this.current.config = original; this.draw(); };
-      this.stopDrag = stop; document.addEventListener('pointermove', move); document.addEventListener('pointerup', up, { once: true }); document.addEventListener('pointercancel', cancel, { once: true });
+      this.stopDrag = cancel; window.addEventListener('blur', cancel, { once: true }); document.addEventListener('pointermove', move); document.addEventListener('pointerup', up, { once: true }); document.addEventListener('pointercancel', cancel, { once: true });
     };
     private dragstart = (event: DragEvent): void => {
       const item = (event.target as Element).closest<HTMLElement>('[data-node-add]');
@@ -228,7 +272,8 @@ export function registerNodeView(): void {
       if (!(event.target as Element).closest('.nv-gauge') || !this.dragged) return;
       event.preventDefault(); const item = nodeCatalog(this.current.config, this.current.catalog, this.current.snapshot).find(row => row.label === this.dragged);
       if (!item) return;
-      if (!clearedFor(item.tier, this.current.node.dataTier)) { if (event.dataTransfer) event.dataTransfer.dropEffect = 'none'; this.current.nodeNote = T.refuseTier; this.querySelector('.nv-preview')!.textContent = T.refuseTier; if (!this.querySelector('.nv-drop-tip')) this.querySelector('.nv-gauge')!.insertAdjacentHTML('beforeend', `<div class="nv-drop-tip" role="tooltip">${esc(T.refuseTier)}</div>`); return; }
+      const refusal = nodeAddReason(this.current.config, this.current.snapshot, item, this.current.node.activity, this.current.node.dataTier);
+      if (refusal) { if (event.dataTransfer) event.dataTransfer.dropEffect = 'none'; this.current.nodeNote = refusal; this.querySelector('.nv-preview')!.textContent = refusal; if (!this.querySelector('.nv-drop-tip')) this.querySelector('.nv-gauge')!.insertAdjacentHTML('beforeend', `<div class="nv-drop-tip" role="tooltip">${esc(refusal)}</div>`); return; }
       if (this.current.nodeGhost === item.label) return;
       this.current.nodeGhost = item.label;
       this.querySelector('.nv-preview')!.textContent = item.exists ? T.preview : T.awaitingReview;
@@ -237,7 +282,7 @@ export function registerNodeView(): void {
       this.querySelector('.nv-gauge .nv-ring')!.outerHTML = ring({ ...this.current, config }, rows, row);
     };
     private drop = (event: DragEvent): void => { if ((event.target as Element).closest('.nv-gauge') && this.dragged) { event.preventDefault(); this.emit('node-add', { label: this.dragged }); } this.dragend(); };
-    private dragend = (): void => { this.dragged = null; this.current.nodeGhost = undefined; this.draw(); };
+    private dragend = (): void => { this.dragged = null; this.current.nodeGhost = undefined; this.current.nodeNote = undefined; this.draw(); };
   }
   customElements.define('augur-node-view', NodeView);
 }
