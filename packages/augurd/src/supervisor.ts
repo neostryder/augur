@@ -31,6 +31,7 @@ import { ProseQueue } from './prose-queue.js';
 import type { ProseItem, ProseStatus } from './prose-queue.js';
 import { appendGate, gateTotals, readGate } from './balance-files.js';
 import { PremiumBacklog } from './premium-backlog.js';
+import { takeNamedApproval } from './named-approval.js';
 import type { BacklogItem, BacklogStatus } from './premium-backlog.js';
 
 export interface SupervisorDeps {
@@ -261,7 +262,9 @@ export class Supervisor {
     }
 
     const policy = this.d.policy(), usage = this.d.usage();
-    if (policy && req.caller.intent === 'automated' && req.released !== true && resolveBalance(policy.balance).gate.premium.includes(route.model)) {
+    if (policy && req.caller.intent === 'automated' && req.released !== true && resolveBalance(policy.balance).gate.premium.includes(route.model) && takeNamedApproval(route.model)) {
+      req = { ...req, named: true };
+    } else if (policy && req.caller.intent === 'automated' && req.released !== true && resolveBalance(policy.balance).gate.premium.includes(route.model)) {
       const ranked = rank(policy, usage, { activity: req.activity, dataTier: req.dataTier, caller: 'automated', gateState: this.gateRead() }, new Date(this.now()));
       const cost = (label: string) => ({ free: 0, very_cheap: 1, cheap: 2, moderate: 3, high: 4, very_high: 5 }[Object.values(policy.providers).find(p => p.models[label])?.models[label]?.cost ?? 'moderate'] ?? 3);
       const fallback = ranked.ranking.map(r => r.model).sort((a, b) => cost(a) - cost(b))[0];

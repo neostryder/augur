@@ -254,10 +254,10 @@ describe('confirming that a person named the model', () => {
     if ('id' in ok) expect((await terminal(e.sup, e.store, ok.id)).named).toBe(true);
   });
 
-  it('lets a caller at the keyboard through, and forgets a message after three more', () => {
+  it('lets a caller at the keyboard through, and forgets a message after ten more', () => {
     const e = setup({ verifyNamed: 'enforce' });
     expect('id' in e.sup.submit(ask(e, 's1', { interactive: true }))).toBe(true);
-    e.sup.humanPrompt('s5', 'use ask'); for (const t of ['one', 'two', 'three']) e.sup.humanPrompt('s5', t);
+    e.sup.humanPrompt('s5', 'use ask'); for (const t of ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten']) e.sup.humanPrompt('s5', t);
     expect(e.sup.submit(ask(e, 's5'))).toMatchObject({ rejected: { code: 'ask_first' } });
   });
 
