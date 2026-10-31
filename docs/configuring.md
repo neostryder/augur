@@ -4,6 +4,8 @@ The app covers most of this. The Rules page says what each model may do, the Rou
 
 ## Node view
 
+node_view_editing_fix
+
 The node view uses the existing pick preview with current usage and a neutral task fit of 0.5, so a real task can produce different shares. Drag a slice edge through five weight levels, use Ctrl K to search activities, or press [ and ] to step through them. The Weight, Data, and Behavior tabs edit the same policy fields as the list, and Rule changes can undo each edit.
 
 Settings has separate switches for sheen, animation, and tick marks under Node view. Reduced motion replaces slice animation with a short crossfade. Catalog additions start unreviewed and need Confirm rules before they can run.
