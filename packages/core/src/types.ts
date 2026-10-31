@@ -161,6 +161,7 @@ export interface ProviderPlugin {
   fetch(host: Host, settings: ProviderSettings, options?: { force?: boolean }): Promise<ProviderResult>;
   /** Default refresh interval in seconds, for providers that should be read less often than the app-wide interval. */
   refreshSeconds?: number;
+  testKey?(host: Host, settings: ProviderSettings): Promise<ProviderResult>;
   /** The models this account can use, for the rules page. */
   listModels?(host: Host, settings: ProviderSettings): Promise<Array<{ id: string; name?: string; created?: string }>>;
   /** `auto` adds each new listed model for review; `catalog` keeps the list to pick from, for marketplaces with hundreds of models. Defaults to auto. */

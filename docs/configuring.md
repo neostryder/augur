@@ -10,6 +10,8 @@ Settings has separate switches for sheen, animation, and tick marks under Node v
 
 Claude API appears in Settings with a password field and a Test key button. The key stays in the existing key store as claude-api.apiKey, and the test calls the provider's model listing without sending a prompt. Routes for claude-api models at https://api.anthropic.com keep their existing route key or environment key first and use this provider key only when that key is missing.
 
+claude_api_configuring_fix
+
 ## Where the settings live
 
 | What | File | Edited with |

@@ -44,7 +44,7 @@ function storedKey(name: string): string | null {
 
 const fallbackKeyName = opt('--fallback-key-name');
 const key = (keyName ? storedKey(keyName) : process.env[keyEnv as string]) || (fallbackKeyName ? storedKey(fallbackKeyName) : null);
-if (!key) { console.error(keyName ? 'no key is stored for this route in the key store' : `environment variable ${keyEnv} is not set for this job`); process.exit(65); }
+if (!key) { console.error(`route_key_missing: ${keyName ?? keyEnv}${fallbackKeyName ? `, ${fallbackKeyName}` : ''}`); process.exit(65); }
 
 let promptText = '';
 process.stdin.setEncoding('utf8');
@@ -52,7 +52,7 @@ for await (const chunk of process.stdin) promptText += chunk;
 
 const anthropic = shape === 'anthropic';
 const base = url.replace(/\/+$/, '');
-const endpoint = mode === 'embeddings' ? `${base}/embeddings` : mode === 'transcribe' ? `${base}/audio/transcriptions` : mode === 'moderation' ? `${base}/moderations` : anthropic ? `${base}/v1/messages` : `${base}/chat/completions`;
+const endpoint = mode === 'embeddings' ? `${base}/embeddings` : mode === 'transcribe' ? `${base}/audio/transcriptions` : mode === 'moderation' ? `${base}/moderations` : anthropic ? `${base.replace(/\/v1$/, '')}/v1/messages` : `${base}/chat/completions`;
 const headers: Record<string, string> = anthropic
   ? { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }
   : { authorization: `Bearer ${key}`, 'content-type': 'application/json' };
