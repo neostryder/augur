@@ -396,6 +396,12 @@ pub fn show_popup(app: tauri::AppHandle) -> Result<(), String> {
     crate::show_popup(&app)
 }
 
+/// Keeps the Start at login choice made in the settings page, so a launch can restore it.
+#[tauri::command]
+pub fn remember_autostart(app: tauri::AppHandle, on: bool) -> Result<(), String> {
+    crate::remember_autostart(&app, on)
+}
+
 #[tauri::command]
 pub fn popup_pinned(state: tauri::State<'_, AppState>) -> bool {
     state.pinned.load(Ordering::SeqCst)
