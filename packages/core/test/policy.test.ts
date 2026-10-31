@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { addModels, buildPolicyFile, emptyPolicy, fieldPath, mergePolicy, migratePolicy, pauseActive, policyFromFile, policyPathFor, resolveModel, setField, setFieldMany, stampTime, undoChange } from '../src/policy.js';
+import { addModels, batchPolicyChanges, buildPolicyFile, emptyPolicy, fieldPath, mergePolicy, migratePolicy, pauseActive, policyFromFile, policyPathFor, resolveModel, setField, setFieldMany, stampTime, undoChange } from '../src/policy.js';
 import { importPolicy } from '../src/policy-import.js';
 import type { PolicyConfig } from '../src/policy.js';
 import { defaultConfig, migrateConfig } from '../src/config.js';
@@ -292,5 +292,28 @@ describe('providers added for their rules alone', () => {
     addModels(policy, 'acme', [{ label: 'acme-1', id: 'acme-1' }], 'manual', t0);
     const file = buildPolicyFile(policy, list, t0);
     expect(file.providers.acme).toMatchObject({ name: 'Acme', metered: false, models: { 'acme-1': { id: 'acme-1' } } });
+  });
+});
+
+describe('grouped rule history', () => {
+  it('restores inheritance and explicit blocks with one undo after a restart', () => {
+    const policy = sample(), first = 'codex|codex/sol|activities.review_code', second = 'codex|codex/luna|activities.review_code';
+    setField(policy, second, null, 'desktop', t0);
+    const before = structuredClone(policy.providers);
+    const historyLength = policy.history.length;
+    batchPolicyChanges(policy, () => { setField(policy, first, 'often', 'desktop', t1); setField(policy, second, 'preferred', 'desktop', t1); });
+    expect(policy.history).toHaveLength(historyLength + 1);
+    const restarted = migratePolicy(JSON.parse(JSON.stringify(policy)));
+    expect(restarted.history).toEqual(policy.history);
+    undoChange(restarted, restarted.history.at(-1)!, 'desktop', t2);
+    expect(restarted.providers).toEqual(before);
+    expect(restarted.history).toHaveLength(historyLength + 2);
+    expect(restarted.stamps[first]).not.toBe(policy.stamps[first]);
+  });
+
+  it('keeps a no-op batch out of history', () => {
+    const policy = sample(), count = policy.history.length;
+    batchPolicyChanges(policy, () => {});
+    expect(policy.history).toHaveLength(count);
   });
 });

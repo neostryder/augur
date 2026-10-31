@@ -268,6 +268,8 @@ A route is local when its model is listed under the cogitator provider in the ru
 
 Model rules has List and Node views. The node view previews one activity as a donut, and its Weight, Data, and Behavior tabs edit the same rules as the list. Rule changes records each edit and lets you undo it.
 
+node_view_readme_fix
+
 ### Who classifies tasks
 
 `augur pick --task "..."` can work out the activity and data tier from a description. The setup screen and the Service page ask who does that.
