@@ -47,6 +47,6 @@ describe('node view rendering', () => {
     expect(html).toContain('Confirm rules');
     expect(html).toContain('No models in this mix');
     expect(html).toContain('data-node-copy');
-    expect(html).toContain('data-node-add="openrouter/terra"');
+    expect(html).not.toContain('data-node-add="openrouter/terra"');
   });
 });

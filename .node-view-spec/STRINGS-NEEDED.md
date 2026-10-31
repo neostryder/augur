@@ -10,3 +10,7 @@
 | node_view_readme_fix | README.md | Copy and suggest each have one undo step. Copy skips missing source levels. Catalog additions preserve existing levels and respect refusals. | 60 words |
 | node_view_editing_fix | docs/configuring.md | Copy and suggest group their history, missing source levels preserve inheritance, and positive scores remain visible. | 80 words |
 | node_view_history_changelog_fix | CHANGELOG.md | Catalog adds respect existing levels and refusals, copy and suggest undo together, and small positive shares stay visible. | 50 words |
+| node_catalog_add | apps/ui/src/views/node-view.ts | The button adds the selected catalog entry. | 24 characters |
+| node_view_controls_fix | docs/configuring.md | Catalog taps select an entry before Add. Ring arrows select slices, edge keys adjust levels in one idle-bounded edit, and activity search preserves pending text and drags. | 100 words |
+| node_view_contributing_fix | CONTRIBUTING.md | The element and wiring suite runs headless Chrome or Chromium through its debugging pipe. CHROME_PATH can supply the executable, and existing platform install paths are checked. | 80 words |
+| node_view_controls_changelog_fix | CHANGELOG.md | Pointer cancellation, keyboard batching, selection isolation, search drafts, tooltips, phone controls, focus, and session-only key-test results were corrected. | 60 words |
