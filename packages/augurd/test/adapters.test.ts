@@ -495,7 +495,7 @@ describe('an API connector', () => {
     unset.writeRoutes({ chat: { model: 'test/text', adapter: 'openai-api', options: { baseUrl: m.url, model: 'x', apiKeyEnv: 'AUGUR_KEY_NOT_SET' } } });
     const id2 = submitOk(unset.sup, { ...textReq('chat'), cwd: unset.root });
     expect((await terminal(unset.sup, unset.store, id2)).state).toBe('failed');
-    expect(unset.sup.logs(id2, 'stderr')!.text).toContain('AUGUR_KEY_NOT_SET is not set');
+    expect(unset.sup.logs(id2, 'stderr')!.text).toContain('route_key_missing: AUGUR_KEY_NOT_SET');
   });
 
   it.skipIf(process.platform !== 'win32')('reads a route\'s key from the Windows credential store when its keySource is store', async () => {
@@ -652,5 +652,22 @@ describe('the supported-harness manifest', () => {
     const manifest = JSON.parse(readFileSync(new URL('../harnesses.json', import.meta.url), 'utf8')) as { harnesses: Record<string, { tested: string; conformance: string }> };
     expect(Object.keys(manifest.harnesses).sort()).toEqual([...ADAPTER_IDS].sort());
     for (const h of Object.values(manifest.harnesses)) expect(['verified', 'shadow', 'unit-only']).toContain(h.conformance);
+  });
+});
+
+describe('provider-key route plans', () => {
+  it.each([undefined, 'invalid', 'https://[bad'])('names the route and baseUrl when planning an invalid address: %s', baseUrl => {
+    const r = req({ route: 'claude-api/test', tools: 'none', output: 'text_only' });
+    expect(() => anthropicApi.plan(r, { model: 'claude-api/test', adapter: 'anthropic-api', options: { ...(baseUrl === undefined ? {} : { baseUrl }), model: 'test', apiKeyEnv: 'TEST_KEY' } }, ctx('hello'))).toThrow(/claude-api\/test.*baseUrl/);
+  });
+
+  it('passes the file-store fallback to an environment-key route', () => {
+    vi.stubEnv('AUGUR_KEYSTORE', 'file');
+    try {
+      const r = req({ route: 'claude-api/test', tools: 'none', output: 'text_only' });
+      const plan = anthropicApi.plan(r, { model: 'claude-api/test', adapter: 'anthropic-api', options: { baseUrl: 'https://api.anthropic.com/v1', model: 'test', apiKeyEnv: 'TEST_KEY' } }, ctx('hello'));
+      expect(plan.args).toContain('--fallback-key-name'); expect(plan.args).toContain('claude-api.apiKey');
+      expect(plan.args).toContain('--key-file'); expect(plan.args).toContain('--key-file-only');
+    } finally { vi.unstubAllEnvs(); }
   });
 });
