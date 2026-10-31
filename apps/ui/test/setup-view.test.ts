@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { defaultConfig, migratePolicy } from '@augur/core';
+import { allPlugins, defaultConfig, migratePolicy } from '@augur/core';
 import type { PolicyConfig } from '@augur/core';
 import type { UsageSnapshot } from '@augur/dispatch-protocol';
 import { HOLD_BACK, afterApply, answersFromCurrent, applySteps, planSetup } from '@augur/view-model';
@@ -252,4 +252,18 @@ describe('where the interview opens', () => {
     expect(settings).toContain('data-action="setup-again"');
     expect(renderSettings(settingsModel(true))).not.toContain('data-action="setup-again"');
   });
+});
+
+it('shows a key result only after an explicit test in the current session', () => {
+  const m = settingsModel(false);
+  const plugin = allPlugins(m.config).find(item => item.id === 'claude-api')!;
+  m.plugins.set(plugin.id, plugin); m.config.providers.push({ id: plugin.id, enabled: true, settings: {} });
+  m.openProvider = plugin.id; m.secrets.add('claude-api.apiKey');
+  m.snapshot = { schema: 1, generatedAt: '', providers: { 'claude-api': { ok: true, meters: [], money: [] } } } as SettingsModel['snapshot'];
+  let html = renderSettings(m);
+  expect(html).toContain('type="password"'); expect(html).toContain('data-action="provider-test"');
+  expect(html).not.toContain('Key works.'); expect(html).not.toContain('Key test failed.');
+  m.keyTests = { 'claude-api': true }; html = renderSettings(m); expect(html).toContain('Key works.');
+  m.keyTests['claude-api'] = false; html = renderSettings(m); expect(html).toContain('Key test failed.');
+  m.keyTests = {}; html = renderSettings(m); expect(html).not.toContain('Key test failed.');
 });

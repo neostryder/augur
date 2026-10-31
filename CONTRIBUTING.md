@@ -47,6 +47,8 @@ The Cogitator catalog lives in `packages/core/src/cogitator-catalog.ts`, and `re
 
 The node view uses the pick preview from dispatch-protocol. Its pure logic and wording live in the view-model package, and the window app renders the gauge and tabs. Tests cover shares, gates, drag detents, slug collisions, and the existing rule paths.
 
+node_view_contributing_fix
+
 If you changed Laya, also run `python -m unittest discover -s packages/laya/tests`.
 
 Add a line under `[Unreleased]` in `CHANGELOG.md`. Start it with `[Visible]` when a user would notice the change and `[Internal]` when not, then the kind: Providers, UI, Alerts, Sync, Platform, Security or Docs.
