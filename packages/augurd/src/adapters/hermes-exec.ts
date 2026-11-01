@@ -42,7 +42,7 @@ export const hermesExec: Adapter = {
     }
     const args = [...exe.prefix, '-z', message, '-m', optStr(route.options, 'model') as string, '--usage-file', join(ctx.jobDir, 'usage.json')];
     const promptArgs = [exe.prefix.length + 1];
-    const provider = optStr(route.options, 'provider'), effort = optStr(route.options, 'effort');
+    const provider = optStr(route.options, 'provider'), effort = request.effort ?? optStr(route.options, 'effort');
     if (provider) args.push('--provider', provider);
     if (effort) args.push('--reasoning', effort);
     if (request.tools === 'read') args.push('--safe-mode'); else if (request.tools === 'full') args.push('--yolo');

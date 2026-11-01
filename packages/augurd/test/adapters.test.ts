@@ -83,6 +83,36 @@ describe('what each harness prints, read from real captured output', () => {
   });
 });
 
+describe('per-call options', () => {
+  it('overrides effort in every supporting adapter without changing the route', () => {
+    for (const [adapter, flag] of [[codexExec, 'model_reasoning_effort=high'], [grokExec, '--reasoning-effort'], [copilotExec, '--reasoning-effort'], [hermesExec, '--reasoning'], [mcodeSbx, '--effort'], [opencodeSbx, '--variant']] as const) {
+      const route = { model: 'test/fake', adapter: adapter.id, options: { model: 'fake', effort: 'low', command: process.execPath, sbx: process.execPath, sandbox: 'test', workRoot: 'C:/work' } };
+      const plan = adapter.plan(req({ effort: 'high' }), route, ctx('hi', 'C:/jobs/j1', 'C:/work/job'));
+      expect(plan.args).toContain(flag);
+      if (adapter !== codexExec) expect(plan.args[plan.args.indexOf(flag) + 1]).toBe('high');
+      expect(route.options.effort).toBe('low');
+    }
+  });
+
+  it('passes a schema file to Codex on first and resumed turns', () => {
+    const schema = { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'] };
+    const route = { model: 'test/fake', adapter: 'codex-exec', options: { command: process.execPath, effort: 'low' } };
+    for (const resume of [undefined, { name: 'test', id: 'thread-1', fresh: false }]) {
+      const plan = codexExec.plan(req({ schema, effort: 'high' }), route, { ...ctx('hi'), ...(resume ? { resume } : {}) });
+      expect(plan.args).toContain('model_reasoning_effort=high');
+      expect(plan.args[plan.args.indexOf('--output-schema') + 1]).toBe(join('C:/jobs/j1', 'output-schema.json'));
+      expect(plan.files).toContainEqual({ name: 'output-schema.json', content: JSON.stringify(schema) });
+    }
+    expect(route.options.effort).toBe('low');
+  });
+
+  it('passes a schema directly to Grok', () => {
+    const schema = { type: 'object' };
+    const plan = grokExec.plan(req({ schema }), { model: 'test/fake', adapter: 'grok-exec', options: { command: process.execPath, model: 'fake' } }, ctx('hi'));
+    expect(plan.args[plan.args.indexOf('--json-schema') + 1]).toBe(JSON.stringify(schema));
+  });
+});
+
 describe('command lines', () => {
   const route = (adapter: string, options: Record<string, string | number | boolean>) => ({ model: 'x/y', adapter, options });
   it('hermes: prompt after -z, tier flags, and a long prompt handed over as a file', () => {

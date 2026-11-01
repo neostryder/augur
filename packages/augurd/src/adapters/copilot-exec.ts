@@ -46,7 +46,7 @@ export const copilotExec: Adapter = {
     const args = [...exe.prefix, '-p', tierNote(request.tools, ctx.prompt), '--model', optStr(route.options, 'model') as string, '--allow-all-tools', '--no-color'];
     // From the ai-cli-toolkit copilot dispatch. Measured 2026-09-29: 103.8k input tokens with the ambient instruction file against 14.1k with these flags, plus the built-in MCP schemas.
     if (resolveAmbient(route.options?.ambient, ctx.ambient) === 'trim') args.push('--no-custom-instructions', '--disable-builtin-mcps');
-    const effort = optStr(route.options, 'effort');
+    const effort = request.effort ?? optStr(route.options, 'effort');
     if (effort) args.push('--reasoning-effort', effort);
     args.push(...copilotToolkitArgs(ctx.toolkit));
     return { command: exe.command, args, cwd: request.cwd, env: {}, stdin: null, promptArgs: [exe.prefix.length + 1] };

@@ -9,7 +9,7 @@ interface Row {
   id: string; state: string; route: string; adapter: string; activity: string; data_tier: string; tools: string; output: string; cwd: string;
   created_at: number; started_at: number | null; ended_at: number | null; exit_code: number | null; reason: string | null;
   root_job_id: string; parent_job_id: string | null; depth: number; caller: string; named: number; harness_version: string | null;
-  usage: string | null; runner_pid: number | null; child_pid: number | null; expect_file: string | null; timeout_s: number | null;
+  warnings: string | null; usage: string | null; runner_pid: number | null; child_pid: number | null; expect_file: string | null; timeout_s: number | null;
   purged: number; released: number; workspace: string | null; patch_path: string | null; changed_files: number | null; prompt_chars: number | null; answer_chars: number | null;
   charter: string | null; charter_chars: number | null; charter_notes: string | null; ambient: string | null;
   retry_of: string | null; retried_as: string | null; conversation: string | null; conversation_turn: number | null; served: string | null;
@@ -32,6 +32,7 @@ const toRecord = (r: Row): JobRecord => {
     tools: r.tools as JobRecord['tools'], output: r.output as JobRecord['output'], cwd: r.cwd, createdAt: r.created_at, startedAt: r.started_at, endedAt: r.ended_at,
     exitCode: r.exit_code, reason: r.reason, rootJobId: r.root_job_id, parentJobId: r.parent_job_id, depth: r.depth, caller: JSON.parse(r.caller) as JobRecord['caller'],
     named: r.named === 1, released: r.released === 1, harnessVersion: r.harness_version, usage: r.usage ? JSON.parse(r.usage) as UsageReport : null,
+    ...(stringList(r.warnings)?.length ? { warnings: stringList(r.warnings) } : {}),
     promptChars: r.prompt_chars, answerChars: r.answer_chars,
     ...(charter ? { charter } : {}), ...(r.charter_chars != null ? { charterChars: r.charter_chars } : {}), ...(charterNotes?.length ? { charterNotes } : {}),
     ...(r.ambient === 'keep' || r.ambient === 'trim' ? { ambient: r.ambient } : {}), ...(servedOf(r.served) ? { served: servedOf(r.served) as Served } : {}),
@@ -80,7 +81,7 @@ export class Store {
         name text not null, route text not null, adapter text not null, native_id text, cwd text not null, tools text not null,
         turns integer not null, created_at integer not null, last_used_at integer not null, primary key (name, route));`);
     const have = new Set((this.db.prepare('pragma table_info(jobs)').all() as Array<{ name: string }>).map(c => c.name));
-    for (const [name, type] of [['workspace', 'text'], ['patch_path', 'text'], ['changed_files', 'integer'], ['prompt_chars', 'integer'], ['answer_chars', 'integer'], ['charter', 'text'], ['charter_chars', 'integer'], ['charter_notes', 'text'], ['ambient', 'text'], ['retry_of', 'text'], ['retried_as', 'text'], ['conversation', 'text'], ['conversation_turn', 'integer'], ['served', 'text'], ['released', 'integer not null default 0']] as const) {
+    for (const [name, type] of [['warnings', 'text'], ['workspace', 'text'], ['patch_path', 'text'], ['changed_files', 'integer'], ['prompt_chars', 'integer'], ['answer_chars', 'integer'], ['charter', 'text'], ['charter_chars', 'integer'], ['charter_notes', 'text'], ['ambient', 'text'], ['retry_of', 'text'], ['retried_as', 'text'], ['conversation', 'text'], ['conversation_turn', 'integer'], ['served', 'text'], ['released', 'integer not null default 0']] as const) {
       if (!have.has(name)) this.db.exec(`alter table jobs add column ${name} ${type}`);
     }
     const pickCols = new Set((this.db.prepare('pragma table_info(picks)').all() as Array<{ name: string }>).map(c => c.name));
@@ -154,6 +155,7 @@ export class Store {
     this.db.prepare('update jobs set retried_as=? where id=?').run(next, id);
     this.db.prepare('update jobs set retry_of=? where id=?').run(id, next);
   }
+  setWarnings(id: string, warnings: string[]): void { this.db.prepare('update jobs set warnings=? where id=?').run(JSON.stringify(warnings), id); }
   setVersion(id: string, version: string | null): void { this.db.prepare('update jobs set harness_version=? where id=?').run(version, id); }
   setPatch(id: string, path: string, files: number): void { this.db.prepare('update jobs set patch_path=?, changed_files=? where id=?').run(path, files, id); }
   addPick(p: PickRecord): void {
