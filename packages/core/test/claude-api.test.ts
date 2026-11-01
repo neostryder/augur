@@ -71,6 +71,6 @@ it('caps catalog traversal and stops on an empty page with a cursor', async () =
 
 it('keeps a failed key test free of response and transport credential text', async () => {
   for (const http of [async () => ({ status: 401, body: 'fixture-sensitive' }), async () => { throw new Error('fixture-sensitive'); }]) {
-    await expect(claudeApi.testKey!({ secret: async () => 'fixture-sensitive', http } as unknown as Host, {})).rejects.toThrow('claude_api_test_failed');
+    await expect(claudeApi.testKey!({ secret: async () => 'fixture-sensitive', http } as unknown as Host, {})).rejects.toThrow('The Claude API key test failed.');
   }
 });

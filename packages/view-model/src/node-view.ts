@@ -125,12 +125,12 @@ export const clearedFor = (tier: DataTier, required: DataTier): boolean => DATA_
 
 export function nodeAddReason(config: AppConfig, snapshot: Snapshot | null, item: NodeCatalogItem, activity: ActivityId, tier: DataTier): string {
   if (!clearedFor(item.tier, tier)) return NODE_TEXT.refuseTier;
-  if (!item.exists) return nodeMix(previewCatalog(config, item, activity), snapshot, activity, tier).find(row => row.provider === item.provider && row.label === item.label)?.reason ?? 'node_add_refused';
+  if (!item.exists) return nodeMix(previewCatalog(config, item, activity), snapshot, activity, tier).find(row => row.provider === item.provider && row.label === item.label)?.reason ?? "The current rules don't allow this catalog entry in this activity. Pick a different entry.";
   const rules = config.policy?.providers[item.provider], own = rules?.models[item.label]?.rule.activities?.[activity];
   const explicit = own !== undefined ? own : rules?.defaults.activities?.[activity];
   const current = nodeMix(config, snapshot, activity, tier).find(row => row.provider === item.provider && row.label === item.label);
-  if (current?.resolved.activities[activity] !== undefined || explicit === null) return current?.reason || 'node_level_present';
-  return nodeMix(previewLevel(config, item.provider, item.label, activity, 'normal'), snapshot, activity, tier).find(row => row.provider === item.provider && row.label === item.label)?.reason ?? 'node_add_refused';
+  if (current?.resolved.activities[activity] !== undefined || explicit === null) return current?.reason || "This entry already has a level in this activity. Edit that level directly, since a catalog add can't change it.";
+  return nodeMix(previewLevel(config, item.provider, item.label, activity, 'normal'), snapshot, activity, tier).find(row => row.provider === item.provider && row.label === item.label)?.reason ?? "The current rules don't allow this catalog entry in this activity. Pick a different entry.";
 }
 
 export function suggestedThree(items: NodeCatalogItem[], activity: ActivityId, tier: DataTier): NodeCatalogItem[] {

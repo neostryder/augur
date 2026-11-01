@@ -47,7 +47,7 @@ The Cogitator catalog lives in `packages/core/src/cogitator-catalog.ts`, and `re
 
 The node view uses the pick preview from dispatch-protocol. Its pure logic and wording live in the view-model package, and the window app renders the gauge and tabs. Tests cover shares, gates, drag detents, slug collisions, and the existing rule paths.
 
-node_view_contributing_fix
+The element and wiring test suite runs headless Chrome or Chromium through the browser's debugging pipe. Set CHROME_PATH to the browser executable to choose one. Without it, the suite checks the standard install paths for your platform.
 
 If you changed Laya, also run `python -m unittest discover -s packages/laya/tests`.
 
