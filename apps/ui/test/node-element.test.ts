@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { createServer, type ViteDevServer } from 'vite';
 
 const cases = [
-  'drag commit', 'drag cancel', 'click without movement', 'keyboard slider', 'range keyboard',
+  'mode swap', 'drag commit', 'drag cancel', 'click without movement', 'keyboard slider', 'range keyboard',
   'tab arrows', 'ring arrows', 'Escape', 'focus trap', 'long press', 'outside release',
   'cancel and blur', 'mouse hold', 'node selection', 'catalog tap', 'drag feedback',
   'add refusal', 'copy undo', 'suggest undo', 'Ctrl K drafts', 'Ctrl K drag', 'activity shortcuts',

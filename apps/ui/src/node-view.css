@@ -130,9 +130,6 @@ augur-node-view { display: block; --nv-panel: var(--card); font-variant-numeric:
 .nv-activity-results b { display: block; font-size: 13px; }
 .nv-activity-results small, .nv-activity-results em { display: block; color: var(--muted); font-size: 11px; font-style: normal; margin-top: 3px; }
 .nv-grabber { display: none; }
-.nv-layout:not(.nv-still) .nv-ring { animation: nv-enter 250ms ease-out; }
-@keyframes nv-enter { from { opacity: .6; } to { opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { .nv-layout:not(.nv-still) .nv-ring { animation: nv-enter 100ms linear !important; } }
 @media (max-width: 1050px) and (min-width: 720px) { .nv-layout { grid-template-columns: minmax(0, 1fr) 340px; } .nv-math { position: relative; margin: 0 20px 18px auto; width: 216px; } }
 @media (max-width: 719px) {
   .rules-page:has(augur-node-view) > .top { padding: 10px 12px; gap: 7px; flex-wrap: wrap; }

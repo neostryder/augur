@@ -531,9 +531,12 @@ export class App {
     } else if (this.view === 'rules') {
       // The desktop popup opens at its two-column width so the list and the open model's rules sit side by side.
       this.twoColumns = this.shell.kind === 'desktop';
-      this.root.innerHTML = renderRules(this.rulesModel());
-      const node = this.root.querySelector<HTMLElement & { model: NodeModel }>('augur-node-view');
-      if (node) { registerNodeView(); node.model = this.rulesModel() as NodeModel; }
+      registerNodeView();
+      const model = this.rulesModel(), page = document.createElement('div');
+      page.innerHTML = renderRules(model);
+      const node = page.querySelector<HTMLElement & { model: NodeModel }>('augur-node-view');
+      if (node) node.model = model as NodeModel;
+      this.root.replaceChildren(...page.childNodes);
     } else if (this.view === 'pair' && this.firstRun) {
       this.twoColumns = false;
       this.root.innerHTML = renderPair({ scanError: this.scanError, ...iosState() });
@@ -1534,7 +1537,11 @@ export class App {
       case 'backlog-approve': { const r = await this.augur(['backlog', 'approve', t.dataset.backlog ?? '', '--yes']); this.awaitingNote = r.code === 0 ? '' : r.err || r.text || 'The approval did not go through.'; await this.loadGateStatus(); await this.render(); break; }
       case 'edit-accept': case 'edit-dismiss': await this.engine?.answerEdit(t.dataset.edit ?? '', t.dataset.action === 'edit-accept'); break;
       case 'rules': this.view = 'rules'; this.rules.showHistory = false; if (t.dataset.value) this.rules.filter = t.dataset.value as RulesFilter; await this.render(); void this.loadStances(); break;
-      case 'rules-view': this.rulesMode = t.dataset.value === 'node' ? 'node' : 'list'; await this.render(); break;
+      case 'rules-view': {
+        const mode = t.dataset.value === 'node' ? 'node' : 'list';
+        if (mode !== this.rulesMode) { this.rulesMode = mode; await this.render(); }
+        break;
+      }
       case 'provider-test': {
         const pid = t.dataset.value!, plugin = this.pluginMap().get(pid);
         if (!plugin?.testKey) { await this.refresh(true, [pid]); break; }

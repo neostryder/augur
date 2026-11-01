@@ -40,6 +40,24 @@ export async function run(name: string): Promise<string> {
   const f = fixture(['add refusal', 'copy undo', 'suggest undo', 'Ctrl K drafts', 'Ctrl K drag', 'activity shortcuts', 'tooltip scope'].includes(name), name === 'Ctrl K drafts' ? 'behavior' : 'weight');
   const { node, q, edits, m, app } = f;
   switch (name) {
+    case 'mode swap': {
+      const render = (App.prototype as any).render.bind(app);
+      app.rulesMode = 'list'; await render();
+      const old = f.root.firstElementChild;
+      let draws = 0;
+      const descriptor = Object.getOwnPropertyDescriptor(customElements.get('augur-node-view')!.prototype, 'model')!;
+      Object.defineProperty(customElements.get('augur-node-view')!.prototype, 'model', { ...descriptor, set(value) {
+        check(f.root.firstElementChild === old, 'The old page must remain during preparation.');
+        check(!(this as HTMLElement).isConnected, 'The first draw must happen off the live DOM.');
+        draws++; descriptor.set!.call(this, value);
+      } });
+      try { app.rulesMode = 'node'; await render(); } finally { Object.defineProperty(customElements.get('augur-node-view')!.prototype, 'model', descriptor); }
+      const ready = f.root.querySelector('augur-node-view')!;
+      check(draws === 1 && ready.querySelector('.nv-ring') && ready.querySelector('.nv-panel'), 'The swap must contain one complete draw.');
+      check(getComputedStyle(ready.querySelector('.nv-ring')!).animationName === 'none', 'Redraws must not restart an entrance animation.');
+      const renders = f.renders(); await app.onClick({ target: f.root.querySelector('[data-action="rules-view"][data-value="node"]') });
+      check(f.renders() === renders, 'Selecting the current mode must not render again.'); break;
+    }
     case 'drag commit':
       pointer(q('[data-node-edge]'), 'pointerdown'); pointer(document, 'pointermove', 40); pointer(document, 'pointerup', 40);
       check(edits.length === 1 && edits[0]!.value === 'often', 'A drag must commit one detent once.');
