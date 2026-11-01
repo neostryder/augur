@@ -29,7 +29,8 @@ export interface JobRequest {
   /** Keep this prompt out of the job folder even when prompt persistence is on. */
   persistPrompt?: boolean;
   expectFile?: string;
-  schema?: string;
+  effort?: string;
+  schema?: Record<string, unknown>;
   session?: string;
   timeoutS?: number;
   /** The caller reports that the person named this route. Recorded with the job. */
@@ -95,6 +96,7 @@ export interface JobRecord {
   caller: Caller;
   named: boolean;
   released?: boolean;
+  warnings?: string[];
   harnessVersion: string | null;
   usage: UsageReport | null;
   /** Length in characters of the prompt sent and of the answer received. Only the lengths are kept, so token counts can be estimated for a harness that reports none. The prompt length is the caller's prompt, not a charter prefixed to it. */

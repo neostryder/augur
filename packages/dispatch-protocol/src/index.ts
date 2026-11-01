@@ -1,5 +1,6 @@
 export * from './states.js';
 export * from './spec.js';
+export * from './run-options.js';
 export * from './adapter.js';
 export * from './pace.js';
 export * from './rules.js';
