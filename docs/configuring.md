@@ -215,6 +215,11 @@ The key is in plain text, so the file's mode is the only thing keeping it privat
 
 <!-- adapter-reference:start -->
 
+| Job request field | CLI option | Value | What it does |
+| --- | --- | --- | --- |
+| `effort` | `--effort <level>` | Optional string | Overrides the route effort for one job. Takes 1 to 16 letters, digits or hyphens. Adapters without effort support ignore it. |
+| `schema` | `--schema <file>` | Optional JSON object | Reads a JSON Schema object of at most 64 KB. Uses native structured output when supported, otherwise adds prompt instructions. The service checks type, properties, required, items and enum, and records a schema warning on invalid output. |
+
 #### `codex-exec`: Codex CLI
 
 Runs codex exec. A read-only job is stated in the prompt, and Codex is not held to it. A named conversation resumes the same Codex session and keeps the tool tier of its first turn.

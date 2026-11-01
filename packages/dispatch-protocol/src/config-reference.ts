@@ -104,7 +104,13 @@ export function renderBalanceReference(): string {
 }
 
 export function renderAdapterReference(): string {
-  const out: string[] = [];
+  const out: string[] = [
+    '| Job request field | CLI option | Value | What it does |',
+    '| --- | --- | --- | --- |',
+    '| `effort` | `--effort <level>` | Optional string | Overrides the route effort for one job. Takes 1 to 16 letters, digits or hyphens. Adapters without effort support ignore it. |',
+    '| `schema` | `--schema <file>` | Optional JSON object | Reads a JSON Schema object of at most 64 KB. Uses native structured output when supported, otherwise adds prompt instructions. The service checks type, properties, required, items and enum, and records a schema warning on invalid output. |',
+    '',
+  ];
   for (const a of ADAPTER_INFO) {
     out.push(`#### \`${a.id}\`: ${a.label}`, '', a.summary, '');
     out.push('| Option | Value | What it does |', '| --- | --- | --- |');
