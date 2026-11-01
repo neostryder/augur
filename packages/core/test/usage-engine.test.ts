@@ -58,6 +58,21 @@ describe('the usage engine', () => {
     expect(engine.state.config.policy?.providers.cogitator?.models).toEqual({});
   });
 
+  it('tests a provider key with the engine host and reports only whether it worked', async () => {
+    const config = base();
+    config.providers.find(provider => provider.id === 'claude-api')!.enabled = true;
+    const f = fakeShell(config);
+    f.secrets.set('claude-api.apiKey', 'fixture-key');
+    let status = 200;
+    f.shell.host.http = async () => ({ status, headers: {}, body: '{"data":[]}' });
+    engine = new UsageEngine(f.shell, { hosted: 'https://augur.example.com' });
+    await engine.start();
+    expect(await engine.testProviderKey('claude-api')).toBe(true);
+    status = 401;
+    expect(await engine.testProviderKey('claude-api')).toBe(false);
+    expect(await engine.testProviderKey('no-such-provider')).toBe(false);
+  });
+
   it('waits on first run until setup finishes, then saves and refreshes', async () => {
     const f = fakeShell(null);
     engine = new UsageEngine(f.shell, { hosted: 'https://augur.example.com' });
