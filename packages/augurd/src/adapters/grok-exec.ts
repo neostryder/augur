@@ -40,7 +40,8 @@ export const grokExec: Adapter = {
     if (request.tools === 'none') args.push('--max-turns', String(turns), '--deny', 'Read', '--deny', 'Grep', '--deny', 'Edit', '--deny', 'Bash(*)');
     else if (request.tools === 'read') args.push('--max-turns', String(turns), '--allow', 'Read', '--allow', 'Grep', '--deny', 'Edit', '--deny', 'Bash(*)');
     else args.push('--always-approve', '--max-turns', String(turns));
-    const effort = optStr(route.options, 'effort');
+    if (request.schema) args.push('--json-schema', JSON.stringify(request.schema));
+    const effort = request.effort ?? optStr(route.options, 'effort');
     if (effort) args.push('--reasoning-effort', effort);
     // Grok has no flag that adds an MCP server for one run, so a toolkit's server must be registered with it already. The denied tools still apply.
     for (const [name, s] of Object.entries(ctx.toolkit?.mcp ?? {})) for (const t of s.denyTools ?? []) args.push('--deny', `MCPTool(${name}__${t})`);

@@ -22,7 +22,7 @@ export const mcodeSbx: Adapter = {
     const args = [...sbxPrefix(route), 'exec', '-i', '-e', 'NO_COLOR=1', '-w', insidePath(ws), optStr(route.options, 'sandbox') as string,
       'bash', '-lc', 'exec "$@"', 'mcode-run', 'mcode', 'exec', '--input', '-', '--model', optStr(route.options, 'model') as string,
       '--max-steps', String(steps), '--permission', 'full', '--output-format', 'json'];
-    const effort = optStr(route.options, 'effort');
+    const effort = request.effort ?? optStr(route.options, 'effort');
     if (effort) args.push('--effort', effort);
     return { command: sbx, args, cwd: request.cwd, env: {}, stdin: tierNote(request.tools === 'read' ? 'read' : 'full', ctx.prompt) };
   },

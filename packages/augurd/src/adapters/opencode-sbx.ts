@@ -30,7 +30,7 @@ export const opencodeSbx: Adapter = {
     }
     const args = [...sbxPrefix(route), 'exec', '-e', 'NO_COLOR=1', '-w', insidePath(ws), optStr(route.options, 'sandbox') as string, 'opencode', 'run', '--format', 'json', '--model', optStr(route.options, 'model') as string];
     // OpenCode names reasoning levels variants, and has none above high.
-    const effort = optStr(route.options, 'effort');
+    const effort = request.effort ?? optStr(route.options, 'effort');
     if (effort) args.push('--variant', effort === 'xhigh' ? 'high' : effort);
     args.push(message);
     return { command: sbx, args, cwd: request.cwd, env: {}, stdin: null, files, promptArgs: [args.length - 1] };

@@ -50,27 +50,31 @@ export const codexExec: Adapter = {
     return null;
   },
   plan(request: JobRequest, route: RouteConfig, ctx: PlanContext): LaunchPlan {
-    const o = route.options ?? {};
+    const o = route.options ?? {}, effort = request.effort ?? o.effort;
+    const files = request.schema ? [{ name: 'output-schema.json', content: JSON.stringify(request.schema) }] : [];
+    const schemaArgs = request.schema ? ['--output-schema', join(ctx.jobDir, 'output-schema.json')] : [];
     const command = typeof o.command === 'string' ? o.command : findMaintainedCodex() ?? resolveExecutable('codex')?.command ?? 'codex';
     const prefix: string[] = typeof o.prefixArgsJson === 'string' ? JSON.parse(o.prefixArgsJson) as string[] : [];
     if (ctx.resume && !ctx.resume.fresh) {
       // Resume keeps the sandbox from the first turn, so it sets no sandbox or model. It still takes --json and -o, so the answer and usage come back as on a first turn.
       if (!ctx.resume.id) throw new Error(`conversation ${ctx.resume.name} has no session id to resume`);
       const resumeArgs = [...prefix, 'exec', 'resume', '--skip-git-repo-check', '--json', '-o', join(ctx.jobDir, 'last-message.txt'), ctx.resume.id];
-      if (typeof o.effort === 'string') resumeArgs.push('-c', `model_reasoning_effort=${o.effort}`);
+      if (typeof effort === 'string') resumeArgs.push('-c', `model_reasoning_effort=${effort}`);
+      resumeArgs.push(...schemaArgs);
       resumeArgs.push(...codexToolkitArgs(ctx.toolkit));
       // `-` reads the prompt from standard input, so a long one stays under the command-line limit.
       resumeArgs.push('-');
-      return { command, args: resumeArgs, cwd: request.cwd, env: {}, stdin: tierNote(request.tools, ctx.prompt) };
+      return { command, args: resumeArgs, cwd: request.cwd, env: {}, files, stdin: tierNote(request.tools, ctx.prompt) };
     }
     const sandbox = typeof o.sandbox === 'string' ? o.sandbox : 'danger-full-access';
     const args = [...prefix, 'exec', '--skip-git-repo-check', '--json', '-o', join(ctx.jobDir, 'last-message.txt'), '--sandbox', sandbox];
     if (resolveAmbient(o.ambient, ctx.ambient) === 'trim') for (const feature of CODEX_AMBIENT_OFF) args.push('--disable', feature);
     if (typeof o.model === 'string') args.push('-m', o.model);
-    if (typeof o.effort === 'string') args.push('-c', `model_reasoning_effort=${o.effort}`);
+    if (typeof effort === 'string') args.push('-c', `model_reasoning_effort=${effort}`);
+    args.push(...schemaArgs);
     args.push(...codexToolkitArgs(ctx.toolkit));
     args.push('-');
-    return { command, args, cwd: request.cwd, env: {}, stdin: tierNote(request.tools, ctx.prompt) };
+    return { command, args, cwd: request.cwd, env: {}, files, stdin: tierNote(request.tools, ctx.prompt) };
   },
   extract(input: ExtractInput): Extraction {
     const usage = codexUsage(input.stdout);

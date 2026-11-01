@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { JOBHOST, killEverything, makeEnv, processesWith, request, sleep, submitOk, terminal, until } from './harness.js';
 import type { Env } from './harness.js';
 import { REJECTION_CATEGORIES, systemdScopes } from '../src/supervisor.js';
+import { genericExec } from '../src/adapters/exec.js';
 import { REJECTION_CODES } from '@augur/dispatch-protocol';
 
 vi.setConfig({ testTimeout: 90000 });
@@ -15,6 +16,45 @@ const kinds = (e: Env, id: string) => e.store.events(id).map(x => x.kind);
 
 it('classifies every rejection code as exactly one backlog result category', () => {
   for (const code of REJECTION_CODES) expect(Number(REJECTION_CATEGORIES.transient.includes(code as never)) + Number(REJECTION_CATEGORIES.permanent.includes(code as never))).toBe(1);
+});
+
+describe('per-call options', () => {
+  it('refuses invalid effort and schema before starting a job', () => {
+    const e = setup();
+    for (const effort of ['', 'x'.repeat(17), 'high;exit', 'high_low']) expect(e.sup.submit(request({ effort, cwd: e.root }))).toMatchObject({ rejected: { code: 'bad_request', reason: expect.stringContaining('effort') } });
+    for (const schema of [null, [], 'file.json', { description: 'x'.repeat(65536) }]) expect(e.sup.submit(request({ schema: schema as never, cwd: e.root }))).toMatchObject({ rejected: { code: 'bad_request', reason: expect.stringContaining('schema') } });
+    expect(e.store.list()).toEqual([]);
+  });
+
+  it('adds schema instructions to a fallback adapter and records a warning without failing', async () => {
+    const e = setup({ persistPrompts: true });
+    const schema = { type: 'object', required: ['ok'] };
+    const planCall = vi.spyOn(genericExec, 'plan');
+    const id = submitOk(e.sup, request({ route: 'raw', schema, text: 'ENV AUGUR_IN_JOB', cwd: e.root }));
+    const sent = planCall.mock.calls[0]?.[2].prompt;
+    planCall.mockRestore();
+    expect(sent).toContain('Reply with only a JSON document matching this JSON Schema.');
+    expect(sent).toContain(JSON.stringify(schema));
+    const job = await terminal(e.sup, e.store, id);
+    const plan = JSON.parse(readFileSync(join(e.dir, 'jobs', id, 'job.json'), 'utf8'));
+    expect(plan.files).toContainEqual({ name: 'output-schema.json', content: JSON.stringify(schema) });
+    expect(job.state).toBe('completed');
+    expect(job.warnings).toContain('schema: answer is not valid JSON.');
+    const saved = e.make();
+    expect(saved.result(id)?.job.warnings).toEqual(job.warnings);
+  });
+
+  it('keeps schema warnings on native jobs and removes the scratch schema after completion', async () => {
+    const e = setup();
+    const before = readFileSync(e.routesPath, 'utf8');
+    const id = submitOk(e.sup, request({ effort: 'high', schema: { type: 'object' }, cwd: e.root }));
+    expect(JSON.parse(readFileSync(join(e.dir, 'jobs', id, 'output-schema.json'), 'utf8'))).toEqual({ type: 'object' });
+    const job = await terminal(e.sup, e.store, id);
+    expect(job.state).toBe('completed');
+    expect(job.warnings).toContain('schema: answer is not valid JSON.');
+    expect(existsSync(join(e.dir, 'jobs', id, 'output-schema.json'))).toBe(false);
+    expect(readFileSync(e.routesPath, 'utf8')).toBe(before);
+  });
 });
 
 describe('a job that finishes', () => {

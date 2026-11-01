@@ -7,7 +7,7 @@ import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES } from '@augur/core';
 import type { PolicyFile } from '@augur/core';
 import { BRIEF_RESULTS, GRADE_LABELS, STUDENT_RE, classifyDepth, classifyTask, decide as decideGrade, fitScores, grade as gradeText, gradeStats, gradeTier } from '@augur/decision';
 import type { BriefResult, DecisionBackend, GradeVerdictLabel } from '@augur/decision';
-import { BUDGET_WINDOW_MS, NAMED_PROMPT_WINDOW, PICK_WINDOW_MIN, TOOL_TIERS, account, agreement, attachmentKind, balanceReport, budgetStatus, calibrateRoutes, copilotSpend, checkLineage, routeSecretName, checkNamed, checkPick, evaluate, isTerminal, learnedShares, learnedTilt, lookup, matchNamedModels, pressure, propose, rank, resolveBalance, surplusWindowStatus, trainingKey, usageFactors } from '@augur/dispatch-protocol';
+import { BUDGET_WINDOW_MS, NAMED_PROMPT_WINDOW, PICK_WINDOW_MIN, TOOL_TIERS, account, agreement, attachmentKind, balanceReport, budgetStatus, calibrateRoutes, copilotSpend, checkLineage, routeSecretName, checkNamed, checkPick, evaluate, isTerminal, learnedShares, learnedTilt, lookup, matchNamedModels, pressure, propose, rank, resolveBalance, surplusWindowStatus, trainingKey, usageFactors, schemaPrompt, validateRunOptions, validateSchemaAnswer } from '@augur/dispatch-protocol';
 import type { Adapter, BalanceReport, BudgetStatus, Conversation, Depth, GradeAnswer, GradeParams, GradeReport, JobRecord, JobRequest, LaunchPlan, PickAnswer, PickParams, RateCard, Rejection, ResolvedAttachment, RouteCapabilities, RouteConfig, UsageSnapshot } from '@augur/dispatch-protocol';
 import { MAX_COMMAND_LINE, optNum, optStr } from './adapters/util.js';
 import { realInside, realInsideAny, realOf } from './real-paths.js';
@@ -318,9 +318,10 @@ export class Supervisor {
       dir: resolveCharterDir(this.d.config.runner.charterDir, this.d.home ?? augurHome(this.d.env)),
       engine: adapter.charterEngine, tools: req.tools, cwd: req.cwd, packs: [...(req.packs ?? []), ...(kit?.pack ? [kit.pack] : [])],
     });
-    const sent = charter?.text ? charter.text + prompt : prompt;
+    const sent = schemaPrompt(charter?.text ? charter.text + prompt : prompt, req.schema, adapter.id);
     let plan: LaunchPlan;
     try { plan = adapter.plan(req, route, { jobDir: dir, prompt: sent, workspace, ambient: this.d.config.runner.ambient, ...(conv.resume ? { resume: conv.resume } : {}), ...(attached.items.length ? { attachments: attached.items } : {}), ...(kit && adapter.toolkit ? { toolkit: kit } : {}) }); } catch (e) { return reject('bad_request', `Route ${req.route}: ${(e as Error).message}`); }
+    if (req.schema && !plan.files?.some(f => f.name === 'output-schema.json')) plan.files = [...(plan.files ?? []), { name: 'output-schema.json', content: JSON.stringify(req.schema) }];
     if (process.platform === 'win32') {
       const len = plan.command.length + 1 + plan.args.reduce((n, a) => n + a.length + 3, 0);
       if (len > MAX_COMMAND_LINE) return reject('prompt_too_large', `The command for ${adapter.id} would be ${len} characters, over the Windows limit of about 32767. This harness takes its prompt as an argument.`);
@@ -345,6 +346,7 @@ export class Supervisor {
       });
       else if (conv.fresh) this.d.store.reopenConversation(req.conversation, { nativeId: conv.nativeId, tools: req.tools, cwd: req.cwd });
     }
+    this.d.store.setWarnings(id, warnings);
     this.d.store.setLaunchMeta(id, { promptChars: prompt.length, ambient, ...(charter?.text ? { charter: charter.parts, charterChars: charter.text.length } : {}), ...(charter?.notes.length ? { charterNotes: charter.notes } : {}) });
     const s = this.d.store;
     s.event(id, 'requested', `${req.caller.kind}${req.caller.label ? ' ' + req.caller.label : ''}`, this.now());
@@ -802,6 +804,8 @@ export class Supervisor {
   }
 
   private validate(req: JobRequest): string | null {
+    const badOptions = validateRunOptions(req);
+    if (badOptions) return badOptions;
     if (!ACTIVITIES.includes(req.activity)) return 'Unknown activity.';
     if (!DATA_TIERS.includes(req.dataTier)) return 'Unknown data tier.';
     if (!TOOL_TIERS.includes(req.tools)) return 'Unknown tool tier.';
@@ -1054,6 +1058,12 @@ export class Supervisor {
       if (answer) { writeFileSync(join(dir, 'answer.txt'), answer); store.setChars(rec.id, { answer: answer.length }); }
       if (x.served && Object.keys(x.served).length) store.setServed(rec.id, x.served);
       if (x.usage) { store.setUsage(rec.id, x.usage); store.event(rec.id, 'usage_recorded', `${x.usage.inputTokens} in, ${x.usage.outputTokens} out`, at); }
+    }
+    const schema = readJson<Record<string, unknown>>(join(dir, 'output-schema.json'));
+    if (schema) {
+      const checked = validateSchemaAnswer(answer ?? '', schema);
+      if (checked.warning) { store.setWarnings(rec.id, [...(rec.warnings ?? []), checked.warning]); store.event(rec.id, 'schema_warning', checked.warning, at); }
+      if (answer && checked.answer !== answer) { answer = checked.answer; writeFileSync(join(dir, 'answer.txt'), answer); store.setChars(rec.id, { answer: answer.length }); }
     }
     const patch = { endedAt: res.endedAt, exitCode: res.exitCode };
     const expected = inner?.expectFile ? resolve(rec.workspace ?? rec.cwd, inner.expectFile) : null;
