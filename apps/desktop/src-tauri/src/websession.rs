@@ -42,7 +42,7 @@ fn trace(app: &tauri::AppHandle, line: &str) {
     let seconds = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| duration.as_secs());
-    let line = line.replace('\r', " ").replace('\n', " ");
+    let line = line.replace(['\r', '\n'], " ");
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
         let _ = writeln!(file, "{seconds} {line}");
     }
@@ -136,35 +136,36 @@ pub async fn web_session_sign_in(app: tauri::AppHandle, site: String) -> Result<
     let closing_succeeded = succeeded.clone();
     let closing_destroyed = destroyed.clone();
     // A successful reading is already cached. Only a manual close needs another refresh.
-    window.on_window_event(move |event| {
-        match event {
-            WindowEvent::Destroyed => {
-                closing_destroyed.store(true, Ordering::SeqCst);
-                let succeeded = closing_succeeded.load(Ordering::SeqCst);
-                trace(
-                    &handle,
-                    &format!("window destroyed site={closing_site} succeeded={succeeded}"),
-                );
-                if should_clear_cache_on_destroy(succeeded) {
-                    if let Ok(mut cache) = handle.state::<WebSessions>().cache.lock() {
-                        cache.remove(&closing_site);
-                    }
-                    if let Some(popup) = handle.get_webview_window("popup") {
-                        let _ = popup.emit("refresh-requested", ());
-                    }
+    window.on_window_event(move |event| match event {
+        WindowEvent::Destroyed => {
+            closing_destroyed.store(true, Ordering::SeqCst);
+            let succeeded = closing_succeeded.load(Ordering::SeqCst);
+            trace(
+                &handle,
+                &format!("window destroyed site={closing_site} succeeded={succeeded}"),
+            );
+            if should_clear_cache_on_destroy(succeeded) {
+                if let Ok(mut cache) = handle.state::<WebSessions>().cache.lock() {
+                    cache.remove(&closing_site);
+                }
+                if let Some(popup) = handle.get_webview_window("popup") {
+                    let _ = popup.emit("refresh-requested", ());
                 }
             }
-            WindowEvent::Focused(focused) => {
-                trace(
-                    &handle,
-                    &format!("window focus site={closing_site} focused={focused}"),
-                );
-            }
-            WindowEvent::CloseRequested { .. } => {
-                trace(&handle, &format!("window close requested site={closing_site}"));
-            }
-            _ => {}
         }
+        WindowEvent::Focused(focused) => {
+            trace(
+                &handle,
+                &format!("window focus site={closing_site} focused={focused}"),
+            );
+        }
+        WindowEvent::CloseRequested { .. } => {
+            trace(
+                &handle,
+                &format!("window close requested site={closing_site}"),
+            );
+        }
+        _ => {}
     });
     // Reading opens a second window on the shared profile. Wait until the visible window has
     // landed after sign-in, and give the user time to proceed after each unsuccessful reading.
