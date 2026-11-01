@@ -41,6 +41,45 @@ describe('the Cogitator catalog', () => {
     expect(readFleet({}).roles).toEqual([]);
   });
 
+  it('lets declared catalog knowledge override seeds and fleet fields through catalog entries and offers', () => {
+    const knowledge = { uses: ['catalog vision'], strengths: 'Catalog strength.', limits: 'Catalog limit.' };
+    expect(readCogitatorKnowledge({ engines: [{ id: 'gemma-4-12b', uses_declared: true, ...knowledge }] }, 'gemma-4-12b')).toEqual(knowledge);
+    const fleet = readFleet(hosts, { engines: [{ id: 'gemma-4-12b', uses_declared: true, ...knowledge }] });
+    expect(fleet.machines[0]!.models[0]).toMatchObject(knowledge);
+    expect(fleetCatalog(fleet).find(entry => entry.id === 'gemma-4-12b')).toMatchObject(knowledge);
+    expect(fleetOffers(fleet, [], []).find(entry => entry.id === 'gemma-4-12b')).toMatchObject(knowledge);
+    const changed = readFleet(hosts, { engines: [{ id: 'new-text', uses_declared: true, ...knowledge }] });
+    expect(changed.machines[0]!.models[1]).toMatchObject(knowledge);
+  });
+
+  it.each([false, undefined, 'true'])('keeps fleet and seeded knowledge when uses_declared is %s', usesDeclared => {
+    expect(readCogitatorKnowledge({ engines: [{ id: 'gemma-4-12b', uses_declared: usesDeclared, uses: ['catalog text'] }] }, 'gemma-4-12b').uses).toEqual(COGITATOR_MODELS[0]!.uses);
+    const fleet = readFleet(hosts, { engines: ['gemma-4-12b', 'new-text'].map(id => ({ id, uses_declared: usesDeclared, uses: ['catalog text'], strengths: 'Catalog strength.', limits: 'Catalog limit.' })) });
+    expect(fleet.machines[0]!.models).toEqual(readFleet(hosts).machines[0]!.models);
+    expect(fleetCatalog(fleet)).toEqual(fleetCatalog(readFleet(hosts)));
+  });
+
+  it('ignores malformed catalog rows and fields while retaining valid knowledge', () => {
+    const fleet = readFleet(hosts, { engines: [null, 42, { id: 4, uses_declared: true, uses: ['bad id'] },
+      { id: 'gemma-4-12b', uses_declared: true, uses: [42], strengths: null, limits: {} },
+      { id: 'new-text', uses_declared: true, uses: [], strengths: '', limits: false }],
+      roles: [null, { id: 4, chain: [], refuses_degrade: false }, { id: 'describe', chain: [42], refuses_degrade: false }, { id: 'judge', chain: [], refuses_degrade: 'true' }] });
+    expect(fleet.machines[0]!.models[0]).toMatchObject({ uses: COGITATOR_MODELS[0]!.uses, strengths: COGITATOR_MODELS[0]!.strengths, limits: COGITATOR_MODELS[0]!.limits });
+    expect(fleet.machines[0]!.models[1]).toMatchObject({ uses: [], strengths: '', limits: 'Live limit.' });
+    expect(fleet.roles).toEqual(readFleet(hosts).roles);
+    expect(readFleet(hosts, { engines: {}, roles: 'bad rows' })).toEqual(readFleet(hosts));
+  });
+
+  it('reads live role chains and describes a member from its own peer catalog', () => {
+    const knowledge = { uses: ['peer text'], strengths: 'Peer strength.', limits: 'Peer limit.' };
+    const fleet = readFleet(hosts, { roles: [{ id: 'describe', chain: ['new-text@bilbo'], refuses_degrade: true }] },
+      new Map([['bilbo', { engines: [{ id: 'new-text', state: 'ready', memory_mb: 1000, uses_declared: true, ...knowledge }] }]]));
+    expect(fleet.roles[0]).toMatchObject({ name: 'describe', chain: ['new-text@bilbo'], refusesDegrade: true, servingMachine: 'bilbo', servingModel: 'new-text' });
+    expect(fleet.machines[0]!.models[1]!.uses).toEqual(['live text']);
+    expect(fleet.machines[1]!.models.find(entry => entry.id === 'new-text')).toMatchObject({ state: 'ready', memoryMb: 1000, ...knowledge });
+    expect(fleetCatalog(fleet).find(entry => entry.id === 'new-text')).toMatchObject(knowledge);
+  });
+
   it('keeps live metadata when a second machine lists the same entry without it', () => {
     const fleet = readFleet({ ...hosts, self: { ...hosts.self, ledger: { models: [{ id: 'gemma-4-12b', uses: ['live image reading'] }] } } });
     expect(fleetCatalog(fleet).find(entry => entry.id === 'gemma-4-12b')?.uses).toEqual(['live image reading']);
