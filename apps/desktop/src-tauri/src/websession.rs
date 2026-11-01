@@ -82,6 +82,8 @@ fn site(id: &str) -> Option<Site> {
 // The reader script lives in its own file so the core tests can run it against saved page text.
 const TYPESAFE_SCRIPT: &str = include_str!("readers/typesafe.js");
 const CLAUDE_SCRIPT: &str = include_str!("readers/claude.js");
+// Keep provider pages from closing the sign-in window before the user finishes.
+const SIGN_IN_GUARD: &str = "try { Object.defineProperty(window, 'close', { value: function () {}, writable: false, configurable: false }); } catch (e) {}";
 
 struct CachedReading {
     at: Instant,
@@ -123,6 +125,7 @@ pub async fn web_session_sign_in(app: tauri::AppHandle, site: String) -> Result<
     // browser the user was in. Staying on top keeps the sign-in in front through the identity provider's pages.
     .always_on_top(true)
     .focused(true)
+    .initialization_script(SIGN_IN_GUARD)
     .build()
     .map_err(|e| e.to_string())?;
     trace(
@@ -516,6 +519,13 @@ fn deliver(app: &tauri::AppHandle, site: &str, target: &Url) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sign_in_guard_disables_window_close_without_fetching() {
+        assert!(SIGN_IN_GUARD.contains("window"));
+        assert!(SIGN_IN_GUARD.contains("close"));
+        assert!(!SIGN_IN_GUARD.contains("fetch"));
+    }
 
     fn landed(url: &str, seen_off_site: bool) -> bool {
         landed_after_sign_in(&Url::parse(url).unwrap(), seen_off_site)

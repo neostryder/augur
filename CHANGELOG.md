@@ -15,6 +15,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Fixed
 
+- [Visible] [Windows] **The TypeSafe sign-in window no longer closes by itself before you finish logging in.** A sign-in page can ask its own window to close, and that request used to shut the Augur sign-in window. The window now ignores the request and stays open until Augur has read the balance or you close it.
 - [Visible] [Windows] **The TypeSafe sign-in window writes a local `signin.log` trace of its navigation and account-reading results.** The trace contains URL hosts and paths without query strings or fragments, and it never records page text, cookies, or tokens.
 - [Visible] [UI] **The TypeSafe and Claude sign-in window stays open until Augur reads your account page (the credit balance, for TypeSafe), then closes itself.** It no longer gives up after 15 minutes, and Augur waits 30 seconds or for a page change before retrying a failed reading. A downloading update now waits for you to close the window before installing and restarting Augur.
 - [Visible] [UI] **Node view search keeps the cursor and selection while you type.** Results update with each keystroke, and model search matches names, providers, and descriptions regardless of case and punctuation. A message shows when nothing matches, and Escape clears the search first.
