@@ -133,12 +133,24 @@ export const clearedFor = (tier: DataTier, required: DataTier): boolean => DATA_
 
 export function nodeAddReason(config: AppConfig, snapshot: Snapshot | null, item: NodeCatalogItem, activity: ActivityId, tier: DataTier): string {
   if (!clearedFor(item.tier, tier)) return NODE_TEXT.refuseTier;
-  if (!item.exists) return nodeMix(previewCatalog(config, item, activity), snapshot, activity, tier).find(row => row.provider === item.provider && row.label === item.label)?.reason ?? "The current rules don't allow this catalog entry in this activity. Pick a different entry.";
+  if (!item.exists) return nodeMix(previewCatalog(config, item, activity), snapshot, activity, tier).find(row => row.provider === item.provider && row.label === item.label)?.reason ?? NODE_TEXT.rulesBlocked;
   const rules = config.policy?.providers[item.provider], own = rules?.models[item.label]?.rule.activities?.[activity];
   const explicit = own !== undefined ? own : rules?.defaults.activities?.[activity];
   const current = nodeMix(config, snapshot, activity, tier).find(row => row.provider === item.provider && row.label === item.label);
-  if (current?.resolved.activities[activity] !== undefined || explicit === null) return current?.reason || "This entry already has a level in this activity. Edit that level directly, since a catalog add can't change it.";
-  return nodeMix(previewLevel(config, item.provider, item.label, activity, 'normal'), snapshot, activity, tier).find(row => row.provider === item.provider && row.label === item.label)?.reason ?? "The current rules don't allow this catalog entry in this activity. Pick a different entry.";
+  if (current?.resolved.activities[activity] !== undefined || explicit === null) return current?.reason || NODE_TEXT.alreadyInMix;
+  return nodeMix(previewLevel(config, item.provider, item.label, activity, 'normal'), snapshot, activity, tier).find(row => row.provider === item.provider && row.label === item.label)?.reason ?? NODE_TEXT.rulesBlocked;
+}
+
+export function nodeRemoveReason(config: AppConfig, snapshot: Snapshot | null, label: string, activity: ActivityId, tier: DataTier): string {
+  const mix = nodeMix(config, snapshot, activity, tier).filter(row => row.share > 0);
+  if (!mix.some(row => row.label === label)) return NODE_TEXT.absentModel;
+  return mix.length === 1 ? NODE_TEXT.lastModel : '';
+}
+
+export function nodeCanRestore(config: AppConfig, snapshot: Snapshot | null, item: NodeCatalogItem, activity: ActivityId, tier: DataTier): boolean {
+  const rules = config.policy?.providers[item.provider], own = rules?.models[item.label]?.rule.activities?.[activity];
+  const explicit = own !== undefined ? own : rules?.defaults.activities?.[activity];
+  return item.exists && explicit === null && clearedFor(item.tier, tier) && nodeMix(previewLevel(config, item.provider, item.label, activity, 'normal'), snapshot, activity, tier).some(row => row.label === item.label && row.share > 0);
 }
 
 export function suggestedThree(items: NodeCatalogItem[], activity: ActivityId, tier: DataTier): NodeCatalogItem[] {
@@ -180,7 +192,7 @@ export const NODE_TEXT = {
   sheen: 'Sheen',
   animation: 'Animation',
   ticks: 'Tick marks',
-  effectHelp: 'Turn off sheen, animation, or tick marks separately; reduced motion uses a short crossfade.',
+  effectHelp: 'TODO_PROSE_effectHelp Sheen, animation and ticks can be disabled; reduced motion disables slice animation.',
   testKey: 'Test key',
   keyOk: 'Key works.',
   keyFailed: 'Key test failed. Check the key and try again.',
@@ -215,6 +227,19 @@ export const NODE_TEXT = {
   dataGate: 'Data tier gate',
   noMatch: 'No matching activities',
   noModelMatch: 'TODO_PROSE_noModelMatch No models match this search.',
+  addSelected: 'TODO_PROSE_addSelected Add selected model.',
+  removeSelected: 'TODO_PROSE_removeSelected Remove selected model from this activity.',
+  mixDragHelp: 'TODO_PROSE_mixDragHelp Drag this model to the list to remove it.',
+  rulesBlocked: 'TODO_PROSE_rulesBlocked Current activity rules prevent adding this model.',
+  restoreActivity: 'TODO_PROSE_restoreActivity This activity blocks the model; add it at Normal?',
+  alreadyInMix: 'TODO_PROSE_alreadyInMix This model already has a level in this activity.',
+  absentModel: 'TODO_PROSE_absentModel This model is not in this activity mix.',
+  lastModel: 'TODO_PROSE_lastModel Removing this model leaves the activity mix empty; continue?',
+  added: 'TODO_PROSE_added Model added to this activity.',
+  removed: 'TODO_PROSE_removed Model removed from this activity.',
+  dialogTitle: 'TODO_PROSE_dialogTitle Model mix change.',
+  ok: 'TODO_PROSE_ok OK.',
+  dialogCancel: 'TODO_PROSE_dialogCancel Cancel.',
   selectionHelp: 'Select an activity to view its rules.',
   status: 'Status',
   highestTier: 'Highest data tier',

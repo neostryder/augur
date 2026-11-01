@@ -1,5 +1,5 @@
 import { ACTIVITIES, ACTIVITY_LABELS, COST_TIERS, DATA_TIERS, DATA_TIER_LABELS, WEIGHT_LABELS, WEIGHT_LEVELS, WEIGHTS, fieldPath, pauseActive, type ActivityId, type DataTier } from '@augur/core';
-import { COST_LABELS, NODE_TEXT as T, OUTPUT_LABELS, RULES_TEXT, STATUS_LABELS, clearedFor, dragLevel, nodeActivityLabel, nodeAddReason, nodeCatalog, nodeMix, nodeSearch, nodeTooltip as math, pauseResets, previewCatalog, previewLevel, suggestedThree, statusText, type NodeRow, type NodeState } from '@augur/view-model';
+import { COST_LABELS, NODE_TEXT as T, OUTPUT_LABELS, RULES_TEXT, STATUS_LABELS, clearedFor, dragLevel, nodeActivityLabel, nodeAddReason, nodeCatalog, nodeCanRestore, nodeMix, nodeRemoveReason, nodeSearch, nodeTooltip as math, pauseResets, previewCatalog, previewLevel, suggestedThree, statusText, type NodeRow, type NodeState } from '@augur/view-model';
 import { activityRows, boolSelect, enumSelect, handlingRows, pauseRows, waitRows, type RulesModel } from './rules';
 import { esc } from '../util';
 
@@ -30,7 +30,7 @@ function ring(m: NodeModel, rows: NodeRow[], selected: NodeRow | undefined, mini
     const y = right && lx > 620 && initialY < 245 ? 245 : initialY;
     const attrs = `data-node-select="${esc(row.label)}" data-provider="${esc(row.provider)}"`;
     const [hx, hy] = point(189, start + Math.min(22, sweep / 2));
-    return `<g class="nv-slice ${on ? 'on' : ''} ${row.label === m.nodeGhost ? 'ghost' : ''}"><path id="nv-slice-${nodeId(row.label)}" d="${sector(start + Math.min(.8, sweep / 4), end - Math.min(.8, sweep / 4))}" fill="${m.config.layout.nodeView?.sheen === false ? 'var(--accent)' : on ? 'url(#nv-selected)' : 'url(#nv-blue)'}" ${attrs} tabindex="${row === focus ? 0 : -1}" role="button" aria-label="${esc(math(row))}" ${tip(math(row))}/>${mini ? '' : `<g class="nv-label" id="nv-label-${nodeId(row.label)}" ${attrs} aria-label="${esc(math(row))}" ${tip(math(row))}><path d="M${point(221, middle)}L${right ? lx - 6 : lx + 6},${y - 4}" stroke="var(--line)"/><text x="${lx}" y="${y}" text-anchor="${right ? 'start' : 'end'}">${esc(row.slug)} <tspan fill="var(--focus)">${row.share}%</tspan></text>${indicators(row, right ? lx : lx - 60, y + 13)}${row.tag ? `<text class="nv-tag" x="${lx}" y="${y + 30}" text-anchor="${right ? 'start' : 'end'}">${esc(row.tag)}</text>` : ''}</g><circle class="nv-edge" cx="${hx}" cy="${hy}" r="6" id="nv-edge-${nodeId(row.label)}" data-node-edge="${esc(row.label)}" data-provider="${esc(row.provider)}" tabindex="${row === focus ? 0 : -1}" role="slider" aria-label="${esc(`${row.slug}: ${T.level}`)}" aria-valuemin="1" aria-valuemax="5" aria-valuenow="${WEIGHT_LEVELS.indexOf(row.ranked!.level) + 1}" aria-valuetext="${WEIGHT_LABELS[row.ranked!.level]}" ${tip(T.dragHelp)}/>${on ? `<text class="nv-drag-label" x="${hx - 10}" y="${hy - 25}" text-anchor="end">${T.dragCue}</text>` : ''}`}</g>`;
+    return `<g class="nv-slice ${on ? 'on' : ''} ${row.label === m.nodeGhost ? 'ghost' : ''}"><path id="nv-slice-${nodeId(row.label)}" d="${sector(start + Math.min(.8, sweep / 4), end - Math.min(.8, sweep / 4))}" fill="${m.config.layout.nodeView?.sheen === false ? 'var(--accent)' : on ? 'url(#nv-selected)' : 'url(#nv-blue)'}" ${attrs} tabindex="${row === focus ? 0 : -1}" role="button" aria-label="${esc(`${math(row)} ${T.mixDragHelp}`)}" ${tip(`${math(row)} ${T.mixDragHelp}`)}/>${mini ? '' : `<g class="nv-label" id="nv-label-${nodeId(row.label)}" ${attrs} aria-label="${esc(math(row))}" ${tip(math(row))}><path d="M${point(221, middle)}L${right ? lx - 6 : lx + 6},${y - 4}" stroke="var(--line)"/><text x="${lx}" y="${y}" text-anchor="${right ? 'start' : 'end'}">${esc(row.slug)} <tspan fill="var(--focus)">${row.share}%</tspan></text>${indicators(row, right ? lx : lx - 60, y + 13)}${row.tag ? `<text class="nv-tag" x="${lx}" y="${y + 30}" text-anchor="${right ? 'start' : 'end'}">${esc(row.tag)}</text>` : ''}</g><circle class="nv-edge" cx="${hx}" cy="${hy}" r="6" id="nv-edge-${nodeId(row.label)}" data-node-edge="${esc(row.label)}" data-provider="${esc(row.provider)}" tabindex="${row === focus ? 0 : -1}" role="slider" aria-label="${esc(`${row.slug}: ${T.level}`)}" aria-valuemin="1" aria-valuemax="5" aria-valuenow="${WEIGHT_LEVELS.indexOf(row.ranked!.level) + 1}" aria-valuetext="${WEIGHT_LABELS[row.ranked!.level]}" ${tip(T.dragHelp)}/>${on ? `<text class="nv-drag-label" x="${hx - 10}" y="${hy - 25}" text-anchor="end">${T.dragCue}</text>` : ''}`}</g>`;
   }).join('');
   const ticks = m.config.layout.nodeView?.ticks === false || mini ? '' : Array.from({ length: 100 }, (_, i) => `<path d="M${point(201, i * 3.6)}L${point(i % 10 ? 208 : 216, i * 3.6)}" stroke="${i % 10 ? 'var(--line)' : 'var(--muted)'}"/>`).join('');
   return `<svg class="nv-ring" viewBox="${mini ? '230 162 420 420' : '0 0 880 744'}" aria-label="${esc(ACTIVITY_LABELS[m.node.activity])}" role="group"><defs><radialGradient id="nv-blue" gradientUnits="userSpaceOnUse" cx="440" cy="372" r="194"><stop offset=".83" stop-color="#245a9f"/><stop offset="1" stop-color="#5d9be3"/></radialGradient><radialGradient id="nv-selected" gradientUnits="userSpaceOnUse" cx="440" cy="372" r="194"><stop offset=".83" stop-color="#2f78d6"/><stop offset="1" stop-color="#9cc7f4"/></radialGradient></defs><g class="nv-bezel" fill="none"><circle cx="440" cy="372" r="220" stroke="var(--line)"/>${ticks}${!mini && m.config.layout.nodeView?.ticks !== false ? [0, 25, 50, 75].map((value, index) => { const [x, y] = point(142, index * 90); return `<text class="nv-scale" x="${x}" y="${y + 3}" text-anchor="middle">${value}</text>`; }).join('') : ''}<circle cx="440" cy="372" r="155" stroke="var(--line)"/><circle cx="440" cy="372" r="176" stroke="var(--line)" stroke-width="22"/></g>${slices}<g class="nv-center"><text x="440" y="360" text-anchor="middle" class="nv-number">${mini ? '' : mix.length}</text><text x="440" y="386" text-anchor="middle">${mini ? '' : T.inMix}</text><text x="440" y="419" text-anchor="middle" class="nv-subtle">${mini ? '' : `${T.sum} ${sum ? 100 : 0}%`}</text></g><g class="nv-phone-center"><text x="440" y="330" text-anchor="middle">${esc(selected?.slug ?? '')}</text><text x="440" y="385" text-anchor="middle" class="nv-number">${selected?.share ?? 0}%</text><text x="440" y="411" text-anchor="middle">${esc(ACTIVITY_LABELS[m.node.activity])}</text></g></svg>`;
@@ -69,7 +69,7 @@ const field = (label: string, input: string, help: string): string => `<div clas
 function panel(m: NodeModel, selected: NodeRow | undefined): string {
   if (!selected) return `<aside class="nv-panel"><p class="nv-note">${T.selectionHelp}</p></aside>`;
   const status = fieldPath(selected.provider, selected.label, 'status');
-  return `<aside class="nv-panel" aria-label="${esc(selected.label)}"><div class="nv-grabber"></div><header class="nv-panel-head"><h2>${esc(selected.slug)}</h2><span class="chip">${STATUS_LABELS[selected.entry.status]}</span><p>${esc(selected.label)}. ${selected.share}% / ${ACTIVITY_LABELS[m.node.activity]}</p></header><div class="nv-tabs" role="tablist" aria-label="${RULES_TEXT.title}">${(['weight', 'data', 'behavior'] as const).map(tab => `<button id="nv-tab-${tab}" role="tab" tabindex="${m.node.tab === tab ? 0 : -1}" aria-selected="${m.node.tab === tab}" aria-controls="nv-tab-panel" data-node-tab="${tab}" ${tip(tab === 'weight' ? T.levelHelp : tab === 'data' ? T.tierHelp : T.behaviorHelp)}>${T[tab]}${tab === 'data' ? `<small>${DATA_TIER_LABELS[selected.resolved.dataTier]}</small>` : ''}</button>`).join('')}</div><div class="nv-panel-body" id="nv-tab-panel" role="tabpanel" aria-labelledby="nv-tab-${m.node.tab}">${m.node.tab === 'weight' ? weightPanel(m, selected) : m.node.tab === 'data' ? dataPanel(m, selected) : behaviorPanel(m, selected)}<div class="nv-status"><button class="btn small nv-phone-dial" data-action="rules-dial">${RULES_TEXT.dialTitle}</button><p>${esc(statusText(m.config.policy!, selected.provider, selected.entry))}</p>${selected.entry.status !== 'confirmed' && selected.entry.status !== 'hidden' ? `<button class="btn small primary" data-status="${esc(status)}" data-value="confirmed" ${tip(RULES_TEXT.confirm)}>${RULES_TEXT.confirm}</button>` : ''}<button class="btn small" data-status="${esc(status)}" data-value="${selected.entry.status === 'hidden' ? 'unreviewed' : 'hidden'}" ${tip(RULES_TEXT.hide)}>${selected.entry.status === 'hidden' ? RULES_TEXT.show : RULES_TEXT.hide}</button></div></div></aside>`;
+  return `<aside class="nv-panel" aria-label="${esc(selected.label)}"><div class="nv-grabber"></div><header class="nv-panel-head"><h2>${esc(selected.slug)}</h2><span class="chip">${STATUS_LABELS[selected.entry.status]}</span><p>${esc(selected.label)}. ${selected.share}% / ${ACTIVITY_LABELS[m.node.activity]}</p></header><div class="nv-tabs" role="tablist" aria-label="${RULES_TEXT.title}">${(['weight', 'data', 'behavior'] as const).map(tab => `<button id="nv-tab-${tab}" role="tab" tabindex="${m.node.tab === tab ? 0 : -1}" aria-selected="${m.node.tab === tab}" aria-controls="nv-tab-panel" data-node-tab="${tab}" ${tip(tab === 'weight' ? T.levelHelp : tab === 'data' ? T.tierHelp : T.behaviorHelp)}>${T[tab]}${tab === 'data' ? `<small>${DATA_TIER_LABELS[selected.resolved.dataTier]}</small>` : ''}</button>`).join('')}</div><div class="nv-panel-body" id="nv-tab-panel" role="tabpanel" aria-labelledby="nv-tab-${m.node.tab}">${m.node.tab === 'weight' ? weightPanel(m, selected) : m.node.tab === 'data' ? dataPanel(m, selected) : behaviorPanel(m, selected)}<div class="nv-status"><button class="btn small" id="nv-remove-${nodeId(selected.label)}" data-node-remove="${esc(selected.label)}" aria-label="${esc(`${selected.slug}: ${T.removeSelected}`)}">${T.removeSelected}</button><button class="btn small nv-phone-dial" data-action="rules-dial">${RULES_TEXT.dialTitle}</button><p>${esc(statusText(m.config.policy!, selected.provider, selected.entry))}</p>${selected.entry.status !== 'confirmed' && selected.entry.status !== 'hidden' ? `<button class="btn small primary" data-status="${esc(status)}" data-value="confirmed" ${tip(RULES_TEXT.confirm)}>${RULES_TEXT.confirm}</button>` : ''}<button class="btn small" data-status="${esc(status)}" data-value="${selected.entry.status === 'hidden' ? 'unreviewed' : 'hidden'}" ${tip(RULES_TEXT.hide)}>${selected.entry.status === 'hidden' ? RULES_TEXT.show : RULES_TEXT.hide}</button></div></div></aside>`;
 }
 
 function switcher(m: NodeModel): string {
@@ -88,7 +88,7 @@ export function renderNodeView(m: NodeModel): string {
   const active = rows.filter(row => row.share > 0), out = rows.filter(row => row.share === 0);
   const items = nodeCatalog(m.config, m.catalog, m.snapshot).filter(item => nodeSearch(m.node.query, item.name, item.id, item.label, item.provider, item.providerName ?? '', item.description));
   const suggests = suggestedThree(nodeCatalog(m.config, m.catalog, m.snapshot).filter(item => !nodeAddReason(m.config, m.snapshot, item, m.node.activity, m.node.dataTier)), m.node.activity, m.node.dataTier);
-  return `<main class="nv-layout ${m.config.layout.nodeView?.animation === false ? 'nv-still' : ''} ${m.config.layout.nodeView?.sheen === false ? 'nv-flat' : ''}" data-node-drop><div class="nv-stage"><div class="nv-heading"><button id="nv-activity" class="nv-activity" data-node-switch="open" ${tip(T.switchHelp)}>${ACTIVITY_LABELS[m.node.activity]} <span>v</span></button><label class="nv-gate">${T.dataGate}<select id="nv-gate" data-node-gate ${tip(T.tierHelp)}>${DATA_TIERS.map(tier => `<option value="${tier}" ${tier === m.node.dataTier ? 'selected' : ''}>${DATA_TIER_LABELS[tier]}</option>`).join('')}</select></label><div class="nv-activity-chips">${ACTIVITIES.map(activity => `<button id="nv-quick-${activity}" data-node-activity="${activity}" class="${activity === m.node.activity ? 'on' : ''}" aria-pressed="${activity === m.node.activity}" ${tip(T.switchHelp)}>${ACTIVITY_LABELS[activity]}</button>`).join('')}</div><button class="nv-phone-search" data-node-switch="open" aria-label="${T.searchActivities}" ${tip(T.switchHelp)}><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="6.5" cy="6.5" r="4"/><path d="m9.5 9.5 4 4"/></svg></button></div><div class="nv-gauge" data-node-drop>${ring(m, rows, selected)}${selected?.ranked ? `<div class="nv-math" ${tip(T.mathHelp)}><b>${esc(selected.slug)} <span>${selected.share}%</span></b><div class="nv-factors"><span><b>${selected.ranked.weight}</b><small>${T.level}</small></span><i>x</i><span><b>${selected.ranked.fit.toFixed(2)}</b><small>${T.fit}</small></span><i>x</i><span><b>${selected.ranked.usage.toFixed(2)}</b><small>${T.usage}</small></span></div><p>${DATA_TIER_LABELS[selected.resolved.dataTier]} <span>${COST_LABELS[selected.resolved.cost]}</span></p>${selected.ranked.tilt !== 1 || selected.ranked.boost !== 1 ? `<small>${T.balance}: ${selected.ranked.tilt} x ${selected.ranked.boost}</small>` : ''}<small class="nv-pin-note">${T.pinHelp}</small></div>` : ''}${!active.length ? `<div class="nv-empty"><h2>${T.emptyTitle}</h2><p>${T.emptyHelp}</p><button class="btn primary" data-node-suggest ${suggests.length ? '' : 'disabled'} ${tip(suggests.map(item => item.name).join(', ') || T.noSuggestions)}>${T.suggested}</button><label>${T.copy}<select id="nv-copy" data-node-copy ${tip(T.copy)}><option value="">${T.activity}</option>${ACTIVITIES.filter(activity => activity !== m.node.activity).map(activity => `<option value="${activity}">${ACTIVITY_LABELS[activity]}</option>`).join('')}</select></label></div>` : ''}</div><div class="nv-chips" role="group" aria-label="${T.inMix}">${active.map(row => `<button id="nv-chip-${nodeId(row.label)}" class="${row.label === selected?.label ? 'on' : ''}" data-node-select="${esc(row.label)}" data-provider="${esc(row.provider)}" ${tip(math(row))}><b>${esc(row.slug)}</b>${row.tag ? `<small>${esc(row.tag)}</small>` : ''}<span>${row.share}%</span><span class="nv-sr">${esc(row.reason)}</span></button>`).join('')}</div><div class="nv-legend"><span>${T.level} <i class="nv-sample-dots"></i></span><span>${T.highestTier} <i class="nv-sample-bars"></i></span><small>${T.dragHelp}</small></div><p class="nv-touch-hint">${T.touchHelp}</p><p class="nv-preview ${m.nodeNote ? 'nv-feedback' : ''}" role="status">${esc(m.nodeNote || T.preview)}</p><section class="nv-tray"><header><h3>${T.catalog}</h3><input id="nv-catalog-search" type="search" aria-label="${T.searchCatalog}" placeholder="${T.searchCatalog}" data-node-query value="${esc(m.node.query)}" ${tip(T.addHelp)}></header><div class="nv-catalog">${items.map(item => `<button id="nv-catalog-${nodeId(item.label)}" draggable="true" data-node-add="${esc(item.label)}" aria-pressed="${m.node.candidate === item.label}" class="nv-candidate" ${tip(`${item.description} ${item.limits} ${clearedFor(item.tier, m.node.dataTier) ? T.addHelp : T.refuseTier}`)}><b>${esc(item.name)}</b><small>${esc(item.description || item.provider)}</small><span>${DATA_TIER_LABELS[item.tier]}</span></button>`).join('') || `<p role="status">${T.noModelMatch}</p>`}</div><button class="btn small" data-node-confirm-add ${m.node.candidate && items.some(item => item.label === m.node.candidate) ? '' : 'disabled'}>Add selected entry</button></section><section class="nv-out"><h3>${T.out}</h3>${out.map(row => `<button id="nv-out-${nodeId(row.label)}" data-node-select="${esc(row.label)}" data-provider="${esc(row.provider)}" ${tip(row.reason)}><b>${esc(row.slug)}</b>${row.tag ? `<small>${esc(row.tag)}</small>` : ''}<span>${esc(row.reason)}</span><em>0%</em></button>`).join('')}</section></div>${panel(m, selected)}</main>${switcher(m)}`;
+  return `<main class="nv-layout ${m.config.layout.nodeView?.animation === false ? 'nv-still' : ''} ${m.config.layout.nodeView?.sheen === false ? 'nv-flat' : ''}" data-node-drop><div class="nv-stage"><div class="nv-heading"><button id="nv-activity" class="nv-activity" data-node-switch="open" ${tip(T.switchHelp)}>${ACTIVITY_LABELS[m.node.activity]} <span>v</span></button><label class="nv-gate">${T.dataGate}<select id="nv-gate" data-node-gate ${tip(T.tierHelp)}>${DATA_TIERS.map(tier => `<option value="${tier}" ${tier === m.node.dataTier ? 'selected' : ''}>${DATA_TIER_LABELS[tier]}</option>`).join('')}</select></label><div class="nv-activity-chips">${ACTIVITIES.map(activity => `<button id="nv-quick-${activity}" data-node-activity="${activity}" class="${activity === m.node.activity ? 'on' : ''}" aria-pressed="${activity === m.node.activity}" ${tip(T.switchHelp)}>${ACTIVITY_LABELS[activity]}</button>`).join('')}</div><button class="nv-phone-search" data-node-switch="open" aria-label="${T.searchActivities}" ${tip(T.switchHelp)}><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="6.5" cy="6.5" r="4"/><path d="m9.5 9.5 4 4"/></svg></button></div><div class="nv-gauge" role="group" data-node-drop draggable="${!!active.length}" data-node-drag="${esc(selected?.label ?? '')}" aria-label="${esc(`${ACTIVITY_LABELS[m.node.activity]}: ${T.mixDragHelp}`)}">${ring(m, rows, selected)}${selected?.ranked ? `<div class="nv-math" role="group" draggable="true" data-node-drag="${esc(selected.label)}" aria-label="${esc(`${math(selected)} ${T.mixDragHelp}`)}" ${tip(T.mixDragHelp)}><b>${esc(selected.slug)} <span>${selected.share}%</span></b><div class="nv-factors"><span><b>${selected.ranked.weight}</b><small>${T.level}</small></span><i>x</i><span><b>${selected.ranked.fit.toFixed(2)}</b><small>${T.fit}</small></span><i>x</i><span><b>${selected.ranked.usage.toFixed(2)}</b><small>${T.usage}</small></span></div><p>${DATA_TIER_LABELS[selected.resolved.dataTier]} <span>${COST_LABELS[selected.resolved.cost]}</span></p>${selected.ranked.tilt !== 1 || selected.ranked.boost !== 1 ? `<small>${T.balance}: ${selected.ranked.tilt} x ${selected.ranked.boost}</small>` : ''}<small class="nv-pin-note">${T.pinHelp}</small></div>` : ''}${!active.length ? `<div class="nv-empty"><h2>${T.emptyTitle}</h2><p>${T.emptyHelp}</p><button class="btn primary" data-node-suggest ${suggests.length ? '' : 'disabled'} ${tip(suggests.map(item => item.name).join(', ') || T.noSuggestions)}>${T.suggested}</button><label>${T.copy}<select id="nv-copy" data-node-copy ${tip(T.copy)}><option value="">${T.activity}</option>${ACTIVITIES.filter(activity => activity !== m.node.activity).map(activity => `<option value="${activity}">${ACTIVITY_LABELS[activity]}</option>`).join('')}</select></label></div>` : ''}</div><div class="nv-chips" role="group" aria-label="${T.inMix}">${active.map(row => `<button id="nv-chip-${nodeId(row.label)}" class="${row.label === selected?.label ? 'on' : ''}" draggable="true" data-node-drag="${esc(row.label)}" aria-label="${esc(`${math(row)} ${T.mixDragHelp}`)}" data-node-select="${esc(row.label)}" data-provider="${esc(row.provider)}" ${tip(math(row))}><b>${esc(row.slug)}</b>${row.tag ? `<small>${esc(row.tag)}</small>` : ''}<span>${row.share}%</span><span class="nv-sr">${esc(row.reason)}</span></button>`).join('')}</div><div class="nv-legend"><span>${T.level} <i class="nv-sample-dots"></i></span><span>${T.highestTier} <i class="nv-sample-bars"></i></span><small>${T.dragHelp}</small></div><p class="nv-touch-hint">${T.touchHelp}</p><p class="nv-preview ${m.nodeNote ? 'nv-feedback' : ''}" role="status">${esc(m.nodeNote || T.preview)}</p><section class="nv-tray" role="region" aria-label="${T.catalog}"><header><h3>${T.catalog}</h3><input id="nv-catalog-search" type="search" aria-label="${T.searchCatalog}" placeholder="${T.searchCatalog}" data-node-query value="${esc(m.node.query)}" ${tip(T.addHelp)}></header><div class="nv-catalog">${items.map(item => `<button id="nv-catalog-${nodeId(item.label)}" draggable="true" data-node-add="${esc(item.label)}" aria-pressed="${m.node.candidate === item.label}" class="nv-candidate" ${tip(`${item.description} ${item.limits} ${clearedFor(item.tier, m.node.dataTier) ? T.addHelp : T.refuseTier}`)}><b>${esc(item.name)}</b><small>${esc(item.description || item.provider)}</small><span>${DATA_TIER_LABELS[item.tier]}</span></button>`).join('') || `<p role="status">${T.noModelMatch}</p>`}</div><button class="btn small" data-node-confirm-add ${m.node.candidate && items.some(item => item.label === m.node.candidate) ? '' : 'disabled'}>${T.addSelected}</button></section><section class="nv-out"><h3>${T.out}</h3>${out.map(row => `<button id="nv-out-${nodeId(row.label)}" data-node-select="${esc(row.label)}" data-provider="${esc(row.provider)}" ${tip(row.reason)}><b>${esc(row.slug)}</b>${row.tag ? `<small>${esc(row.tag)}</small>` : ''}<span>${esc(row.reason)}</span><em>0%</em></button>`).join('')}</section></div>${panel(m, selected)}</main>${switcher(m)}`;
 }
 
 export function registerNodeView(): void {
@@ -104,6 +104,7 @@ export function registerNodeView(): void {
     private pendingEdit: { path: string; value: unknown } | null = null;
     private rangeKeyboard = false;
     private switchFocus: HTMLElement | null = null;
+    private prompt: { message: string; proceed?: () => void; focusId?: string } | null = null;
     set model(value: NodeModel) {
       if (!value.sel?.model) {
         const rows = nodeMix(value.config, value.snapshot, value.node.activity, value.node.dataTier), row = rows.find(row => row.share > 0) ?? rows[0];
@@ -122,6 +123,7 @@ export function registerNodeView(): void {
       const previous = new Map([...this.querySelectorAll<SVGPathElement>('.nv-slice > path')].map(path => [path.dataset.nodeSelect, path.getAttribute('d')!]));
       const active = document.activeElement as HTMLInputElement | null, id = this.contains(active) ? active?.id : undefined, caret = active?.selectionStart, end = active?.selectionEnd, direction = active?.selectionDirection;
       this.innerHTML = renderNodeView(this.current);
+      if (this.prompt) this.drawPrompt();
       for (const key of expanded) { const detail = this.querySelector<HTMLDetailsElement>(`[data-node-details="${key}"]`); if (detail) detail.open = true; }
       if (this.current.config.layout.nodeView?.animation !== false && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
         for (const path of this.querySelectorAll<SVGPathElement>('.nv-slice > path')) {
@@ -132,6 +134,7 @@ export function registerNodeView(): void {
       for (const control of this.querySelectorAll<HTMLElement>('button,input,select,textarea,summary')) {
         if (!control.dataset.nodeTip) { const text = control.getAttribute('aria-label') || control.closest('label,.row,.nv-field')?.textContent?.trim() || control.textContent?.trim() || T.advanced; control.dataset.nodeTip = text; }
       }
+      if (this.prompt) { this.querySelector<HTMLElement>('[data-node-answer]')?.focus(); return; }
       if (id) { const next = this.querySelector<HTMLInputElement>(`#${id}`); if (next) next.focus({ preventScroll: true }); else if (!this.current.node.switching) this.focusActivity(); if (caret !== null && caret !== undefined && next?.type === 'search') next.setSelectionRange(caret, end ?? caret, direction ?? undefined); }
     }
     connectedCallback(): void {
@@ -194,7 +197,15 @@ export function registerNodeView(): void {
         if (until) this.emit('node-edit', { path: d.path, value: { until, weights: null, ...(d.nodePause === 'reset' && meter ? { meter: meter.id } : {}) } });
       }
       if (d.nodeAdd) this.state({ candidate: d.nodeAdd });
-      if (d.nodeConfirmAdd !== undefined && this.current.node.candidate) this.emit('node-add', { label: this.current.node.candidate });
+      if (d.nodeConfirmAdd !== undefined && this.current.node.candidate) this.add(this.current.node.candidate);
+      if (d.nodeRemove) this.removeModel(d.nodeRemove);
+      if (d.nodeAnswer) {
+        const prompt = this.prompt; this.prompt = null; this.querySelector('.nv-action-backdrop')?.remove();
+        for (const section of this.querySelectorAll<HTMLElement>('.nv-layout,.nv-switch-backdrop')) section.inert = false;
+        if (d.nodeAnswer === 'ok') prompt?.proceed?.();
+        const focus = prompt?.focusId ? this.querySelector<HTMLElement>(`#${prompt.focusId}`) : null;
+        if (focus) focus.focus(); else this.focusActivity();
+      }
       if (d.nodeSuggest !== undefined) this.emit('node-suggest', {});
     };
     private input = (event: Event): void => {
@@ -221,6 +232,14 @@ export function registerNodeView(): void {
     };
     private key = (event: KeyboardEvent): void => {
       const target = event.target as HTMLElement;
+      if (this.prompt) {
+        if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); (this.querySelector<HTMLButtonElement>('[data-node-answer="cancel"]') ?? this.querySelector<HTMLButtonElement>('[data-node-answer="ok"]'))?.click(); }
+        if (event.key === 'Tab') this.trapFocus(event, '.nv-action');
+        return;
+      }
+      if (event.key === 'Delete' && target.matches('[data-node-drag],path[data-node-select],g[data-node-select]')) {
+        event.preventDefault(); event.stopPropagation(); this.removeModel(target.dataset.nodeDrag ?? target.dataset.nodeSelect!); return;
+      }
       if (event.key === 'Escape' && this.stopDrag) { event.preventDefault(); event.stopPropagation(); this.stopDrag(); return; }
       if (event.key === 'Escape' && target.matches('[data-node-query],[data-node-search]') && (target as HTMLInputElement).value) {
         event.preventDefault(); event.stopPropagation();
@@ -248,8 +267,7 @@ export function registerNodeView(): void {
       }
       if (target.matches('path[data-node-select],g[data-node-select]') && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); target.dispatchEvent(new MouseEvent('click', { bubbles: true })); }
       if (this.current.node.switching && event.key === 'Tab') {
-        const controls = [...this.querySelectorAll<HTMLElement>('.nv-switch input:not(:disabled),.nv-switch button:not(:disabled),.nv-switch select:not(:disabled)')].filter(control => control.getClientRects().length > 0), first = controls[0], last = controls.at(-1);
-        if (event.shiftKey && target === first) { event.preventDefault(); last?.focus(); } else if (!event.shiftKey && target === last) { event.preventDefault(); first?.focus(); }
+        this.trapFocus(event, '.nv-switch');
       }
     };
     private pointer = (event: PointerEvent): void => {
@@ -257,7 +275,13 @@ export function registerNodeView(): void {
       this.stopHold?.(); this.held = false; this.suppressClick = false; this.rangeKeyboard = false; this.flushEdit();
       if (!edge) {
         const slice = (event.target as Element).closest<HTMLElement>('[data-node-select]');
-        if (!slice || event.pointerType === 'mouse') return;
+        if (event.pointerType === 'mouse') {
+          const gauge = this.querySelector<HTMLElement>('.nv-gauge')!;
+          gauge.draggable = !!slice;
+          if (slice) gauge.dataset.nodeDrag = slice.dataset.nodeSelect!;
+          return;
+        }
+        if (!slice) return;
         const timer = setTimeout(() => {
           this.held = true; const width = Math.min(300, innerWidth - 24), left = Math.max(12, Math.min(event.clientX - width / 2, innerWidth - width - 12)), top = Math.max(12, Math.min(event.clientY - 100, innerHeight - 140));
           this.insertAdjacentHTML('beforeend', `<div class="nv-touch-tip" role="tooltip" style="width:${width}px;left:${left}px;top:${top}px">${esc(slice.dataset.nodeTip ?? slice.getAttribute('aria-label') ?? '')}</div>`);
@@ -275,18 +299,71 @@ export function registerNodeView(): void {
       const cancel = () => { stop(); this.current.config = original; this.draw(); };
       this.stopDrag = cancel; window.addEventListener('blur', cancel, { once: true }); document.addEventListener('pointermove', move); document.addEventListener('pointerup', up, { once: true }); document.addEventListener('pointercancel', cancel, { once: true });
     };
+    private trapFocus(event: KeyboardEvent, selector: string): void {
+      const controls = [...this.querySelectorAll<HTMLElement>(`${selector} input:not(:disabled),${selector} button:not(:disabled),${selector} select:not(:disabled)`)].filter(control => control.getClientRects().length > 0);
+      const first = controls[0], last = controls.at(-1), target = event.target as HTMLElement;
+      if (event.shiftKey && target === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && target === last) { event.preventDefault(); first?.focus(); }
+    }
+    private drawPrompt(): void {
+      if (!this.prompt) return;
+      this.querySelector('.nv-action-backdrop')?.remove();
+      this.insertAdjacentHTML('beforeend', `<div class="nv-switch-backdrop nv-action-backdrop"><section class="nv-switch nv-action" role="dialog" aria-modal="true" aria-label="${T.dialogTitle}" aria-describedby="nv-action-message"><p id="nv-action-message">${esc(this.prompt.message)}</p><footer><button class="btn small primary" data-node-answer="ok">${T.ok}</button>${this.prompt.proceed ? `<button class="btn small" data-node-answer="cancel">${T.dialogCancel}</button>` : ''}</footer></section></div>`);
+      for (const section of this.querySelectorAll<HTMLElement>('.nv-layout,.nv-switch-backdrop:not(.nv-action-backdrop)')) section.inert = true;
+      this.querySelector<HTMLElement>('[data-node-answer]')?.focus();
+    }
+    private explain(message: string, proceed?: () => void): void {
+      this.prompt = { message, proceed, focusId: (document.activeElement as HTMLElement | null)?.id };
+      this.current.nodeNote = message; this.emit('node-note', { message });
+      this.querySelector('.nv-preview')!.textContent = message;
+      this.drawPrompt();
+    }
+    private add(label: string, confirmed = false): void {
+      this.flushEdit();
+      const item = nodeCatalog(this.current.config, this.current.catalog, this.current.snapshot).find(row => row.label === label);
+      const reason = item ? nodeAddReason(this.current.config, this.current.snapshot, item, this.current.node.activity, this.current.node.dataTier) : T.rulesBlocked;
+      const restore = item && nodeCanRestore(this.current.config, this.current.snapshot, item, this.current.node.activity, this.current.node.dataTier);
+      if (reason && !(confirmed && restore)) {
+        const { activity, dataTier } = this.current.node;
+        this.explain(restore ? T.restoreActivity : reason, restore ? () => {
+          if (this.current.node.activity === activity && this.current.node.dataTier === dataTier) this.add(label, true);
+        } : undefined); return;
+      }
+      this.current.nodeNote = T.added; this.emit('node-note', { message: T.added });
+      this.querySelector('.nv-preview')!.textContent = T.added;
+      this.emit('node-add', { label, allowActivity: confirmed && restore });
+    }
+    private removeModel(label: string, confirmed = false): void {
+      this.flushEdit();
+      const { activity, dataTier } = this.current.node;
+      const reason = nodeRemoveReason(this.current.config, this.current.snapshot, label, activity, dataTier);
+      if (reason === T.absentModel) { this.explain(reason); return; }
+      if (reason && !confirmed) { this.explain(reason, () => {
+        if (this.current.node.activity === activity && this.current.node.dataTier === dataTier) this.removeModel(label, true);
+      }); return; }
+      const row = nodeMix(this.current.config, this.current.snapshot, activity, dataTier).find(row => row.label === label)!;
+      this.current.nodeNote = T.removed; this.emit('node-note', { message: T.removed });
+      this.querySelector('.nv-preview')!.textContent = T.removed;
+      this.emit('node-edit', { path: fieldPath(row.provider, label, `activities.${activity}`), value: null });
+    }
     private dragstart = (event: DragEvent): void => {
-      const item = (event.target as Element).closest<HTMLElement>('[data-node-add]');
+      if (this.prompt) { event.preventDefault(); return; }
+      const item = (event.target as Element).closest<HTMLElement>('[data-node-add],[data-node-drag]');
       if (!item) return;
-      this.dragged = item.dataset.nodeAdd!; event.dataTransfer?.setData('text/plain', this.dragged);
-      if (event.dataTransfer) event.dataTransfer.effectAllowed = 'copy';
+      this.dragged = item.dataset.nodeAdd ?? item.dataset.nodeDrag!;
+      event.dataTransfer?.setData('text/plain', this.dragged);
+      if (event.dataTransfer) event.dataTransfer.effectAllowed = 'copyMove';
     };
     private dragover = (event: DragEvent): void => {
-      if (!(event.target as Element).closest('.nv-gauge') || !this.dragged) return;
-      event.preventDefault(); const item = nodeCatalog(this.current.config, this.current.catalog, this.current.snapshot).find(row => row.label === this.dragged);
+      const target = (event.target as Element).closest('.nv-gauge,.nv-tray');
+      if (!target || !this.dragged || this.prompt) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = target.matches('.nv-tray') ? 'move' : 'copy';
+      if (target.matches('.nv-tray')) { this.clearPreview(); return; }
+      const item = nodeCatalog(this.current.config, this.current.catalog, this.current.snapshot).find(row => row.label === this.dragged);
       if (!item) return;
       const refusal = nodeAddReason(this.current.config, this.current.snapshot, item, this.current.node.activity, this.current.node.dataTier);
-      if (refusal) { if (event.dataTransfer) event.dataTransfer.dropEffect = 'none'; this.current.nodeNote = refusal; this.querySelector('.nv-preview')!.textContent = refusal; if (!this.querySelector('.nv-drop-tip')) this.querySelector('.nv-gauge')!.insertAdjacentHTML('beforeend', `<div class="nv-drop-tip" role="tooltip">${esc(refusal)}</div>`); return; }
+      if (refusal) { this.querySelector('.nv-preview')!.textContent = refusal; return; }
       if (this.current.nodeGhost === item.label) return;
       this.current.nodeGhost = item.label;
       this.querySelector('.nv-preview')!.textContent = item.exists ? T.preview : T.awaitingReview;
@@ -294,8 +371,23 @@ export function registerNodeView(): void {
       const rows = nodeMix(config, this.current.snapshot, this.current.node.activity, this.current.node.dataTier), row = rows.find(row => row.label === item.label);
       this.querySelector('.nv-gauge .nv-ring')!.outerHTML = ring({ ...this.current, config }, rows, row);
     };
-    private drop = (event: DragEvent): void => { if ((event.target as Element).closest('.nv-gauge') && this.dragged) { event.preventDefault(); this.emit('node-add', { label: this.dragged }); } this.dragend(); };
-    private dragend = (): void => { this.dragged = null; this.current.nodeGhost = undefined; this.current.nodeNote = undefined; this.draw(); };
+    private drop = (event: DragEvent): void => {
+      const target = (event.target as Element).closest('.nv-gauge,.nv-tray'), label = this.dragged;
+      this.dragend();
+      if (!target || !label || this.prompt) return;
+      event.preventDefault();
+      if (target.matches('.nv-tray')) this.removeModel(label); else this.add(label);
+    };
+    private clearPreview(): void {
+      if (this.current.nodeGhost) {
+        this.current.nodeGhost = undefined;
+        const rows = nodeMix(this.current.config, this.current.snapshot, this.current.node.activity, this.current.node.dataTier);
+        this.querySelector('.nv-gauge .nv-ring')!.outerHTML = ring(this.current, rows, rows.find(row => row.label === this.current.sel?.model));
+      }
+      this.querySelector('.nv-preview')!.textContent = this.current.nodeNote || T.preview;
+    }
+    private dragend = (): void => { this.dragged = null; this.clearPreview(); };
+
   }
   customElements.define('augur-node-view', NodeView);
 }

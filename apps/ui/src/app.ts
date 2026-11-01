@@ -1,5 +1,5 @@
 import Sortable from 'sortablejs';
-import { nodeAddReason, copyMix, initialNodeState, nodeCatalog, stepActivity, suggestedThree, type NodeState } from '@augur/view-model';
+import { NODE_TEXT, nodeAddReason, nodeCanRestore, copyMix, initialNodeState, nodeCatalog, stepActivity, suggestedThree, type NodeState } from '@augur/view-model';
 import { registerNodeView, type NodeModel } from './views/node-view';
 import { ACTIVITY_LABELS, DATA_TIER_LABELS, WEIGHT_LABELS, addModels, applyEdit, batchPolicyChanges, emptyEditState, emptyPolicy, mergePolicy, policyDigest, setField, setFieldMany, setModelStatus, undoChange, type AppConfig, type DataTier, type EditState, type ModelCatalog, type ModelEntry, type ProviderPlugin, type Shell, type Snapshot, feedFor, feedFromUsage, type AlertKind, type Outlet, type PushStatus, type ClaudeStatus } from '@augur/core';
 import * as core from './core';
@@ -509,7 +509,7 @@ export class App {
   private async render(): Promise<void> {
     this.ensureStrip();
     const expandedNodeDetails = [...this.root.querySelectorAll<HTMLDetailsElement>('augur-node-view details[open]')].map(detail => detail.dataset.nodeDetails);
-    const active = document.activeElement as HTMLInputElement | null, focusId = active?.id, caret = active?.selectionStart ?? null, caretEnd = active?.selectionEnd, caretDirection = active?.selectionDirection;
+    const active = document.activeElement as HTMLInputElement | null, nodeFocused = !!active?.closest('augur-node-view'), focusId = active?.id, caret = active?.selectionStart ?? null, caretEnd = active?.selectionEnd, caretDirection = active?.selectionDirection;
     if (this.view === 'dashboard') {
       await this.chooseColumns();
     } else if (this.view === 'jobs') {
@@ -550,7 +550,8 @@ export class App {
     for (const key of expandedNodeDetails) { const detail = this.root.querySelector<HTMLDetailsElement>(`augur-node-view [data-node-details="${key}"]`); if (detail) detail.open = true; }
     if (focusId) {
       const el = document.getElementById(focusId) as HTMLInputElement | null;
-      el?.focus({ preventScroll: true });
+      if (el) el.focus({ preventScroll: true });
+      else if (nodeFocused) this.root.querySelector<HTMLElement>('#nv-activity')?.focus({ preventScroll: true });
       if (el && caret !== null && el.type === 'search') el.setSelectionRange(caret, caretEnd ?? caret, caretDirection ?? undefined);
     }
     this.bindSortables();
@@ -991,6 +992,7 @@ export class App {
   }
 
   private wireNodeView(): void {
+    this.root.addEventListener('node-note', event => { this.nodeNote = (event as CustomEvent<{ message: string }>).detail.message; });
     this.root.addEventListener('node-state', (event) => { const patch = (event as CustomEvent<Partial<NodeState>>).detail; if (patch.activity) this.nodeNote = ''; this.nodeState = { ...this.nodeState, ...patch }; });
     this.root.addEventListener('node-select', (event) => { this.nodeSel = (event as CustomEvent<RulesModel['sel']>).detail; });
     this.root.addEventListener('node-edit', (event) => {
@@ -1000,7 +1002,7 @@ export class App {
       setField(this.config.policy ??= emptyPolicy(), path, value, this.device);
       void this.saveRules();
     });
-    this.root.addEventListener('node-add', (event) => { void this.addNodeModels([(event as CustomEvent<{ label: string }>).detail.label]); });
+    this.root.addEventListener('node-add', (event) => { const { label, allowActivity } = (event as CustomEvent<{ label: string; allowActivity?: boolean }>).detail; void this.addNodeModels([label], allowActivity); });
     this.root.addEventListener('node-suggest', () => {
       const items = suggestedThree(nodeCatalog(this.config, this.catalog, this.snapshot).filter(item => !nodeAddReason(this.config, this.snapshot, item, this.nodeState.activity, this.nodeState.dataTier)), this.nodeState.activity, this.nodeState.dataTier);
       void this.addNodeModels(items.map(item => item.label));
@@ -1015,9 +1017,10 @@ export class App {
       const target = event.target as HTMLElement;
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault(); event.stopImmediatePropagation();
+        if (this.root.querySelector('.nv-action')) return;
         this.root.querySelector<HTMLElement & { openSwitcher(): void }>('augur-node-view')?.openSwitcher(); return;
       }
-      if (!target.closest('input,textarea,select,[contenteditable="true"]') && (event.key === '[' || event.key === ']')) {
+      if (!target.closest('[role="dialog"],input,textarea,select,[contenteditable="true"]') && (event.key === '[' || event.key === ']')) {
         event.preventDefault(); const activity = stepActivity(this.nodeState.activity, event.key === '[' ? -1 : 1);
         const node = this.root.querySelector<HTMLElement & { activity: NodeState['activity'] }>('augur-node-view');
         if (node) node.activity = activity;
@@ -1025,7 +1028,7 @@ export class App {
     }, { capture: true });
   }
 
-  private async addNodeModels(labels: string[]): Promise<void> {
+  private async addNodeModels(labels: string[], allowActivity = false): Promise<void> {
     const items = nodeCatalog(this.config, this.catalog, this.snapshot), policy = this.config.policy ??= emptyPolicy();
     this.nodeNote = '';
     batchPolicyChanges(policy, () => {
@@ -1033,7 +1036,7 @@ export class App {
         const item = items.find(row => row.label === label);
         if (!item) continue;
         const reason = nodeAddReason(this.config, this.snapshot, item, this.nodeState.activity, this.nodeState.dataTier);
-        if (reason) { this.nodeNote = reason; continue; }
+        if (reason && !(allowActivity && nodeCanRestore(this.config, this.snapshot, item, this.nodeState.activity, this.nodeState.dataTier))) { this.nodeNote = reason; continue; }
         if (!item.exists) {
           addModels(policy, item.provider, [{ label: item.label, id: item.id, name: item.name }], 'manual');
           const entry = policy.providers[item.provider]!.models[item.label]!;
@@ -1042,6 +1045,7 @@ export class App {
         }
         setField(policy, `${item.provider}|${item.label}|activities.${this.nodeState.activity}`, 'normal', this.device);
         this.nodeSel = { provider: item.provider, model: item.label };
+        this.nodeNote = item.exists ? NODE_TEXT.added : NODE_TEXT.awaitingReview;
       }
     });
     await this.saveRules();

@@ -121,6 +121,9 @@ augur-node-view { display: block; --nv-panel: var(--card); font-variant-numeric:
 .nv-switch-backdrop { position: fixed; inset: 0; z-index: 20; background: #0008; display: grid; place-items: start center; padding: 80px 20px 20px; }
 .nv-switch { width: min(520px, 100%); max-height: min(650px, 80vh); border: 1px solid var(--line); border-radius: 15px; background: var(--nv-panel); box-shadow: 0 20px 60px #0008; overflow: hidden; display: flex; flex-direction: column; }
 .nv-switch header { display: flex; gap: 10px; padding: 14px; border-bottom: 1px solid var(--line); }
+.nv-action p { margin: 0; padding: 20px; overflow-wrap: anywhere; }
+.nv-action footer { display: flex; gap: 10px; justify-content: flex-end; padding: 14px; border-top: 1px solid var(--line); }
+[data-node-drag] { cursor: grab; }
 .nv-switch input { flex: 1; min-width: 0; }
 .nv-activity-results { overflow: auto; padding: 7px; }
 .nv-activity-results button { display: flex; align-items: center; width: 100%; gap: 13px; padding: 10px; text-align: left; background: none; border: 1px solid transparent; border-radius: 9px; cursor: pointer; }

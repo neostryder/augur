@@ -6,6 +6,8 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Fixed
 
+- [Visible] [UI] Models can be dragged from the Node view mix back to the full list, with matching button and keyboard removal, undo, live feedback, and dialogs for invalid drops or the last model. Restoring an activity exclusion asks first and rechecks the other gates.
+
 - [Visible] [UI] Node view searches preserve focus and text selection, match providers and descriptions, and show an empty result message for models.
 
 - [Visible] [UI] The Model rules mode switch prepares the Node view before swapping pages and no longer replays the ring entrance on redraw.
