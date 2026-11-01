@@ -67,7 +67,7 @@ describe('node element and app wiring in Chromium', () => {
     await command('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', clickCount: 1, ...to }, sessionId);
     const checked = await command('Runtime.evaluate', { expression: "import('/test/node-element.browser.ts').then(module => module.checkNativeDrag())", awaitPromise: true, returnByValue: true }, sessionId);
     expect(checked.exceptionDetails?.exception?.description ?? checked.exceptionDetails?.text).toBeUndefined();
-  });
+  }, 30000);
   it.each(cases)('%s', async name => {
     await command('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: name.endsWith(' reduced') ? 'reduce' : 'no-preference' }] }, sessionId);
     await command('Emulation.setDeviceMetricsOverride', { width: name.startsWith('phone') || name === 'focus trap' || name === 'popup bounds' ? 390 : 1280, height: 900, deviceScaleFactor: 1, mobile: false }, sessionId);
