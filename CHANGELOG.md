@@ -4,20 +4,18 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
-### Fixed
-
-- [Visible] [UI] Models can be dragged from the Node view mix back to the full list, with matching button and keyboard removal, undo, live feedback, and dialogs for invalid drops or the last model. Restoring an activity exclusion asks first and rechecks the other gates.
-
-- [Visible] [UI] Node view searches preserve focus and text selection, match providers and descriptions, and show an empty result message for models.
-
-- [Visible] [UI] The Model rules mode switch prepares the Node view before swapping pages and no longer replays the ring entrance on redraw.
-
 ### Added
 
 - [Visible] [UI] **Added a node view that edits each activity's model mix as a donut, with undo history and reduced motion support.** Catalog adds now keep existing levels and respect refusals. Copy and suggest each undo in one step, and small positive shares stay visible. Pointer cancellation, keyboard batching, selection isolation, search drafts, tooltips, phone controls, and focus in the node view were fixed.
 - [Visible] [Providers] **Added Claude API key support with a key test.** Existing route-specific keys still apply. Usage refresh for the Claude API provider now stays offline. Route planning checks that baseUrl is valid, and requests accept a baseUrl that ends in a v1 path. Test key results now last only for the current session.
 - [Visible] [Platform] **`augur run` and the augur_run tool take a per-job effort and an answer schema.** The effort overrides the route's setting for that job. Codex and Grok routes enforce the JSON Schema with native structured output, other routes get it in the prompt, and an answer that fails it adds a warning to the job.
 - [Visible] [Providers] **Augur reads the Cogitator gateway's catalog endpoint with the manage key.** Entries that declare their uses replace the shipped descriptions, role chains come from the live roles, and each peer's models are described by that peer's own catalog. A gateway or peer without the endpoint keeps the shipped descriptions.
+- [Visible] [UI] **In the Node view, drag a model from the full list onto the dial to add it, or back to the list to remove it.** Buttons and the Delete key do the same, and each change can be undone. A drop that cannot work explains why in a dialog, and removing the last model or adding a blocked model asks first.
+
+### Fixed
+
+- [Visible] [UI] **Node view search keeps the cursor and selection while you type.** Results update with each keystroke, and model search matches names, providers, and descriptions regardless of case and punctuation. A message shows when nothing matches, and Escape clears the search first.
+- [Visible] [UI] **Switching Model rules to Node view no longer flickers.** The page builds the Node view first and swaps once, and the dial's entrance animation no longer replays on each redraw.
 
 ## [1.16.0] - 2026-10-31
 

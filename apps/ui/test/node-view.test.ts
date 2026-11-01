@@ -20,7 +20,7 @@ describe('node view rendering', () => {
     }
     m.node.query = 'missing';
     expect(renderNodeView(m)).not.toContain('data-node-add="openrouter/terra"');
-    expect(renderNodeView(m)).toContain('TODO_PROSE_noModelMatch');
+    expect(renderNodeView(m)).toContain('No models match your search.');
   });
   it('keeps list and history available around the native component', () => {
     const m = model();
