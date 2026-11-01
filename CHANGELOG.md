@@ -15,6 +15,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Fixed
 
+- [Visible] [Windows] **The TypeSafe sign-in window writes a local `signin.log` trace of its navigation and account-reading results.** The trace contains URL hosts and paths without query strings or fragments, and it never records page text, cookies, or tokens.
 - [Visible] [UI] **The TypeSafe and Claude sign-in window stays open until Augur reads your account page (the credit balance, for TypeSafe), then closes itself.** It no longer gives up after 15 minutes, and Augur waits 30 seconds or for a page change before retrying a failed reading. A downloading update now waits for you to close the window before installing and restarting Augur.
 - [Visible] [UI] **Node view search keeps the cursor and selection while you type.** Results update with each keystroke, and model search matches names, providers, and descriptions regardless of case and punctuation. A message shows when nothing matches, and Escape clears the search first.
 - [Visible] [UI] **Switching Model rules to Node view no longer flickers.** The page builds the Node view first and swaps once, and the dial's entrance animation no longer replays on each redraw.
