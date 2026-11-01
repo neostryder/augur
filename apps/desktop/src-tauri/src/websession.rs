@@ -6,9 +6,11 @@
 //! the window's navigation handler intercepts. No IPC is exposed to the provider's pages.
 
 use std::collections::HashMap;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 use tauri::Url;
@@ -25,6 +27,26 @@ const RETRY_AFTER: Duration = Duration::from_secs(30);
 const READ_TIMEOUT: Duration = Duration::from_secs(45);
 // The reader script navigates here with its findings; the navigation is intercepted and never loads.
 const REPORT_HOST: &str = "augur.invalid";
+
+fn trace(app: &tauri::AppHandle, line: &str) {
+    let Ok(dir) = app.path().app_data_dir() else {
+        return;
+    };
+    if fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let path = dir.join("signin.log");
+    if fs::metadata(&path).is_ok_and(|metadata| metadata.len() > 64 * 1024) {
+        let _ = OpenOptions::new().write(true).truncate(true).open(&path);
+    }
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs());
+    let line = line.replace('\r', " ").replace('\n', " ");
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(file, "{seconds} {line}");
+    }
+}
 
 struct Site {
     title: &'static str,
@@ -103,6 +125,10 @@ pub async fn web_session_sign_in(app: tauri::AppHandle, site: String) -> Result<
     .focused(true)
     .build()
     .map_err(|e| e.to_string())?;
+    trace(
+        &app,
+        &format!("window opened site={site} start_url={}", spec.sign_in_url),
+    );
     let succeeded = Arc::new(AtomicBool::new(false));
     let destroyed = Arc::new(AtomicBool::new(false));
     let handle = app.clone();
@@ -113,7 +139,12 @@ pub async fn web_session_sign_in(app: tauri::AppHandle, site: String) -> Result<
     window.on_window_event(move |event| {
         if matches!(event, WindowEvent::Destroyed) {
             closing_destroyed.store(true, Ordering::SeqCst);
-            if should_clear_cache_on_destroy(closing_succeeded.load(Ordering::SeqCst)) {
+            let succeeded = closing_succeeded.load(Ordering::SeqCst);
+            trace(
+                &handle,
+                &format!("window destroyed site={closing_site} succeeded={succeeded}"),
+            );
+            if should_clear_cache_on_destroy(succeeded) {
                 if let Ok(mut cache) = handle.state::<WebSessions>().cache.lock() {
                     cache.remove(&closing_site);
                 }
@@ -146,6 +177,14 @@ pub async fn web_session_sign_in(app: tauri::AppHandle, site: String) -> Result<
             };
             let now = Instant::now();
             if last_url.as_ref() != Some(&current) {
+                trace(
+                    &watcher,
+                    &format!(
+                        "url changed site={watched} host={} path={}",
+                        current.host_str().unwrap_or(""),
+                        current.path()
+                    ),
+                );
                 last_url_change = now;
                 last_url = Some(current.clone());
             }
@@ -164,12 +203,46 @@ pub async fn web_session_sign_in(app: tauri::AppHandle, site: String) -> Result<
             if !should_read(now, last_failed_read, last_url_change, settled) {
                 continue;
             }
+            trace(
+                &watcher,
+                &format!("settled and about to read site={watched}"),
+            );
             let reading = read_site(&watcher, &watched, Some(&destroyed), true).await;
+            match &reading {
+                Ok(Some(value)) => {
+                    let signed_in = value.get("signedIn") == Some(&Value::Bool(true));
+                    if let Some(reason) = value.get("reason").and_then(Value::as_str) {
+                        trace(
+                            &watcher,
+                            &format!(
+                                "read outcome site={watched} signedIn={signed_in} reason={reason}"
+                            ),
+                        );
+                    } else {
+                        trace(
+                            &watcher,
+                            &format!("read outcome site={watched} signedIn={signed_in}"),
+                        );
+                    }
+                }
+                Ok(None) => trace(
+                    &watcher,
+                    &format!("read outcome site={watched} signedIn=false"),
+                ),
+                Err(error) => trace(
+                    &watcher,
+                    &format!("read outcome site={watched} Err={error}"),
+                ),
+            }
             if destroyed.load(Ordering::SeqCst) {
                 return;
             }
             if reading_succeeded(&reading) {
                 succeeded.store(true, Ordering::SeqCst);
+                trace(
+                    &watcher,
+                    &format!("destroying window after success site={watched}"),
+                );
                 let _ = window.destroy();
                 if let Some(popup) = watcher.get_webview_window("popup") {
                     let _ = popup.emit("web-session-ready", ());
@@ -189,12 +262,6 @@ pub async fn web_session_read(
     site: String,
     fresh: Option<bool>,
 ) -> Result<Option<Value>, String> {
-    // A reading loads the account page in a second window on the same profile. While the sign-in window is open that
-    // page redirects to the sign-in flow, and the second flow replaces the first one's cookie, so the first fails
-    // with "We couldn't verify your browser". The sign-in window's own watcher is the only reader until it closes.
-    if app.get_webview_window(&format!("signin-{site}")).is_some() {
-        return Ok(None);
-    }
     read_site(&app, &site, None, fresh.unwrap_or(false)).await
 }
 
@@ -204,8 +271,18 @@ async fn read_site(
     sign_in_destroyed: Option<&AtomicBool>,
     skip_cache: bool,
 ) -> Result<Option<Value>, String> {
-    let state = app.state::<WebSessions>();
     let site = site.to_string();
+    // A reading loads the account page in a second window on the same profile. While the sign-in window is open that
+    // page redirects to the sign-in flow, and the second flow replaces the first one's cookie, so the first fails
+    // with "We couldn't verify your browser". The sign-in window's own watcher is the only reader until it closes.
+    if sign_in_destroyed.is_none() && app.get_webview_window(&format!("signin-{site}")).is_some() {
+        trace(
+            app,
+            &format!("read skipped site={site} sign-in window exists"),
+        );
+        return Ok(None);
+    }
+    let state = app.state::<WebSessions>();
     let spec = self::site(&site).ok_or("Unknown site")?;
     // A requested reading skips the cache, except for the successful reading handed to the ready refresh.
     if let Some(cached) = state
