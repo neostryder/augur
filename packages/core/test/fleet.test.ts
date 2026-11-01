@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { baseOf, DEFAULT_BASE } from '../src/providers/cogitator.js';
-import { cogitator, readFleet, compactFleet, fleetOf, withCompactFleet, collect, defaultConfig } from '../src/index.js';
-import type { Host, HttpRequest, HttpResponse, Snapshot } from '../src/index.js';
+import { cogitator, readFleet, compactFleet, fleetOf, fleetCatalog, withCompactFleet, collect, defaultConfig, COGITATOR_MODELS } from '../src/index.js';
+import type { FleetReading, Host, HttpRequest, HttpResponse, Snapshot } from '../src/index.js';
 
 /** What a gateway on Eru answers at /api/v1/hosts: Eru up with three models, Bilbo up with one, Aragorn down. */
 const hosts = {
@@ -71,15 +71,72 @@ describe('the Cogitator fleet reading', () => {
 });
 
 describe('the Cogitator provider', () => {
-  it('sends the manage key to the hosts endpoint and reports the fleet', async () => {
+  it('sends the manage key to the fleet and catalog endpoints once per peer and reports the fleet', async () => {
     const h = host(() => ok(hosts));
     const r = await cogitator.fetch(h, {});
-    expect(h.seen).toHaveLength(1);
-    expect(h.seen[0]!.url).toBe(`${DEFAULT_BASE}/api/v1/hosts`);
-    expect(h.seen[0]!.headers).toEqual({ Authorization: 'Bearer k-manage' });
+    expect(h.seen.map(req => req.url)).toEqual([`${DEFAULT_BASE}/api/v1/hosts`, `${DEFAULT_BASE}/api/v1/catalog`, 'http://bilbo:8470/api/v1/catalog', 'http://aragorn:8470/api/v1/catalog']);
+    for (const req of h.seen) {
+      expect(req.headers).toEqual({ Authorization: 'Bearer k-manage' });
+      expect(req.timeoutMs).toBe(5000);
+    }
     expect(r.detail).toBe('2 of 3 machines up');
     expect(r.meters).toEqual([]);
     expect((r.notes!.fleet as { machines: unknown[] }).machines).toHaveLength(3);
+  });
+
+  it.each([404, 401, 403, 500, 'timeout', 'bad JSON'])('keeps the fleet and seeded knowledge when the gateway catalog returns %s', async failure => {
+    const body = { self: { name: 'eru', models: ['gemma-4-12b'] } };
+    const h = host(req => {
+      if (req.url.endsWith('/hosts')) return ok(body);
+      if (failure === 'timeout') throw new Error('ETIMEDOUT');
+      return { status: typeof failure === 'number' ? failure : 200, headers: {}, body: '{' };
+    });
+    const result = await cogitator.fetch(h, { baseUrl: 'http://eru:8470/' });
+    expect(result.detail).toBe('1 of 1 machines up');
+    expect(fleetCatalog(result.notes!.fleet as FleetReading)[0]).toMatchObject({ id: 'gemma-4-12b', uses: COGITATOR_MODELS[0]!.uses, strengths: COGITATOR_MODELS[0]!.strengths, limits: COGITATOR_MODELS[0]!.limits });
+    expect(h.seen.map(req => req.url)).toEqual(['http://eru:8470/api/v1/hosts', 'http://eru:8470/api/v1/catalog']);
+  });
+
+  it('reads a peer catalog for live chains and keeps gateway knowledge when another peer returns 404', async () => {
+    const knowledge = { uses: ['peer speech'], strengths: 'Peer strength.', limits: 'Peer limit.' };
+    const h = host(req => {
+      if (req.url.endsWith('/hosts')) return ok(hosts);
+      if (req.url.startsWith(DEFAULT_BASE)) return ok({ schema: 1, node: 'eru', engines: [{ id: 'laya-judge', uses_declared: true, uses: ['gateway judgment'] }],
+        roles: [{ id: 'listen', chain: ['peer-speech@aragorn', 'apple@bilbo'], refuses_degrade: false }] });
+      if (req.url.startsWith('http://aragorn:')) return ok({ schema: 1, node: 'aragorn', engines: [{ id: 'peer-speech', uses_declared: true, ...knowledge }], roles: [] });
+      return { status: 404, headers: {}, body: '{}' };
+    });
+    const result = await cogitator.fetch(h, {}), fleet = result.notes!.fleet as FleetReading;
+    expect(fleet.roles.find(role => role.name === 'listen')?.chain).toEqual(['peer-speech@aragorn', 'apple@bilbo']);
+    expect(fleetCatalog(fleet).find(entry => entry.id === 'peer-speech')).toMatchObject(knowledge);
+    expect(fleetCatalog(fleet).find(entry => entry.id === 'laya-judge')?.uses).toEqual(['gateway judgment']);
+    expect(fleet.machines[1]!.models[0]!.strengths).toBeUndefined();
+    expect(h.seen.filter(req => req.url === 'http://bilbo:8470/api/v1/catalog')).toHaveLength(1);
+    expect(h.seen.filter(req => req.url === 'http://aragorn:8470/api/v1/catalog')).toHaveLength(1);
+  });
+
+  it.each([404, 403, 'timeout', 'bad JSON'])('keeps the fleet when a peer catalog returns %s', async failure => {
+    const h = host(req => {
+      if (req.url.endsWith('/hosts')) return ok(hosts);
+      if (req.url.startsWith(DEFAULT_BASE)) return ok({ schema: 1, node: 'eru', engines: [], roles: [] });
+      if (failure === 'timeout') throw new Error('ETIMEDOUT');
+      return { status: typeof failure === 'number' ? failure : 200, headers: {}, body: '{' };
+    });
+    expect((await cogitator.fetch(h, {})).notes!.fleet).toEqual(readFleet(hosts));
+  });
+
+  it.each([
+    [DEFAULT_BASE, 'https://unrelated.example'],
+    [DEFAULT_BASE, 'http://unrelated.example'],
+    [DEFAULT_BASE, 'invalid address'],
+    [DEFAULT_BASE, undefined],
+    ['https://gateway.example', 'http://bilbo:8470'],
+    ['https://gateway.example', 'https://other.example'],
+  ])('skips an untrusted or unknown peer address from %s to %s', async (baseUrl, url) => {
+    const body = { self: { name: 'eru', roles: [{ name: 'judge', chain: ['apple@bilbo', 'apple@unknown'] }] }, peers: [{ name: 'bilbo', url }] };
+    const h = host(req => req.url.endsWith('/hosts') ? ok(body) : ok({ engines: [], roles: [] }));
+    await cogitator.fetch(h, { baseUrl });
+    expect(h.seen.map(req => req.url)).toEqual([`${baseUrl}/api/v1/hosts`, `${baseUrl}/api/v1/catalog`]);
   });
 
   it('counts degraded roles in the detail', async () => {
