@@ -454,7 +454,6 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
@@ -470,6 +469,7 @@ pub fn run() {
             commands::set_popup_size,
             commands::max_popup_height,
             commands::hide_popup,
+            commands::install_update,
             commands::show_popup,
             commands::popup_pinned,
             commands::remember_autostart,

@@ -6,7 +6,8 @@
 //! the window's navigation handler intercepts. No IPC is exposed to the provider's pages.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
@@ -20,7 +21,7 @@ const CLAUDE_CACHE_FOR: Duration = Duration::from_secs(6 * 3600);
 // A reading that found no sign-in is kept briefly, so a provider that refreshes every minute does not open a window each time.
 const SIGNED_OUT_CACHE_FOR: Duration = Duration::from_secs(900);
 const WATCH_EVERY: Duration = Duration::from_secs(5);
-const WATCH_FOR: Duration = Duration::from_secs(900);
+const RETRY_AFTER: Duration = Duration::from_secs(30);
 const READ_TIMEOUT: Duration = Duration::from_secs(45);
 // The reader script navigates here with its findings; the navigation is intercepted and never loads.
 const REPORT_HOST: &str = "augur.invalid";
@@ -60,14 +61,25 @@ fn site(id: &str) -> Option<Site> {
 const TYPESAFE_SCRIPT: &str = include_str!("readers/typesafe.js");
 const CLAUDE_SCRIPT: &str = include_str!("readers/claude.js");
 
+struct CachedReading {
+    at: Instant,
+    value: Value,
+    // The ready event forces a provider refresh. Hand that refresh the reading we just collected.
+    after_sign_in: bool,
+}
+
 #[derive(Default)]
 pub struct WebSessions {
     pending: Mutex<HashMap<String, oneshot::Sender<Value>>>,
-    cache: Mutex<HashMap<String, (Instant, Value)>>,
+    cache: Mutex<HashMap<String, CachedReading>>,
+    // An update holds this through installation and restart, after existing sign-ins have ended.
+    pub(crate) window_gate: tokio::sync::Mutex<()>,
 }
 
 #[tauri::command]
 pub async fn web_session_sign_in(app: tauri::AppHandle, site: String) -> Result<(), String> {
+    let sessions = app.state::<WebSessions>();
+    let _gate = sessions.window_gate.lock().await;
     let spec = self::site(&site).ok_or("Unknown site")?;
     let label = format!("signin-{site}");
     if let Some(window) = app.get_webview_window(&label) {
@@ -91,61 +103,81 @@ pub async fn web_session_sign_in(app: tauri::AppHandle, site: String) -> Result<
     .focused(true)
     .build()
     .map_err(|e| e.to_string())?;
-    // Signing in can take a while, with a Cloudflare check first, so the account page is read again every
-    // few seconds while the window is open, but only once the sign-in window itself is back on the site
-    // after the identity provider. Reading earlier opens a second window on the sign-in page every few
-    // seconds, which competes with the one being used. The first signed-in reading refreshes the providers
-    // that use it.
-    let watcher = app.clone();
-    let watched = site.clone();
-    let home = Url::parse(spec.sign_in_url).ok();
-    tauri::async_runtime::spawn(async move {
-        let started = Instant::now();
-        let mut seen_off_site = false;
-        let mut settled = 0;
-        while started.elapsed() < WATCH_FOR {
-            tokio::time::sleep(WATCH_EVERY).await;
-            let Some(signin) = watcher.get_webview_window(&format!("signin-{watched}")) else {
-                return;
-            };
-            if let (Some(home), Ok(current)) = (home.as_ref(), signin.url()) {
-                if current.host_str() != home.host_str() {
-                    seen_off_site = true;
-                    settled = 0;
-                    continue;
+    let succeeded = Arc::new(AtomicBool::new(false));
+    let destroyed = Arc::new(AtomicBool::new(false));
+    let handle = app.clone();
+    let closing_site = site.clone();
+    let closing_succeeded = succeeded.clone();
+    let closing_destroyed = destroyed.clone();
+    // A successful reading is already cached. Only a manual close needs another refresh.
+    window.on_window_event(move |event| {
+        if matches!(event, WindowEvent::Destroyed) {
+            closing_destroyed.store(true, Ordering::SeqCst);
+            if should_clear_cache_on_destroy(closing_succeeded.load(Ordering::SeqCst)) {
+                if let Ok(mut cache) = handle.state::<WebSessions>().cache.lock() {
+                    cache.remove(&closing_site);
                 }
-                // A redirect chain after the identity provider passes through several pages on the site, so the
-                // window has to stay on a post-sign-in page for two checks in a row before the account page is read.
-                if !landed_after_sign_in(&current, seen_off_site) {
-                    settled = 0;
-                    continue;
-                }
-                settled += 1;
-                if settled < 2 {
-                    continue;
-                }
-            }
-            let reading = read_site(&watcher, &watched, true, false).await;
-            if let Ok(Some(value)) = reading {
-                if value.get("signedIn") == Some(&Value::Bool(true)) {
-                    if let Some(popup) = watcher.get_webview_window("popup") {
-                        let _ = popup.emit("web-session-ready", ());
-                    }
-                    return;
+                if let Some(popup) = handle.get_webview_window("popup") {
+                    let _ = popup.emit("refresh-requested", ());
                 }
             }
         }
     });
-    // Closing the sign-in window forgets the cached reading and refreshes, so new numbers show at once.
-    let handle = app.clone();
-    window.on_window_event(move |event| {
-        if matches!(event, WindowEvent::Destroyed) {
-            if let Ok(mut cache) = handle.state::<WebSessions>().cache.lock() {
-                cache.remove(&site);
+    // Reading opens a second window on the shared profile. Wait until the visible window has
+    // landed after sign-in, and give the user time to proceed after each unsuccessful reading.
+    let watcher = app.clone();
+    let watched = site;
+    let home = Url::parse(spec.sign_in_url).ok();
+    tauri::async_runtime::spawn(async move {
+        let mut seen_off_site = false;
+        let mut settled = 0;
+        let mut last_url = None;
+        let mut last_url_change = Instant::now();
+        let mut last_failed_read = None;
+        loop {
+            tokio::time::sleep(WATCH_EVERY).await;
+            // Keep this window's lifetime, so closing and reopening the same label cannot revive an old watcher.
+            if destroyed.load(Ordering::SeqCst) {
+                return;
             }
-            if let Some(popup) = handle.get_webview_window("popup") {
-                let _ = popup.emit("refresh-requested", ());
+            let (Some(home), Ok(current)) = (home.as_ref(), window.url()) else {
+                settled = 0;
+                continue;
+            };
+            let now = Instant::now();
+            if last_url.as_ref() != Some(&current) {
+                last_url_change = now;
+                last_url = Some(current.clone());
             }
+            if current.host_str() != home.host_str() {
+                seen_off_site = true;
+                settled = 0;
+                continue;
+            }
+            // Redirects can pass through several pages on the site. Require two consecutive checks
+            // on post-sign-in pages, including after an unsuccessful reading.
+            if !landed_after_sign_in(&current, seen_off_site) {
+                settled = 0;
+                continue;
+            }
+            settled = (settled + 1).min(2);
+            if !should_read(now, last_failed_read, last_url_change, settled) {
+                continue;
+            }
+            let reading = read_site(&watcher, &watched, Some(&destroyed), true).await;
+            if destroyed.load(Ordering::SeqCst) {
+                return;
+            }
+            if reading_succeeded(&reading) {
+                succeeded.store(true, Ordering::SeqCst);
+                let _ = window.destroy();
+                if let Some(popup) = watcher.get_webview_window("popup") {
+                    let _ = popup.emit("web-session-ready", ());
+                }
+                return;
+            }
+            last_failed_read = Some(Instant::now());
+            settled = 0;
         }
     });
     Ok(())
@@ -163,36 +195,44 @@ pub async fn web_session_read(
     if app.get_webview_window(&format!("signin-{site}")).is_some() {
         return Ok(None);
     }
-    read_site(&app, &site, false, fresh.unwrap_or(false)).await
+    read_site(&app, &site, None, fresh.unwrap_or(false)).await
 }
 
 async fn read_site(
     app: &tauri::AppHandle,
     site: &str,
-    fresh: bool,
+    sign_in_destroyed: Option<&AtomicBool>,
     skip_cache: bool,
 ) -> Result<Option<Value>, String> {
     let state = app.state::<WebSessions>();
     let site = site.to_string();
     let spec = self::site(&site).ok_or("Unknown site")?;
-    // A reading the user asked for skips the cache, so a change on the account page shows at once.
-    if let Some((at, value)) = state
+    // A requested reading skips the cache, except for the successful reading handed to the ready refresh.
+    if let Some(cached) = state
         .cache
         .lock()
         .map_err(|e| e.to_string())?
-        .get(&site)
-        .filter(|_| !skip_cache)
+        .get_mut(&site)
     {
-        let signed_in = value.get("signedIn") == Some(&Value::Bool(true));
+        let signed_in = cached.value.get("signedIn") == Some(&Value::Bool(true));
         let keep = if signed_in {
             spec.cache_for
-        } else if fresh {
+        } else if sign_in_destroyed.is_some() {
             Duration::ZERO
         } else {
             SIGNED_OUT_CACHE_FOR
         };
-        if at.elapsed() < keep {
-            return Ok(Some(value.clone()));
+        if should_use_cached_reading(
+            cached.at.elapsed(),
+            keep,
+            skip_cache,
+            cached.after_sign_in,
+            sign_in_destroyed.is_some(),
+        ) {
+            if skip_cache {
+                cached.after_sign_in = false;
+            }
+            return Ok(Some(cached.value.clone()));
         }
     }
     let (tx, rx) = oneshot::channel();
@@ -256,12 +296,54 @@ async fn read_site(
     };
     // A signed-out reading is kept only briefly and never served to the sign-in window's own watcher,
     // so signing in shows up at once.
-    state
-        .cache
-        .lock()
-        .map_err(|e| e.to_string())?
-        .insert(site, (Instant::now(), value.clone()));
+    let mut cache = state.cache.lock().map_err(|e| e.to_string())?;
+    // A manual close may happen during the reading. Do not undo its cache clear when the reader finishes.
+    if !sign_in_destroyed.is_some_and(|destroyed| destroyed.load(Ordering::SeqCst)) {
+        cache.insert(
+            site,
+            CachedReading {
+                at: Instant::now(),
+                value: value.clone(),
+                after_sign_in: sign_in_destroyed.is_some()
+                    && value.get("signedIn") == Some(&Value::Bool(true)),
+            },
+        );
+    }
     Ok(Some(value))
+}
+
+pub(crate) fn has_sign_in_window<'a>(labels: impl IntoIterator<Item = &'a str>) -> bool {
+    labels.into_iter().any(|label| label.starts_with("signin-"))
+}
+
+fn should_use_cached_reading(
+    age: Duration,
+    keep: Duration,
+    skip_cache: bool,
+    after_sign_in: bool,
+    watching_sign_in: bool,
+) -> bool {
+    age < keep && (!skip_cache || (after_sign_in && !watching_sign_in))
+}
+
+fn should_read(
+    now: Instant,
+    last_failed_read: Option<Instant>,
+    last_url_change: Instant,
+    settled: u8,
+) -> bool {
+    settled >= 2
+        && last_failed_read.is_none_or(|failed| {
+            last_url_change > failed || now.duration_since(failed) >= RETRY_AFTER
+        })
+}
+
+fn reading_succeeded(reading: &Result<Option<Value>, String>) -> bool {
+    matches!(reading, Ok(Some(value)) if value.get("signedIn") == Some(&Value::Bool(true)))
+}
+
+fn should_clear_cache_on_destroy(succeeded: bool) -> bool {
+    !succeeded
 }
 
 /// Whether the sign-in window, already on the site's own host, is showing a page that follows a sign-in.
@@ -279,36 +361,6 @@ fn landed_after_sign_in(url: &Url, seen_off_site: bool) -> bool {
         ]
         .iter()
         .any(|word| path.contains(word)))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn landed(url: &str, seen_off_site: bool) -> bool {
-        landed_after_sign_in(&Url::parse(url).unwrap(), seen_off_site)
-    }
-
-    #[test]
-    fn waits_on_the_login_screen_until_the_identity_provider_has_been_visited() {
-        assert!(!landed("https://console.typesafe.ai/", false));
-        assert!(!landed("https://console.typesafe.ai/login", false));
-        assert!(!landed("https://claude.ai/login", false));
-        assert!(!landed("https://console.typesafe.ai/auth/callback", false));
-    }
-
-    #[test]
-    fn reads_when_the_window_comes_back_from_the_identity_provider() {
-        assert!(landed("https://console.typesafe.ai/", true));
-        assert!(landed("https://console.typesafe.ai/auth/callback", true));
-    }
-
-    #[test]
-    fn reads_a_session_that_was_still_valid() {
-        assert!(landed("https://console.typesafe.ai/dashboard", false));
-        assert!(landed("https://claude.ai/new", false));
-        assert!(landed("https://console.typesafe.ai/design", false));
-    }
 }
 
 // WebView2 windows sharing one profile must be created with the same browser arguments,
@@ -345,5 +397,161 @@ fn deliver(app: &tauri::AppHandle, site: &str, target: &Url) {
     let sender = state.pending.lock().ok().and_then(|mut p| p.remove(site));
     if let Some(tx) = sender {
         let _ = tx.send(payload);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn landed(url: &str, seen_off_site: bool) -> bool {
+        landed_after_sign_in(&Url::parse(url).unwrap(), seen_off_site)
+    }
+
+    #[test]
+    fn waits_on_the_login_screen_until_the_identity_provider_has_been_visited() {
+        assert!(!landed("https://console.typesafe.ai/", false));
+        assert!(!landed("https://console.typesafe.ai/login", false));
+        assert!(!landed("https://claude.ai/login", false));
+        assert!(!landed("https://console.typesafe.ai/auth/callback", false));
+    }
+
+    #[test]
+    fn reads_when_the_window_comes_back_from_the_identity_provider() {
+        assert!(landed("https://console.typesafe.ai/", true));
+        assert!(landed("https://console.typesafe.ai/auth/callback", true));
+    }
+
+    #[test]
+    fn reads_a_session_that_was_still_valid() {
+        assert!(landed("https://console.typesafe.ai/dashboard", false));
+        assert!(landed("https://claude.ai/new", false));
+        assert!(landed("https://console.typesafe.ai/design", false));
+    }
+
+    #[test]
+    fn reading_requires_two_settled_checks_even_after_navigation_or_a_long_wait() {
+        let failed = Instant::now();
+        let later = failed + RETRY_AFTER;
+        for settled in [0, 1] {
+            assert!(!should_read(later, None, failed, settled));
+            assert!(!should_read(later, Some(failed), later, settled));
+        }
+        assert!(should_read(later, None, failed, 2));
+    }
+
+    #[test]
+    fn an_unchanged_page_backs_off_until_the_retry_pause_has_passed() {
+        let failed = Instant::now();
+        assert!(!should_read(failed + WATCH_EVERY, Some(failed), failed, 2));
+        assert!(!should_read(
+            failed + RETRY_AFTER - Duration::from_nanos(1),
+            Some(failed),
+            failed,
+            2,
+        ));
+        assert!(should_read(failed + RETRY_AFTER, Some(failed), failed, 2));
+    }
+
+    #[test]
+    fn only_a_url_change_after_the_failure_allows_an_early_retry() {
+        let changed = Instant::now();
+        let failed = changed + WATCH_EVERY;
+        let now = failed + WATCH_EVERY;
+        assert!(!should_read(now, Some(failed), changed, 2));
+        assert!(!should_read(now, Some(failed), failed, 2));
+        assert!(should_read(now, Some(failed), now, 2));
+    }
+
+    #[test]
+    fn each_failure_restarts_the_retry_pause() {
+        let first = Instant::now();
+        let second = first + RETRY_AFTER;
+        assert!(should_read(second, Some(first), first, 2));
+        assert!(!should_read(second + WATCH_EVERY, Some(second), first, 2));
+    }
+
+    #[test]
+    fn readings_continue_after_fifteen_minutes() {
+        let started = Instant::now();
+        let now = started + Duration::from_secs(3600);
+        assert!(should_read(now, None, started, 2));
+        assert!(should_read(now, Some(started), started, 2));
+    }
+
+    #[test]
+    fn only_a_signed_in_reading_completes_sign_in() {
+        for reason in ["signin", "challenge", "nobalance", "timeout"] {
+            assert!(!reading_succeeded(&Ok(Some(serde_json::json!({
+                "signedIn": false, "reason": reason,
+            })))));
+        }
+        assert!(!reading_succeeded(&Err(String::new())));
+        assert!(!reading_succeeded(&Ok(None)));
+        assert!(!reading_succeeded(&Ok(Some(serde_json::json!({})))));
+        assert!(!reading_succeeded(&Ok(Some(
+            serde_json::json!({"signedIn": "true"})
+        ))));
+        assert!(reading_succeeded(&Ok(Some(serde_json::json!({
+            "signedIn": true, "balance": 0,
+        })))));
+    }
+
+    #[test]
+    fn successful_close_keeps_the_reading_and_manual_close_clears_it() {
+        assert!(!should_clear_cache_on_destroy(true));
+        assert!(should_clear_cache_on_destroy(false));
+    }
+
+    #[test]
+    fn the_ready_refresh_uses_the_successful_reading_even_when_forced() {
+        assert!(should_use_cached_reading(
+            Duration::ZERO,
+            CACHE_FOR,
+            true,
+            true,
+            false,
+        ));
+        // Once handed off, another forced refresh can collect a new reading.
+        assert!(!should_use_cached_reading(
+            Duration::ZERO,
+            CACHE_FOR,
+            true,
+            false,
+            false,
+        ));
+        assert!(should_use_cached_reading(
+            Duration::ZERO,
+            CACHE_FOR,
+            false,
+            false,
+            false,
+        ));
+    }
+
+    #[test]
+    fn a_watcher_requires_a_new_reading_and_an_expired_reading_is_never_handed_off() {
+        assert!(!should_use_cached_reading(
+            Duration::ZERO,
+            CACHE_FOR,
+            true,
+            true,
+            true,
+        ));
+        assert!(!should_use_cached_reading(
+            CACHE_FOR, CACHE_FOR, true, true, false,
+        ));
+    }
+
+    #[test]
+    fn updates_wait_for_either_sign_in_window_but_not_the_popup_or_readers() {
+        assert!(has_sign_in_window(["popup", "signin-typesafe"]));
+        assert!(has_sign_in_window(["signin-claude", "scrape-claude"]));
+        assert!(!has_sign_in_window([
+            "popup",
+            "scrape-typesafe",
+            "scrape-claude",
+        ]));
+        assert!(!has_sign_in_window([]));
     }
 }

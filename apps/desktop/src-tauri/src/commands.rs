@@ -392,6 +392,33 @@ pub fn hide_popup(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub async fn install_update(
+    webview: tauri::Webview,
+    app: tauri::AppHandle,
+    rid: tauri::ResourceId,
+) -> Result<(), String> {
+    require_popup(&webview)?;
+    let update = webview
+        .resources_table()
+        .get::<tauri_plugin_updater::Update>(rid)
+        .map_err(|e| e.to_string())?;
+    let bytes = update
+        .download(|_, _| {}, || {})
+        .await
+        .map_err(|e| e.to_string())?;
+    let sessions = app.state::<crate::websession::WebSessions>();
+    let _gate = sessions.window_gate.lock().await;
+    // Hiding the popup can start an automatic update. The Windows installer exits the process,
+    // so defer installation itself, and prevent new sign-in windows until the restart completes.
+    while crate::websession::has_sign_in_window(app.webview_windows().keys().map(String::as_str)) {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    update.install(bytes).map_err(|e| e.to_string())?;
+    app.request_restart();
+    std::future::pending().await
+}
+
+#[tauri::command]
 pub fn show_popup(app: tauri::AppHandle) -> Result<(), String> {
     crate::show_popup(&app)
 }

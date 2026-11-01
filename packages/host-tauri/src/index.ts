@@ -4,7 +4,6 @@ import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { check, type Update } from '@tauri-apps/plugin-updater';
-import { relaunch } from '@tauri-apps/plugin-process';
 import { getVersion } from '@tauri-apps/api/app';
 import type { Host, Platform, Shell, TrayUpdate, UpdateInfo } from '@augur/core';
 
@@ -93,8 +92,7 @@ export function createTauriShell(): Shell {
       if (await invoke<string | null>('package_manager').catch(() => null)) return;
       const update = pendingUpdate ?? await check();
       if (!update) return;
-      await update.downloadAndInstall();
-      await relaunch();
+      await invoke<void>('install_update', { rid: update.rid });
     },
     on: (event, handler) => {
       let closed = false;
