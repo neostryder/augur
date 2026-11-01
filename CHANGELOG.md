@@ -6,6 +6,8 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Added
 
+- [Visible] [UI] **Added a node view that edits each activity's model mix as a donut, with undo history and reduced motion support.** Catalog adds now keep existing levels and respect refusals. Copy and suggest each undo in one step, and small positive shares stay visible. Pointer cancellation, keyboard batching, selection isolation, search drafts, tooltips, phone controls, and focus in the node view were fixed.
+- [Visible] [Providers] **Added Claude API key support with a key test.** Existing route-specific keys still apply. Usage refresh for the Claude API provider now stays offline. Route planning checks that baseUrl is valid, and requests accept a baseUrl that ends in a v1 path. Test key results now last only for the current session.
 - [Visible] [Platform] **`augur run` and the augur_run tool take a per-job effort and an answer schema.** The effort overrides the route's setting for that job. Codex and Grok routes enforce the JSON Schema with native structured output, other routes get it in the prompt, and an answer that fails it adds a warning to the job.
 - [Visible] [Providers] **Augur reads the Cogitator gateway's catalog endpoint with the manage key.** Entries that declare their uses replace the shipped descriptions, role chains come from the live roles, and each peer's models are described by that peer's own catalog. A gateway or peer without the endpoint keeps the shipped descriptions.
 
@@ -13,8 +15,6 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Added
 
-- [Visible] [UI] **Added a node view that edits each activity's model mix as a donut, with undo history and reduced motion support.**
-- [Visible] [Providers] **Added Claude API key support with a key test.** Existing route-specific keys still apply.
 - [Visible] [Providers] **Cogitator entries share one catalog of uses, strengths, limits, sizes, and activity fits.** Live management fields override the shipped descriptions. `augur models` and `augur_models` show live roles, chains, entries, and offers for missing rules or routes. Only the owner can accept an offer with `augur models accept`. New entries stay unreviewed, and routes never receive a key from the catalog. Seeded activity strengths fill unset rules, while explicit blocks, data clearance, fleet availability, cold loads, and memory pressure still apply.
 
 ### Changed

@@ -44,7 +44,7 @@ function storedKey(name: string): string | null {
 
 const fallbackKeyName = opt('--fallback-key-name');
 const key = (keyName ? storedKey(keyName) : process.env[keyEnv as string]) || (fallbackKeyName ? storedKey(fallbackKeyName) : null);
-if (!key) { console.error(`route_key_missing: ${keyName ?? keyEnv}${fallbackKeyName ? `, ${fallbackKeyName}` : ''}`); process.exit(65); }
+if (!key) { console.error(`Key ${keyName ?? keyEnv} is not set. Add it to the route or the environment.${fallbackKeyName ? ` A Claude API route can also use the provider key ${fallbackKeyName} saved in Settings.` : ''}`); process.exit(65); }
 
 let promptText = '';
 process.stdin.setEncoding('utf8');
