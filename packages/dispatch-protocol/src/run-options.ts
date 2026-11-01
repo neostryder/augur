@@ -2,18 +2,18 @@ export const MAX_SCHEMA_BYTES = 64 * 1024;
 const object = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 
 export function validateRunOptions(request: { effort?: unknown; schema?: unknown }): string | null {
-  if (request.effort !== undefined && (typeof request.effort !== 'string' || !/^[A-Za-z0-9-]{1,16}$/.test(request.effort))) return 'effort must be 1 to 16 letters, digits or hyphens.';
+  if (request.effort !== undefined && (typeof request.effort !== 'string' || !/^[A-Za-z0-9-]{1,16}$/.test(request.effort))) return 'Invalid effort level. Use 1 to 16 letters, digits, or hyphens.';
   if (request.schema !== undefined) {
-    if (!object(request.schema)) return 'schema must be a JSON object.';
-    try { if (new TextEncoder().encode(JSON.stringify(request.schema)).length > MAX_SCHEMA_BYTES) return 'schema must be at most 64 KB.'; }
-    catch { return 'schema must be a JSON object.'; }
+    if (!object(request.schema)) return 'Invalid schema: it must be a JSON object.';
+    try { if (new TextEncoder().encode(JSON.stringify(request.schema)).length > MAX_SCHEMA_BYTES) return 'Schema is larger than 64 KB. Use a smaller schema.'; }
+    catch { return 'Invalid schema: it must be a JSON object.'; }
   }
   return null;
 }
 
 export function schemaPrompt(prompt: string, schema: Record<string, unknown> | undefined, adapter: string): string {
   return schema && adapter !== 'codex-exec' && adapter !== 'grok-exec'
-    ? prompt + '\n\nReply with only a JSON document matching this JSON Schema. Do not wrap it in a code fence.\n' + JSON.stringify(schema)
+    ? prompt + '\n\nReply with only a JSON document that matches the schema below. Do not wrap it in a code fence.\n' + JSON.stringify(schema)
     : prompt;
 }
 
@@ -39,14 +39,14 @@ function matchesType(value: unknown, type: unknown): boolean {
 }
 
 function mismatch(value: unknown, schema: unknown, path = '$', depth = 0): string | null {
-  if (schema === false) return path + ' is disallowed.';
+  if (schema === false) return path + ' is not allowed by the schema';
   if (!object(schema)) return null;
-  if (depth > 64) return 'validation nesting exceeds 64 levels.';
-  if (schema.type !== undefined && !(Array.isArray(schema.type) ? schema.type : [schema.type]).some(t => matchesType(value, t))) return path + ' has the wrong type.';
-  if (Array.isArray(schema.enum) && !schema.enum.some(v => jsonEqual(value, v))) return path + ' is outside enum.';
+  if (depth > 64) return 'the answer nests deeper than 64 levels, so the check stopped';
+  if (schema.type !== undefined && !(Array.isArray(schema.type) ? schema.type : [schema.type]).some(t => matchesType(value, t))) return path + ' has a type the schema does not allow';
+  if (Array.isArray(schema.enum) && !schema.enum.some(v => jsonEqual(value, v))) return path + ' is not one of the values the schema lists';
   if (object(value)) {
     if (Array.isArray(schema.required)) for (const key of schema.required) {
-      if (typeof key === 'string' && !Object.hasOwn(value, key)) return path + ' is missing a required property.';
+      if (typeof key === 'string' && !Object.hasOwn(value, key)) return path + ' is missing a property the schema requires';
     }
     if (object(schema.properties)) for (const [key, rule] of Object.entries(schema.properties)) {
       if (!Object.hasOwn(value, key)) continue;
@@ -66,10 +66,10 @@ export function validateSchemaAnswer(answer: string, schema: Record<string, unkn
   try { value = JSON.parse(answer); }
   catch {
     const fence = /^\s*```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```\s*$/i.exec(answer);
-    if (!fence) return { answer, warning: 'schema: answer is not valid JSON.' };
+    if (!fence) return { answer, warning: 'schema: the answer is not valid JSON, so it was not checked.' };
     try { value = JSON.parse(fence[1] as string); answer = (fence[1] as string).trim(); }
-    catch { return { answer, warning: 'schema: answer is not valid JSON after removing a code fence.' }; }
+    catch { return { answer, warning: 'schema: the answer is not valid JSON, even after removing its code fence.' }; }
   }
   const problem = mismatch(value, schema);
-  return { answer, ...(problem ? { warning: 'schema: ' + problem } : {}) };
+  return { answer, ...(problem ? { warning: `schema: the answer does not match the schema (${problem})` } : {}) };
 }

@@ -30,8 +30,8 @@ augur run <route> --prompt-file <file|-> | --prompt <text> [options]
   --tools <t>        ${TOOL_TIERS.join(' | ')} (default read)
   --output <o>       ${OUTPUT_MODES.join(' | ')} (default text_only)
   --cwd <dir>        working directory (default: current)
-  --effort <level>  override reasoning effort for this job (1 to 16 letters, digits or hyphens)
-  --schema <file>   JSON Schema object for the answer (at most 64 KB)
+  --effort <level>   override the route's reasoning effort for this job (1-16 chars)
+  --schema <file>    JSON Schema file the answer must match (max 64 KB)
   --expect-file <f>  file the job must leave in the working directory
   --timeout <s>      wall time limit in seconds
   --named            the route was named for this task by the person
@@ -599,9 +599,9 @@ async function run(rest: string[], p: Parsed, io: Io, opts: Opts, say: (h: strin
   if (opt('schema') !== undefined) {
     try {
       const bytes = readFileSync(resolve(io.cwd, opt('schema') as string));
-      if (bytes.length > MAX_SCHEMA_BYTES) throw new Error('schema must be at most 64 KB.');
+      if (bytes.length > MAX_SCHEMA_BYTES) throw new Error('Schema is larger than 64 KB. Use a smaller schema.');
       schema = JSON.parse(bytes.toString('utf8')) as Record<string, unknown>;
-    } catch (e) { io.err(`The schema file could not be read as JSON: ${(e as Error).message}\n`); return EXIT_CODES.usage; }
+    } catch (e) { io.err(`Could not read the schema file as JSON: ${(e as Error).message}. Check the file path and make sure the file holds valid JSON.\n`); return EXIT_CODES.usage; }
   }
   const badOptions = validateRunOptions({ effort, schema });
   if (badOptions) { io.err(`${badOptions}\n`); return EXIT_CODES.usage; }

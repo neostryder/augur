@@ -90,7 +90,7 @@ describe('run effort and schema', () => {
     const { run } = await boot();
     for (const effort of ['', 'x'.repeat(17), 'high;exit', 'high_low']) {
       const result = await run(['run', 'fake', '--prompt', 'hi', '--effort', effort]);
-      expect(result.code).toBe(1); expect(result.err).toContain('effort must be 1 to 16');
+      expect(result.code).toBe(1); expect(result.err).toContain('Invalid effort level. Use 1 to 16');
     }
   });
 

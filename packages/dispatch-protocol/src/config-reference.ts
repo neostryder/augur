@@ -107,8 +107,8 @@ export function renderAdapterReference(): string {
   const out: string[] = [
     '| Job request field | CLI option | Value | What it does |',
     '| --- | --- | --- | --- |',
-    '| `effort` | `--effort <level>` | Optional string | Overrides the route effort for one job. Takes 1 to 16 letters, digits or hyphens. Adapters without effort support ignore it. |',
-    '| `schema` | `--schema <file>` | Optional JSON object | Reads a JSON Schema object of at most 64 KB. Uses native structured output when supported, otherwise adds prompt instructions. The service checks type, properties, required, items and enum, and records a schema warning on invalid output. |',
+    '| `effort` | `--effort <level>` | Optional string | Overrides the route\'s effort setting for this job without changing the saved route. Takes 1 to 16 letters, digits, or hyphens. Adapters with no effort setting ignore it. |',
+    '| `schema` | `--schema <file>` | Optional JSON object | Path to a JSON Schema object (at most 64 KB) the answer must match. codex-exec and grok-exec use their native structured output, and every other adapter gets an instruction block added to the prompt. When the job ends, Augur parses the answer as JSON, strips one surrounding code fence, and checks `type`, `properties`, `required`, `items`, and `enum`. A failure adds a schema warning to the job without failing it. |',
     '',
   ];
   for (const a of ADAPTER_INFO) {
