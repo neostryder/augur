@@ -137,21 +137,33 @@ pub async fn web_session_sign_in(app: tauri::AppHandle, site: String) -> Result<
     let closing_destroyed = destroyed.clone();
     // A successful reading is already cached. Only a manual close needs another refresh.
     window.on_window_event(move |event| {
-        if matches!(event, WindowEvent::Destroyed) {
-            closing_destroyed.store(true, Ordering::SeqCst);
-            let succeeded = closing_succeeded.load(Ordering::SeqCst);
-            trace(
-                &handle,
-                &format!("window destroyed site={closing_site} succeeded={succeeded}"),
-            );
-            if should_clear_cache_on_destroy(succeeded) {
-                if let Ok(mut cache) = handle.state::<WebSessions>().cache.lock() {
-                    cache.remove(&closing_site);
-                }
-                if let Some(popup) = handle.get_webview_window("popup") {
-                    let _ = popup.emit("refresh-requested", ());
+        match event {
+            WindowEvent::Destroyed => {
+                closing_destroyed.store(true, Ordering::SeqCst);
+                let succeeded = closing_succeeded.load(Ordering::SeqCst);
+                trace(
+                    &handle,
+                    &format!("window destroyed site={closing_site} succeeded={succeeded}"),
+                );
+                if should_clear_cache_on_destroy(succeeded) {
+                    if let Ok(mut cache) = handle.state::<WebSessions>().cache.lock() {
+                        cache.remove(&closing_site);
+                    }
+                    if let Some(popup) = handle.get_webview_window("popup") {
+                        let _ = popup.emit("refresh-requested", ());
+                    }
                 }
             }
+            WindowEvent::Focused(focused) => {
+                trace(
+                    &handle,
+                    &format!("window focus site={closing_site} focused={focused}"),
+                );
+            }
+            WindowEvent::CloseRequested { .. } => {
+                trace(&handle, &format!("window close requested site={closing_site}"));
+            }
+            _ => {}
         }
     });
     // Reading opens a second window on the shared profile. Wait until the visible window has
@@ -165,11 +177,34 @@ pub async fn web_session_sign_in(app: tauri::AppHandle, site: String) -> Result<
         let mut last_url = None;
         let mut last_url_change = Instant::now();
         let mut last_failed_read = None;
+        let mut last_state: Option<String> = None;
+        let mut missing_window_logged = false;
         loop {
             tokio::time::sleep(WATCH_EVERY).await;
             // Keep this window's lifetime, so closing and reopening the same label cannot revive an old watcher.
             if destroyed.load(Ordering::SeqCst) {
                 return;
+            }
+            let state = format!(
+                "visible={:?} focused={:?} minimized={:?}",
+                window.is_visible(),
+                window.is_focused(),
+                window.is_minimized()
+            );
+            if last_state.as_ref() != Some(&state) {
+                trace(&watcher, &format!("window state site={watched} {state}"));
+                last_state = Some(state);
+            }
+            if !missing_window_logged
+                && watcher
+                    .get_webview_window(&format!("signin-{watched}"))
+                    .is_none()
+            {
+                trace(
+                    &watcher,
+                    &format!("window missing without destroy event site={watched}"),
+                );
+                missing_window_logged = true;
             }
             let (Some(home), Ok(current)) = (home.as_ref(), window.url()) else {
                 settled = 0;
