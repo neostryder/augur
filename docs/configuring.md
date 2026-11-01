@@ -10,7 +10,7 @@ Tap a catalog entry to select it, then press Add. In the ring, the arrow keys mo
 
 The node view uses the existing pick preview with current usage and a neutral task fit of 0.5, so a real task can produce different shares. Drag a slice edge through five weight levels, use Ctrl K to search activities, or press [ and ] to step through them. The Weight, Data, and Behavior tabs edit the same policy fields as the list, and Rule changes can undo each edit.
 
-Settings has separate switches for sheen, animation, and tick marks under Node view. Reduced motion replaces slice animation with a short crossfade. Catalog additions start unreviewed and need Confirm rules before they can run.
+Settings has separate switches for sheen, animation, and tick marks under Node view. The mode switch prepares the complete Node view before replacing the page. Redraws do not replay an entrance animation, and reduced motion disables slice animation. Catalog additions start unreviewed and need Confirm rules before they can run.
 
 Claude API appears in Settings with a password field and a Test key button. The key stays in the existing key store as claude-api.apiKey, and the test calls the provider's model listing without sending a prompt. Routes for claude-api models at https://api.anthropic.com keep their existing route key or environment key first and use this provider key only when that key is missing.
 

@@ -4,6 +4,10 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+### Fixed
+
+- [Visible] [UI] The Model rules mode switch prepares the Node view before swapping pages and no longer replays the ring entrance on redraw.
+
 ### Added
 
 - [Visible] [UI] **Added a node view that edits each activity's model mix as a donut, with undo history and reduced motion support.** Catalog adds now keep existing levels and respect refusals. Copy and suggest each undo in one step, and small positive shares stay visible. Pointer cancellation, keyboard batching, selection isolation, search drafts, tooltips, phone controls, and focus in the node view were fixed.
