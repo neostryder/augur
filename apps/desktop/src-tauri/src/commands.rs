@@ -7,8 +7,41 @@ use std::{
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::Serialize;
 use tauri::{Manager, image::Image};
+use tauri_plugin_updater::UpdaterExt;
 
 use crate::{AppState, anchor_popup};
+
+const STABLE_UPDATE_ENDPOINT: &str =
+    "https://github.com/neostryder/augur/releases/latest/download/latest.json";
+const EARLY_UPDATE_ENDPOINT: &str =
+    "https://github.com/neostryder/augur/releases/download/edge-channel/latest.json";
+
+fn update_endpoint(channel: &str) -> Result<tauri::Url, String> {
+    let endpoint = match channel {
+        "stable" => STABLE_UPDATE_ENDPOINT,
+        "early" => EARLY_UPDATE_ENDPOINT,
+        _ => return Err("Invalid update channel".into()),
+    };
+    endpoint.parse::<tauri::Url>().map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod update_endpoint_tests {
+    use super::{EARLY_UPDATE_ENDPOINT, STABLE_UPDATE_ENDPOINT, update_endpoint};
+
+    #[test]
+    fn maps_update_channels_to_endpoints() {
+        assert_eq!(
+            update_endpoint("stable").unwrap().as_str(),
+            STABLE_UPDATE_ENDPOINT
+        );
+        assert_eq!(
+            update_endpoint("early").unwrap().as_str(),
+            EARLY_UPDATE_ENDPOINT
+        );
+        assert!(update_endpoint("unknown").is_err());
+    }
+}
 
 #[derive(Serialize)]
 pub struct CommandOutput {
@@ -395,13 +428,19 @@ pub fn hide_popup(app: tauri::AppHandle) -> Result<(), String> {
 pub async fn install_update(
     webview: tauri::Webview,
     app: tauri::AppHandle,
-    rid: tauri::ResourceId,
+    channel: String,
 ) -> Result<(), String> {
     require_popup(&webview)?;
-    let update = webview
-        .resources_table()
-        .get::<tauri_plugin_updater::Update>(rid)
+    let endpoint = update_endpoint(&channel)?;
+    let updater = app
+        .updater_builder()
+        .endpoints(vec![endpoint])
+        .map_err(|e| e.to_string())?
+        .build()
         .map_err(|e| e.to_string())?;
+    let Some(update) = updater.check().await.map_err(|e| e.to_string())? else {
+        return Ok(());
+    };
     let bytes = update
         .download(|_, _| {}, || {})
         .await
