@@ -1,9 +1,20 @@
 export function compareVersions(a: string, b: string): number {
-  const parts = (v: string) => (v.match(/\d+(?:\.\d+)*/)?.[0] ?? '0').split('.').map(Number);
-  const x = parts(a), y = parts(b);
-  for (let i = 0; i < Math.max(x.length, y.length); i++) {
-    const d = (x[i] ?? 0) - (y[i] ?? 0);
+  const parse = (v: string) => {
+    const match = v.replace(/^v/, '').match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?/);
+    return match ? { core: match.slice(1, 4).map(Number), pre: match[4]?.split('.') ?? null } : { core: [0, 0, 0], pre: null };
+  };
+  const x = parse(a), y = parse(b);
+  for (let i = 0; i < 3; i++) {
+    const d = x.core[i]! - y.core[i]!;
     if (d) return Math.sign(d);
+  }
+  if (!x.pre || !y.pre) return x.pre ? -1 : y.pre ? 1 : 0;
+  for (let i = 0; i < Math.max(x.pre.length, y.pre.length); i++) {
+    if (x.pre[i] === undefined || y.pre[i] === undefined) return x.pre[i] === undefined ? -1 : 1;
+    const xn = /^\d+$/.test(x.pre[i]!), yn = /^\d+$/.test(y.pre[i]!);
+    if (xn && yn) { const d = Number(x.pre[i]) - Number(y.pre[i]); if (d) return Math.sign(d); }
+    else if (xn !== yn) return xn ? -1 : 1;
+    else if (x.pre[i] !== y.pre[i]) return x.pre[i]! < y.pre[i]! ? -1 : 1;
   }
   return 0;
 }

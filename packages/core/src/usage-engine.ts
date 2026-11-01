@@ -165,6 +165,7 @@ export class UsageEngine implements EngineApi {
   private loadedResets: ResetEvent[] = [];
   private pendingResets: ResetEvent[] = [];
   private resetAppend: Promise<void> = Promise.resolve();
+  private updateCheckId = 0;
 
   constructor(private shell: EngineShell, private options: EngineOptions) {
     this.device = options.device ?? 'desktop';
@@ -575,6 +576,13 @@ export class UsageEngine implements EngineApi {
     const shareChanged = (prev.sync?.shareKeys ?? false) !== (config.sync?.shareKeys ?? false);
     const rulesChanged = !!policy && (!prev.policy || policyDigest(prev.policy) !== policyDigest(policy) || JSON.stringify(prev.policy.stamps) !== JSON.stringify(policy.stamps));
     this.state.config = config;
+    const updateChannelChanged = (prev.updateChannel ?? 'stable') !== (config.updateChannel ?? 'stable');
+    if (updateChannelChanged) {
+      this.updateCheckId++;
+      this.state.update.available = null;
+      this.state.update.changes = null;
+      this.state.update.status = 'idle';
+    }
     await this.persist();
     this.emit('config', 'policyError');
     if (customChanged) await this.refreshSecrets();
@@ -585,6 +593,7 @@ export class UsageEngine implements EngineApi {
       if (this.state.claude?.code && config.exportPath) { await this.shell.claudeInstall?.('code', config.exportPath).catch(() => undefined); await this.loadClaude(false); }
     }
     if (rulesChanged) void this.clearFeed();
+    if (updateChannelChanged) void this.checkUpdate();
     if (shareChanged) { this.lastPush = 0; void this.refresh(); }
     else if (gained && !this.state.firstRun) void this.refresh();
   }
@@ -869,19 +878,31 @@ export class UsageEngine implements EngineApi {
   async checkUpdate(): Promise<void> {
     const u = this.state.update;
     if (!this.shell.checkUpdate || u.status === 'checking' || u.status === 'installing') return;
+    const checkId = ++this.updateCheckId;
+    const channel = this.config.updateChannel ?? 'stable';
     const before = u.available?.version;
     u.status = 'checking';
     this.emit('update');
     try {
-      u.available = await this.shell.checkUpdate();
+      u.available = await this.shell.checkUpdate(channel);
       u.status = u.available ? 'available' : 'current';
     } catch {
       // A failed check keeps showing an update already found, so the button does not disappear.
       u.status = u.available ? 'available' : 'error';
     }
+    if (checkId !== this.updateCheckId) return;
+    if (channel !== (this.config.updateChannel ?? 'stable')) {
+      u.available = null;
+      u.changes = null;
+      u.status = 'idle';
+      this.emit('update');
+      void this.checkUpdate();
+      return;
+    }
     const found = u.available?.version;
     if (found && found !== before) {
       u.changes = await this.loadChanges(found);
+      if (checkId !== this.updateCheckId) return;
       await this.raise([{ id: `update.${found}`, kind: 'update', severity: 'info', group: 'update', clears: { when: 'flag', flag: 'update' },
         title: `Augur ${found} is ready`, body: u.available?.managedBy ? UPDATE_ALERT_TEXT.managed : this.config.autoUpdate !== false ? UPDATE_ALERT_TEXT.auto : UPDATE_ALERT_TEXT.manual }]);
     }

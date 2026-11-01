@@ -300,6 +300,11 @@ describe('engine, pace, history and alerts', () => {
     expect(migrateConfig({ openOnLaunch: false }).openOnLaunch).toBe(false);
     expect(migrateConfig({ openOnLaunch: 'no' }).openOnLaunch).toBe(true);
   });
+  it('normalizes the update channel to stable unless it is early', () => {
+    expect(migrateConfig({}).updateChannel).toBe('stable');
+    expect(migrateConfig({ updateChannel: 'early' }).updateChannel).toBe('early');
+    expect(migrateConfig({ updateChannel: 'unknown' }).updateChannel).toBe('stable');
+  });
 });
 
 describe('changelog', () => {
@@ -313,6 +318,11 @@ describe('changelog', () => {
       { version: '0.5.1', changes: ['Plain entry with no bold lead.'] },
     ]);
     expect(releaseChanges(log, '0.6.0', '0.6.0')).toEqual([]);
+  });
+  it('orders prerelease versions before releases and compares their identifiers numerically', () => {
+    expect(compareVersions('1.17.0-edge.9', '1.17.0')).toBe(-1);
+    expect(compareVersions('1.17.0-edge.9', '1.17.0-edge.10')).toBe(-1);
+    expect(compareVersions('1.17.0-edge.1', '1.16.0')).toBe(1);
   });
   it('compares versions by number', () => {
     expect(compareVersions('0.10.0', '0.9.9')).toBe(1);
