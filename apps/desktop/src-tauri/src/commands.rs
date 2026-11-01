@@ -430,29 +430,67 @@ pub async fn install_update(
     app: tauri::AppHandle,
     channel: String,
 ) -> Result<(), String> {
-    require_popup(&webview)?;
-    let endpoint = update_endpoint(&channel)?;
+    crate::websession::trace_to(&app, "update.log", &format!("start channel={channel}"));
+    require_popup(&webview).map_err(|e| {
+        crate::websession::trace_to(&app, "update.log", &format!("popup check failed error={e}"));
+        e.to_string()
+    })?;
+    let endpoint = update_endpoint(&channel).map_err(|e| {
+        crate::websession::trace_to(&app, "update.log", &format!("endpoint failed error={e}"));
+        e.to_string()
+    })?;
+    crate::websession::trace_to(&app, "update.log", &format!("endpoint={endpoint}"));
     let updater = app
         .updater_builder()
         .endpoints(vec![endpoint])
-        .map_err(|e| e.to_string())?
+        .map_err(|e| {
+            crate::websession::trace_to(&app, "update.log", &format!("endpoints failed error={e}"));
+            e.to_string()
+        })?
         .build()
-        .map_err(|e| e.to_string())?;
-    let Some(update) = updater.check().await.map_err(|e| e.to_string())? else {
+        .map_err(|e| {
+            crate::websession::trace_to(&app, "update.log", &format!("builder failed error={e}"));
+            e.to_string()
+        })?;
+    let Some(update) = updater.check().await.map_err(|e| {
+        crate::websession::trace_to(&app, "update.log", &format!("check failed error={e}"));
+        e.to_string()
+    })?
+    else {
+        crate::websession::trace_to(&app, "update.log", "check result=None");
         return Ok(());
     };
-    let bytes = update
-        .download(|_, _| {}, || {})
-        .await
-        .map_err(|e| e.to_string())?;
+    crate::websession::trace_to(
+        &app,
+        "update.log",
+        &format!(
+            "check result=Some version={} current_version={}",
+            update.version, update.current_version
+        ),
+    );
+    let bytes = update.download(|_, _| {}, || {}).await.map_err(|e| {
+        crate::websession::trace_to(&app, "update.log", &format!("download failed error={e}"));
+        e.to_string()
+    })?;
+    crate::websession::trace_to(
+        &app,
+        "update.log",
+        &format!("download finished bytes={}", bytes.len()),
+    );
     let sessions = app.state::<crate::websession::WebSessions>();
     let _gate = sessions.window_gate.lock().await;
+    crate::websession::trace_to(&app, "update.log", "window_gate acquired");
     // Hiding the popup can start an automatic update. The Windows installer exits the process,
     // so defer installation itself, and prevent new sign-in windows until the restart completes.
     while crate::websession::has_sign_in_window(app.webview_windows().keys().map(String::as_str)) {
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
-    update.install(bytes).map_err(|e| e.to_string())?;
+    crate::websession::trace_to(&app, "update.log", "about to call update.install");
+    update.install(bytes).map_err(|e| {
+        crate::websession::trace_to(&app, "update.log", &format!("install returned error={e}"));
+        e.to_string()
+    })?;
+    crate::websession::trace_to(&app, "update.log", "request_restart reached");
     app.request_restart();
     std::future::pending().await
 }

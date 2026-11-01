@@ -29,13 +29,17 @@ const READ_TIMEOUT: Duration = Duration::from_secs(45);
 const REPORT_HOST: &str = "augur.invalid";
 
 fn trace(app: &tauri::AppHandle, line: &str) {
+    trace_to(app, "signin.log", line);
+}
+
+pub(crate) fn trace_to(app: &tauri::AppHandle, file: &str, line: &str) {
     let Ok(dir) = app.path().app_data_dir() else {
         return;
     };
     if fs::create_dir_all(&dir).is_err() {
         return;
     }
-    let path = dir.join("signin.log");
+    let path = dir.join(file);
     if fs::metadata(&path).is_ok_and(|metadata| metadata.len() > 64 * 1024) {
         let _ = OpenOptions::new().write(true).truncate(true).open(&path);
     }
