@@ -58,14 +58,14 @@ export function cogitatorEntry(id: string, role = false): CogitatorCatalogEntry 
   return (role ? COGITATOR_ROLES : COGITATOR_MODELS).find(entry => entry.id === id) ?? COGITATOR_ROLES.find(entry => entry.id === id);
 }
 
-/** The management metadata shape is kept here while the gateway settles its catalog endpoint. */
-export function readCogitatorKnowledge(body: unknown, id: string, role = false, row: unknown = {}): CogitatorKnowledge {
+export function readCogitatorKnowledge(body: unknown, id: string, role = false, row: unknown = {}, liveRow: unknown = {}): CogitatorKnowledge {
   const doc = obj(body), catalog = obj(doc.catalog ?? doc), rows = catalog[role ? 'roles' : 'models'];
   const listed = Array.isArray(rows) ? rows.map(obj).find(item => (role ? item.name ?? item.id : item.id) === id) : undefined;
   const machines = [obj(doc.self), ...(Array.isArray(doc.peers) ? doc.peers.map(obj) : [])];
   const sightings = role ? [] : machines.flatMap(machine => [machine.models, obj(machine.ledger).models].flatMap(rows => Array.isArray(rows) ? rows.map(obj).filter(item => item.id === id) : []));
   const seed = cogitatorEntry(id, role), knowledge: CogitatorKnowledge = {};
-  for (const source of [seed, ...sightings, listed, obj(row)]) {
+  const live = obj(liveRow), engine = live.id === id ? live : Array.isArray(catalog.engines) ? catalog.engines.map(obj).find(item => item.id === id) : undefined;
+  for (const source of [seed, ...sightings, listed, obj(row), ...(!role && engine?.uses_declared === true ? [engine] : [])]) {
     if (!source) continue;
     if (Array.isArray(source.uses) && source.uses.every((use: unknown) => typeof use === 'string')) knowledge.uses = [...source.uses];
     if (typeof source.strengths === 'string') knowledge.strengths = source.strengths;
@@ -89,8 +89,9 @@ export function fleetCatalog(fleet: FleetReading): FleetCatalogEntry[] {
   const rows = new Map<string, FleetCatalogEntry>();
   for (const item of [...fleet.machines.flatMap(machine => machine.models.map(model => ({ model, role: false }))), ...fleet.roles.map(model => ({ model, role: true }))]) {
     const id = 'id' in item.model ? item.model.id : item.model.name, seed = cogitatorEntry(id, item.role);
+    const declared = item.role ? undefined : fleet.machines.flatMap(machine => machine.models).find(model => model.id === id && model.usesDeclared);
     rows.set(id, { id, label: `cogitator/${id}`, role: item.role, kind: seed?.kind, sizeClass: seed?.sizeClass, activities: { ...seed?.activities },
-      ...readCogitatorKnowledge({}, id, item.role, item.model), ...('chain' in item.model ? { chain: [...item.model.chain] } : {}) });
+      ...readCogitatorKnowledge({}, id, item.role, declared ?? item.model), ...('chain' in item.model ? { chain: [...item.model.chain] } : {}) });
   }
   return [...rows.values()];
 }
