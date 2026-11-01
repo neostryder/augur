@@ -3,11 +3,8 @@ import { listen } from '@tauri-apps/api/event';
 import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import { check, type Update } from '@tauri-apps/plugin-updater';
 import { getVersion } from '@tauri-apps/api/app';
-import type { Host, Platform, Shell, TrayUpdate, UpdateInfo } from '@augur/core';
-
-let pendingUpdate: Update | null = null;
+import type { Host, Platform, Shell, TrayUpdate, UpdateChannel } from '@augur/core';
 let engineListener: Promise<() => void> | null = null;
 
 function platform(): Platform {
@@ -82,17 +79,9 @@ export function createTauriShell(): Shell {
     setHotkey: (accelerator: string | null) => invoke<void>('set_hotkey', { accelerator }),
     appVersion: () => getVersion(),
     openSignIn: (site: string) => invoke<void>('web_session_sign_in', { site }),
-    checkUpdate: async (): Promise<UpdateInfo | null> => {
-      pendingUpdate = await check();
-      if (!pendingUpdate) return null;
-      const managedBy = await invoke<string | null>('package_manager').catch(() => null);
-      return { version: pendingUpdate.version, notes: pendingUpdate.body, date: pendingUpdate.date, ...(managedBy ? { managedBy } : {}) };
-    },
-    installUpdate: async () => {
+    installUpdate: async (channel?: UpdateChannel) => {
       if (await invoke<string | null>('package_manager').catch(() => null)) return;
-      const update = pendingUpdate ?? await check();
-      if (!update) return;
-      await invoke<void>('install_update', { rid: update.rid });
+      await invoke<void>('install_update', { channel: channel ?? 'stable' });
     },
     on: (event, handler) => {
       let closed = false;

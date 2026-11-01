@@ -23,4 +23,3 @@ minimumReleaseAgeExclude:
   - '@tauri-apps/plugin-opener@2.6.0'
   - '@cloudflare/workers-types@5.20260927.1'
   - '@tauri-apps/plugin-process@2.4.0'
-  - '@tauri-apps/plugin-updater@2.13.0'

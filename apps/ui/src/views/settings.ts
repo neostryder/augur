@@ -289,13 +289,15 @@ function refreshRow(m: SettingsModel, pid: string, plugin: ProviderPlugin): stri
 export function updateRows(m: Pick<SettingsModel, 'update' | 'config'>): string {
   const u = m.update;
   const by = u.available?.managedBy;
-  const status = u.status === 'available' ? [COMPUTER_TEXT.available(u.available?.version ?? ''), by ? COMPUTER_TEXT.managed(by) : ''].filter(Boolean).join(' ') : COMPUTER_TEXT.status[u.status];
+  const status = u.status === 'available' ? [COMPUTER_TEXT.channelAvailable(m.config.updateChannel ?? 'stable', u.available?.version ?? ''), by ? COMPUTER_TEXT.managed(by) : ''].filter(Boolean).join(' ') : COMPUTER_TEXT.status[u.status];
   const busy = u.status === 'checking' || u.status === 'installing';
   const button = u.status === 'available' && !by
     ? '<button class="btn small primary" data-action="update-install">Install and restart</button>'
     : `<button class="btn small" data-action="update-check" ${busy ? 'disabled' : ''}>${COMPUTER_TEXT.check}</button>`;
+  const channels = `<option value="stable" ${m.config.updateChannel !== 'early' ? 'selected' : ''}>${COMPUTER_TEXT.stableChannel}</option><option value="early" ${m.config.updateChannel === 'early' ? 'selected' : ''}>${COMPUTER_TEXT.earlyChannel}</option>`;
   return `<div class="row"><label class="name">${u.version ? esc(COMPUTER_TEXT.version(u.version)) : COMPUTER_TEXT.updates}${status ? `<span class="desc">${esc(status)}</span>` : ''}</label>${button}</div>
-      <div class="row"><label class="name">Install updates automatically<span class="desc">Augur installs each new version while the panel is closed, then restarts.</span></label>${toggle('autoupdate', m.config.autoUpdate !== false, 'Install updates automatically')}</div>`;
+      <div class="row"><label class="name">Install updates automatically<span class="desc">Augur installs each new version while the panel is closed, then restarts.</span></label>${toggle('autoupdate', m.config.autoUpdate !== false, 'Install updates automatically')}</div>
+      <div class="row"><label class="name">${COMPUTER_TEXT.updateChannel}<span class="desc">${COMPUTER_TEXT.updateChannelHelp}</span></label><select data-update-channel>${channels}</select></div>`;
 }
 
 function phoneSection(m: SettingsModel): string {

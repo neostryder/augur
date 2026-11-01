@@ -1,5 +1,7 @@
 # Configuring Augur
 
+TODO_PROSE_DOCS
+
 The app covers most of this. The Rules page says what each model may do, the Routes page connects a model to the program that runs it, and Settings holds providers and keys. This page covers the files and settings behind those screens, for when you adapt Augur by hand or have an agent do it. Its tables are generated from the code, and a test fails when they stop matching it.
 
 ## Node view
