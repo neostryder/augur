@@ -7,6 +7,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 ### Added
 
 - [Visible] [Platform] **`augur run` and the augur_run tool take a per-job effort and an answer schema.** The effort overrides the route's setting for that job. Codex and Grok routes enforce the JSON Schema with native structured output, other routes get it in the prompt, and an answer that fails it adds a warning to the job.
+- [Visible] [Providers] **Augur reads the Cogitator gateway's catalog endpoint with the manage key.** Entries that declare their uses replace the shipped descriptions, role chains come from the live roles, and each peer's models are described by that peer's own catalog. A gateway or peer without the endpoint keeps the shipped descriptions.
 
 ## [1.16.0] - 2026-10-31
 
