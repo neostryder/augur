@@ -3,17 +3,22 @@ name: Desktop installers
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
 
 jobs:
   build:
+    concurrency:
+      group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && format('edge-{0}', github.ref) || format('release-{0}', github.run_id) }}
+      cancel-in-progress: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: windows-latest
-            args: '--bundles nsis,msi'
+            args: ${{ github.ref == 'refs/heads/main' && '--bundles nsis' || '--bundles nsis,msi' }}
           - platform: macos-latest
             args: '--target universal-apple-darwin --bundles app,dmg'
           - platform: ubuntu-24.04
@@ -62,6 +67,18 @@ jobs:
           codesign --force --sign - augur-node
           echo "AUGUR_NODE=$RUNNER_TEMP/augur-node" >> "$GITHUB_ENV"
       # The service carries the web app, so the app is built before the service copies it.
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: edge-version
+        shell: bash
+        run: |
+          version=$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null 2>&1; then
+            IFS=. read -r major minor patch <<< "$version"
+            version="$major.$((minor + 1)).0"
+          fi
+          edge="$version-edge.$GITHUB_RUN_NUMBER"
+          UPDATE_VERSION="$edge" node -e "const fs=require('node:fs');const p='apps/desktop/src-tauri/tauri.conf.json';const c=JSON.parse(fs.readFileSync(p,'utf8'));c.version=process.env.UPDATE_VERSION;fs.writeFileSync(p,JSON.stringify(c,null,2)+'\\n')"
+          echo "version=$edge" >> "$GITHUB_OUTPUT"
       - run: pnpm --filter @augur/ui build
       - run: pnpm build:service
       - if: github.ref_type == 'tag'
@@ -78,13 +95,37 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
         with:
           projectPath: apps/desktop
-          tagName: ${{ github.ref_type == 'tag' && github.ref_name || format('desktop-{0}', github.run_number) }}
-          releaseName: "Augur ${{ github.ref_type == 'tag' && github.ref_name || github.run_number }}"
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || (github.ref == 'refs/heads/main' && format('v{0}', steps.edge-version.outputs.version)) || format('desktop-{0}', github.run_number) }}
+          releaseName: "Augur ${{ github.ref_type == 'tag' && github.ref_name || (github.ref == 'refs/heads/main' && steps.edge-version.outputs.version) || github.run_number }}"
           # A tagged release is published so the in-app updater can find it; a manual run stays a draft.
-          releaseDraft: ${{ github.ref_type != 'tag' }}
-          releaseBody: 'What changed is in [CHANGELOG.md](https://github.com/neostryder/augur/blob/main/CHANGELOG.md). The installers are not code-signed yet, so the first launch needs one extra step on Windows and macOS; the [README](https://github.com/neostryder/augur#install) shows it for each platform.'
+          releaseDraft: ${{ github.ref_type != 'tag' && github.ref != 'refs/heads/main' }}
+          prerelease: ${{ github.ref == 'refs/heads/main' }}
+          releaseBody: ${{ github.ref == 'refs/heads/main' && 'Automatic build of main for the Early channel. What changed is in [CHANGELOG.md](https://github.com/neostryder/augur/blob/main/CHANGELOG.md).' || 'What changed is in [CHANGELOG.md](https://github.com/neostryder/augur/blob/main/CHANGELOG.md). The installers are not code-signed yet, so the first launch needs one extra step on Windows and macOS; the [README](https://github.com/neostryder/augur#install) shows it for each platform.' }}
           uploadUpdaterJson: true
           args: ${{ matrix.args }}
+
+  edge-pointer:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Point the Early channel at this build and prune old builds
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          release=$(gh release list --limit 100 --json tagName | jq -r --arg suffix "-edge.$GITHUB_RUN_NUMBER" '.[] | select(.tagName | endswith($suffix)) | .tagName' | head -n 1)
+          test -n "$release"
+          mkdir updater
+          gh release download "$release" --pattern latest.json --dir updater
+          if ! gh release view edge-channel >/dev/null 2>&1; then
+            gh release create edge-channel --prerelease --title "Augur Early channel" --notes "Points the Early channel at the newest edge build."
+          fi
+          gh release upload edge-channel updater/latest.json --clobber
+          gh release list --limit 100 --json tagName,createdAt | jq -r '[.[] | select(.tagName | test("^v[0-9]+\\.[0-9]+\\.[0-9]+-edge\\.[0-9]+$"))] | sort_by(.createdAt) | reverse | .[5:][] | .tagName' | while read -r tag; do
+            gh release delete "$tag" --cleanup-tag --yes
+          done
 
   # The terminal package: a tarball for Arch (it uses the system Node), a tarball for macOS (it carries its own), and the macOS install script.
   # They go on the release the installers made, and the checksum file below covers them.
