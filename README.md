@@ -107,6 +107,8 @@ Each meter shows how much is used, when it resets, and a thin mark on the bar fo
 
 Augur checks for a new version every 5 minutes. When one is ready, an Update button appears next to refresh: hover over it to see what changed, or click it to install and restart. Augur also installs it on its own while the panel is closed, unless you turn that off in settings.
 
+The Release channel choice in Settings sets where Augur gets its updates, and Stable, the default, offers tagged releases only. Early gets a new build of the main branch after each merge for testing features before a release, and these builds can break. Moving from Early back to Stable keeps the installed version until a newer tagged release appears.
+
 Settings also cover the theme (system, light or dark), which meters each card shows, card colors, how often each provider refreshes (from every 15 seconds to once a week), and alerts. Providers refresh every 15 minutes by default and Jev once a week, a provider whose last read failed tries again after 5 minutes, and the refresh button reads every provider at once.
 
 ## Alerts

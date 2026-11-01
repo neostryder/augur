@@ -6,7 +6,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Added
 
-- [Visible] [Platform] **TODO_PROSE_CHANGELOG**
+- [Visible] [Platform] **Settings has a Release channel choice: Stable, the default, or Early.** Early installs a new build of the main branch after each merge so you can test features before a release is tagged, and these builds can break. Switching back to Stable keeps the installed version until a newer tagged release appears.
 - [Visible] [UI] **Added a node view that edits each activity's model mix as a donut, with undo history and reduced motion support.** Catalog adds now keep existing levels and respect refusals. Copy and suggest each undo in one step, and small positive shares stay visible. Pointer cancellation, keyboard batching, selection isolation, search drafts, tooltips, phone controls, and focus in the node view were fixed.
 - [Visible] [Providers] **Added Claude API key support with a key test.** Existing route-specific keys still apply. Usage refresh for the Claude API provider now stays offline. Route planning checks that baseUrl is valid, and requests accept a baseUrl that ends in a v1 path. Test key results now last only for the current session.
 - [Visible] [Platform] **`augur run` and the augur_run tool take a per-job effort and an answer schema.** The effort overrides the route's setting for that job. Codex and Grok routes enforce the JSON Schema with native structured output, other routes get it in the prompt, and an answer that fails it adds a warning to the job.

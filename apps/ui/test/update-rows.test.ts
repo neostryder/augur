@@ -9,18 +9,18 @@ const model = (available: { version: string; managedBy?: string } | null) => ({
 describe('the update rows', () => {
   it('offer to install an update the app can install itself', () => {
     const html = updateRows(model({ version: '1.6.0' }));
-    expect(html).toContain('TODO_PROSE_UPDATE_CHANNEL_STATUS stable 1.6.0');
+    expect(html).toContain('Version 1.6.0 is available.');
     expect(html).toContain('data-update-channel');
-    expect(html).toContain('TODO_PROSE_UPDATE_CHANNEL_HELP');
-    expect(html).toContain('TODO_PROSE_UPDATE_CHANNEL');
-    expect(html).toContain('TODO_PROSE_STABLE_CHANNEL');
-    expect(html).toContain('TODO_PROSE_EARLY_CHANNEL');
+    expect(html).toContain('Stable gets tagged releases only.');
+    expect(html).toContain('Release channel');
+    expect(html).toContain('>Stable<');
+    expect(html).toContain('>Early<');
     expect(html).toContain('data-action="update-install"');
   });
 
   it('name the package manager and offer no install when one owns the app', () => {
     const html = updateRows(model({ version: '1.6.0', managedBy: 'pacman' }));
-    expect(html).toContain('TODO_PROSE_UPDATE_CHANNEL_STATUS stable 1.6.0');
+    expect(html).toContain('Version 1.6.0 is available.');
     expect(html).toContain('pacman installed Augur');
     expect(html).toContain('makepkg -si');
     expect(html).not.toContain('update-install');
