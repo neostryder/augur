@@ -4,9 +4,9 @@ The app covers most of this. The Rules page says what each model may do, the Rou
 
 ## Node view
 
-node_view_editing_fix
+Copy and suggest each record one step in the undo history. When the source has no level for an entry, copy leaves the target entry inheriting its level. Positive scores stay visible.
 
-node_view_controls_fix
+Tap a catalog entry to select it, then press Add. In the ring, the arrow keys move the selection between slices, and the edge keys adjust levels. A run of edge-key presses counts as one edit until the keys go idle. Activity search keeps pending text and drags in progress.
 
 The node view uses the existing pick preview with current usage and a neutral task fit of 0.5, so a real task can produce different shares. Drag a slice edge through five weight levels, use Ctrl K to search activities, or press [ and ] to step through them. The Weight, Data, and Behavior tabs edit the same policy fields as the list, and Rule changes can undo each edit.
 
@@ -14,7 +14,7 @@ Settings has separate switches for sheen, animation, and tick marks under Node v
 
 Claude API appears in Settings with a password field and a Test key button. The key stays in the existing key store as claude-api.apiKey, and the test calls the provider's model listing without sending a prompt. Routes for claude-api models at https://api.anthropic.com keep their existing route key or environment key first and use this provider key only when that key is missing.
 
-claude_api_configuring_fix
+Use Test key to check the Claude API key. Usage refresh does not test it. A Test key result lasts for the current session.
 
 ## Where the settings live
 

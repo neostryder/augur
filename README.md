@@ -268,7 +268,7 @@ A route is local when its model is listed under the cogitator provider in the ru
 
 Model rules has List and Node views. The node view previews one activity as a donut, and its Weight, Data, and Behavior tabs edit the same rules as the list. Rule changes records each edit and lets you undo it.
 
-node_view_readme_fix
+Copy and suggest each make a single undo step. Copy skips levels missing from the source. Adding an entry from the catalog keeps any level the activity already has and does not add entries the rules refuse.
 
 ### Who classifies tasks
 

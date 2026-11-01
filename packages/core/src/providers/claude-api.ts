@@ -10,7 +10,7 @@ export const claudeApi: ProviderPlugin = {
     const key = await host.secret('claude-api.apiKey');
     if (!key) throw new Error('No API key yet. Add one in settings.');
     try { await json(host, { url: 'https://api.anthropic.com/v1/models?limit=1', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' } }); }
-    catch { throw new Error('claude_api_test_failed'); }
+    catch { throw new Error('The Claude API key test failed. Check the key in Settings and run Test key again.'); }
     return { meters: [], money: [] };
   },
   async listModels(host) {

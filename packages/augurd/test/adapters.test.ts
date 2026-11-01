@@ -465,7 +465,7 @@ describe('an API connector', () => {
     unset.writeRoutes({ chat: { model: 'test/text', adapter: 'openai-api', options: { baseUrl: m.url, model: 'x', apiKeyEnv: 'AUGUR_KEY_NOT_SET' } } });
     const id2 = submitOk(unset.sup, { ...textReq('chat'), cwd: unset.root });
     expect((await terminal(unset.sup, unset.store, id2)).state).toBe('failed');
-    expect(unset.sup.logs(id2, 'stderr')!.text).toContain('route_key_missing: AUGUR_KEY_NOT_SET');
+    expect(unset.sup.logs(id2, 'stderr')!.text).toContain('Key AUGUR_KEY_NOT_SET is not set.');
   });
 
   it.skipIf(process.platform !== 'win32')('reads a route\'s key from the Windows credential store when its keySource is store', async () => {
