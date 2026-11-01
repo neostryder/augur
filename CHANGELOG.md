@@ -4,6 +4,10 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+### Added
+
+- [Visible] [Platform] **`augur run` and the augur_run tool take a per-job effort and an answer schema.** The effort overrides the route's setting for that job. Codex and Grok routes enforce the JSON Schema with native structured output, other routes get it in the prompt, and an answer that fails it adds a warning to the job.
+
 ## [1.16.0] - 2026-10-31
 
 ### Added

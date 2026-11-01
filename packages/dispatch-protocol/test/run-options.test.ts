@@ -23,7 +23,7 @@ describe('per-call option validation', () => {
 describe('schema prompts', () => {
   it('appends instructions for a fallback adapter and leaves native prompts alone', () => {
     const prompt = schemaPrompt('task', schema, 'exec');
-    expect(prompt).toContain('task\n\nReply with only a JSON document matching this JSON Schema.');
+    expect(prompt).toContain('task\n\nReply with only a JSON document that matches the schema below.');
     expect(prompt.endsWith(JSON.stringify(schema))).toBe(true);
     expect(schemaPrompt('task', schema, 'codex-exec')).toBe('task');
     expect(schemaPrompt('task', schema, 'grok-exec')).toBe('task');
@@ -43,9 +43,9 @@ describe('schema answers', () => {
 
   it('warns on type, required, items and enum mismatches', () => {
     for (const answer of ['[]', '{}', '{"count":1.5,"tags":[]}', '{"count":1,"tags":[2]}', '{"count":1,"tags":["maybe"]}']) expect(validateSchemaAnswer(answer, schema).warning).toMatch(/^schema:/);
-    expect(validateSchemaAnswer('null', { type: 'object' }).warning).toContain('wrong type');
-    expect(validateSchemaAnswer('1', { enum: ['1'] }).warning).toContain('enum');
-    expect(validateSchemaAnswer('{}', { required: ['toString'] }).warning).toContain('required');
+    expect(validateSchemaAnswer('null', { type: 'object' }).warning).toContain('has a type the schema does not allow');
+    expect(validateSchemaAnswer('1', { enum: ['1'] }).warning).toContain('not one of the values');
+    expect(validateSchemaAnswer('{}', { required: ['toString'] }).warning).toContain('property the schema requires');
   });
 
   it('strips one surrounding fence and retries parsing once', () => {

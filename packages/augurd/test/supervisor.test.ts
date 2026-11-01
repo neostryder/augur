@@ -33,13 +33,13 @@ describe('per-call options', () => {
     const id = submitOk(e.sup, request({ route: 'raw', schema, text: 'ENV AUGUR_IN_JOB', cwd: e.root }));
     const sent = planCall.mock.calls[0]?.[2].prompt;
     planCall.mockRestore();
-    expect(sent).toContain('Reply with only a JSON document matching this JSON Schema.');
+    expect(sent).toContain('Reply with only a JSON document that matches the schema below.');
     expect(sent).toContain(JSON.stringify(schema));
     const job = await terminal(e.sup, e.store, id);
     const plan = JSON.parse(readFileSync(join(e.dir, 'jobs', id, 'job.json'), 'utf8'));
     expect(plan.files).toContainEqual({ name: 'output-schema.json', content: JSON.stringify(schema) });
     expect(job.state).toBe('completed');
-    expect(job.warnings).toContain('schema: answer is not valid JSON.');
+    expect(job.warnings).toContain('schema: the answer is not valid JSON, so it was not checked.');
     const saved = e.make();
     expect(saved.result(id)?.job.warnings).toEqual(job.warnings);
   });
@@ -51,7 +51,7 @@ describe('per-call options', () => {
     expect(JSON.parse(readFileSync(join(e.dir, 'jobs', id, 'output-schema.json'), 'utf8'))).toEqual({ type: 'object' });
     const job = await terminal(e.sup, e.store, id);
     expect(job.state).toBe('completed');
-    expect(job.warnings).toContain('schema: answer is not valid JSON.');
+    expect(job.warnings).toContain('schema: the answer is not valid JSON, so it was not checked.');
     expect(existsSync(join(e.dir, 'jobs', id, 'output-schema.json'))).toBe(false);
     expect(readFileSync(e.routesPath, 'utf8')).toBe(before);
   });
