@@ -110,6 +110,8 @@ export class App {
   private nodeNote = '';
   private nodeSel: RulesModel['sel'] = null;
   private keyTests: Record<string, boolean | undefined> = {};
+  /** Counts key changes per provider, so a test that finishes after its key changed is dropped. */
+  private keyEpoch: Record<string, number> = {};
   private rules: { sel: RulesModel['sel']; query: string; filter: RulesFilter; open: Set<string>; picked: Set<string>; showHistory: boolean; addError: string; note: string; bulkTier: string; bulkField: string; bulkValue: string; preview: BulkPreview | null; dialOpen: boolean; dialEnd: string; dialCustom: string; dialPlan: DialBackPlan | null; dialError: string; pauseMode: 'off' | 'weights'; pauseWeights: Record<string, string> } =
     { sel: null, query: '', filter: 'all', open: new Set(), picked: new Set(), showHistory: false, addError: '', note: '', bulkTier: '', bulkField: 'cost', bulkValue: '', preview: null, dialOpen: false, dialEnd: '', dialCustom: '', dialPlan: null, dialError: '', pauseMode: 'off', pauseWeights: {} };
 
@@ -1509,6 +1511,8 @@ export class App {
         if (input) input.value = '';
       } else if (this.engine) await this.engine.deleteSecret(name);
       else await this.shell.deleteSecret(name);
+      delete this.keyTests[pid];
+      this.keyEpoch[pid] = (this.keyEpoch[pid] ?? 0) + 1;
       await this.refreshSecrets();
       this.savedFlash = t.dataset.secretSave ? 'Key saved' : 'Key removed';
       await this.render();
@@ -1535,8 +1539,11 @@ export class App {
         const pid = t.dataset.value!, plugin = this.pluginMap().get(pid);
         if (!plugin?.testKey) { await this.refresh(true, [pid]); break; }
         delete this.keyTests[pid];
-        try { await plugin.testKey(this.shell.host, this.provider(pid).settings); this.keyTests[pid] = true; }
-        catch { this.keyTests[pid] = false; }
+        const epoch = this.keyEpoch[pid] ?? 0;
+        let ok = false;
+        try { ok = this.engine ? await this.engine.testProviderKey(pid) : (await plugin.testKey(this.shell.host, this.provider(pid).settings), true); }
+        catch { ok = false; }
+        if ((this.keyEpoch[pid] ?? 0) === epoch) this.keyTests[pid] = ok;
         await this.render(); break;
       }
       case 'rules-dial': this.rules.dialOpen = !this.rules.dialOpen; this.rules.dialPlan = null; this.rules.dialError = ''; await this.render(); break;

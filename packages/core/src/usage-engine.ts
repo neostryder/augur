@@ -109,6 +109,8 @@ export interface EngineCommands {
   setClaude(target: ClaudeTarget, on: boolean): Promise<void>;
   /** Reads one provider's model list now. */
   listModels(provider: string): Promise<void>;
+  /** Tests one provider's saved key with the service's own keys and network, and says whether it worked. */
+  testProviderKey(provider: string): Promise<boolean>;
   answerEdit(id: string, accept: boolean): Promise<void>;
   retryPolicy(): Promise<void>;
   /** Starts pairing a phone and returns the link the phone opens. */
@@ -130,7 +132,7 @@ export interface EngineCommands {
 }
 
 export const ENGINE_COMMANDS = ['refresh', 'refreshSignIns', 'viewShown', 'saveConfig', 'finishSetup', 'dismiss', 'setProviderKey', 'setSecret', 'addProvider', 'deleteSecret',
-  'hasSecret', 'setClaude', 'listModels', 'answerEdit', 'retryPolicy', 'pair', 'pairUrl', 'unpair', 'checkUpdate', 'setInstalling',
+  'hasSecret', 'setClaude', 'listModels', 'testProviderKey', 'answerEdit', 'retryPolicy', 'pair', 'pairUrl', 'unpair', 'checkUpdate', 'setInstalling',
   'signInBegin', 'signInComplete', 'signOut', 'signInStatus'] as const satisfies ReadonlyArray<keyof EngineCommands>;
 export type EngineCommand = (typeof ENGINE_COMMANDS)[number];
 
@@ -671,6 +673,12 @@ export class UsageEngine implements EngineApi {
 
   async listModels(provider: string): Promise<void> {
     await this.refreshModelLists(provider);
+  }
+
+  async testProviderKey(provider: string): Promise<boolean> {
+    const plugin = this.pluginMap().get(provider), pc = this.config.providers.find((p) => p.id === provider);
+    if (!plugin?.testKey) return false;
+    try { await plugin.testKey(this.shell.host, pc?.settings ?? {}); return true; } catch { return false; }
   }
 
   /** Where the edit inbox and its results sit: beside policy.json. */
