@@ -37,9 +37,30 @@ function fixture(wiring = false, tab: NodeModel['node']['tab'] = 'weight') {
 }
 
 export async function run(name: string): Promise<string> {
-  const f = fixture(['add refusal', 'copy undo', 'suggest undo', 'Ctrl K drafts', 'Ctrl K drag', 'activity shortcuts', 'tooltip scope'].includes(name), name === 'Ctrl K drafts' ? 'behavior' : 'weight');
+  const f = fixture(['add refusal', 'copy undo', 'suggest undo', 'Ctrl K drafts', 'Ctrl K drag', 'activity shortcuts', 'tooltip scope', 'search inputs', 'search Escape'].includes(name), name === 'Ctrl K drafts' ? 'behavior' : 'weight');
   const { node, q, edits, m, app } = f;
   switch (name) {
+    case 'search inputs': {
+      const search = q<HTMLInputElement>('#nv-catalog-search'), ring = q('.nv-ring'), panel = q('.nv-panel');
+      search.focus(); search.value = 'LUNA'; search.setSelectionRange(1, 3, 'backward'); search.dispatchEvent(new Event('input', { bubbles: true }));
+      check(q('#nv-catalog-search') === search && document.activeElement === search && search.selectionStart === 1 && search.selectionEnd === 3 && search.selectionDirection === 'backward', 'Model search must preserve the input and selection.');
+      check(node.querySelectorAll('[data-node-add]').length === 1 && q('[data-node-add]').getAttribute('data-node-add') === 'openrouter/luna', 'Model results must update on input.');
+      search.value = 'zzzz'; search.dispatchEvent(new Event('input', { bubbles: true }));
+      check(q('.nv-catalog').textContent === NODE_TEXT.noModelMatch, 'An empty model search must explain the result.');
+      check(q('.nv-ring') === ring && q('.nv-panel') === panel && f.renders() === 0, 'Search must preserve the dial and panel.');
+      node.openSwitcher(); const activities = q<HTMLInputElement>('#nv-activity-search');
+      activities.value = 'REVIEW_code'; activities.setSelectionRange(2, 5); activities.dispatchEvent(new Event('input', { bubbles: true }));
+      check(q('#nv-activity-search') === activities && document.activeElement === activities && activities.selectionStart === 2 && activities.selectionEnd === 5, 'Activity search must preserve its input and selection.');
+      check(node.querySelectorAll('.nv-activity-results button').length === 1 && q('.nv-activity-results button').getAttribute('data-node-activity') === 'review_code', 'Activity search must handle case and punctuation.'); break;
+    }
+    case 'search Escape': {
+      const search = q<HTMLInputElement>('#nv-catalog-search'); search.focus(); search.value = 'luna'; search.dispatchEvent(new Event('input', { bubbles: true })); key(search, 'Escape');
+      check(search.value === '' && app.nodeState.query === '' && app.view === 'rules' && document.activeElement === search, 'Escape must clear model search without leaving rules.');
+      key(search, 'Escape'); check(app.view === 'rules', 'Empty model search must keep Escape local.');
+      node.openSwitcher(); const activities = q<HTMLInputElement>('#nv-activity-search'); activities.value = 'zzzz'; activities.dispatchEvent(new Event('input', { bubbles: true }));
+      key(activities, 'Escape'); check(activities.value === '' && node.querySelector('.nv-switch'), 'First Escape must clear activity search.');
+      key(activities, 'Escape'); check(!node.querySelector('.nv-switch') && app.view === 'rules', 'Next Escape must close the switcher.'); break;
+    }
     case 'mode swap': {
       const render = (App.prototype as any).render.bind(app);
       app.rulesMode = 'list'; await render();

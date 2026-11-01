@@ -509,7 +509,7 @@ export class App {
   private async render(): Promise<void> {
     this.ensureStrip();
     const expandedNodeDetails = [...this.root.querySelectorAll<HTMLDetailsElement>('augur-node-view details[open]')].map(detail => detail.dataset.nodeDetails);
-    const active = document.activeElement as HTMLInputElement | null, focusId = active?.id, caret = active?.selectionStart ?? null;
+    const active = document.activeElement as HTMLInputElement | null, focusId = active?.id, caret = active?.selectionStart ?? null, caretEnd = active?.selectionEnd, caretDirection = active?.selectionDirection;
     if (this.view === 'dashboard') {
       await this.chooseColumns();
     } else if (this.view === 'jobs') {
@@ -550,8 +550,8 @@ export class App {
     for (const key of expandedNodeDetails) { const detail = this.root.querySelector<HTMLDetailsElement>(`augur-node-view [data-node-details="${key}"]`); if (detail) detail.open = true; }
     if (focusId) {
       const el = document.getElementById(focusId) as HTMLInputElement | null;
-      el?.focus();
-      if (el && caret !== null && el.type === 'search') el.setSelectionRange(caret, caret);
+      el?.focus({ preventScroll: true });
+      if (el && caret !== null && el.type === 'search') el.setSelectionRange(caret, caretEnd ?? caret, caretDirection ?? undefined);
     }
     this.bindSortables();
     await this.sizePopup();

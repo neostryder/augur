@@ -90,6 +90,7 @@ export function nodeMix(config: AppConfig, snapshot: Snapshot | null, activity: 
 
 export interface NodeCatalogItem {
   provider: string;
+  providerName?: string;
   label: string;
   id: string;
   name: string;
@@ -118,7 +119,14 @@ export function nodeCatalog(config: AppConfig, catalog: ModelCatalog, snapshot: 
     if (existing) { existing.description = entry.strengths ?? existing.description; existing.limits = entry.limits ?? existing.limits; if (!existing.exists) existing.activities = entry.activities; continue; }
     items.set(entry.label, { provider: 'cogitator', label: entry.label, id: entry.id, name: entry.id, description: entry.strengths ?? entry.uses?.join(', ') ?? '', limits: entry.limits ?? '', activities: entry.activities, tier: config.policy?.providers.cogitator?.defaults.dataTier ?? 'public', exists: false });
   }
-  return [...items.values()];
+  const providers = policyProviders(config);
+  return [...items.values()].map(item => ({ ...item, providerName: providers.find(provider => provider.id === item.provider)?.name ?? allPlugins(config).find(plugin => plugin.id === item.provider)?.name ?? item.provider }));
+}
+
+export function nodeSearch(query: string, ...values: string[]): boolean {
+  const normalize = (value: string): string => value.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  const haystack = normalize(values.join(' '));
+  return normalize(query).split(/\s+/).every(word => haystack.includes(word));
 }
 
 export const clearedFor = (tier: DataTier, required: DataTier): boolean => DATA_TIERS.indexOf(tier) >= DATA_TIERS.indexOf(required);
@@ -206,6 +214,7 @@ export const NODE_TEXT = {
   confirm: 'Confirm',
   dataGate: 'Data tier gate',
   noMatch: 'No matching activities',
+  noModelMatch: 'TODO_PROSE_noModelMatch No models match this search.',
   selectionHelp: 'Select an activity to view its rules.',
   status: 'Status',
   highestTier: 'Highest data tier',

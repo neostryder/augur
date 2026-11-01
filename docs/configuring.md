@@ -6,7 +6,7 @@ The app covers most of this. The Rules page says what each model may do, the Rou
 
 Copy and suggest each record one step in the undo history. When the source has no level for an entry, copy leaves the target entry inheriting its level. Positive scores stay visible.
 
-Tap a catalog entry to select it, then press Add. In the ring, the arrow keys move the selection between slices, and the edge keys adjust levels. A run of edge-key presses counts as one edit until the keys go idle. Activity search keeps pending text and drags in progress.
+Tap a catalog entry to select it, then press Add. In the ring, the arrow keys move the selection between slices, and the edge keys adjust levels. A run of edge-key presses counts as one edit until the keys go idle. Activity search keeps pending text and drags in progress. Both searches update while typing and keep the input and text selection in place. Model search covers names, providers, identifiers, and descriptions, including entries blocked by current rules. Matching ignores case and punctuation. Escape clears a search first, then closes the activity switcher when its search is empty.
 
 The node view uses the existing pick preview with current usage and a neutral task fit of 0.5, so a real task can produce different shares. Drag a slice edge through five weight levels, use Ctrl K to search activities, or press [ and ] to step through them. The Weight, Data, and Behavior tabs edit the same policy fields as the list, and Rule changes can undo each edit.
 
