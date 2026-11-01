@@ -15,6 +15,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Fixed
 
+- [Visible] [Windows] **Refreshing Jev or Claude usage no longer shows a window that looks like a sign-in prompt.** Augur reads the account page in a background window, and on Windows that window used to sit on screen for about 30 seconds before closing. The window now opens off screen and ignores mouse input, and you still sign in through the sign-in window that Settings opens.
 - [Visible] [Windows] **The TypeSafe sign-in window no longer closes by itself before you finish logging in.** A sign-in page can ask its own window to close, and that request used to shut the Augur sign-in window. The window now ignores the request and stays open until Augur has read the balance or you close it.
 - [Visible] [Windows] **The TypeSafe sign-in window writes a local `signin.log` trace of its navigation and account-reading results.** The trace contains URL hosts and paths without query strings or fragments, and it never records page text, cookies, or tokens.
 - [Visible] [UI] **The TypeSafe and Claude sign-in window stays open until Augur reads your account page (the credit balance, for TypeSafe), then closes itself.** It no longer gives up after 15 minutes, and Augur waits 30 seconds or for a page change before retrying a failed reading. A downloading update now waits for you to close the window before installing and restarting Augur.

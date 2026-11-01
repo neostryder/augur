@@ -102,6 +102,7 @@ pub struct WebSessions {
 
 #[tauri::command]
 pub async fn web_session_sign_in(app: tauri::AppHandle, site: String) -> Result<(), String> {
+    trace(&app, &format!("sign-in requested site={site}"));
     let sessions = app.state::<WebSessions>();
     let _gate = sessions.window_gate.lock().await;
     let spec = self::site(&site).ok_or("Unknown site")?;
@@ -127,7 +128,13 @@ pub async fn web_session_sign_in(app: tauri::AppHandle, site: String) -> Result<
     .focused(true)
     .initialization_script(SIGN_IN_GUARD)
     .build()
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| {
+        trace(
+            &app,
+            &format!("sign-in window build failed site={site} error={e}"),
+        );
+        e.to_string()
+    })?;
     trace(
         &app,
         &format!("window opened site={site} start_url={}", spec.sign_in_url),
@@ -321,6 +328,10 @@ async fn read_site(
         );
         return Ok(None);
     }
+    trace(
+        app,
+        &format!("reader read requested site={site} fresh={skip_cache}"),
+    );
     let state = app.state::<WebSessions>();
     let spec = self::site(&site).ok_or("Unknown site")?;
     // A requested reading skips the cache, except for the successful reading handed to the ready refresh.
@@ -370,8 +381,8 @@ async fn read_site(
         app,
         WebviewWindowBuilder::new(app, &label, WebviewUrl::External(url)),
     )
-    // Off screen rather than hidden: Cloudflare's check does not finish in a hidden webview.
-    .position(-32000.0, -32000.0)
+    // -32000 is the minimized-window position on Windows, so use a plain off-screen position.
+    .position(-10000.0, -10000.0)
     .inner_size(1024.0, 768.0)
     .decorations(false)
     .focused(false)
@@ -389,6 +400,15 @@ async fn read_site(
     .build();
     let result = match built {
         Ok(window) => {
+            let _ = window.set_position(tauri::PhysicalPosition::new(-10000, -10000));
+            let _ = window.set_ignore_cursor_events(true);
+            trace(
+                app,
+                &format!(
+                    "reader window opened site={site} at={:?}",
+                    window.outer_position().map(|p| (p.x, p.y))
+                ),
+            );
             let answer = tokio::time::timeout(READ_TIMEOUT, rx).await;
             let _ = window.destroy();
             answer.ok().and_then(|r| r.ok())
