@@ -152,6 +152,21 @@ describe('pick', () => {
 });
 
 describe('run', () => {
+  it('sends per-call effort and schema to the service', async () => {
+    const calls: Calls[] = [], schema = { type: 'object' };
+    await createTools(deps({ submit: { id: 'abc', warnings: [] } }, calls)).run({ route: 'luna', prompt: 'hi', activity: 'write_code', data_tier: 'internal', effort: 'high', schema, wait_s: 0 });
+    expect(calls[0]!.params).toMatchObject({ effort: 'high', schema });
+  });
+
+  it('refuses invalid per-call effort or schema without calling the service', async () => {
+    const calls: Calls[] = [], tools = createTools(deps({}, calls));
+    for (const options of [{ effort: 'high;exit' }, { schema: [] }, { schema: { description: 'x'.repeat(65536) } }]) {
+      const result = await tools.run({ route: 'luna', prompt: 'hi', activity: 'write_code', data_tier: 'internal', ...options } as never);
+      expect(result.isError).toBe(true);
+    }
+    expect(calls).toEqual([]);
+  });
+
   const args = { route: 'luna', prompt: 'hi', activity: 'write_code', data_tier: 'internal' };
   it('never assumes a data tier or an activity', async () => {
     const calls: Calls[] = [];

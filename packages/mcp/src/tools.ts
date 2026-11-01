@@ -5,7 +5,7 @@ import { call as serviceCall } from '@augur/augurd/client';
 import type { ClientOptions } from '@augur/augurd/client';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES, balanceField, balanceSegments, checkEdit, cogitatorEntry, editKind, fleetCatalog, fleetOf, fleetOffers, isBalanceField, parseEditState, parseInbox, previewEdits } from '@augur/core';
 import type { ActivityId, DataTier, OutputMode, PolicyEdit, PolicyFile, Snapshot } from '@augur/core';
-import { TOOL_TIERS, checkBalanceSetting, describeCapabilities, isTerminal, rank, renderReport, renderResets, routeAddShapeProblems, seatLines } from '@augur/dispatch-protocol';
+import { TOOL_TIERS, checkBalanceSetting, describeCapabilities, isTerminal, rank, renderReport, renderResets, routeAddShapeProblems, seatLines, validateRunOptions } from '@augur/dispatch-protocol';
 import type { JobRecord, JobRequest, ProseAddParams, ProseQueueStatus, ProseStatus, ToolTier, UsageSnapshot } from '@augur/dispatch-protocol';
 
 export interface ToolResult { text: string; isError?: boolean; data?: Record<string, unknown> }
@@ -49,6 +49,7 @@ export interface RouteAddArgs {
 
 export interface RunArgs {
   route: string; prompt: string; activity: string; data_tier: string; tools?: string; output?: string; cwd?: string; timeout_s?: number; wait_s?: number;
+  effort?: string; schema?: Record<string, unknown>;
   packs?: string[]; no_charter?: boolean; conversation?: string; attachments?: string[]; urgent?: boolean;
 }
 
@@ -132,7 +133,10 @@ export function createTools(d: McpDeps) {
     const tools = oneOf(TOOL_TIERS, a.tools, 'read'), output = oneOf(OUTPUT_MODES, a.output, 'text_only');
     if (!activity || !dataTier || !tools || !output) return fail('An activity, a data tier, tools or output is not a known value. The data tier is never assumed: say how sensitive the task is.');
     if (!a.route || !a.prompt) return fail('A route and a prompt are required.');
+    const badOptions = validateRunOptions(a);
+    if (badOptions) return fail(badOptions);
     const req: JobRequest = { route: a.route, activity: activity as ActivityId, dataTier: dataTier as DataTier, tools: tools as ToolTier, output: output as OutputMode, cwd: a.cwd ?? d.cwd,
+      ...(a.effort !== undefined ? { effort: a.effort } : {}), ...(a.schema !== undefined ? { schema: a.schema } : {}),
       prompt: { text: a.prompt }, ...(a.timeout_s ? { timeoutS: a.timeout_s } : {}), ...(a.packs ? { packs: a.packs } : {}), ...(a.no_charter ? { noCharter: true } : {}), ...(a.conversation ? { conversation: a.conversation } : {}),
       ...(a.attachments?.length ? { attach: a.attachments } : {}), ...(a.urgent ? { urgent: true } : {}),
       caller: { kind: 'mcp', label: 'augur-mcp', session: d.session, intent: 'interactive' } };
@@ -175,6 +179,7 @@ export function createTools(d: McpDeps) {
 
   function describeResult(job: JobRecord, answer: string | null, warnings: string[] = [], notes: string[] = [], chain: string[] = []): ToolResult {
     const ok = job.state === 'completed';
+    warnings = [...new Set([...warnings, ...(job.warnings ?? [])])];
     const head = [...(warnings.length ? [`Warnings: ${warnings.join(' ')}`] : []), ...notes];
     const body = ok ? (answer ?? '(no answer text)') : `The job ended as ${job.state}.${job.reason ? ` ${job.reason}` : ''}${answer ? `\n${answer}` : ''}`;
     return { text: head.length ? `${head.join('\n')}\n${body}` : body, ...(ok ? {} : { isError: true }), data: { id: job.id, state: job.state, answer, reason: job.reason, patch: job.patch, usage: job.usage, ...(chain.length > 1 ? { chain, retriedAs: job.id } : {}) } };

@@ -79,6 +79,45 @@ async function boot(extra: Record<string, unknown> = {}) {
   return { e, run, pipe };
 }
 
+describe('run effort and schema', () => {
+  it('parses both options', () => {
+    const parsed = parse(['run', 'fake', '--effort', 'xhigh', '--schema', 'answer.json']);
+    expect(parsed.flags.get('effort')).toBe('xhigh');
+    expect(parsed.flags.get('schema')).toBe('answer.json');
+  });
+
+  it('rejects invalid effort before submitting', async () => {
+    const { run } = await boot();
+    for (const effort of ['', 'x'.repeat(17), 'high;exit', 'high_low']) {
+      const result = await run(['run', 'fake', '--prompt', 'hi', '--effort', effort]);
+      expect(result.code).toBe(1); expect(result.err).toContain('effort must be 1 to 16');
+    }
+  });
+
+  it('rejects unreadable, oversized, invalid and non-object schema files', async () => {
+    const { e, run } = await boot(), file = join(e.root, 'schema.json');
+    expect((await run(['run', 'fake', '--prompt', 'hi', '--schema', 'missing.json'])).code).toBe(1);
+    for (const text of ['{', '[]', 'null', '1', JSON.stringify({ description: 'x'.repeat(65536) }), '{}'.padEnd(65537, ' ')]) {
+      writeFileSync(file, text);
+      const result = await run(['run', 'fake', '--prompt', 'hi', '--schema', 'schema.json']);
+      expect(result.code).toBe(1); expect(result.err).toContain('schema');
+    }
+  });
+
+  it('reads the schema relative to the caller and sends it with the effort override', async () => {
+    const { e, run } = await boot({ persistPrompts: true });
+    const schema = { type: 'object', required: ['ok'] };
+    writeFileSync(join(e.root, 'schema.json'), JSON.stringify(schema));
+    const before = readFileSync(e.routesPath, 'utf8');
+    const result = await run(['run', 'fake', '--prompt', 'hi', '--schema', 'schema.json', '--effort', 'high', '--wait', '--json']);
+    expect(result.code).toBe(0);
+    const record = JSON.parse(result.out), plan = JSON.parse(readFileSync(join(e.dir, 'jobs', record.job.id, 'job.json'), 'utf8'));
+    expect(plan.args).toContain('model_reasoning_effort=high');
+    expect(plan.files).toContainEqual({ name: 'output-schema.json', content: JSON.stringify(schema) });
+    expect(readFileSync(e.routesPath, 'utf8')).toBe(before);
+  });
+});
+
 describe('augur models', () => {
   it('prints live uses, role chains, and offers as text and JSON without editing rules', async () => {
     const { e, pipe } = await boot();
