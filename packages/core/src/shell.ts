@@ -30,6 +30,8 @@ export interface UpdateInfo {
   date?: string;
 }
 
+export type UpdateChannel = 'stable' | 'early';
+
 export interface Shell {
   kind: 'desktop' | 'pwa';
   /** Set when augurd serves the app to a browser. It is a view of the engine like the desktop panel, with no popup, tray, or sign-in windows of its own. */
@@ -114,9 +116,9 @@ export interface Shell {
   /** The running app's version. */
   appVersion?(): Promise<string>;
   /** Looks for a newer release; null means this is the latest. */
-  checkUpdate?(): Promise<UpdateInfo | null>;
+  checkUpdate?(channel?: UpdateChannel): Promise<UpdateInfo | null>;
   /** Downloads and installs the newer release, then restarts the app. */
-  installUpdate?(): Promise<void>;
+  installUpdate?(channel?: UpdateChannel): Promise<void>;
 
   /**
    * Fires when the popup is shown, when the tray menu asks for a refresh or for settings, and when a

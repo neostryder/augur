@@ -15,7 +15,13 @@ import { appDirs } from './paths.js';
 import type { ViewHub } from './views.js';
 
 const execute = promisify(execFile);
-const LATEST_URL = 'https://github.com/neostryder/augur/releases/latest/download/latest.json';
+export const LATEST_URL = 'https://github.com/neostryder/augur/releases/latest/download/latest.json';
+export const EARLY_LATEST_URL = 'https://github.com/neostryder/augur/releases/download/edge-channel/latest.json';
+
+export function shouldOfferUpdate(channel: AppConfig['updateChannel'], version: string, installed: string, stableVersion?: string): boolean {
+  if (channel === 'early' && stableVersion && compareVersions(version, stableVersion) <= 0) return false;
+  return !!version && compareVersions(version, installed) > 0;
+}
 const CLAUDE_KEYCHAIN_SERVICE = 'Claude Code-credentials';
 const BWS_TTL_MS = 10 * 60 * 1000;
 
@@ -202,12 +208,19 @@ export function createEngineShell(opts: EngineShellOptions): NodeEngineShell {
     claudeInstall: async (target, path) => claudeInstall(claudePaths(), target, path),
     claudeRemove: async target => claudeRemove(claudePaths(), target),
     appVersion: async () => opts.version ?? SERVICE_VERSION,
-    async checkUpdate(): Promise<UpdateInfo | null> {
-      const res = await httpsRequest({ url: LATEST_URL, headers: { Accept: 'application/json', 'User-Agent': 'augur' }, timeoutMs: 20000 });
+    async checkUpdate(channel: AppConfig['updateChannel'] = 'stable'): Promise<UpdateInfo | null> {
+      const url = channel === 'early' ? EARLY_LATEST_URL : LATEST_URL;
+      const res = await httpsRequest({ url, headers: { Accept: 'application/json', 'User-Agent': 'augur' }, timeoutMs: 20000 });
       if (res.status !== 200) throw new Error(`The release list answered ${res.status}`);
       const latest = JSON.parse(res.body) as { version?: string; notes?: string; pub_date?: string };
       const version = String(latest.version ?? '').replace(/^v/, '');
-      if (!version || compareVersions(version, opts.version ?? SERVICE_VERSION) <= 0) return null;
+      if (channel === 'early') {
+        const stable = await httpsRequest({ url: LATEST_URL, headers: { Accept: 'application/json', 'User-Agent': 'augur' }, timeoutMs: 20000 });
+        if (stable.status !== 200) throw new Error(`The release list answered ${stable.status}`);
+        const stableVersion = String((JSON.parse(stable.body) as { version?: string }).version ?? '').replace(/^v/, '');
+        if (!shouldOfferUpdate(channel, version, opts.version ?? SERVICE_VERSION, stableVersion)) return null;
+      }
+      if (!shouldOfferUpdate(channel, version, opts.version ?? SERVICE_VERSION)) return null;
       return { version, ...(latest.notes ? { notes: latest.notes } : {}), ...(latest.pub_date ? { date: latest.pub_date } : {}) };
     },
   };

@@ -222,6 +222,8 @@ export interface AppConfig {
   hotkey?: string | null;
   /** Install new desktop releases without asking. Defaults to on. */
   autoUpdate?: boolean;
+  /** Desktop release channel. Defaults to stable. */
+  updateChannel?: 'stable' | 'early';
   /** Desktop: open the panel on the main usage view whenever the app starts. Defaults to on. */
   openOnLaunch?: boolean;
   /** Desktop-to-phone sync channel. The encryption key and write secret live in the keychain. */

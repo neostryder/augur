@@ -58,6 +58,19 @@ describe('the usage engine', () => {
     expect(engine.state.config.policy?.providers.cogitator?.models).toEqual({});
   });
 
+  it('checks updates using the configured channel', async () => {
+    const f = fakeShell(base());
+    f.shell.checkUpdate = vi.fn(async () => null);
+    engine = new UsageEngine(f.shell, { hosted: 'https://augur.example.com' });
+    await engine.start();
+    engine.state.update.available = { version: '1.17.0-edge.4' };
+    engine.state.update.status = 'available';
+    await engine.saveConfig({ ...engine.state.config, updateChannel: 'early' });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(f.shell.checkUpdate).toHaveBeenCalledWith('early');
+    expect(engine.state.update.available).toBeNull();
+  });
+
   it('tests a provider key with the engine host and reports only whether it worked', async () => {
     const config = base();
     config.providers.find(provider => provider.id === 'claude-api')!.enabled = true;
