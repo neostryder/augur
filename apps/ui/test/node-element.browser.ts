@@ -8,6 +8,12 @@ const check = (condition: unknown, message: string): void => { if (!condition) t
 const wait = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 const key = (target: Element, value: string, extra = {}): void => { target.dispatchEvent(new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true, ...extra })); };
 const pointer = (target: EventTarget, type: string, x = 0, y = 0, pointerType = 'touch'): void => { target.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, pointerType })); };
+const drag = (source: Element, target: Element): void => {
+  source.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: new DataTransfer() }));
+  target.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: new DataTransfer() }));
+  target.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true }));
+  source.dispatchEvent(new DragEvent('dragend', { bubbles: true }));
+};
 const click = (target: Element, detail = 0): void => { target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail })); };
 let dispose = (): void => {};
 
@@ -37,9 +43,74 @@ function fixture(wiring = false, tab: NodeModel['node']['tab'] = 'weight') {
 }
 
 export async function run(name: string): Promise<string> {
-  const f = fixture(['add refusal', 'copy undo', 'suggest undo', 'Ctrl K drafts', 'Ctrl K drag', 'activity shortcuts', 'tooltip scope', 'search inputs', 'search Escape'].includes(name), name === 'Ctrl K drafts' ? 'behavior' : 'weight');
+  const f = fixture(['add refusal', 'copy undo', 'suggest undo', 'Ctrl K drafts', 'Ctrl K drag', 'activity shortcuts', 'tooltip scope', 'search inputs', 'search Escape', 'drag roundtrip', 'drop refusals', 'last removal', 'remove controls', 'restore recheck'].includes(name), name === 'Ctrl K drafts' ? 'behavior' : 'weight');
   const { node, q, edits, m, app } = f;
   switch (name) {
+    case 'drag roundtrip': {
+      const policy = m.config.policy!, entry = policy.providers.openrouter!.models['openrouter/terra']!, before = structuredClone(entry.rule);
+      check(q('.nv-math').getAttribute('draggable') === 'true' && q('.nv-chips button').getAttribute('draggable') === 'true', 'Mix models must provide native HTML drag sources.');
+      drag(q('.nv-math'), q('.nv-tray'));
+      check(entry.rule.activities?.write_code === null && policy.history.length === 1 && f.saves() === 1, 'Removing by drag must use the existing policy edit path once.');
+      check(q('.nv-preview').textContent === NODE_TEXT.removed && app.nodeNote === NODE_TEXT.removed, 'Removal must announce its result.');
+      undoChange(policy, policy.history.at(-1)!, 'test'); check(JSON.stringify(entry.rule) === JSON.stringify(before), 'One undo must restore removal including inheritance.');
+      drag(q('.nv-math'), q('.nv-tray')); f.redraw();
+      drag(q('[data-node-add="openrouter/terra"]'), q('.nv-gauge'));
+      check(q('#nv-action-message').textContent === NODE_TEXT.restoreActivity && entry.rule.activities?.write_code === null, 'Restoring an excluded activity must ask before changing it.');
+      click(q('[data-node-answer="ok"]'));
+      check(entry.rule.activities?.write_code === 'normal' && app.nodeNote === NODE_TEXT.added, 'Confirmed restore must add at Normal and announce the result.');
+      undoChange(policy, policy.history.at(-1)!, 'test'); check(entry.rule.activities?.write_code === null, 'One undo must restore the exclusion.');
+      drag(q('[data-node-add="openrouter/new"]'), q('.nv-gauge'));
+      check(policy.providers.openrouter!.models['openrouter/new']?.status === 'unreviewed', 'A new drag addition must remain unreviewed.');
+      check(app.nodeNote === NODE_TEXT.awaitingReview, 'A new model must announce its pending review.'); break;
+    }
+    case 'drop refusals': {
+      const policy = m.config.policy!, entry = policy.providers.openrouter!.models['openrouter/terra']!;
+      for (const test of ['duplicate', 'tier', 'activity', 'absent']) {
+        entry.rule = test === 'tier' ? { dataTier: 'public' } : test === 'activity' ? { activities: { write_code: null }, askFirst: true } : {};
+        f.redraw();
+        const source = q(`[data-node-add="openrouter/${test === 'absent' ? 'new' : 'terra'}"]`);
+        source.focus(); drag(source, q(test === 'absent' ? '.nv-tray' : '.nv-gauge'));
+        check(node.querySelector('.nv-action') && !node.querySelector('[data-node-answer="cancel"]'), 'An impossible drop must show an explanatory OK dialog.');
+        check(document.activeElement?.matches('[data-node-answer="ok"]'), 'The dialog must take focus.');
+        key(q('[data-node-answer="ok"]'), 'Tab'); check(document.activeElement?.matches('[data-node-answer="ok"]'), 'The one-button dialog must trap Tab.');
+        key(q('[data-node-answer="ok"]'), 'Tab', { shiftKey: true }); check(document.activeElement?.matches('[data-node-answer="ok"]'), 'The one-button dialog must trap Shift Tab.');
+        check(policy.history.length === 0 && f.adds.length === 0, 'Impossible drops must not edit policy or emit adds.');
+        click(q('[data-node-answer="ok"]')); check(document.activeElement === source && !q('.nv-layout').hasAttribute('inert'), 'OK must restore focus and background interaction.');
+      }
+      break;
+    }
+    case 'last removal': {
+      const policy = m.config.policy!, entry = policy.providers.openrouter!.models['openrouter/terra']!;
+      policy.providers.openrouter!.models['openrouter/luna']!.rule.activities = { write_code: null }; f.redraw();
+      const source = q<HTMLElement>('.nv-chips button'); source.focus(); drag(source, q('.nv-tray'));
+      check(q('#nv-action-message').textContent === NODE_TEXT.lastModel && policy.history.length === 0, 'Removing the last model must ask first.');
+      key(q('[data-node-answer="ok"]'), 'Tab', { shiftKey: true }); check(document.activeElement?.matches('[data-node-answer="cancel"]'), 'The confirmation must wrap backward.');
+      key(q('[data-node-answer="cancel"]'), 'Tab'); check(document.activeElement?.matches('[data-node-answer="ok"]'), 'The confirmation must wrap forward.');
+      key(q('[data-node-answer="ok"]'), 'Escape'); check(policy.history.length === 0 && !node.querySelector('.nv-action') && document.activeElement === source, 'Escape must cancel and restore focus.');
+      drag(source, q('.nv-tray')); click(q('[data-node-answer="cancel"]')); check(policy.history.length === 0, 'Cancel must preserve the last model.');
+      drag(source, q('.nv-tray')); click(q('[data-node-answer="ok"]'));
+      check(entry.rule.activities?.write_code === null && policy.history.length === 1 && q('.nv-preview').textContent === NODE_TEXT.removed, 'OK must remove the final model once.');
+      undoChange(policy, policy.history.at(-1)!, 'test'); check(entry.rule.activities?.write_code === undefined, 'The final removal must be undoable.'); break;
+    }
+    case 'remove controls': {
+      const policy = m.config.policy!, entry = policy.providers.openrouter!.models['openrouter/terra']!;
+      key(q('.nv-chips [data-node-drag="openrouter/terra"]'), 'Delete'); check(entry.rule.activities?.write_code === null && edits.length === 1, 'Delete must use the removal edit path.');
+      undoChange(policy, policy.history.at(-1)!, 'test'); f.redraw();
+      click(q('[data-node-remove]')); check(entry.rule.activities?.write_code === null && edits.length === 2, 'The remove button must use the same path.');
+      undoChange(policy, policy.history.at(-1)!, 'test'); f.redraw();
+      const source = q('.nv-math'); source.dispatchEvent(new DragEvent('dragstart', { bubbles: true })); node.dispatchEvent(new DragEvent('dragend', { bubbles: true }));
+      check(entry.rule.activities?.write_code === undefined && edits.length === 2, 'A cancelled native drag must not remove anything.'); break;
+    }
+    case 'restore recheck': {
+      const policy = m.config.policy!, entry = policy.providers.openrouter!.models['openrouter/terra']!;
+      entry.rule.activities = { write_code: null }; f.redraw();
+      drag(q('[data-node-add="openrouter/terra"]'), q('.nv-gauge'));
+      entry.rule.dataTier = 'public'; click(q('[data-node-answer="ok"]'));
+      check(entry.rule.activities.write_code === null && policy.history.length === 0 && q('#nv-action-message').textContent === NODE_TEXT.refuseTier, 'Confirmation must recheck data clearance before restoring.');
+      click(q('[data-node-answer="ok"]'));
+      await app.addNodeModels(['openrouter/terra'], true);
+      check(entry.rule.activities.write_code === null && policy.history.length === 0, 'The app must independently recheck confirmed additions.'); break;
+    }
     case 'search inputs': {
       const search = q<HTMLInputElement>('#nv-catalog-search'), ring = q('.nv-ring'), panel = q('.nv-panel');
       search.focus(); search.value = 'LUNA'; search.setSelectionRange(1, 3, 'backward'); search.dispatchEvent(new Event('input', { bubbles: true }));
@@ -143,7 +214,7 @@ export async function run(name: string): Promise<string> {
     case 'node selection':
       m.sel = null; node.model = m; check(m.sel === null && f.selections.length === 0, 'Initial node selection must leave list selection alone.'); break;
     case 'catalog tap':
-      click(q('[data-node-add]')); check(f.adds.length === 0, 'A catalog tap must select a candidate.');
+      click(q('[data-node-add="openrouter/new"]')); check(f.adds.length === 0, 'A catalog tap must select a candidate.');
       click(q('[data-node-confirm-add]')); check(f.adds.length === 1, 'Add must work without drag events.'); break;
     case 'drag feedback': {
       const item = q('[data-node-add]'); item.dispatchEvent(new DragEvent('dragstart', { bubbles: true }));
@@ -230,4 +301,21 @@ export async function run(name: string): Promise<string> {
     default: throw new Error(`Unknown case: ${name}`);
   }
   return name;
+}
+
+export function prepareNativeDrag(): { from: { x: number; y: number }; to: { x: number; y: number } } {
+  const f = fixture(true);
+  f.m.sel = { provider: 'openrouter', model: 'openrouter/luna' }; f.app.nodeSel = f.m.sel; f.node.model = f.m;
+  window.scrollTo(0, 180);
+  const svg = f.q<SVGSVGElement>('.nv-ring'), matrix = svg.getScreenCTM()!;
+  const from = new DOMPoint(264, 372).matrixTransform(matrix), tray = f.q('.nv-tray').getBoundingClientRect();
+  (window as any).nativeDragFixture = f;
+  return { from: { x: from.x, y: from.y }, to: { x: tray.left + 25, y: tray.top + 20 } };
+}
+
+export function checkNativeDrag(): void {
+  const f = (window as any).nativeDragFixture;
+  check(f.m.config.policy.providers.openrouter.models['openrouter/terra'].rule.activities?.write_code === null, 'A native mouse drag must remove the dragged slice even when another model was selected.');
+  check(f.edits.length === 1, 'A native drag must commit once.');
+  delete (window as any).nativeDragFixture;
 }

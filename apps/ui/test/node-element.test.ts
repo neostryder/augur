@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { createServer, type ViteDevServer } from 'vite';
 
 const cases = [
-  'search inputs', 'search Escape', 'mode swap', 'drag commit', 'drag cancel', 'click without movement', 'keyboard slider', 'range keyboard',
+  'drag roundtrip', 'drop refusals', 'last removal', 'remove controls', 'restore recheck', 'search inputs', 'search Escape', 'mode swap', 'mode swap reduced', 'drag commit', 'drag cancel', 'click without movement', 'keyboard slider', 'range keyboard',
   'tab arrows', 'ring arrows', 'Escape', 'focus trap', 'long press', 'outside release',
   'cancel and blur', 'mouse hold', 'node selection', 'catalog tap', 'drag feedback',
   'add refusal', 'copy undo', 'suggest undo', 'Ctrl K drafts', 'Ctrl K drag', 'activity shortcuts',
@@ -55,10 +55,25 @@ afterAll(async () => {
 });
 
 describe('node element and app wiring in Chromium', () => {
+  it('drags a slice to the list with native mouse input', async () => {
+    await command('Emulation.setDeviceMetricsOverride', { width: 1280, height: 1100, deviceScaleFactor: 1, mobile: false }, sessionId);
+    const result = await command('Runtime.evaluate', { expression: "import('/test/node-element.browser.ts').then(module => module.prepareNativeDrag())", awaitPromise: true, returnByValue: true }, sessionId);
+    expect(result.exceptionDetails).toBeUndefined();
+    const { from, to } = result.result.value;
+    await command('Input.dispatchMouseEvent', { type: 'mouseMoved', ...from }, sessionId);
+    await command('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', clickCount: 1, ...from }, sessionId);
+    for (let step = 1; step <= 12; step++) await command('Input.dispatchMouseEvent', { type: 'mouseMoved', button: 'left', buttons: 1, x: from.x + (to.x - from.x) * step / 12, y: from.y + (to.y - from.y) * step / 12 }, sessionId);
+    await command('Input.dispatchMouseEvent', { type: 'mouseMoved', button: 'left', buttons: 1, ...to }, sessionId);
+    await command('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', clickCount: 1, ...to }, sessionId);
+    const checked = await command('Runtime.evaluate', { expression: "import('/test/node-element.browser.ts').then(module => module.checkNativeDrag())", awaitPromise: true, returnByValue: true }, sessionId);
+    expect(checked.exceptionDetails?.exception?.description ?? checked.exceptionDetails?.text).toBeUndefined();
+  });
   it.each(cases)('%s', async name => {
+    await command('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: name.endsWith(' reduced') ? 'reduce' : 'no-preference' }] }, sessionId);
     await command('Emulation.setDeviceMetricsOverride', { width: name.startsWith('phone') || name === 'focus trap' || name === 'popup bounds' ? 390 : 1280, height: 900, deviceScaleFactor: 1, mobile: false }, sessionId);
-    const result = await command('Runtime.evaluate', { expression: `import('/test/node-element.browser.ts').then(module => module.run(${JSON.stringify(name)}))`, awaitPromise: true, returnByValue: true }, sessionId);
+    const caseName = name.replace(/ reduced$/, '');
+    const result = await command('Runtime.evaluate', { expression: `import('/test/node-element.browser.ts').then(module => module.run(${JSON.stringify(caseName)}))`, awaitPromise: true, returnByValue: true }, sessionId);
     expect(result.exceptionDetails?.exception?.description ?? result.exceptionDetails?.text).toBeUndefined();
-    expect(result.result.value).toBe(name);
+    expect(result.result.value).toBe(caseName);
   }, 30000);
 });

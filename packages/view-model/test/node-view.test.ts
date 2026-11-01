@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ACTIVITIES, buildPolicyFile, emptyPolicy, fieldPath, migrateConfig, policyProviders, setField, undoChange, type AppConfig, type ModelEntry, type Rule, type Snapshot } from '@augur/core';
 import { rank } from '@augur/dispatch-protocol';
-import { clearedFor, copyMix, dragLevel, nodeActivityLabel, nodeCatalog, nodeMix, nodeSearch, nodeSlug, nodeTooltip, previewCatalog, previewLevel, roundShares, stepActivity, suggestedThree } from '../src/node-view.js';
+import { clearedFor, copyMix, dragLevel, nodeActivityLabel, nodeCatalog, nodeCanRestore, nodeRemoveReason, NODE_TEXT, nodeMix, nodeSearch, nodeSlug, nodeTooltip, previewCatalog, previewLevel, roundShares, stepActivity, suggestedThree } from '../src/node-view.js';
 
 const now = new Date('2026-10-29T12:00:00Z');
 const entry = (id: string, rule: Rule = {}, status: ModelEntry['status'] = 'confirmed'): ModelEntry => ({ id, status, source: 'manual', firstSeen: now.toISOString(), rule });
@@ -196,5 +196,31 @@ describe('node search matching', () => {
     const item = nodeCatalog(configWithKnownProvider(), {}, null)[0]!;
     expect(item.providerName).toBe('OpenRouter');
     expect(nodeSearch('openrouter', item.providerName!, item.name, item.description)).toBe(true);
+  });
+});
+
+describe('node mix removal and restoration', () => {
+  it('explains absent and last-model removals without changing rules', () => {
+    const c = config(), before = JSON.stringify(c);
+    expect(nodeRemoveReason(c, null, 'demo/terra', 'write_code', 'internal')).toBe('');
+    expect(nodeRemoveReason(c, null, 'missing', 'write_code', 'internal')).toBe(NODE_TEXT.absentModel);
+    expect(JSON.stringify(c)).toBe(before);
+    c.policy!.providers.demo!.models['demo/luna']!.rule.activities = { write_code: null };
+    c.policy!.providers.demo!.models['demo/sonnet']!.rule.activities = { write_code: null };
+    expect(nodeRemoveReason(c, null, 'demo/terra', 'write_code', 'internal')).toBe(NODE_TEXT.lastModel);
+  });
+
+  it('permits a confirmed activity restore only when every other gate permits the model', () => {
+    const c = config(), entry = c.policy!.providers.demo!.models['demo/terra']!;
+    entry.rule.activities = { write_code: null };
+    const allowed = () => nodeCanRestore(c, null, nodeCatalog(c, {}, null).find(item => item.label === 'demo/terra')!, 'write_code', 'internal');
+    expect(allowed()).toBe(true);
+    entry.rule.dataTier = 'public'; expect(allowed()).toBe(false);
+    entry.rule.dataTier = 'regulated'; entry.rule.askFirst = true; expect(allowed()).toBe(false);
+    entry.rule.askFirst = false; entry.status = 'unreviewed'; expect(allowed()).toBe(false);
+    entry.status = 'confirmed'; entry.rule.pause = { until: '2099-01-01T00:00:00Z', weights: null }; expect(allowed()).toBe(false);
+    delete entry.rule.pause; expect(allowed()).toBe(true);
+    expect(entry.rule.activities.write_code).toBeNull();
+    expect(c.policy!.history).toHaveLength(0);
   });
 });
