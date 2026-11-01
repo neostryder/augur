@@ -46,6 +46,11 @@ beforeAll(async () => {
   await command('Page.enable', {}, sessionId);
   await command('Page.navigate', { url: server.resolvedUrls!.local[0] + '__node-test' }, sessionId);
   await command('Runtime.evaluate', { expression: "new Promise(resolve => { if (document.readyState === 'complete') resolve(); else addEventListener('load', resolve, { once: true }); })", awaitPromise: true }, sessionId);
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const result = await command('Runtime.evaluate', { expression: "import('/test/node-element.browser.ts').then(() => true)", awaitPromise: true, returnByValue: true }, sessionId);
+    if (!result.exceptionDetails) break;
+    if (attempt < 3) await new Promise(resolve => setTimeout(resolve, 1000));
+  }
 }, 60000);
 
 afterAll(async () => {
