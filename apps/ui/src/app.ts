@@ -1762,7 +1762,7 @@ export class App {
     await this.engine?.setInstalling(true);
     await this.render();
     try {
-      await this.shell.installUpdate();
+      await this.shell.installUpdate(this.config.updateChannel ?? 'stable');
     } catch {
       this.update.status = 'error';
       await this.engine?.setInstalling(false);
@@ -1982,6 +1982,11 @@ export class App {
   private async onChange(e: Event): Promise<void> {
     const t = e.target as HTMLInputElement;
     const d = t.dataset;
+    if (d.updateChannel !== undefined) {
+      this.config.updateChannel = t.value === 'early' ? 'early' : 'stable';
+      await this.saveConfig();
+      return;
+    }
     if (this.view === 'rules' && await this.onRulesChange(t)) return;
     if (this.view === 'routes' && this.onRouteField(t)) return;
     if (d.nodeEffect) { this.config.layout.nodeView = { sheen: true, animation: true, ticks: true, ...this.config.layout.nodeView, [d.nodeEffect]: t.checked }; await this.saveConfig(false); return; }

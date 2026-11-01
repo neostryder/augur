@@ -286,11 +286,14 @@ export class SettingsPage implements Page {
 
   private computer(ctx: Ctx): Row[] {
     const u = ctx.state.update, config = ctx.state.config;
-    const status = u.status === 'available' ? [COMPUTER_TEXT.available(u.available?.version ?? ''), this.deps.updateAdvice].filter(Boolean).join(' ') : COMPUTER_TEXT.status[u.status];
+    const status = u.status === 'available' ? [COMPUTER_TEXT.channelAvailable(config.updateChannel ?? 'stable', u.available?.version ?? ''), this.deps.updateAdvice].filter(Boolean).join(' ') : COMPUTER_TEXT.status[u.status];
     const busy = u.status === 'checking' || u.status === 'installing';
     const out: Row[] = [{ kind: 'heading', text: COMPUTER_TEXT.heading }];
     out.push({ kind: 'action', id: 'update', label: u.version ? COMPUTER_TEXT.version(u.version) : COMPUTER_TEXT.updates, ...(status ? { desc: status } : {}),
       button: COMPUTER_TEXT.check, disabled: busy, run: () => this.act(ctx, 'checkUpdate', []).then(() => {}) });
+    out.push({ kind: 'choice', id: 'update-channel', label: COMPUTER_TEXT.updateChannel, desc: COMPUTER_TEXT.updateChannelHelp, value: config.updateChannel ?? 'stable',
+      options: [['stable', COMPUTER_TEXT.stableChannel], ['early', COMPUTER_TEXT.earlyChannel]],
+      set: (value) => this.save(ctx, (c) => { c.updateChannel = value === 'early' ? 'early' : 'stable'; }, SETTINGS_TEXT.saved) });
     const login = this.deps.login?.state();
     if (this.deps.login && login?.supported) {
       const control = this.deps.login;
