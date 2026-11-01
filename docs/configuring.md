@@ -30,7 +30,13 @@ Idle time counts back through usage history to the last reading at or above the 
 
 `augur models` and the read-only `augur_models` tool list the live Cogitator entries and roles, with the uses, strengths, and limits of each, plus the ordered chain for each role. Both report when the reading was taken and whether the provider marked it stale. The catalog in `packages/core/src/cogitator-catalog.ts` supplies descriptions for the known Gemmas, the reasoning distill, Apple on-device text, embeddings, transcription, diarization, Laya, prose rewriting, prompt guarding, and image generation. When an entry reports no parameter count, its size stays unknown. Augur never invents a chain, and it does not treat a seed as proof that an entry is installed.
 
-The reader currently calls `GET /api/v1/hosts`. It includes machine inventories even when their memory ledger is absent. It accepts `uses`, `strengths`, and `limits` on inventory entries, ledger entries, and roles, and also in top-level or nested `catalog` lists. `readCogitatorKnowledge` isolates the metadata shape so that a separate management catalog endpoint can use the same merge. A valid live field overrides its seed. An absent or malformed field leaves the seed in place, and an empty live use list clears the seeded uses. Chains come from the live roles. The compact phone reading leaves out the full descriptions and chains.
+The reader calls `GET /api/v1/hosts`, then `GET /api/v1/catalog`, with the same manage key and a 5 second timeout each. A failed catalog call keeps the fleet reading and the seeded catalog.
+
+A catalog engine row overrides the seeded `uses`, `strengths`, and `limits` only when `uses_declared` is true. Catalog engines also join the machine's inventory, and catalog roles supply the chains.
+
+A chain member written `model@peer` is described by that peer's own catalog, read once per refresh. Augur sends the key only to peers on the gateway's host or the home network. A peer that fails or answers 404 stays undescribed.
+
+Inventories without a memory ledger count. Inventory entries, ledger entries, roles, and nested catalog lists all accept `uses`, `strengths`, and `limits`. An empty live use list clears the seeded uses. The compact phone reading omits descriptions and chains.
 
 A live entry that lacks rules or a route appears as an offer in the CLI and MCP output. Augur computes offers from the current reading and configuration and does not store them as series swaps. Listing an offer writes nothing. Cogitator's list remains available for manual selection in Model rules, even if an earlier configuration chose automatic imports. The owner accepts an offer with these commands:
 

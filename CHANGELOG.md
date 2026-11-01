@@ -4,6 +4,10 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+### Added
+
+- [Visible] [Providers] **Augur reads the Cogitator gateway's catalog endpoint with the manage key.** Entries that declare their uses replace the shipped descriptions, role chains come from the live roles, and each peer's models are described by that peer's own catalog. A gateway or peer without the endpoint keeps the shipped descriptions.
+
 ## [1.16.0] - 2026-10-31
 
 ### Added
