@@ -883,21 +883,16 @@ export class UsageEngine implements EngineApi {
     const before = u.available?.version;
     u.status = 'checking';
     this.emit('update');
-    try {
-      u.available = await this.shell.checkUpdate(channel);
-      u.status = u.available ? 'available' : 'current';
-    } catch {
+    let available: UpdateInfo | null = null, failed = false;
+    try { available = await this.shell.checkUpdate(channel); } catch { failed = true; }
+    // A newer check, or a channel change, owns the result.
+    if (checkId !== this.updateCheckId) return;
+    if (failed) {
       // A failed check keeps showing an update already found, so the button does not disappear.
       u.status = u.available ? 'available' : 'error';
-    }
-    if (checkId !== this.updateCheckId) return;
-    if (channel !== (this.config.updateChannel ?? 'stable')) {
-      u.available = null;
-      u.changes = null;
-      u.status = 'idle';
-      this.emit('update');
-      void this.checkUpdate();
-      return;
+    } else {
+      u.available = available;
+      u.status = available ? 'available' : 'current';
     }
     const found = u.available?.version;
     if (found && found !== before) {

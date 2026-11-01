@@ -1,7 +1,7 @@
 export function compareVersions(a: string, b: string): number {
   const parse = (v: string) => {
-    const match = v.replace(/^v/, '').match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?/);
-    return match ? { core: match.slice(1, 4).map(Number), pre: match[4]?.split('.') ?? null } : { core: [0, 0, 0], pre: null };
+    const match = v.replace(/^v/, '').match(/^(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([0-9A-Za-z.-]+))?/);
+    return match ? { core: match.slice(1, 4).map(n => Number(n ?? 0)), pre: match[4]?.split('.') ?? null } : { core: [0, 0, 0], pre: null };
   };
   const x = parse(a), y = parse(b);
   for (let i = 0; i < 3; i++) {
