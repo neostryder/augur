@@ -157,6 +157,12 @@ pub async fn web_session_read(
     site: String,
     fresh: Option<bool>,
 ) -> Result<Option<Value>, String> {
+    // A reading loads the account page in a second window on the same profile. While the sign-in window is open that
+    // page redirects to the sign-in flow, and the second flow replaces the first one's cookie, so the first fails
+    // with "We couldn't verify your browser". The sign-in window's own watcher is the only reader until it closes.
+    if app.get_webview_window(&format!("signin-{site}")).is_some() {
+        return Ok(None);
+    }
     read_site(&app, &site, false, fresh.unwrap_or(false)).await
 }
 
