@@ -114,6 +114,7 @@ jobs:
     steps:
       - name: Point the Early channel at this build and prune old builds
         env:
+          GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           release=$(gh release list --limit 100 --json tagName | jq -r --arg suffix "-edge.$GITHUB_RUN_NUMBER" '.[] | select(.tagName | endswith($suffix)) | .tagName' | head -n 1)
