@@ -1,12 +1,26 @@
+!macro AugurTrace TEXT
+  Push $R9
+  ClearErrors
+  CreateDirectory "$LOCALAPPDATA\Augur"
+  FileOpen $R9 "$LOCALAPPDATA\Augur\update-install.log" a
+  FileSeek $R9 0 END
+  FileWrite $R9 "${TEXT}$\r$\n"
+  FileClose $R9
+  ClearErrors
+  Pop $R9
+!macroend
+
 ; The dispatch service runs from the install folder, so an upgrade or an uninstall has to stop it first.
 ; It is stopped only when no job is running, since a job's process tree also runs from these files.
 !macro AugurStopService
+  !insertmacro AugurTrace "AugurStopService start"
   IfFileExists "$INSTDIR\service\augur.cmd" 0 augur_skip_stop
     ; It names the running jobs and waits for them to end (up to two hours), so the install goes on by itself once they finish.
     DetailPrint "Waiting for Augur's running jobs to finish before updating..."
     nsExec::ExecToStack '"$INSTDIR\service\augur.cmd" service stop --wait --timeout 7200'
     Pop $0
     Pop $1
+    !insertmacro AugurTrace "service stop result exit_code=$0"
     StrCmp $0 "0" augur_stopped
     MessageBox MB_ICONEXCLAMATION|MB_OK "Augur is still running these jobs after two hours, so the update cannot replace its files:$\r$\n$\r$\n$1$\r$\n$\r$\nCancel them with augur cancel <job>, then run the update again."
     Abort
@@ -16,6 +30,7 @@
     nsExec::ExecToStack 'taskkill /F /IM augur-node.exe'
     Pop $0
     Pop $1
+    !insertmacro AugurTrace "taskkill finished exit_code=$0"
     ; An open Claude session starts its MCP server again within a second of the kill, so the file can be locked again by the time it is copied.
     ; Windows lets a running program be renamed but not overwritten, so the old file moves aside and the copy lands in a free name.
     ; Copies set aside by an earlier run go once nothing runs them.
@@ -27,14 +42,22 @@
       Goto augur_aside
   augur_rename:
     Rename "$INSTDIR\service\augur-node.exe" "$INSTDIR\service\augur-node.exe.old$R0"
+    !insertmacro AugurTrace "rename finished suffix=$R0"
   augur_skip_stop:
 !macroend
 
 !macro NSIS_HOOK_PREINSTALL
+  !insertmacro AugurTrace "NSIS_HOOK_PREINSTALL start"
   !insertmacro AugurStopService
+  !insertmacro AugurTrace "NSIS_HOOK_PREINSTALL end"
+!macroend
+
+!macro NSIS_HOOK_POSTINSTALL
+  !insertmacro AugurTrace "NSIS_HOOK_POSTINSTALL"
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
+  !insertmacro AugurTrace "NSIS_HOOK_PREUNINSTALL start"
   !insertmacro AugurStopService
 !macroend
 
