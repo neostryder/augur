@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES, feedFor, fleetCatalog, fleetOf, fleetOffers } from '@augur/core';
 import type { AliasRefreshResult } from '@augur/core';
 import type { ActivityId, DataTier, EngineState, OutputMode, ProviderAdded, Snapshot } from '@augur/core';
-import { EXIT_CODES, TOOL_TIERS, describeCapabilities, describeFigure, exitCodeForState, isTerminal, renderReport, renderResets, seatLines } from '@augur/dispatch-protocol';
+import { EXIT_CODES, MAX_SCHEMA_BYTES, TOOL_TIERS, validateRunOptions, describeCapabilities, describeFigure, exitCodeForState, isTerminal, renderReport, renderResets, seatLines } from '@augur/dispatch-protocol';
 import type { Conversation, Depth, JobRecord, JobRequest, ProseAddParams, ProseStatus, ToolTier } from '@augur/dispatch-protocol';
 import { STATUS_TEXT, duration, servedText, statusLine } from '@augur/view-model';
 import { bridge, stdioBridge } from './bridge.js';
@@ -30,6 +30,8 @@ augur run <route> --prompt-file <file|-> | --prompt <text> [options]
   --tools <t>        ${TOOL_TIERS.join(' | ')} (default read)
   --output <o>       ${OUTPUT_MODES.join(' | ')} (default text_only)
   --cwd <dir>        working directory (default: current)
+  --effort <level>  override reasoning effort for this job (1 to 16 letters, digits or hyphens)
+  --schema <file>   JSON Schema object for the answer (at most 64 KB)
   --expect-file <f>  file the job must leave in the working directory
   --timeout <s>      wall time limit in seconds
   --named            the route was named for this task by the person
@@ -592,6 +594,17 @@ async function run(rest: string[], p: Parsed, io: Io, opts: Opts, say: (h: strin
   const pick = <T extends string>(name: string, list: readonly T[], d: T): T | null => { const v = (opt(name) ?? d) as T; return list.includes(v) ? v : null; };
   const activity = pick('activity', ACTIVITIES, 'research'), dataTier = pick('data', DATA_TIERS, 'regulated'), tools = pick('tools', TOOL_TIERS, 'read'), output = pick('output', OUTPUT_MODES, 'text_only');
   if (!activity || !dataTier || !tools || !output) { io.err('One of --activity, --data, --tools or --output is not a known value.\n'); return EXIT_CODES.usage; }
+  const effort = opt('effort');
+  let schema: Record<string, unknown> | undefined;
+  if (opt('schema') !== undefined) {
+    try {
+      const bytes = readFileSync(resolve(io.cwd, opt('schema') as string));
+      if (bytes.length > MAX_SCHEMA_BYTES) throw new Error('schema must be at most 64 KB.');
+      schema = JSON.parse(bytes.toString('utf8')) as Record<string, unknown>;
+    } catch (e) { io.err(`The schema file could not be read as JSON: ${(e as Error).message}\n`); return EXIT_CODES.usage; }
+  }
+  const badOptions = validateRunOptions({ effort, schema });
+  if (badOptions) { io.err(`${badOptions}\n`); return EXIT_CODES.usage; }
   const parentId = io.env.AUGUR_JOB_ID;
   const allow = (opt('allow') ?? '').split(',').map(x => x.trim()).filter(Boolean) as Array<'unpicked' | 'exhausted'>;
   if (allow.some(x => x !== 'unpicked' && x !== 'exhausted')) { io.err('--allow takes unpicked, exhausted, or both.\n'); return EXIT_CODES.usage; }
@@ -603,7 +616,7 @@ async function run(rest: string[], p: Parsed, io: Io, opts: Opts, say: (h: strin
   if (runsInsideJob(io) && allow.includes('unpicked')) { io.err('--allow unpicked is for the owner\'s own terminal, not for a job.\n'); return EXIT_CODES.usage; }
   const req: JobRequest = {
     route, activity: activity as ActivityId, dataTier: dataTier as DataTier, tools: tools as ToolTier, output: output as OutputMode, cwd: resolve(io.cwd, opt('cwd') ?? '.'),
-    prompt: { text: promptText as string },
+    prompt: { text: promptText as string }, ...(effort !== undefined ? { effort } : {}), ...(schema !== undefined ? { schema } : {}),
     ...(opt('expect-file') ? { expectFile: opt('expect-file') as string } : {}), ...(opt('timeout') ? { timeoutS: Number(opt('timeout')) } : {}),
     ...(p.flags.has('named') ? { named: true } : {}), ...(attach.length ? { attach } : {}), ...(p.flags.has('urgent') ? { urgent: true } : {}),
     caller: { kind: parentId ? 'job' : 'cli', intent: caller, ...(parentId ? { label: parentId } : {}), ...(io.env.CLAUDE_CODE_SESSION_ID ? { session: io.env.CLAUDE_CODE_SESSION_ID } : {}), ...(io.interactive ? { interactive: true } : {}) },
