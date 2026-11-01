@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ACTIVITIES, buildPolicyFile, emptyPolicy, fieldPath, migrateConfig, policyProviders, setField, undoChange, type AppConfig, type ModelEntry, type Rule, type Snapshot } from '@augur/core';
 import { rank } from '@augur/dispatch-protocol';
-import { clearedFor, copyMix, dragLevel, nodeActivityLabel, nodeCatalog, nodeMix, nodeSlug, nodeTooltip, previewCatalog, previewLevel, roundShares, stepActivity, suggestedThree } from '../src/node-view.js';
+import { clearedFor, copyMix, dragLevel, nodeActivityLabel, nodeCatalog, nodeMix, nodeSearch, nodeSlug, nodeTooltip, previewCatalog, previewLevel, roundShares, stepActivity, suggestedThree } from '../src/node-view.js';
 
 const now = new Date('2026-10-29T12:00:00Z');
 const entry = (id: string, rule: Rule = {}, status: ModelEntry['status'] = 'confirmed'): ModelEntry => ({ id, status, source: 'manual', firstSeen: now.toISOString(), rule });
@@ -185,5 +185,16 @@ describe('catalog inputs and tooltip factors', () => {
     c.policy!.providers.demo!.models[row.label]!.rule.askFirst = true;
     const blocked = nodeMix(c, null, 'write_code', 'internal', now).find(item => item.label === row.label)!;
     expect(nodeTooltip(blocked)).toContain(blocked.reason); expect(nodeTooltip(blocked)).toContain('0%');
+  });
+});
+
+describe('node search matching', () => {
+  it('matches names, provider names, identifiers and descriptions across case and punctuation', () => {
+    for (const query of ['GPT 6.1', 'open router', 'FAST code', 'cafe']) expect(nodeSearch(query, 'GPT-6.1', 'Open Router', 'Fast code, cafe')).toBe(true);
+    expect(nodeSearch('  ', 'anything')).toBe(true);
+    expect(nodeSearch('unknown', 'Fast code')).toBe(false);
+    const item = nodeCatalog(configWithKnownProvider(), {}, null)[0]!;
+    expect(item.providerName).toBe('OpenRouter');
+    expect(nodeSearch('openrouter', item.providerName!, item.name, item.description)).toBe(true);
   });
 });

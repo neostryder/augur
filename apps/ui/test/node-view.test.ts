@@ -11,6 +11,17 @@ function model(): NodeModel {
 }
 
 describe('node view rendering', () => {
+  it('searches full names, provider names and descriptions even for blocked models', () => {
+    const m = model(), entry = m.config.policy!.providers.openrouter!.models['openrouter/terra']!;
+    entry.name = 'Terra-6.1'; entry.rule.notes = 'Fast code review'; entry.rule.dataTier = 'public';
+    for (const query of ['TERRA 6.1', 'OPENROUTER', 'code REVIEW']) {
+      m.node.query = query;
+      expect(renderNodeView(m)).toContain('data-node-add="openrouter/terra"');
+    }
+    m.node.query = 'missing';
+    expect(renderNodeView(m)).not.toContain('data-node-add="openrouter/terra"');
+    expect(renderNodeView(m)).toContain('TODO_PROSE_noModelMatch');
+  });
   it('keeps list and history available around the native component', () => {
     const m = model();
     expect(renderRules(m)).toContain('<augur-node-view>');
@@ -47,6 +58,6 @@ describe('node view rendering', () => {
     expect(html).toContain('Confirm rules');
     expect(html).toContain('No models in this mix');
     expect(html).toContain('data-node-copy');
-    expect(html).not.toContain('data-node-add="openrouter/terra"');
+    expect(html).toContain('data-node-add="openrouter/terra"');
   });
 });
