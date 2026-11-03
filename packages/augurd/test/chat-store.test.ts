@@ -103,4 +103,15 @@ describe('chat settings', () => {
     applySettings(defs, { thinking: 'true' }, body);
     expect(body).toEqual({ chat_template_kwargs: { enable_thinking: true } });
   });
+
+  it('never lets a capabilities path reach the prototype chain', () => {
+    const defs = settingsFromDocument([
+      { key: 'a', label: 'A', type: 'boolean', via: '__proto__.polluted', tooltip: 't' },
+      { key: 'b', label: 'B', type: 'boolean', via: 'x.constructor.prototype.polluted', tooltip: 't' },
+    ]);
+    const body: Record<string, unknown> = {};
+    applySettings(defs, { a: true, b: true }, body);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    expect(body).toEqual({});
+  });
 });

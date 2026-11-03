@@ -173,6 +173,19 @@ describe('chat principals', () => {
     expect(svc.get(alice, chat.id)!.tree).toEqual([]);
   });
 
+  it('shows a provider error body to the owner and only the status to everyone else', async () => {
+    const svc = make(scripted([{ t: 'error', message: 'HTTP 401: {"error":"org-123 is out of credit"}' }]));
+    stores.at(-1)!.addUser({ id: 'alice', name: 'Alice', models: ['text'] });
+    const message = async (who: typeof owner | typeof alice) => {
+      const chat = svc.create(who, { route: 'text', tier: 'internal' });
+      return (await collect(svc.send(who, { chat: chat.id, text: 'q' }))).find(e => e.t === 'error') as Extract<ChatEvent, { t: 'error' }>;
+    };
+    expect((await message(owner)).message).toMatch(/org-123/);
+    const shown = (await message(alice)).message;
+    expect(shown).toMatch(/^HTTP 401: the provider refused/);
+    expect(shown).not.toMatch(/org-123/);
+  });
+
   it('counts saved and temporary user messages from local midnight and guards concurrent sends', async () => {
     let at = new Date(2026, 10, 2, 23, 59).getTime();
     const { svc, users } = ready(() => at);
