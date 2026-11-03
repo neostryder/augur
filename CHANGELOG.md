@@ -4,6 +4,8 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+## [1.17.0] - 2026-11-03
+
 ### Added
 
 - [Visible] [Platform] **Settings has a Release channel choice: Stable, the default, or Early.** Early installs a new build of the main branch after each merge so you can test features before a release is tagged, and these builds can break. Switching back to Stable keeps the installed version until a newer tagged release appears.
