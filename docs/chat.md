@@ -1,6 +1,6 @@
 # Augur Chat
 
-Augur Chat is a chat page for every chat model you have set up in Augur, whether it runs on your own network or at a hosted provider. The service serves it at `/chat/` next to the [web app](web.md), it opens with the same web token, and every message you send goes through the same rules a job does.
+Augur Chat is a chat page for every chat model you have set up in Augur, on your own network or at a hosted provider. The service serves it at `/chat/` next to the [web app](web.md). The owner opens it with the web token and everyone else with a personal token, and every message goes through the same rules a job does.
 
 ## Opening it
 
@@ -83,9 +83,81 @@ Saved chats live on the computer that runs the service, in its data folder: `%LO
 
 A temporary chat stays in memory and never goes into `chat.db` or `chat-files`. The one thing that touches the disk is a reply's own attachments: while a reply is being written, the images and text files it sends to the model sit in a `chat-tmp` folder in the data folder, and they are removed when the reply ends. That happens in temporary chats too.
 
-Whoever holds the web token can read every saved chat, and can do everything else the web app does. Keep the token like a password, and run `augur web rotate` if it gets out.
+The owner's web token reads the owner's chats and can do everything else the web app does. A user's personal token reads only that user's chats. Every chat and attachment is stored unencrypted on the host, so anyone who can read the service data folder can read all of them, the owner included. Keep tokens like passwords. Run `augur web rotate` if the web token gets out, and see [Tokens and devices](#tokens-and-devices) for a leaked user token or a lost device.
 
 The service starts a separate process for each reply and hands the provider key only to that process, so the key never enters the service itself. The page's offline cache never keeps anything the service sends back, so chat text stays out of the browser's cache. If the service listens on a network address over plain http, the token and every message cross the network unencrypted, and [Plain http and https](web.md#plain-http-and-https) covers how to avoid that.
+
+## Sharing the chat with other people
+
+The owner can set up other people as users, each with their own chats, models, and sign-in. Once users exist, the reading rules in [Where chats are kept and who can read them](#where-chats-are-kept-and-who-can-read-them) apply to each person separately. To reach the chat from other machines without opening the rest of the web app, set up [the chat listener](web.md#the-chat-listener).
+
+### Users
+
+A user has an id, a name, an optional email, a list of allowed chat models, a data-tier cap, an optional daily message limit, and an enabled flag. The id is a lowercase slug of up to 32 characters made of letters, digits, and hyphens. [Cloudflare Access](web.md#signing-in-with-cloudflare-access) sign-in matches people by this email.
+
+A new user has no models until the owner lists some, and sees a message telling them to ask the owner. The list can only narrow what the rules already allow for chat. It never adds a model the rules refuse.
+
+The tier cap is `public`, `internal`, `sensitive`, or `regulated`, and new users start at `internal`. A user cannot create a chat above their cap or move one above it, and the tier chips in the page do not offer the higher levels. The daily limit counts the user's own messages since local midnight. Once the limit is reached, the next send is refused with a plain message. A disabled user is refused.
+
+### Tokens and devices
+
+Each user has one user token, and each of their devices has its own device token. A device belongs to one user and has a label. Both kinds of token start with `augc_`, appear once when made, and are stored only as a hash.
+
+Rotating a user token ends the old one. Revoking a device ends that device's token and nothing else, and the service keeps its last-seen time.
+
+A user or device token works only for `/chat/` and `/api/chat/`. On every other path the service treats it as a wrong token and counts it toward the same lockout. The owner's web token keeps full access.
+
+### Who sees which chats
+
+Every saved or temporary chat, every message, and every attachment belongs to one person. Another person's chat answers as missing. In the page, the owner sees only the owner's chats. Chats that existed before users were set up stay the owner's.
+
+Deleting a user keeps their chats stored but unreachable. To delete the chats and their files too, purge them with `--purge` or the checkbox in the admin panel.
+
+User credentials live in `chat-users.db` in the service data folder, as hashes only. Chats stay in `chat.db`.
+
+### Managing users from the command line
+
+The `augur web user` and `augur web device` commands work on the files directly, so they run whether the service is up or stopped. Adding a user, adding a device, and rotating a token print the new token once.
+
+```
+augur web user add <id> --name <name> [--email <e>] [--models a,b,c] [--tier <tier>] [--daily <n>]
+augur web user list
+augur web user set <id> [--name --email --models --tier --daily --enable --disable]
+augur web user remove <id> [--purge]
+augur web user token <id>
+augur web device add <user> <label>
+augur web device list [<user>]
+augur web device revoke <user> <device-id>
+```
+
+### Managing users from the chat page
+
+The owner opens the admin panel with "Manage users" in the command palette or with the button next to the signed-in label. The panel is available only to the owner on the main listener.
+
+Each user has a card with their email, enabled switch, tier cap, daily limit, and model checklist. A model the rules refuse appears disabled with the reason. The card lists the user's devices with a Revoke button and has Add device, New token, and Delete user buttons. Delete user has a checkbox to delete the user's chats as well. An Add user form sits below the cards. A new token appears once with a Copy button.
+
+### Admin API
+
+The admin API is served on the main listener and accepts only the owner's web token. Paths are under `/api/admin/chat`.
+
+- `GET /users` lists users, and `POST /users` adds one.
+- `PATCH /users/<id>` changes a user, and `DELETE /users/<id>` removes one. Add `?purge=1` to delete their chats and files too.
+- `POST /users/<id>/token` rotates the user token.
+- `POST /users/<id>/devices` adds a device.
+- `DELETE /users/<id>/devices/<device-id>` revokes a device.
+- `GET /routes` lists the chat routes for the model checklist.
+
+`GET /api/chat/me` tells the page who is signed in.
+
+### Signing in
+
+When the browser has no stored token, the page first asks `/api/chat/me`. A [Cloudflare Access](web.md#signing-in-with-cloudflare-access) identity or a working token opens the chat. Otherwise the page asks for a token: the owner's web token or the personal token the owner handed out.
+
+The label at the foot of the chat list shows the person's name, or Owner, with a Sign out button. Access sign-ins have no Sign out button. When the server refuses a send, for example over the daily limit or a model the user may not use, the page shows the server's sentence in a toast.
+
+### What sharing does not change
+
+Plain http on a network sends tokens in the clear, so keep https, the default on a network bind. A cloud model a user is allowed to use receives that user's messages, subject to the data tier rules.
 
 ## On a phone
 

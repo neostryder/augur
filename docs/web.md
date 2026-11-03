@@ -2,7 +2,7 @@
 
 The Augur service can serve the app the desktop panel shows to a browser on any device that can reach your computer, such as a laptop in another room or a phone on your home network. The page shows the service's usage engine the same way the terminal app does. It reads no provider itself and holds no provider login, and a change made on the page shows in the window app and the terminal app at once.
 
-The service also serves [Augur Chat](chat.md) at `/chat/`, a chat page for every chat model you have set up, and it opens with the same web token.
+The service also serves [Augur Chat](chat.md) at `/chat/`, a chat page for every chat model you have set up, and the owner opens it with the same web token. To give other people or devices the chat without the rest of the web app, use [The chat listener](#the-chat-listener).
 
 ## How it differs from the phone relay
 
@@ -36,6 +36,10 @@ Each setting can be changed with `augur config set <setting> <value>` or on the 
 | `web.tlsCert` | none | Path of a PEM certificate chain. |
 | `web.tlsKey` | none | Path of the PEM private key for `web.tlsCert`. With both set, the web app uses https with your certificate, whatever `web.tlsAuto` says. |
 | `web.tlsAuto` | `auto` | When to serve https with a self-signed certificate the service makes and keeps: `auto` on a network address only, `on` on every address, `off` never. Ignored when `web.tlsCert` and `web.tlsKey` are both set. See [Self-signed https with web.tlsAuto](#self-signed-https-with-webtlsauto). |
+| `web.chatPort` | `0` | Port for [the chat listener](#the-chat-listener). `0` turns it off, and any other value must be between 1024 and 65535 and different from `web.port`. `augur config` marks it as lowering checks. |
+| `web.chatHost` | `0.0.0.0` | Address the chat listener binds to. `augur config` marks it as lowering checks. |
+| `web.accessTeam` | none | Cloudflare Access team domain, such as `team.cloudflareaccess.com`. Access sign-in on the chat listener needs this and `web.accessAud`; see [Signing in with Cloudflare Access](#signing-in-with-cloudflare-access). |
+| `web.accessAud` | none | Audience tag of the Access application for the chat hostname. Access sign-in needs this and `web.accessTeam`. |
 
 The service checks the host name in every request. On the default `127.0.0.1` it answers only `localhost`, a loopback address, and the names in `web.allowedHosts`. On a network address it also answers any numeric IP address, this computer's own host name, that name with `.local` added, and the value of `web.host`. A request that names any other host is refused, so add the name of a tunnel or a reverse proxy to `web.allowedHosts` before you open the page through it.
 
@@ -168,6 +172,70 @@ If the service serves https on loopback, use an `https://` address. That happens
 `submit` takes the job request the `augur` command builds. It needs `route`, `activity`, `dataTier`, `tools` (`read`, `write` or `full`), `output` (`text_only`, `patch_only` or `write_files`), and `cwd`, which must be an existing absolute folder. The prompt goes in `prompt` as `{ "text": "..." }` or `{ "file": "..." }`. Give a `caller` as well, for example `{ "kind": "other", "label": "my-app", "session": "my-app" }`. The optional fields are `attach`, `timeoutS`, `packs`, `noCharter`, `conversation`, `urgent`, and `failover`. Attachments are file paths, never file contents. Each path has to sit inside `cwd` or a folder listed in `promptRoots`, just as on the command line, and the service reads the file itself.
 
 Calls here run with an agent's reach, the same as the MCP server's, even though the web token can do more elsewhere. The service drops `named`, `allow`, and the caller's `interactive` flag, so a job runs only on a model picked for the same session within the last hour. Pass the same string as `session` to `pick` and as `caller.session` to `submit`. Methods outside the table are refused, so nothing sent here can change the rules or add a route. Jobs also need "Also run jobs" turned on in Augur's settings. Until it is, `submit` comes back refused with `jobs_off`.
+
+## The chat listener
+
+The chat listener is a second https listener for people and devices that should reach [Augur Chat](chat.md) and nothing else. It serves the chat page and `/api/chat/*`, redirects `/` to `/chat/`, and returns 404 for every other path, so the rest of the web app, the engine calls, and the dispatch endpoint are not reachable on it. It runs whether or not `web.enabled` is on, and `web.chatPort` and `web.chatHost` control it (see [Settings](#settings)).
+
+The owner's web token is not accepted on the chat listener. The owner uses the main listener, and everyone else signs in with a personal token or through Cloudflare Access.
+
+### Setting it up
+
+1. Set the port and address:
+
+   ```
+   augur config set web.chatPort 7430
+   augur config set web.chatHost 0.0.0.0
+   ```
+
+2. Restart the service.
+3. Run `augur web`. With `web.chatPort` set, it lists the chat listener's addresses and its certificate fingerprint.
+4. Add a user and give them their token:
+
+   ```
+   augur web user add <id> --name <name> --models a,b,c
+   ```
+
+5. For each device the person uses, add a device and enter its token on that device:
+
+   ```
+   augur web device add <user> <label>
+   ```
+
+[Sharing the chat with other people](chat.md#sharing-the-chat-with-other-people) covers the other user options and how tokens behave.
+
+The chat listener follows the web app's certificate rules and uses your own certificate if you set one, or the self-signed one. With the self-signed certificate, compare the fingerprint the browser shows with the one `augur web` prints before you enter a token. See [Plain http and https](#plain-http-and-https) and [Self-signed https with web.tlsAuto](#self-signed-https-with-webtlsauto).
+
+### Signing in with Cloudflare Access
+
+With Cloudflare Access in front of the chat listener, a person signed in to Access opens the chat with no token in the browser. Access sign-in works only on the chat listener.
+
+1. In Cloudflare Zero Trust, create a self-hosted Access application for the chat's public hostname.
+2. Copy the application's audience tag.
+3. Set your team domain:
+
+   ```
+   augur config set web.accessTeam team.cloudflareaccess.com
+   ```
+
+4. Set the audience tag:
+
+   ```
+   augur config set web.accessAud <audience tag>
+   ```
+
+5. Add the chat's public hostname to `web.allowedHosts`, because requests through a Cloudflare tunnel carry the public hostname.
+6. Give each person's user the email they sign in to Access with:
+
+   ```
+   augur web user set <id> --email <e>
+   ```
+
+7. Point the tunnel's public hostname at the chat port (7430 in the example above) on the Augur host.
+
+The service verifies a request that carries a `Cf-Access-Jwt-Assertion` header and no bearer token. It accepts only RS256 and takes the keys from `https://<team>/cdn-cgi/access/certs`. Keys are cached for an hour, and an unknown key id triggers a refetch at most once a minute. The issuer must be `https://<team>` and the audience must include the tag. The token must not be expired or used before its start time, with 30 seconds of leeway. The service matches the email claim to a user's email and ignores an email in any other header.
+
+A person whose email belongs to no user, or whose user is disabled, gets 403 "This person is not set up for Augur Chat." and the page shows a dead end.
 
 ## What the service checks
 
