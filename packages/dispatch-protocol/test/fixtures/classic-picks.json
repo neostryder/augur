@@ -7768,7 +7768,7 @@
    "copilot/gpt-6-luna",
    "copilot/gemini-3.8-flash"
   ],
-  "reason": "chatgpt/web for deep research: suits research. Next: codex/luna.",
+  "reason": "chatgpt/web for deep research: suits research; shared with codex: plenty left. Next: codex/luna.",
   "rest": "825e1580c296"
  },
  "hot/research/everyday": {
@@ -15236,7 +15236,7 @@
    "copilot/gpt-6-luna",
    "copilot/gemini-3.8-flash"
   ],
-  "reason": "chatgpt/web for deep research: suits research. Next: codex/luna.",
+  "reason": "chatgpt/web for deep research: suits research; shared with codex: plenty left. Next: codex/luna.",
   "rest": "5b384bda5a49"
  },
  "reserve/research/everyday": {
@@ -18676,7 +18676,7 @@
    "copilot/gpt-6-luna",
    "copilot/gemini-3.8-flash"
   ],
-  "reason": "chatgpt/web for deep research: suits research. Next: codex/luna.",
+  "reason": "chatgpt/web for deep research: suits research; shared with codex: plenty left. Next: codex/luna.",
   "rest": "447019476edf"
  },
  "stale/research/everyday": {
@@ -29552,7 +29552,7 @@
    "copilot/gpt-6-luna",
    "copilot/gemini-3.8-flash"
   ],
-  "reason": "chatgpt/web for deep research: suits research. Next: codex/luna.",
+  "reason": "chatgpt/web for deep research: suits research; shared with codex: plenty left. Next: codex/luna.",
   "rest": "065c9454b509"
  },
  "claudeAtReserveCopilotCap/research/everyday": {
