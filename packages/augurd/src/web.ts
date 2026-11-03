@@ -18,6 +18,9 @@ import { resetLedger } from '@augur/dispatch-protocol';
 import type { TlsAuto, WebSettings } from './config.js';
 import type { EngineLink } from './ipc.js';
 import type { ChatService } from './chat/service.js';
+import type { Principal } from './chat/principal.js';
+import type { UserStore } from './chat/users.js';
+import type { ChatUserCreate, ChatUserPatch } from '@augur/dispatch-protocol';
 import { CHAT_FILE_MAX_MB, type ChatSendParams } from '@augur/dispatch-protocol';
 import { DATA_TIERS, type DataTier } from '@augur/core';
 
@@ -74,6 +77,8 @@ export function originAllowed(origin: string | undefined, hostHeader: string | u
 }
 
 export interface WebDeps {
+  scope?: 'full' | 'chat';
+  users?: UserStore;
   settings: WebSettings;
   engine(): EngineLink | null;
   /** The current web token. Read at each request, so a rotated token takes effect at once. */
@@ -127,15 +132,23 @@ export class WebServer {
 
   private locked(addr: string): boolean { const f = this.fails.get(addr); return !!f && f.until > Date.now() && f.n > FAIL_LIMIT; }
 
-  /** Checks the token. Answers the request itself and returns false when it is missing, wrong, or the caller is locked out. */
-  private authorize(req: http.IncomingMessage, res: http.ServerResponse): boolean {
-    const addr = req.socket.remoteAddress ?? '?';
-    if (this.locked(addr)) { this.send(res, 429, 'Too many wrong tokens. Wait a minute.', 'text/plain; charset=utf-8', { 'Retry-After': '60' }); return false; }
+  private identify(req: http.IncomingMessage): Principal | null {
     const m = /^Bearer\s+(\S+)$/.exec(req.headers.authorization ?? '');
-    if (m && safeEqual(m[1]!, this.deps.token())) { this.fails.delete(addr); return true; }
+    if (!m) return null;
+    if (safeEqual(m[1]!, this.deps.token())) return { kind: 'owner' };
+    const found = this.deps.users?.resolve(m[1]!);
+    return found ? { kind: 'user', user: found.user.id, ...(found.device ? { device: found.device.id } : {}) } : null;
+  }
+
+  /** Failed credentials share one address lockout across every API path. */
+  private authorize(req: http.IncomingMessage, res: http.ServerResponse, path: string): Principal | null {
+    const addr = req.socket.remoteAddress ?? '?';
+    if (this.locked(addr)) { this.send(res, 429, 'Too many wrong tokens. Wait a minute.', 'text/plain; charset=utf-8', { 'Retry-After': '60' }); return null; }
+    const principal = this.identify(req);
+    if (principal && (principal.kind === 'owner' || path.startsWith('/api/chat/'))) { this.fails.delete(addr); return principal; }
     this.failed(addr);
     this.send(res, 401, 'Missing or wrong token.', 'text/plain; charset=utf-8', { 'WWW-Authenticate': 'Bearer' });
-    return false;
+    return null;
   }
 
   private handle = (req: http.IncomingMessage, res: http.ServerResponse): void => {
@@ -146,10 +159,13 @@ export class WebServer {
     if (!hostAllowed(req.headers.host, this.deps.settings)) { this.send(res, 421, 'This address is not one the service serves. Open it by this computer\'s own name or address.'); return; }
     if (!originAllowed(req.headers.origin, req.headers.host) || req.headers['sec-fetch-site'] === 'cross-site') { this.send(res, 403, 'Cross-origin requests are refused.'); return; }
     const url = new URL(req.url ?? '/', 'http://x'), path = url.pathname;
-    if (path === '/api/watch') { if (req.method !== 'GET') { this.send(res, 405, 'Use GET.'); return; } if (this.authorize(req, res)) this.watch(req, res); return; }
+    if (this.deps.scope === 'chat' && !path.startsWith('/api/chat/') && !path.startsWith('/chat/')) { this.send(res, 404, 'No such call.'); return; }
+    const principal = path.startsWith('/api/') ? this.authorize(req, res, path) : null;
+    if (path.startsWith('/api/') && !principal) return;
+    if (path.startsWith('/api/admin/chat/')) { void this.adminChatRoute(req, res, url, principal!); return; }
+    if (path === '/api/watch') { if (req.method !== 'GET') { this.send(res, 405, 'Use GET.'); return; } this.watch(req, res); return; }
     if (path === '/api/resets') {
       if (req.method !== 'GET') { this.send(res, 405, 'Use GET.'); return; }
-      if (!this.authorize(req, res)) return;
       const engine = this.deps.engine();
       if (!engine) { this.json(res, 503, { error: 'The usage engine is not running in this service.' }); return; }
       try {
@@ -164,7 +180,7 @@ export class WebServer {
       if (req.method !== 'POST') { this.send(res, 405, 'Use POST.'); return; }
       // A form or a cross-origin script cannot send this type without a preflight, which this server never grants.
       if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) { this.send(res, 415, 'Send application/json.'); return; }
-      if (this.authorize(req, res)) this.call(req, res);
+      this.call(req, res);
       return;
     }
     if (path === '/api/dispatch') {
@@ -174,10 +190,10 @@ export class WebServer {
       // A reverse proxy on this computer connects from loopback on behalf of a remote client, and it says so in a forwarding header.
       const proxied = ['x-forwarded-for', 'forwarded', 'x-real-ip'].some(h => req.headers[h] !== undefined);
       if (proxied || !isLoopback(req.socket.remoteAddress)) { this.send(res, 403, 'Dispatch answers only to programs on this computer.'); return; }
-      if (this.authorize(req, res)) this.dispatchCall(req, res);
+      this.dispatchCall(req, res);
       return;
     }
-    if (path.startsWith('/api/chat/')) { if (this.authorize(req, res)) void this.chatRoute(req, res, url); return; }
+    if (path.startsWith('/api/chat/')) { void this.chatRoute(req, res, url, principal!); return; }
     if (path.startsWith('/api/')) { this.send(res, 404, 'No such call.'); return; }
     if (req.method !== 'GET' && req.method !== 'HEAD') { this.send(res, 405, 'Use GET.'); return; }
     this.file(path, req.method === 'HEAD', res);
@@ -189,6 +205,7 @@ export class WebServer {
     let rel: string;
     try { rel = decodeURIComponent(path); } catch { this.send(res, 400, 'Bad path.'); return; }
     if (rel.includes('\0') || rel.includes('\\')) { this.send(res, 400, 'Bad path.'); return; }
+    if (this.deps.scope === 'chat' && !normalize(rel).replace(/\\/g, '/').startsWith('/chat/')) { this.send(res, 404, 'No such call.'); return; }
     const full = resolve(root, '.' + normalize('/' + rel));
     if (full !== root && !full.startsWith(root + sep)) { this.send(res, 403, 'Not served.'); return; }
     let target = full;
@@ -265,57 +282,59 @@ export class WebServer {
   }
 
   /** /api/chat/...: the model list, saved and temporary chats, files, and the streamed reply. Every call here has passed the token check. */
-  private async chatRoute(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+  private async chatRoute(req: http.IncomingMessage, res: http.ServerResponse, url: URL, principal: Principal): Promise<void> {
     const chat = this.deps.chat;
     if (!chat) { this.json(res, 503, { error: 'This service has no chat to offer.' }); return; }
-    const parts = url.pathname.slice('/api/chat/'.length).split('/').filter(Boolean).map(decodeURIComponent), method = req.method ?? 'GET';
-    const fail = (e: unknown) => { if (!res.headersSent) this.json(res, 400, { error: e instanceof Error ? e.message : String(e) }); else res.end(); };
+    const fail = (e: unknown) => { if (!res.headersSent) this.json(res, e instanceof Error && e.message === 'No such chat.' ? 404 : 400, { error: e instanceof Error ? e.message : 'The request failed.' }); else res.end(); };
     const tier = (v: unknown): DataTier | undefined => (typeof v === 'string' && (DATA_TIERS as readonly string[]).includes(v) ? v as DataTier : undefined);
     const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
     const obj = (v: unknown): Record<string, unknown> | undefined => (typeof v === 'object' && v !== null && !Array.isArray(v) ? v as Record<string, unknown> : undefined);
     try {
-      if (parts[0] === 'models' && method === 'GET') { this.json(res, 200, { models: await chat.models() }); return; }
+      const parts = url.pathname.slice('/api/chat/'.length).split('/').filter(Boolean).map(decodeURIComponent), method = req.method ?? 'GET';
+      const me = chat.me(principal);
+      if (parts[0] === 'me' && method === 'GET') { this.json(res, 200, me); return; }
+      if (parts[0] === 'models' && method === 'GET') { this.json(res, 200, { models: await chat.models(principal) }); return; }
       if (parts[0] === 'chats') {
-        if (parts.length === 1 && method === 'GET') { this.json(res, 200, { chats: url.searchParams.has('q') ? chat.search(url.searchParams.get('q') ?? '') : chat.list() }); return; }
+        if (parts.length === 1 && method === 'GET') { this.json(res, 200, { chats: url.searchParams.has('q') ? chat.search(principal, url.searchParams.get('q') ?? '') : chat.list(principal) }); return; }
         if (parts.length === 1 && method === 'POST') {
           const b = await this.readJson(req, res);
           if (!b) return;
           const route = str(b.route);
           if (!route) { this.json(res, 400, { error: 'A chat needs a route.' }); return; }
           const settings = obj(b.settings);
-          this.json(res, 200, chat.create({ route, ...(tier(b.tier) ? { tier: tier(b.tier)! } : {}), temporary: b.temporary === true, ...(str(b.title) ? { title: str(b.title)! } : {}), ...(str(b.system) ? { system: str(b.system)! } : {}), ...(settings ? { settings } : {}) }));
+          this.json(res, 200, chat.create(principal, { route, ...(tier(b.tier) ? { tier: tier(b.tier)! } : {}), temporary: b.temporary === true, ...(str(b.title) ? { title: str(b.title)! } : {}), ...(str(b.system) ? { system: str(b.system)! } : {}), ...(settings ? { settings } : {}) }));
           return;
         }
         const id = parts[1];
-        if (id && parts.length === 2 && method === 'GET') { const c = chat.get(id); if (c) this.json(res, 200, c); else this.json(res, 404, { error: 'No such chat.' }); return; }
+        if (id && parts.length === 2 && method === 'GET') { const c = chat.get(principal, id); if (c) this.json(res, 200, c); else this.json(res, 404, { error: 'No such chat.' }); return; }
         if (id && parts.length === 2 && method === 'PATCH') {
           const b = await this.readJson(req, res);
           if (!b) return;
           const settings = obj(b.settings);
-          this.json(res, 200, chat.update(id, {
+          this.json(res, 200, chat.update(principal, id, {
             ...(str(b.title) !== undefined ? { title: str(b.title)! } : {}), ...(str(b.route) ? { route: str(b.route)! } : {}), ...(tier(b.tier) ? { tier: tier(b.tier)! } : {}),
             ...(typeof b.pinned === 'boolean' ? { pinned: b.pinned } : {}), ...(str(b.system) !== undefined ? { system: str(b.system)! } : {}), ...(settings ? { settings } : {}),
             ...(b.head === null || typeof b.head === 'string' ? { head: b.head as string | null } : {}),
           }));
           return;
         }
-        if (id && parts.length === 2 && method === 'DELETE') { this.json(res, 200, { removed: chat.remove(id) }); return; }
-        if (id && parts[2] === 'stop' && method === 'POST') { this.json(res, 200, { stopped: chat.stop(id) }); return; }
+        if (id && parts.length === 2 && method === 'DELETE') { this.json(res, 200, { removed: chat.remove(principal, id) }); return; }
+        if (id && parts[2] === 'stop' && method === 'POST') { this.json(res, 200, { stopped: chat.stop(principal, id) }); return; }
         if (id && parts[2] === 'files' && method === 'POST') {
           const raw = await this.readBody(req, res, CHAT_FILE_MAX_MB * 1048576 + 1024);
           if (!raw) return;
           let name = 'file';
           try { name = decodeURIComponent(String(req.headers['x-file-name'] ?? 'file')); } catch { /* keeps the plain name */ }
-          this.json(res, 200, chat.upload(id, name, String(req.headers['content-type'] ?? ''), raw));
+          this.json(res, 200, chat.upload(principal, id, name, String(req.headers['content-type'] ?? ''), raw));
           return;
         }
       }
       if (parts[0] === 'files' && parts[1] && method === 'GET') {
-        const f = chat.file(parts[1]);
-        if (!f) { this.send(res, 404, 'No such file.'); return; }
+        const f = chat.file(principal, parts[1]);
+        if (!f) { this.json(res, 404, { error: 'No such chat.' }); return; }
         // Only images, audio and plain text play inline; anything else downloads, so an uploaded page can never run from this origin.
         const svg = f.ref.mime === 'image/svg+xml', inline = !svg && (f.ref.kind === 'image' || f.ref.kind === 'audio' || f.ref.mime === 'text/plain');
-        res.writeHead(200, this.headers({ 'Content-Type': inline ? f.ref.mime : 'application/octet-stream', 'Cache-Control': 'private, max-age=3600', 'Content-Length': String(f.bytes.byteLength),
+        res.writeHead(200, this.headers({ 'Content-Type': inline ? f.ref.mime : 'application/octet-stream', 'Cache-Control': 'no-store', 'Content-Length': String(f.bytes.byteLength),
           'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(f.ref.name)}` }));
         res.end(Buffer.from(f.bytes));
         return;
@@ -329,11 +348,12 @@ export class WebServer {
           chat: chatId, text: str(b.text) ?? '', ...(Array.isArray(b.files) ? { files: b.files.filter((x): x is string => typeof x === 'string') } : {}),
           ...(b.parent === null || typeof b.parent === 'string' ? { parent: b.parent as string | null } : {}), ...(str(b.retry) ? { retry: str(b.retry)! } : {}), ...(str(b.route) ? { route: str(b.route)! } : {}),
         };
+        if (!chat.get(principal, chatId)) { this.json(res, 404, { error: 'No such chat.' }); return; }
         res.writeHead(200, this.headers({ 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' }));
         this.streams.add(res);
         // A browser that goes away ends the reply it was reading.
-        res.on('close', () => { this.streams.delete(res); chat.stop(chatId); });
-        for await (const ev of chat.send(params)) {
+        res.on('close', () => { this.streams.delete(res); try { chat.stop(principal, chatId); } catch { /* the chat or credentials can be removed during a reply */ } });
+        for await (const ev of chat.send(principal, params)) {
           if (res.destroyed) break;
           if (res.writableLength > MAX_STREAM_BACKLOG) { res.destroy(); break; }
           res.write(JSON.stringify(ev) + '\n');
@@ -343,6 +363,47 @@ export class WebServer {
       }
       this.json(res, 404, { error: 'No such call.' });
     } catch (e) { fail(e); }
+  }
+
+  private async adminChatRoute(req: http.IncomingMessage, res: http.ServerResponse, url: URL, principal: Principal): Promise<void> {
+    if (principal.kind !== 'owner') { this.send(res, 401, 'Missing or wrong token.'); return; }
+    const users = this.deps.users;
+    if (!users) { this.json(res, 503, { error: 'This service has no user store.' }); return; }
+    try {
+      const parts = url.pathname.slice('/api/admin/chat/'.length).split('/').filter(Boolean).map(decodeURIComponent), method = req.method;
+      if (parts.length === 1 && parts[0] === 'routes' && method === 'GET') { this.json(res, 200, { routes: await this.deps.chat?.models(principal) ?? [] }); return; }
+      if (parts[0] !== 'users') { this.json(res, 404, { error: 'No such call.' }); return; }
+      if (parts.length === 1 && method === 'GET') { this.json(res, 200, { users: users.listUsers() }); return; }
+      if (parts.length === 1 && method === 'POST') {
+        const body = await this.readJson(req, res);
+        if (body) this.json(res, 200, users.addUser(body as unknown as ChatUserCreate));
+        return;
+      }
+      const id = parts[1];
+      if (!id || !users.getUser(id)) { this.json(res, 404, { error: 'No such user.' }); return; }
+      if (parts.length === 2 && method === 'PATCH') {
+        const body = await this.readJson(req, res);
+        if (body) this.json(res, 200, users.updateUser(id, body as ChatUserPatch));
+        return;
+      }
+      if (parts.length === 2 && method === 'DELETE') {
+        if (url.searchParams.get('purge') === '1') this.deps.chat?.purge(principal, id);
+        else this.deps.chat?.orphan(principal, id);
+        this.json(res, 200, { removed: users.removeUser(id) });
+        return;
+      }
+      if (parts.length === 3 && parts[2] === 'token' && method === 'POST') { this.json(res, 200, users.rotateUserToken(id)); return; }
+      if (parts.length === 3 && parts[2] === 'devices' && method === 'POST') {
+        const body = await this.readJson(req, res);
+        if (body) {
+          if (Object.keys(body).some(k => k !== 'label')) throw new Error('The device settings contain an unknown field.');
+          this.json(res, 200, users.addDevice(id, body.label as string));
+        }
+        return;
+      }
+      if (parts.length === 4 && parts[2] === 'devices' && method === 'DELETE') { this.json(res, 200, { revoked: users.revokeDevice(id, parts[3]!) }); return; }
+      this.json(res, 404, { error: 'No such call.' });
+    } catch (e) { this.json(res, 400, { error: e instanceof Error ? e.message : 'The request failed.' }); }
   }
 
   /** POST /api/dispatch with `{ method, params }`. The answer is `{ result }`, or `{ error }` with status 400. */

@@ -119,3 +119,46 @@ export interface ChatSendParams {
 
 export const CHAT_TITLE_MAX = 80;
 export const CHAT_FILE_MAX_MB = 25;
+
+export interface ChatDevice {
+  id: string;
+  user: string;
+  label: string;
+  createdAt: number;
+  lastSeen: number | null;
+  revoked: boolean;
+}
+
+export interface ChatUser {
+  id: string;
+  name: string;
+  email: string | null;
+  models: string[];
+  tierCap: DataTier;
+  dailyMessages: number | null;
+  disabled: boolean;
+  createdAt: number;
+  devices: ChatDevice[];
+}
+
+export interface ChatUserPatch {
+  name?: string;
+  email?: string | null;
+  models?: string[];
+  tierCap?: DataTier;
+  dailyMessages?: number | null;
+  disabled?: boolean;
+}
+
+export interface ChatUserCreate extends ChatUserPatch { id: string; name: string }
+export interface ChatUserCreated { user: ChatUser; token: string }
+export interface ChatDeviceCreate { label: string }
+export interface ChatDeviceCreated { device: ChatDevice; token: string }
+export interface ChatTokenRotated { token: string }
+export interface ChatUsersResponse { users: ChatUser[] }
+export interface ChatRoutesResponse { routes: ChatModelInfo[] }
+export type ChatMeResponse = { kind: 'owner' } | {
+  kind: 'user';
+  user: Pick<ChatUser, 'id' | 'name' | 'models' | 'tierCap' | 'dailyMessages'>;
+  device?: string;
+};

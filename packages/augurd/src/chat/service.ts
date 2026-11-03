@@ -18,6 +18,9 @@ import { openaiApi, anthropicApi } from '../adapters/api.js';
 import { optStr } from '../adapters/util.js';
 import { applySettings, cleanSettings, defaultSettings, settingsFromDocument } from './settings.js';
 import { ChatStore, diskBlobs, memoryBlobs } from './store.js';
+import type { Principal } from './principal.js';
+import type { UserStore } from './users.js';
+import type { ChatMeResponse, ChatUser } from '@augur/dispatch-protocol';
 
 const CALL_SCRIPT = scriptPath(import.meta.url, 'chat-call', './call.ts');
 const DOC_TTL_MS = 60_000;
@@ -55,6 +58,7 @@ export const spawnCaller: Caller = (args, stdin, env) => {
 };
 
 export interface ChatDeps {
+  users: UserStore;
   dir: string;
   routes(): Record<string, RouteConfig> | null;
   adapters: ReadonlySet<string>;
@@ -114,6 +118,51 @@ export class ChatService {
 
   close(): void { for (const stop of this.running.values()) stop(); this.saved.close(); this.temp.close(); }
 
+  private user(principal: Principal): ChatUser | null {
+    if (principal.kind === 'owner') return null;
+    const user = this.d.users.getUser(principal.user);
+    if (!user || user.disabled) throw new Error('This user cannot chat.');
+    if (principal.device && !user.devices.some(d => d.id === principal.device && !d.revoked)) throw new Error('This device cannot chat.');
+    return user;
+  }
+
+  private owner(principal: Principal): string { this.user(principal); return principal.kind === 'owner' ? '' : principal.user; }
+
+  private access(principal: Principal, route: string, tier: DataTier): void {
+    const user = this.user(principal);
+    if (!DATA_TIERS.includes(tier)) throw new Error('The chat needs a known data tier.');
+    if (user && !user.models.includes(route)) throw new Error('This user cannot use that route.');
+    if (user && DATA_TIERS.indexOf(tier) > DATA_TIERS.indexOf(user.tierCap)) throw new Error('The chat data tier exceeds this user\'s tier cap.');
+  }
+
+  private quota(principal: Principal): void {
+    const user = this.user(principal);
+    if (!user || user.dailyMessages === null) return;
+    const midnight = new Date(this.now());
+    midnight.setHours(0, 0, 0, 0);
+    const count = this.saved.countMessages(user.id, midnight.getTime()) + this.temp.countMessages(user.id, midnight.getTime());
+    if (count >= user.dailyMessages) throw new Error('This user has reached the daily message limit.');
+  }
+
+  me(principal: Principal): ChatMeResponse {
+    const user = this.user(principal);
+    if (!user || principal.kind === 'owner') return { kind: 'owner' };
+    return { kind: 'user', user: { id: user.id, name: user.name, models: user.models, tierCap: user.tierCap, dailyMessages: user.dailyMessages }, ...(principal.device ? { device: principal.device } : {}) };
+  }
+
+  purge(principal: Principal, user: string): void {
+    if (principal.kind !== 'owner') throw new Error('Only the owner can purge chats.');
+    for (const store of [this.saved, this.temp]) for (const chat of store.list(user)) { this.running.get(chat.id)?.(); store.remove(chat.id, user); }
+  }
+
+  orphan(principal: Principal, user: string): void {
+    if (principal.kind !== 'owner') throw new Error('Only the owner can remove chat ownership.');
+    for (const store of [this.saved, this.temp]) {
+      for (const chat of store.list(user)) this.running.get(chat.id)?.();
+      store.orphan(user);
+    }
+  }
+
   // ---- models ----
 
   private keyArgs(name: string, r: RouteConfig): { args: string[]; env: Record<string, string> } {
@@ -145,11 +194,12 @@ export class ChatService {
   }
 
   /** The routes a chat can use, with what the rules say about each. */
-  async models(): Promise<ChatModelInfo[]> {
+  async models(principal: Principal): Promise<ChatModelInfo[]> {
+    const user = this.user(principal);
     const out: ChatModelInfo[] = [];
     const policy = this.d.policy();
     for (const [name, r] of Object.entries(this.d.routes() ?? {})) {
-      if (!isChatRoute(r) || !this.d.adapters.has(r.adapter)) continue;
+      if (!isChatRoute(r) || !this.d.adapters.has(r.adapter) || (user && !user.models.includes(name))) continue;
       const shape = shapeOf(r), baseUrl = optStr(r.options, 'baseUrl') ?? '';
       let settings: ChatSettingDef[] = defaultSettings(shape), vision = shape === 'anthropic' ? true : r.options?.vision === true, contextTokens: number | undefined;
       if (r.options?.vision === false) vision = false;
@@ -164,11 +214,13 @@ export class ChatService {
       }
       const found = policy ? findModel(policy, r.model) : null;
       const probe = this.clearance(name, r, 'public');
+      if (user && probe !== null) continue;
       out.push({
         route: name, label: optStr(r.options, 'label') ?? ((entry?.title as string | undefined) || r.model), model: r.model, shape, vision, local: isLocalUrl(baseUrl),
         tierMax: found?.model.dataTier ?? null, usable: probe === null, ...(probe ? { why: probe } : {}), ...(contextTokens ? { contextTokens } : {}), settings,
       });
     }
+    this.user(principal);
     return out.sort((a, b) => Number(b.usable) - Number(a.usable) || Number(b.local) - Number(a.local) || a.label.localeCompare(b.label));
   }
 
@@ -182,34 +234,36 @@ export class ChatService {
 
   // ---- chats ----
 
-  private storeOf(id: string): ChatStore | null { return this.saved.get(id) ? this.saved : this.temp.get(id) ? this.temp : null; }
+  private storeOf(principal: Principal, id: string): ChatStore | null { const user = this.owner(principal); return this.saved.get(id, user) ? this.saved : this.temp.get(id, user) ? this.temp : null; }
 
-  list(): ChatSummary[] { return [...this.saved.list(), ...this.temp.list().map(c => ({ ...c, temporary: true }))].sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt - a.updatedAt); }
+  list(principal: Principal): ChatSummary[] { const user = this.owner(principal); return [...this.saved.list(user), ...this.temp.list(user).map(c => ({ ...c, temporary: true }))].sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt - a.updatedAt); }
 
-  search(query: string): Array<ChatSummary & { snippet: string }> { return [...this.saved.search(query), ...this.temp.search(query).map(c => ({ ...c, temporary: true }))]; }
+  search(principal: Principal, query: string): Array<ChatSummary & { snippet: string }> { const user = this.owner(principal); return [...this.saved.search(query, 30, user), ...this.temp.search(query, 30, user).map(c => ({ ...c, temporary: true }))]; }
 
-  get(id: string): ChatDetail | null {
-    const s = this.storeOf(id);
-    const c = s?.get(id);
+  get(principal: Principal, id: string): ChatDetail | null {
+    const s = this.storeOf(principal, id);
+    const c = s?.get(id, this.owner(principal));
     return c ? { ...c, temporary: s === this.temp } : null;
   }
 
-  create(input: { route: string; tier?: DataTier; temporary?: boolean; title?: string; system?: string; settings?: Record<string, unknown> }): ChatSummary {
+  create(principal: Principal, input: { route: string; tier?: DataTier; temporary?: boolean; title?: string; system?: string; settings?: Record<string, unknown> }): ChatSummary {
     const r = this.d.routes()?.[input.route];
     if (!r || !isChatRoute(r)) throw new Error('That route cannot chat.');
-    const tier = input.tier ?? 'sensitive';
+    const tier = input.tier ?? this.user(principal)?.tierCap ?? 'sensitive';
+    this.access(principal, input.route, tier);
     const why = this.clearance(input.route, r, tier);
     if (why) throw new Error(why);
     const store = input.temporary ? this.temp : this.saved;
-    const made = store.create({ route: input.route, tier, ...(input.title ? { title: input.title } : {}), ...(input.system ? { system: input.system } : {}), ...(input.settings ? { settings: input.settings } : {}) });
+    const made = store.create({ route: input.route, tier, ...(input.title ? { title: input.title } : {}), ...(input.system ? { system: input.system } : {}), ...(input.settings ? { settings: input.settings } : {}) }, this.owner(principal));
     return { ...made, temporary: store === this.temp };
   }
 
-  update(id: string, patch: { title?: string; route?: string; tier?: DataTier; pinned?: boolean; system?: string; settings?: Record<string, unknown>; head?: string | null }): ChatSummary {
-    const store = this.storeOf(id), chat = store?.get(id);
+  update(principal: Principal, id: string, patch: { title?: string; route?: string; tier?: DataTier; pinned?: boolean; system?: string; settings?: Record<string, unknown>; head?: string | null }): ChatSummary {
+    const store = this.storeOf(principal, id), chat = store?.get(id, this.owner(principal));
     if (!store || !chat) throw new Error('No such chat.');
     if (patch.tier !== undefined && DATA_TIERS.indexOf(patch.tier) < DATA_TIERS.indexOf(chat.tier) && chat.messages > 0) throw new Error('A chat that has messages cannot be set to a lower data tier, since what it holds has already been sent.');
     const tier = patch.tier ?? chat.tier, route = patch.route ?? chat.route;
+    this.access(principal, route, tier);
     if (patch.route !== undefined || patch.tier !== undefined) {
       const r = this.d.routes()?.[route];
       if (!r || !isChatRoute(r)) throw new Error('That route cannot chat.');
@@ -217,47 +271,58 @@ export class ChatService {
       if (why) throw new Error(why);
     }
     if (patch.head !== undefined && patch.head !== null && store.getMessage(patch.head)?.chat !== id) throw new Error('That message is not in this chat.');
-    const next = store.update(id, { ...patch, ...(patch.title !== undefined ? { title: patch.title.slice(0, CHAT_TITLE_MAX) } : {}) });
+    const next = store.update(id, { ...patch, ...(patch.title !== undefined ? { title: patch.title.slice(0, CHAT_TITLE_MAX) } : {}) }, this.owner(principal));
     return { ...next!, temporary: store === this.temp };
   }
 
-  remove(id: string): boolean {
+  remove(principal: Principal, id: string): boolean {
+    const store = this.storeOf(principal, id);
+    if (!store) throw new Error('No such chat.');
     this.running.get(id)?.();
-    const store = this.storeOf(id);
-    return store ? store.remove(id) : false;
+    return store.remove(id, this.owner(principal));
   }
 
   /** Stops the reply being written for a chat, if there is one. */
-  stop(id: string): boolean { const stop = this.running.get(id); stop?.(); return !!stop; }
+  stop(principal: Principal, id: string): boolean { if (!this.storeOf(principal, id)) throw new Error('No such chat.'); const stop = this.running.get(id); stop?.(); return !!stop; }
 
   // ---- files ----
 
-  upload(chat: string, name: string, mime: string, bytes: Uint8Array): ChatFileRef {
-    const store = this.storeOf(chat);
+  upload(principal: Principal, chat: string, name: string, mime: string, bytes: Uint8Array): ChatFileRef {
+    const store = this.storeOf(principal, chat);
     if (!store) throw new Error('No such chat.');
     if (bytes.byteLength === 0) throw new Error('That file is empty.');
     if (bytes.byteLength > CHAT_FILE_MAX_MB * 1048576) throw new Error(`A file may be at most ${CHAT_FILE_MAX_MB} MB.`);
     const cleanName = name.replace(/[\\/:*?"<>|\0]/g, '_').slice(0, 120) || 'file';
     const c = classifyFile(cleanName, mime);
-    return store.addFile(chat, { name: cleanName, mime: c.mime, kind: c.kind }, bytes);
+    return store.addFile(chat, { name: cleanName, mime: c.mime, kind: c.kind }, bytes, this.owner(principal));
   }
 
-  file(id: string): { ref: ChatFileRef; bytes: Uint8Array } | null {
-    const hit = this.saved.file(id) ?? this.temp.file(id);
+  file(principal: Principal, id: string): { ref: ChatFileRef; bytes: Uint8Array } | null {
+    const user = this.owner(principal), hit = this.saved.file(id, user) ?? this.temp.file(id, user);
     return hit ? { ref: hit.ref, bytes: hit.bytes } : null;
   }
 
   // ---- the reply ----
 
-  async *send(params: ChatSendParams): AsyncGenerator<ChatEvent> {
-    const store = this.storeOf(params.chat), chat = store?.get(params.chat);
+  async *send(principal: Principal, params: ChatSendParams): AsyncGenerator<ChatEvent> {
+    let store: ChatStore | null;
+    try { store = this.storeOf(principal, params.chat); } catch (e) { yield { t: 'error', message: (e as Error).message }; return; }
+    const owner = this.owner(principal), chat = store?.get(params.chat, owner);
     if (!store || !chat) { yield { t: 'error', message: 'No such chat.' }; return; }
     if (this.running.has(chat.id)) { yield { t: 'error', message: 'This chat is already writing a reply.' }; return; }
     const routeName = params.route ?? chat.route, route = this.d.routes()?.[routeName];
     if (!route || !isChatRoute(route)) { yield { t: 'error', message: 'That route cannot chat.' }; return; }
+    try { this.access(principal, routeName, chat.tier); this.quota(principal); } catch (e) { yield { t: 'error', message: (e as Error).message }; return; }
     const why = this.clearance(routeName, route, chat.tier);
     if (why) { yield { t: 'error', message: why }; return; }
-    const info = (await this.models()).find(m => m.route === routeName);
+    let info: ChatModelInfo | undefined;
+    try {
+      info = (await this.models(principal)).find(m => m.route === routeName);
+      this.access(principal, routeName, chat.tier);
+      this.quota(principal);
+    } catch (e) { yield { t: 'error', message: (e as Error).message }; return; }
+    if (this.running.has(chat.id)) { yield { t: 'error', message: 'This chat is already writing a reply.' }; return; }
+    if (!store.get(chat.id, owner)) { yield { t: 'error', message: 'No such chat.' }; return; }
     if (!info) { yield { t: 'error', message: 'That route is not available.' }; return; }
 
     // Where the new messages hang. A retry answers an existing user message again; anything else adds a user message under `parent`, or the head.
@@ -268,19 +333,19 @@ export class ChatService {
       user = m;
     } else {
       const text = params.text ?? '';
-      const files = (params.files ?? []).slice(0, MAX_FILES_PER_MESSAGE).map(id => store.file(id)).filter((f): f is NonNullable<typeof f> => !!f && f.chat === chat.id).map(f => f.ref);
+      const files = (params.files ?? []).slice(0, MAX_FILES_PER_MESSAGE).map(id => store.file(id, owner)).filter((f): f is NonNullable<typeof f> => !!f && f.chat === chat.id).map(f => f.ref);
       if (!text.trim() && !files.length) { yield { t: 'error', message: 'There is nothing to send.' }; return; }
       const parent = params.parent === undefined ? chat.head : params.parent;
       if (parent && store.getMessage(parent)?.chat !== chat.id) { yield { t: 'error', message: 'That message is not in this chat.' }; return; }
       user = store.addMessage({ chat: chat.id, parent, role: 'user', text, files });
     }
     const assistant = store.addMessage({ chat: chat.id, parent: user.id, role: 'assistant', route: routeName, state: 'streaming' });
-    yield { t: 'start', user, assistant };
 
     const thread = store.path(chat.id, user.id);
     if (!info.vision && thread.some(m => m.files.some(f => f.kind === 'image'))) {
       const message = `${info.label} cannot see images. Pick a model that can, or start the chat again without them.`;
       store.updateMessage(assistant.id, { state: 'error', error: message });
+      yield { t: 'start', user, assistant };
       yield { t: 'error', message };
       return;
     }
@@ -289,7 +354,7 @@ export class ChatService {
     const scratch = join(this.d.dir, 'chat-tmp', assistant.id);
     mkdirSync(scratch, { recursive: true });
     const wire = thread.map(m => ({ role: m.role, text: m.text, files: m.files.filter(f => f.kind === 'image' || f.kind === 'text').flatMap(f => {
-      const hit = store.file(f.id);
+      const hit = store.file(f.id, owner);
       if (!hit) return [];
       const path = join(scratch, f.id + extname(f.name));
       writeFileSync(path, hit.bytes);
@@ -306,6 +371,7 @@ export class ChatService {
     this.running.set(chat.id, () => { stopped = true; handle.stop(); });
     const save = (state?: ChatMessage['state']) => store.updateMessage(assistant.id, { text, reasoning, ...(usage ? { usage } : {}), ...(served ? { served } : {}), ...(state ? { state } : {}), ...(failed ? { error: failed } : {}) });
     try {
+      yield { t: 'start', user, assistant };
       for await (const ev of handle.events) {
         if (ev.t === 'delta' && typeof ev.text === 'string') { text += ev.text; yield { t: 'delta', text: ev.text }; }
         else if (ev.t === 'think' && typeof ev.text === 'string') { reasoning += ev.text; yield { t: 'think', text: ev.text }; }
@@ -321,7 +387,7 @@ export class ChatService {
     save(state);
     if (state === 'done' && chat.title === 'New chat' && !params.retry) {
       const title = titleFrom(user.text);
-      store.update(chat.id, { title });
+      store.update(chat.id, { title }, owner);
       yield { t: 'title', title };
     }
     const final = store.getMessage(assistant.id)!;

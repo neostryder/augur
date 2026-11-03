@@ -24,7 +24,7 @@ export const memoryBlobs = (): Blobs => {
   return { put: (id, bytes) => { held.set(id, bytes); }, get: id => held.get(id) ?? null, del: id => { held.delete(id); } };
 };
 
-interface ChatRow { id: string; title: string; route: string; tier: string; pinned: number; system: string; settings: string; head: string | null; created_at: number; updated_at: number }
+interface ChatRow { user: string; id: string; title: string; route: string; tier: string; pinned: number; system: string; settings: string; head: string | null; created_at: number; updated_at: number }
 interface MessageRow {
   id: string; chat_id: string; parent: string | null; role: string; text: string; reasoning: string | null; files: string; route: string | null;
   usage: string | null; served: string | null; state: string; error: string | null; at: number;
@@ -51,7 +51,7 @@ export class ChatStore {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS chats (
         id TEXT PRIMARY KEY, title TEXT NOT NULL, route TEXT NOT NULL, tier TEXT NOT NULL, pinned INTEGER NOT NULL DEFAULT 0, system TEXT NOT NULL DEFAULT '',
-        settings TEXT NOT NULL DEFAULT '{}', head TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+        settings TEXT NOT NULL DEFAULT '{}', head TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, user TEXT NOT NULL DEFAULT ''
       );
       CREATE TABLE IF NOT EXISTS messages (
         id TEXT PRIMARY KEY, chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE, parent TEXT, role TEXT NOT NULL, text TEXT NOT NULL DEFAULT '',
@@ -63,6 +63,8 @@ export class ChatStore {
       );
       CREATE INDEX IF NOT EXISTS files_chat ON files(chat_id);
     `);
+    if (!(this.db.prepare('PRAGMA table_info(chats)').all() as Array<{ name: string }>).some(c => c.name === 'user')) this.db.exec("ALTER TABLE chats ADD COLUMN user TEXT NOT NULL DEFAULT ''");
+    this.db.exec('CREATE INDEX IF NOT EXISTS chats_user ON chats(user);');
     // A reply that was streaming when the service stopped will never finish.
     this.db.prepare("UPDATE messages SET state = 'stopped' WHERE state = 'streaming'").run();
   }
@@ -75,30 +77,30 @@ export class ChatStore {
     return { id: r.id, title: r.title, route: r.route, tier: r.tier as DataTier, pinned: r.pinned === 1, temporary: false, createdAt: r.created_at, updatedAt: r.updated_at, messages: n.n, preview: preview(last?.text ?? '') };
   }
 
-  create(input: NewChat): ChatSummary {
+  create(input: NewChat, user = ''): ChatSummary {
     if (!DATA_TIERS.includes(input.tier)) throw new Error('Unknown data tier.');
     const id = randomUUID(), at = this.now();
-    this.db.prepare('INSERT INTO chats (id, title, route, tier, system, settings, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(id, input.title?.trim() || 'New chat', input.route, input.tier, input.system ?? '', JSON.stringify(input.settings ?? {}), at, at);
-    return this.summary(this.row(id)!);
+    this.db.prepare('INSERT INTO chats (id, title, route, tier, system, settings, created_at, updated_at, user) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(id, input.title?.trim() || 'New chat', input.route, input.tier, input.system ?? '', JSON.stringify(input.settings ?? {}), at, at, user);
+    return this.summary(this.row(id, user)!);
   }
 
-  private row(id: string): ChatRow | undefined { return this.db.prepare('SELECT * FROM chats WHERE id = ?').get(id) as ChatRow | undefined; }
+  private row(id: string, user = ''): ChatRow | undefined { return this.db.prepare('SELECT * FROM chats WHERE id = ? AND user = ?').get(id, user) as ChatRow | undefined; }
 
   /** Pinned chats first, then the most recently used. */
-  list(): ChatSummary[] {
-    return (this.db.prepare('SELECT * FROM chats ORDER BY pinned DESC, updated_at DESC').all() as unknown as ChatRow[]).map(r => this.summary(r));
+  list(user = ''): ChatSummary[] {
+    return (this.db.prepare('SELECT * FROM chats WHERE user = ? ORDER BY pinned DESC, updated_at DESC').all(user) as unknown as ChatRow[]).map(r => this.summary(r));
   }
 
-  get(id: string): ChatDetail | null {
-    const r = this.row(id);
+  get(id: string, user = ''): ChatDetail | null {
+    const r = this.row(id, user);
     if (!r) return null;
     const tree = (this.db.prepare('SELECT * FROM messages WHERE chat_id = ? ORDER BY at, rowid').all(id) as unknown as MessageRow[]).map(m => this.message(m));
     return { ...this.summary(r), system: r.system, settings: json<Record<string, unknown>>(r.settings, {}), head: r.head, tree };
   }
 
-  update(id: string, patch: ChatPatch): ChatSummary | null {
-    const r = this.row(id);
+  update(id: string, patch: ChatPatch, user = ''): ChatSummary | null {
+    const r = this.row(id, user);
     if (!r) return null;
     if (patch.tier !== undefined && !DATA_TIERS.includes(patch.tier)) throw new Error('Unknown data tier.');
     const next = {
@@ -108,15 +110,22 @@ export class ChatStore {
     };
     this.db.prepare('UPDATE chats SET title = ?, route = ?, tier = ?, pinned = ?, system = ?, settings = ?, head = ?, updated_at = ? WHERE id = ?')
       .run(next.title, next.route, next.tier, next.pinned, next.system, next.settings, next.head, this.now(), id);
-    return this.summary(this.row(id)!);
+    return this.summary(this.row(id, user)!);
   }
 
-  remove(id: string): boolean {
+  remove(id: string, user = ''): boolean {
+    if (!this.row(id, user)) return false;
     const files = this.db.prepare('SELECT id FROM files WHERE chat_id = ?').all(id) as unknown as Array<{ id: string }>;
     const gone = this.db.prepare('DELETE FROM chats WHERE id = ?').run(id).changes > 0;
     if (gone) for (const f of files) this.blobs.del(f.id);
     return gone;
   }
+
+  countMessages(user: string, since: number): number {
+    return (this.db.prepare("SELECT COUNT(*) AS n FROM messages m JOIN chats c ON c.id = m.chat_id WHERE c.user = ? AND m.role = 'user' AND m.at >= ?").get(user, since) as { n: number }).n;
+  }
+
+  orphan(user: string): void { this.db.prepare('UPDATE chats SET user = ? WHERE user = ?').run(`deleted:${randomUUID()}`, user); }
 
   private message(m: MessageRow): ChatMessage {
     const usage = json<ChatMessage['usage'] | null>(m.usage, null), served = json<Record<string, string> | null>(m.served, null);
@@ -162,28 +171,29 @@ export class ChatStore {
     return out.reverse();
   }
 
-  addFile(chat: string, input: { name: string; mime: string; kind: ChatFileKind }, bytes: Uint8Array): ChatFileRef {
+  addFile(chat: string, input: { name: string; mime: string; kind: ChatFileKind }, bytes: Uint8Array, user = ''): ChatFileRef {
+    if (!this.row(chat, user)) throw new Error('No such chat.');
     const id = `f_${randomUUID()}`;
     this.blobs.put(id, bytes);
     this.db.prepare('INSERT INTO files (id, chat_id, name, mime, bytes, kind) VALUES (?, ?, ?, ?, ?, ?)').run(id, chat, input.name, input.mime, bytes.byteLength, input.kind);
     return { id, name: input.name, mime: input.mime, bytes: bytes.byteLength, kind: input.kind };
   }
 
-  file(id: string): { ref: ChatFileRef; chat: string; bytes: Uint8Array } | null {
+  file(id: string, user = ''): { ref: ChatFileRef; chat: string; bytes: Uint8Array } | null {
     const r = this.db.prepare('SELECT * FROM files WHERE id = ?').get(id) as FileRow | undefined;
-    const bytes = r ? this.blobs.get(id) : null;
+    const bytes = r && this.row(r.chat_id, user) ? this.blobs.get(id) : null;
     return r && bytes ? { ref: { id: r.id, name: r.name, mime: r.mime, bytes: r.bytes, kind: r.kind as ChatFileKind }, chat: r.chat_id, bytes } : null;
   }
 
   /** Chats whose title or any message contains `query`, newest first. Case-insensitive; LIKE wildcards in the query are literal. */
-  search(query: string, limit = 30): Array<ChatSummary & { snippet: string }> {
+  search(query: string, limit = 30, user = ''): Array<ChatSummary & { snippet: string }> {
     const q = query.trim();
     if (!q) return [];
     const like = `%${q.replace(/[\\%_]/g, c => `\\${c}`)}%`;
     const rows = this.db.prepare(`
       SELECT c.*, (SELECT m.text FROM messages m WHERE m.chat_id = c.id AND m.text LIKE ? ESCAPE '\\' ORDER BY m.at LIMIT 1) AS hit
-      FROM chats c WHERE c.title LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM messages m WHERE m.chat_id = c.id AND m.text LIKE ? ESCAPE '\\')
-      ORDER BY c.pinned DESC, c.updated_at DESC LIMIT ?`).all(like, like, like, limit) as unknown as Array<ChatRow & { hit: string | null }>;
+      FROM chats c WHERE c.user = ? AND (c.title LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM messages m WHERE m.chat_id = c.id AND m.text LIKE ? ESCAPE '\\'))
+      ORDER BY c.pinned DESC, c.updated_at DESC LIMIT ?`).all(like, user, like, like, limit) as unknown as Array<ChatRow & { hit: string | null }>;
     return rows.map(r => {
       const text = r.hit ?? r.title, at = text.toLowerCase().indexOf(q.toLowerCase());
       const from = Math.max(0, at - 40);
