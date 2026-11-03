@@ -268,6 +268,21 @@ describe('spending a provider in full before the models that wait on it', () => 
     expect(pressure(policy2(), usage({ meters: [weekly(99, 0.8)] }), now).codex).toMatchObject({ headroom: 0, spent: true });
   });
 
+  it('reads the Codex meters for chatgpt, which spends the same allowance, and counts that pool once', () => {
+    const base = policy();
+    const withChat: PolicyFile = { ...base, providers: { ...base.providers, chatgpt: { name: 'ChatGPT', metered: false, thresholds: base.providers.codex!.thresholds, models: { 'chatgpt/web': { ...base.providers.codex!.models['codex/luna']!, provider: 'chatgpt', id: 'latest', cost: 'free' } } } } };
+    const ahead = usage({ meters: [weekly(70, 0.8)] });
+    const press = pressure(withChat, ahead, now);
+    expect(press.chatgpt).toMatchObject({ headroom: press.codex?.headroom, sharedWith: 'codex', why: expect.stringMatching(/^shared with Codex: /) });
+    expect(press.codex?.sharedWith).toBeUndefined();
+    expect(pressure(withChat, usage({ meters: [weekly(99, 0.8)] }), now).chatgpt).toMatchObject({ headroom: 0, spent: true });
+    // Without Codex figures there is nothing to read, so chatgpt stays unmetered as before.
+    expect(pressure(withChat, { providers: {} }, now).chatgpt).toMatchObject({ headroom: 1, metered: false });
+    // The shared pool adds nothing to how scarce usage looks overall.
+    const only = (labels: string[]) => usageFactors(withChat, press, labels).scarcity;
+    expect(only(['codex/luna', 'chatgpt/web'])).toBe(only(['codex/luna']));
+  });
+
   it('counts each limit reset in hand as another full weekly window for a provider that is paced', () => {
     const at = (resets: number) => pressure(policy(), { providers: { codex: fresh({ meters: [weekly(70, 0.8)], notes: { resets_available: resets } }) } }, now).codex as { headroom: number; why: string };
     expect(at(0).headroom).toBeCloseTo(0.375, 3);

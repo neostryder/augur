@@ -64,7 +64,10 @@ export const BOOST = {
 export const COST_EXPONENT: Record<string, number> = { free: 0, very_cheap: 0.1, cheap: 0.2, moderate: 0.6, high: 1, very_high: 1.5, expensive: 1 };
 
 /** `spent` means a window is at its deny threshold. `down` means the provider's status page reports a major or critical outage. `resets` is how many limit resets the provider says are in hand. */
-export interface Headroom { headroom: number; why: string; metered: boolean; spent?: boolean; down?: boolean; resets?: number }
+export interface Headroom { headroom: number; why: string; metered: boolean; spent?: boolean; down?: boolean; resets?: number; sharedWith?: string }
+
+/** Providers whose usage is the same allowance as another provider's, so they read that provider's meters. OpenAI counts a chatgpt.com message and a Codex task against one weekly window. */
+export const SHARED_METER: Readonly<Record<string, string>> = { chatgpt: 'codex' };
 
 /** Only session and weekly windows count. A meter with no kind counts, so a snapshot written by hand still works. */
 export const isWindowMeter = (m: UsageMeter): boolean =>
@@ -149,7 +152,9 @@ export function pressure(policy: PolicyFile, usage: UsageSnapshot | null, now = 
   const drain = drainProviders(policy);
   for (const [id, p] of Object.entries(policy.providers)) {
     if (!Object.keys(p.models).length) continue;
-    out[id] = providerHeadroom(usage.providers[id], { denyPct: p.thresholds.denyPct, minBalance: p.thresholds.minBalance }, now, drain.has(id));
+    const from = SHARED_METER[id], borrowed = from && policy.providers[from] && usage.providers[from] ? from : undefined;
+    const h = providerHeadroom(usage.providers[borrowed ?? id], { denyPct: p.thresholds.denyPct, minBalance: p.thresholds.minBalance }, now, drain.has(id));
+    out[id] = borrowed ? { ...h, why: `shared with ${policy.providers[borrowed]!.name}: ${h.why}`, sharedWith: borrowed } : h;
   }
   return out;
 }
@@ -165,7 +170,7 @@ export function factorModels(policy: PolicyFile): Array<{ label: string; provide
 /** A model's usage factor is its provider's headroom raised to a power. Costlier models and scarcer usage overall raise the power. */
 export function usageFactors(policy: PolicyFile, press: Record<string, Headroom>, only?: readonly string[]): { factors: Record<string, number>; scarcity: number } {
   const rows = factorModels(policy).filter(r => !only || only.includes(r.label));
-  const pools = [...new Set(rows.filter(r => press[r.provider]?.metered).map(r => r.provider))];
+  const pools = [...new Set(rows.filter(r => press[r.provider]?.metered && !press[r.provider]?.sharedWith).map(r => r.provider))];
   const mean = pools.length ? pools.reduce((s, p) => s + (press[p] as Headroom).headroom, 0) / pools.length : 1;
   const scarcity = 1 + PACE.scarcityGain * (1 - mean);
   const factors: Record<string, number> = {};
