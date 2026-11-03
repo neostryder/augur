@@ -27,4 +27,6 @@ export * from './login.js';
 export * from './rubrics.js';
 export * from './prose-queue.js';
 export * from './web.js';
+export * from './chat/users.js';
+export { ChatStore, diskBlobs } from './chat/store.js';
 export { webCertFingerprint } from './web-cert.js';

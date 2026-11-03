@@ -1,4 +1,5 @@
 // The `augur` command: the canonical caller of the dispatch service. Every command takes --json. Exit codes come from the protocol package.
+import { X509Certificate } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -105,7 +106,7 @@ Every command takes --json. Exit codes: 0 completed, 1 usage, 2 rejected, 3 need
 interface Parsed { cmd: string[]; flags: Map<string, string | true>; /** Values of the flags that may be given more than once, in order. */ repeated: Map<string, string[]> }
 const REPEATABLE = new Set(['attach', 'fact', 'must-include', 'must-avoid']);
 export function parse(argv: string[]): Parsed {
-  const cmd: string[] = [], flags = new Map<string, string | true>(), repeated = new Map<string, string[]>(), boolean = new Set(['json', 'wait', 'named', 'follow', 'stderr', 'help', 'if-idle', 'no-failover', 'no-charter', 'urgent', 'waybar', 'all', 'force', 'stdin', 'dry-run', 'no-key', 'best', 'snippet', 'report', 'can-land-later', 'caller-chooses', 'untested', 'yes']);
+  const cmd: string[] = [], flags = new Map<string, string | true>(), repeated = new Map<string, string[]>(), boolean = new Set(['json', 'wait', 'named', 'follow', 'stderr', 'help', 'if-idle', 'no-failover', 'no-charter', 'urgent', 'waybar', 'all', 'force', 'stdin', 'dry-run', 'no-key', 'best', 'snippet', 'report', 'can-land-later', 'caller-chooses', 'untested', 'yes', 'enable', 'disable', 'purge']);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] as string;
     if (a === '-') { cmd.push(a); continue; }
@@ -294,7 +295,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
       case 'login': case 'logout': return await loginCmd(rest, { stdin: p.flags.has('stdin') }, io, say, { call: (m, a) => engineCall(m, a, io, opts), sleep, now: () => Date.now() }, cmd === 'logout');
       case 'web': {
         const settings = loadConfig(opts.dir).web;
-        return webCmd(rest, say, { settings, token: () => ensureToken(opts.dir, 'web-token'), rotate: () => rotateWebToken(opts.dir), addresses: () => webAddresses(settings), fingerprint: () => webCertFingerprint(opts.dir) }, io.err);
+        return webCmd(rest, say, { settings, dir: opts.dir, flags: p.flags, token: () => ensureToken(opts.dir, 'web-token'), rotate: () => rotateWebToken(opts.dir), addresses: () => webAddresses(settings), fingerprint: () => { if (settings.tlsCert && settings.tlsKey) { try { return new X509Certificate(readFileSync(settings.tlsCert)).fingerprint256; } catch { return null; } } return webCertFingerprint(opts.dir); } }, io.err);
       }
       case 'claude': return await claudeCmd(rest, io, opts, say);
       case 'routes': { const r = await call('routes', undefined, opts); say(r.map(x => `${x.name.padEnd(14)} ${x.model.padEnd(16)} ${x.adapter}   ${describeCapabilities(x.capabilities)}${x.problem ? `   cannot run: ${x.problem}` : ''}`).join('\n') || 'No routes.', r); return 0; }

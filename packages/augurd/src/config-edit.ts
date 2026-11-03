@@ -3,7 +3,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ALL_ADAPTERS } from './adapters/index.js';
-import { DEFAULT_CONFIG, loadConfig, plainHost, gatewayAddress } from './config.js';
+import { DEFAULT_CONFIG, loadConfig, plainHost, gatewayAddress, accessTeam } from './config.js';
 import type { ServiceConfig } from './config.js';
 
 export interface ConfigKey {
@@ -46,6 +46,10 @@ export const CONFIG_KEYS: readonly ConfigKey[] = [
   { key: 'web.host', label: 'Web app address', help: '127.0.0.1 by default, which only this computer can reach. 0.0.0.0 or the network address of this computer opens it to your network, where anyone who has the token can use Augur; serve HTTPS (web.tlsCert and web.tlsKey) or keep it behind a tunnel you trust.', kind: 'text', weakens: true,
     check: t => (plainHost(t) ? null : 'web.host is an IP address or a plain host name.') },
   { key: 'web.port', label: 'Web app port', help: '7420 by default.', kind: 'number', min: 1024, max: 65535 },
+  { key: 'web.chatPort', label: 'Chat port', help: 'The chat listener is off at 0. Its port must differ from web.port.', kind: 'number', min: 0, max: 65535, weakens: true },
+  { key: 'web.chatHost', label: 'Chat address', help: 'The chat listener binds to 0.0.0.0 by default.', kind: 'text', weakens: true, check: t => plainHost(t) ? null : 'web.chatHost is an IP address or a plain host name.' },
+  { key: 'web.accessTeam', label: 'Access team', help: 'The chat listener accepts verified logins from this Cloudflare Access team domain.', kind: 'text', weakens: true, check: t => !t || accessTeam(t) ? null : 'web.accessTeam is a team.cloudflareaccess.com domain.' },
+  { key: 'web.accessAud', label: 'Access audience', help: 'The chat listener requires this Cloudflare Access application audience.', kind: 'text', weakens: true },
   { key: 'web.allowedHosts', label: 'Web app host names', help: 'Names besides this computer that requests may use, separated by commas, such as a DNS name or tunnel address that points here. Requests with any other host name are refused.', kind: 'text', weakens: true,
     check: t => (t.split(',').map(s => s.trim()).filter(Boolean).every(plainHost) ? null : 'web.allowedHosts is a comma-separated list of host names.') },
   { key: 'web.tlsCert', label: 'Web app certificate', help: 'Path of a PEM certificate chain. With web.tlsKey, the web app is served over HTTPS.', kind: 'text' },
@@ -74,6 +78,10 @@ function valueOf(config: ServiceConfig, key: string): string {
     case 'web.enabled': return String(config.web.enabled);
     case 'web.host': return config.web.host;
     case 'web.port': return String(config.web.port);
+    case 'web.chatPort': return String(config.web.chatPort);
+    case 'web.chatHost': return config.web.chatHost;
+    case 'web.accessTeam': return config.web.accessTeam;
+    case 'web.accessAud': return config.web.accessAud;
     case 'web.allowedHosts': return config.web.allowedHosts.join(',');
     case 'web.tlsCert': return config.web.tlsCert;
     case 'web.tlsKey': return config.web.tlsKey;
@@ -100,6 +108,7 @@ export function parseValue(k: ConfigKey, text: string): { ok: true; stored: unkn
   if (k.kind === 'number') {
     const n = Number(t);
     if (t === '' || !Number.isInteger(n) || n < (k.min ?? 0) || n > (k.max ?? Number.MAX_SAFE_INTEGER)) return { ok: false, error: `${k.key} is a whole number from ${k.min} to ${k.max}.` };
+    if (k.key === 'web.chatPort' && n !== 0 && n < 1024) return { ok: false, error: 'web.chatPort is 0 or a whole number from 1024 to 65535.' };
     return { ok: true, stored: n, shown: String(n) };
   }
   if (k.kind === 'bool') {
@@ -123,6 +132,8 @@ export function setConfigValue(dir: string, key: string, text: string): SetResul
   if (!k) return { ok: false, error: `Unknown setting ${key}. Run augur config to see them.` };
   const parsed = parseValue(k, text);
   if (!parsed.ok) return parsed;
+  const current = loadConfig(dir).web;
+  if ((key === 'web.chatPort' && parsed.stored !== 0 && parsed.stored === current.port) || (key === 'web.port' && parsed.stored === current.chatPort)) return { ok: false, error: 'The chat port must differ from web.port.' };
   const raw = readRaw(dir);
   const [head, tail] = key.split('.') as [string, string | undefined];
   if (tail) {

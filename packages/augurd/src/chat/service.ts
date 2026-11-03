@@ -147,7 +147,7 @@ export class ChatService {
   me(principal: Principal): ChatMeResponse {
     const user = this.user(principal);
     if (!user || principal.kind === 'owner') return { kind: 'owner' };
-    return { kind: 'user', user: { id: user.id, name: user.name, models: user.models, tierCap: user.tierCap, dailyMessages: user.dailyMessages }, ...(principal.device ? { device: principal.device } : {}) };
+    return { kind: 'user', user: { id: user.id, name: user.name, models: user.models, tierCap: user.tierCap, dailyMessages: user.dailyMessages }, ...(principal.device ? { device: principal.device } : {}), ...(principal.via ? { via: principal.via } : {}) };
   }
 
   purge(principal: Principal, user: string): void {

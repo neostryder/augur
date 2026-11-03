@@ -77,6 +77,8 @@ export class UserStore {
 
   getUser(id: string): ChatUser | null { slug(id); const r = this.db.prepare('SELECT * FROM users WHERE id = ?').get(id) as UserRow | undefined; return r ? this.user(r) : null; }
 
+  findByEmail(email: string): ChatUser | null { const r = this.db.prepare('SELECT * FROM users WHERE email = ?').get(email.toLowerCase()) as UserRow | undefined; return r ? this.user(r) : null; }
+
   updateUser(id: string, input: ChatUserPatch): ChatUser {
     const user = this.getUser(id);
     if (!user) throw new Error('No such user.');
