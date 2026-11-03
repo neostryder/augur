@@ -1,12 +1,13 @@
 // The chat page: mounts the sidebar, header, thread and composer, and wires them to the shared state.
 import './chat.css';
 import { hasToken, setToken, takeTokenFromAddress } from './api';
-import { GATE, TEMP_NOTE } from './copy';
+import { MULTI_USER, TEMP_NOTE } from './copy';
 import { openDrawer } from './drawer';
 import { clear, h, icon, iconButton } from './dom';
 import { mountComposer, renderComposer, focusComposer } from './composer';
 import { openPalette } from './palette';
-import { mountSidebar, renderList } from './sidebar';
+import { mountSidebar, renderList, renderSession } from './sidebar';
+import { identify, type Session } from './session';
 import { mountThread, renderStream, renderThread } from './thread';
 import { installTips } from './tip';
 import { activeRoute, activeTemporary, applyPrefs, emit, model, newChat, on, openChat, rename, setPrefs, start, state } from './state';
@@ -69,12 +70,23 @@ function drawToast(): void {
   if (state.toast) toastHost.append(h('div', { class: `toast${state.toast.kind === 'error' ? ' error' : ''}`, role: state.toast.kind === 'error' ? 'alert' : 'status' }, state.toast.text));
 }
 
+let sessionScreen: Session['screen'] | 'loading' = 'loading';
+let sessionMessage = '';
 function drawGate(): void {
   document.querySelector('.gate')?.remove();
-  if (!state.needsToken) return;
-  const input = h('input', { type: 'password', placeholder: 'Web token', 'aria-label': 'Web token', autocomplete: 'off' });
-  const form = h('form', { class: 'gate', on: { submit: (e: Event) => { e.preventDefault(); if (!input.value.trim()) return; setToken(input.value.trim()); state.needsToken = false; drawGate(); void boot(); } } },
-    h('h1', {}, 'Augur Chat'), h('p', {}, GATE), input, h('button', { class: 'btn primary', type: 'submit' }, 'Open'));
+  if (state.needsToken) sessionScreen = 'gate';
+  app.hidden = sessionScreen !== 'chat';
+  app.inert = sessionScreen !== 'chat';
+  if (sessionScreen === 'chat' || sessionScreen === 'loading') return;
+  const title = h('h1', { tabIndex: -1 }, MULTI_USER.GATE.title);
+  if (sessionScreen !== 'gate') {
+    document.body.append(h('section', { class: 'gate', role: 'alert' }, title, h('p', {}, sessionMessage)));
+    title.focus();
+    return;
+  }
+  const input = h('input', { type: 'password', placeholder: MULTI_USER.GATE.token, 'aria-label': MULTI_USER.GATE.token, autocomplete: 'off' });
+  const form = h('form', { class: 'gate', on: { submit: (e: Event) => { e.preventDefault(); if (!input.value.trim()) return; setToken(input.value.trim()); location.reload(); } } },
+    title, h('p', {}, MULTI_USER.GATE.prompt), sessionMessage ? h('p', { role: 'alert' }, sessionMessage) : null, input, h('button', { class: 'btn primary', type: 'submit' }, MULTI_USER.GATE.open));
   document.body.append(form);
   input.focus();
 }
@@ -88,23 +100,36 @@ on(topic => {
     case 'thread': renderThread(); renderComposer(); break;
     case 'overlay': drawHeader(); renderComposer(); break;
     case 'models': drawHeader(); renderThread(); renderComposer(); break;
-    default: drawHeader(); renderList(); renderThread(); renderComposer(); drawGate(); break;
+    default: drawHeader(); renderList(); renderSession(); renderThread(); renderComposer(); drawGate(); break;
   }
 });
 
 async function boot(): Promise<void> {
-  if (!hasToken()) { state.needsToken = true; drawGate(); }
+  state.needsToken = false;
+  sessionScreen = 'loading';
+  drawGate();
+  const session = await identify();
+  sessionScreen = session.screen;
+  sessionMessage = session.screen === 'chat' ? '' : session.screen === 'gate' && !hasToken() ? '' : session.message;
+  state.identity = session.screen === 'chat' ? session.identity : null;
+  state.needsToken = session.screen === 'gate';
+  renderSession();
+  drawGate();
+  if (session.screen !== 'chat') return;
   await start();
   const id = location.hash.slice(1);
   if (id) void openChat(id);
+  if (!state.needsToken) focusComposer();
 }
 
 mountSidebar(side);
 mountThread(wrap);
 mountComposer(composerHost);
 drawHeader();
+drawGate();
 
 document.addEventListener('keydown', e => {
+  if (!state.identity || state.needsToken || (e.target as HTMLElement).closest('.admin')) return;
   const mod = e.ctrlKey || e.metaKey;
   if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); openPalette(toggleSide); }
   else if (mod && e.key.toLowerCase() === 'b') { e.preventDefault(); toggleSide(); }
@@ -112,10 +137,11 @@ document.addEventListener('keydown', e => {
   else if (mod && e.key === ',') { e.preventDefault(); openDrawer(); }
 });
 addEventListener('hashchange', () => {
-  if (location.hash.startsWith('#token=')) { takeTokenFromAddress(); void boot(); return; }
+  if (location.hash.startsWith('#token=')) { takeTokenFromAddress(); location.reload(); return; }
+  if (!state.identity || state.needsToken) return;
   const id = location.hash.slice(1);
   if (id && id !== state.current?.id) void openChat(id);
 });
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => emit('prefs'));
 
-void boot().then(() => focusComposer());
+void boot();

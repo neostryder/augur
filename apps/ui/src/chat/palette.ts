@@ -2,6 +2,8 @@
 import { clear, h, icon } from './dom';
 import { closePop } from './picker';
 import { openDrawer } from './drawer';
+import { openAdmin } from './admin';
+import { MULTI_USER } from './copy';
 import { activeRoute, model, newChat, openChat, setPrefs, setRoute, state, emit } from './state';
 
 interface Cmd { id: string; icon: string; label: string; hint?: string; kb?: string; run(): void }
@@ -18,6 +20,7 @@ function commands(toggleSide: () => void): Cmd[] {
     { id: 'compact', icon: 'sliders', label: state.prefs.compact ? 'Use roomy spacing' : 'Use compact spacing', run: () => setPrefs({ compact: !state.prefs.compact }) },
     { id: 'usage', icon: 'info', label: 'Open usage and settings', run: () => { location.href = '../'; } },
   ];
+  if (state.identity?.kind === 'owner') out.push({ id: 'users', icon: 'sliders', label: MULTI_USER.ADMIN.title, run: openAdmin });
   for (const m of state.models) out.push({ id: `m:${m.route}`, icon: m.local ? 'home' : 'cloud', label: `Use ${m.label}`, hint: m.model, run: () => void setRoute(m.route) });
   for (const c of state.chats.slice(0, 30)) out.push({ id: `c:${c.id}`, icon: c.temporary ? 'ghost' : 'file', label: c.title, hint: model(c.route)?.label ?? c.route, run: () => void openChat(c.id) });
   return out;

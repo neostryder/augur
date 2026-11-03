@@ -1,10 +1,9 @@
 // The chat's state and everything that changes it. Views read `state` and listen with `on`; only the functions here write to it.
-import type { ChatDetail, ChatEvent, ChatMessage, ChatModelInfo, ChatSummary } from '@augur/dispatch-protocol';
+import type { ChatDetail, ChatEvent, ChatMeResponse, ChatMessage, ChatModelInfo, ChatSummary } from '@augur/dispatch-protocol';
 import type { DataTier } from '@augur/core';
-import { api, send, Unauthorized } from './api';
-
-export const TIERS: DataTier[] = ['public', 'internal', 'sensitive', 'regulated'];
-export const tierRank = (t: DataTier): number => TIERS.indexOf(t);
+import { api, send, setToken, Unauthorized } from './api';
+import { cappedTier, tierRank, tiersFor } from './session';
+export { TIERS, tierRank } from './session';
 
 export type Theme = 'system' | 'light' | 'dark';
 export interface Prefs { theme: Theme; textSize: number; compact: boolean; motion: boolean; openThinking: boolean; lastRoute: string; lastTier: DataTier; sidebar: boolean }
@@ -24,6 +23,7 @@ export interface Streaming { chat: string; assistant: string; startedAt: number;
 export const state = {
   ready: false,
   needsToken: false,
+  identity: null as ChatMeResponse | null,
   models: [] as ChatModelInfo[],
   chats: [] as Array<ChatSummary & { snippet?: string }>,
   query: '',
@@ -52,7 +52,8 @@ export const activeSettings = (): Record<string, unknown> => state.current?.sett
 export const activeSystem = (): string => state.current?.system ?? state.draft.system;
 
 /** Whether a model can take a chat at `tier`: the rules allow it at all, and the most sensitive data it may see is at least this. */
-export function fits(m: ChatModelInfo, tier: DataTier): boolean { return m.usable && m.tierMax !== null && tierRank(m.tierMax) >= tierRank(tier); }
+export function fits(m: ChatModelInfo, tier: DataTier): boolean { return tiersFor(state.identity).includes(tier) && m.usable && m.tierMax !== null && tierRank(m.tierMax) >= tierRank(tier); }
+export const noAssignedModels = (): boolean => state.identity?.kind === 'user' && state.identity.user.models.length === 0;
 
 export function pathOf(chat: ChatDetail): ChatMessage[] {
   const byId = new Map(chat.tree.map(m => [m.id, m]));
@@ -84,7 +85,7 @@ export function notify(text: string, kind: 'info' | 'error' = 'info'): void {
 }
 
 function failed(e: unknown): void {
-  if (e instanceof Unauthorized) { state.needsToken = true; emit('all'); return; }
+  if (e instanceof Unauthorized) { state.identity = null; state.needsToken = true; emit('all'); return; }
   notify(e instanceof Error ? e.message : String(e), 'error');
 }
 
@@ -121,9 +122,22 @@ export async function loadChats(): Promise<void> {
 }
 
 export async function start(): Promise<void> {
-  state.draft.tier = state.prefs.lastTier;
+  state.draft.tier = cappedTier(state.prefs.lastTier, state.identity);
   await Promise.all([loadModels(), loadChats()]);
   state.ready = true;
+  emit('all');
+}
+
+export function signOut(): void {
+  stop();
+  setToken('');
+  state.identity = null;
+  state.needsToken = true;
+  state.current = null;
+  state.models = [];
+  state.chats = [];
+  state.toast = null;
+  history.replaceState(null, '', location.pathname + location.search);
   emit('all');
 }
 
@@ -137,7 +151,7 @@ export async function openChat(id: string): Promise<void> {
 export function newChat(opts: { temporary?: boolean } = {}): void {
   if (state.streaming) stop();
   state.current = null;
-  state.draft = { route: state.draft.route || state.prefs.lastRoute, tier: state.prefs.lastTier, temporary: !!opts.temporary, system: '', settings: {} };
+  state.draft = { route: state.draft.route || state.prefs.lastRoute, tier: cappedTier(state.prefs.lastTier, state.identity), temporary: !!opts.temporary, system: '', settings: {} };
   history.replaceState(null, '', location.pathname + location.search);
   emit('all');
 }
@@ -180,6 +194,7 @@ export async function setRoute(route: string): Promise<void> {
 }
 
 export async function setTier(tier: DataTier): Promise<void> {
+  if (!tiersFor(state.identity).includes(tier)) return;
   setPrefs({ lastTier: tier });
   if (!state.current) {
     state.draft.tier = tier;
@@ -265,14 +280,15 @@ export async function sendMessage(opts: SendOptions): Promise<boolean> {
     state.streaming = run;
     emit('all');
     const target = chat;
+    let accepted = true;
     try {
       await send({ chat: chat.id, text: opts.text, ...(ids.length ? { files: ids } : {}), ...(opts.parent !== undefined ? { parent: opts.parent } : {}), ...(opts.retry ? { retry: opts.retry } : {}), ...(opts.route ? { route: opts.route } : {}) },
-        ev => { if (state.current?.id === target.id) applyEvent(target, ev, run); }, run.abort.signal);
-    } catch (e) { if ((e as Error).name !== 'AbortError') failed(e); }
+        ev => { if (ev.t === 'error' && !run.assistant) accepted = false; if (state.current?.id === target.id) applyEvent(target, ev, run); }, run.abort.signal);
+    } catch (e) { if ((e as Error).name !== 'AbortError') { if (!run.assistant) accepted = false; failed(e); } }
     state.streaming = null;
     if (state.current?.id === target.id) { try { const fresh = await api.chat(target.id); if (state.current?.id === target.id) state.current = fresh; } catch { /* the local copy stands */ } touchList(state.current ?? target); }
     emit('all');
-    return true;
+    return accepted;
   } catch (e) { state.streaming = null; failed(e); emit('all'); return false; }
 }
 

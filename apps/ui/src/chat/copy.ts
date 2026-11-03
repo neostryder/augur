@@ -19,7 +19,60 @@ export const EMPTY = {
 
 export const TEMP_NOTE = 'Temporary chat: held in the service\'s memory and never saved. Deleting it or restarting the service ends it for good.';
 
-export const GATE = 'Paste the web token to open the chat. The augur web command prints it, and only this browser keeps it.';
+export const MULTI_USER = {
+  GATE: {
+    title: 'Augur Chat',
+    prompt: 'You can open chat with the owner\'s web token or the personal token the owner gave you. This browser keeps the token.',
+    token: 'Your token',
+    open: 'Open',
+    rejected: 'The token was not accepted.',
+    unregistered: 'Your sign-in succeeded, but the owner has not set up your access to Augur Chat. Please ask the owner for access.',
+    unavailable: 'The chat service could not be reached. Please reload this page to try again.',
+  },
+  SESSION: {
+    owner: 'Owner',
+    signOut: 'Sign out',
+    noModels: 'The owner has not given you any models yet. Please ask the owner to add models to your account.',
+  },
+  ADMIN: {
+    title: 'Manage users',
+    close: 'Close',
+    loading: 'The users are loading.',
+    empty: 'You have not added any users yet.',
+    addUser: 'Add user',
+    id: 'User id',
+    name: 'Name',
+    email: 'Email (optional)',
+    enabled: 'The user is enabled.',
+    tierCap: 'Maximum data level',
+    dailyMessages: 'Daily message limit',
+    unlimited: 'The user has no daily limit when this field is empty.',
+    models: 'Allowed models',
+    noRoutes: 'You have no chat routes yet.',
+    refused: 'The rules refuse this route.',
+    devices: 'Devices',
+    noDevices: 'The user has no devices yet.',
+    revoke: 'Revoke',
+    revoked: 'The device is revoked.',
+    addDevice: 'Add device',
+    deviceLabel: 'Device label',
+    newToken: 'New token',
+    rotateConfirm: 'The old personal token will stop working. Do you want to create a new token?',
+    deleteUser: 'Delete user',
+    deleteConfirm: 'The user and their tokens will be deleted. Do you want to continue?',
+    purge: 'You also want to delete their chats.',
+    confirm: 'Confirm',
+    cancel: 'Cancel',
+    token: 'New token',
+    tokenOnce: 'This token is shown once. Please copy it now because it is not shown again.',
+    copy: 'Copy',
+    copied: 'The token was copied.',
+    copyFailed: 'The token could not be copied. Please select and copy it from the box.',
+    saving: 'The changes are saving.',
+    saved: 'The changes were saved.',
+    error: 'The change could not be saved.',
+  },
+};
 
 export const PREF_TIPS = {
   motion: 'Slide and fade effects, plus the typing cursor in a reply that is still arriving.',

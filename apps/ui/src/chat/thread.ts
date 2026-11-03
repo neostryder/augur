@@ -2,11 +2,11 @@
 // Structure re-renders when messages change; while a reply streams only its own text is redrawn, once a frame.
 import type { ChatFileRef, ChatMessage } from '@augur/dispatch-protocol';
 import { fileUrl } from './api';
-import { EMPTY } from './copy';
+import { EMPTY, MULTI_USER } from './copy';
 import { clear, compact, h, icon, iconButton, replace } from './dom';
 import { render } from './markdown';
 import { hueOf, initialOf, modelBadges, openModelPicker } from './picker';
-import { activeTier, editAndSend, fits, model, pathOf, regenerate, setRoute, siblingsOf, state, switchBranch } from './state';
+import { activeTier, editAndSend, fits, model, noAssignedModels, pathOf, regenerate, setRoute, siblingsOf, state, switchBranch } from './state';
 
 let editing: string | null = null;
 let stuck = true;
@@ -111,7 +111,7 @@ function assistantMsg(m: ChatMessage, user: ChatMessage | undefined, isLive: boo
 }
 
 function emptyState(): HTMLElement {
-  const tier = activeTier(), el = h('div', { class: 'empty' }, h('div', { class: 'halo', 'aria-hidden': 'true' }), h('h1', {}, EMPTY.title), h('p', {}, state.models.length ? EMPTY.lead : EMPTY.noModels));
+  const tier = activeTier(), el = h('div', { class: 'empty' }, h('div', { class: 'halo', 'aria-hidden': 'true' }), h('h1', {}, EMPTY.title), h('p', {}, noAssignedModels() ? MULTI_USER.SESSION.noModels : state.models.length ? EMPTY.lead : EMPTY.noModels));
   if (state.models.length) {
     const cards = h('div', { class: 'cards' });
     const sorted = [...state.models].sort((a, b) => Number(fits(b, tier)) - Number(fits(a, tier)));
