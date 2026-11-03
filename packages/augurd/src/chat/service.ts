@@ -31,6 +31,12 @@ const MAX_FILES_PER_MESSAGE = 8;
 export interface CallHandle { events: AsyncIterable<Record<string, unknown>>; stop(): void }
 export type Caller = (args: string[], stdin: string, env: Record<string, string>) => CallHandle;
 
+/** A provider's error body can carry account details, so anyone but the owner, who set the route up, sees the status and nothing after it. */
+function shownError(principal: Principal, message: string): string {
+  const status = /^HTTP (\d{3})/.exec(message);
+  return principal.kind === 'owner' || !status ? message : `HTTP ${status[1]}: the provider refused the request. Ask the owner to check the route.`;
+}
+
 /** Starts call.ts as a child process. Standard error is kept so a crash with no error line can still say why. */
 export const spawnCaller: Caller = (args, stdin, env) => {
   const child = spawn(process.execPath, [CALL_SCRIPT, ...args], { env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -377,7 +383,7 @@ export class ChatService {
         else if (ev.t === 'think' && typeof ev.text === 'string') { reasoning += ev.text; yield { t: 'think', text: ev.text }; }
         else if (ev.t === 'usage') { usage = ev.usage as ChatMessage['usage']; yield { t: 'usage', usage: usage! }; }
         else if (ev.t === 'served') served = ev.served as Record<string, string>;
-        else if (ev.t === 'error') failed = String(ev.message ?? 'the reply failed');
+        else if (ev.t === 'error') failed = shownError(principal, String(ev.message ?? 'the reply failed'));
         if (this.now() - lastSave > SAVE_EVERY_MS) { save(); lastSave = this.now(); }
       }
     } catch (e) { failed = (e as Error).message; }

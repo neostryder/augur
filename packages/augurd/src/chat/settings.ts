@@ -93,9 +93,13 @@ export function cleanSettings(defs: ChatSettingDef[], settings: Record<string, u
   return out;
 }
 
+/** Path segments that would reach the prototype chain; a model host's capabilities document names the paths, so these never resolve. */
+const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 /** Sets `value` at a dotted path inside `body`, creating the objects on the way. */
 function setPath(body: Record<string, unknown>, path: string, value: unknown): void {
   const parts = path.split('.');
+  if (parts.some(p => UNSAFE_KEYS.has(p))) return;
   let at = body;
   for (const p of parts.slice(0, -1)) {
     const next = at[p];
