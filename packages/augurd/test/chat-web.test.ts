@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { spawn } from 'node:child_process';
 import http from 'node:http';
+import https from 'node:https';
+import type { TLSSocket } from 'node:tls';
+import { startService } from '../src/main.js';
+import { webToken } from '../src/ipc.js';
+import { generateKeyPairSync, sign, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { EngineApi } from '@augur/core';
@@ -22,15 +27,14 @@ afterEach(async () => { for (const c of closers.splice(0)) await c(); });
 const route = { model: 'test/text', adapter: 'openai-api', options: { baseUrl: 'http://127.0.0.1:9/v1', model: 'm', apiKeyEnv: 'CHAT_TEST_KEY' } } as RouteConfig;
 const caller: Caller = () => ({ events: (async function* () { yield { t: 'delta', text: 'hi' }; yield { t: 'done' }; })(), stop() { /* done */ } });
 
-async function serve(scope: 'full' | 'chat' = 'full', pages = false) {
+async function serve(scope: 'full' | 'chat' = 'full', pages = false, users = new UserStore(null), accessFetcher?: import('../src/chat/access.js').AccessFetcher) {
   const env: Env = makeEnv();
   env.writePolicy();
   const policy = policySource(join(env.home, 'policy.json'));
-  if (pages) { mkdirSync(join(env.dir, 'chat')); writeFileSync(join(env.dir, 'chat', 'index.html'), '<head></head>chat page'); writeFileSync(join(env.dir, 'index.html'), '<head></head>owner page'); }
-  const users = new UserStore(null);
+  if (pages) { mkdirSync(join(env.dir, 'chat')); mkdirSync(join(env.dir, 'assets')); writeFileSync(join(env.dir, 'assets', 'chat-abcd.js'), 'import "./shared-efgh.js";'); writeFileSync(join(env.dir, 'assets', 'shared-efgh.js'), ''); writeFileSync(join(env.dir, 'assets', 'panel-ijkl.js'), ''); writeFileSync(join(env.dir, 'chat-theme.js'), ''); writeFileSync(join(env.dir, 'chat', 'index.html'), '<head><script src="../assets/chat-abcd.js"></script></head>chat page'); writeFileSync(join(env.dir, 'index.html'), '<head></head>owner page'); }
   const chat = new ChatService({ users, dir: env.dir, routes: () => ({ text: route }), adapters: new Set(['openai-api']), policy: () => policy.read(), usage: () => null, log: () => undefined, caller });
   const engine = { api: { state: { config: {}, secrets: [], resets: [] }, onChange: () => () => undefined } as unknown as EngineApi, views: new ViewHub() };
-  const server = new WebServer({ users, scope, settings: { ...DEFAULT_CONFIG.web, port: 0 }, engine: () => engine, token: () => TOKEN, staticDir: pages ? env.dir : null, log: () => undefined, chat });
+  const server = new WebServer({ users, scope, accessFetcher, settings: { ...DEFAULT_CONFIG.web, port: 0, ...(accessFetcher ? { accessTeam: 'team.cloudflareaccess.com', accessAud: 'app' } : {}) }, engine: () => engine, token: () => TOKEN, staticDir: pages ? env.dir : null, log: () => undefined, chat });
   await server.start();
   closers.push(async () => { await server.close(); chat.close(); users.close(); env.dispose(); });
   const port = (server as unknown as { server: { address(): { port: number } } }).server.address().port;
@@ -215,11 +219,78 @@ describe('chat user API', () => {
     }
   });
 
+  it('accepts user and device credentials and verified Access identities on the chat listener', async () => {
+    const users = new UserStore(null), made = users.addUser({ id: 'alice', name: 'Alice', email: 'alice@example.com' }), device = users.addDevice('alice', 'Phone');
+    const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const base = await serve('chat', false, users, async () => Response.json({ keys: [{ ...publicKey.export({ format: 'jwk' }), kid: 'key' }] }));
+    for (const secret of [made.token, device.token]) expect((await requestChat(base, 'chat/me', secret)).status).toBe(200);
+    const assertion = (email: string) => {
+      const body = [{ alg: 'RS256', kid: 'key' }, { iss: 'https://team.cloudflareaccess.com', aud: ['app'], exp: Date.now() / 1000 + 300, email }].map(v => Buffer.from(JSON.stringify(v)).toString('base64url')).join('.');
+      return `${body}.${sign('RSA-SHA256', Buffer.from(body), privateKey).toString('base64url')}`;
+    };
+    const access = (email: string, extra = {}) => fetch(`${base}/api/chat/me`, { headers: { 'Cf-Access-Jwt-Assertion': assertion(email), ...extra } });
+    expect(await (await access('ALICE@example.com')).json()).toMatchObject({ kind: 'user', user: { id: 'alice' }, via: 'access' });
+    expect((await access('alice@example.com', { Authorization: 'Bearer ' })).status).toBe(200);
+    expect((await access('alice@example.com', { Authorization: `Bearer ${TOKEN}` })).status).toBe(401);
+    expect((await fetch(`${base}/api/chat/me`, { headers: { 'Cf-Access-Authenticated-User-Email': 'alice@example.com' } })).status).toBe(401);
+    expect((await access('unknown@example.com')).status).toBe(403);
+    users.updateUser('alice', { disabled: true });
+    const denied = await access('alice@example.com');
+    expect(denied.status).toBe(403);
+    expect(await denied.text()).toBe('This person is not set up for Augur Chat.');
+    for (let i = 0; i < 12; i++) await fetch(`${base}/api/chat/me`, { headers: { 'Cf-Access-Jwt-Assertion': 'bad' } });
+    expect((await access('alice@example.com')).status).toBe(429);
+  });
+
   it('limits chat scope to chat pages and chat API routes', async () => {
     const base = await serve('chat', true);
-    expect((await requestChat(base, 'chat/me')).status).toBe(200);
+    expect((await requestChat(base, 'chat/me')).status).toBe(401);
+    const redirect = await fetch(base + '/', { redirect: 'manual' });
+    expect(redirect.status).toBe(302);
+    expect(redirect.headers.get('location')).toBe('/chat/');
+    for (const path of ['/assets/chat-abcd.js', '/assets/shared-efgh.js', '/chat-theme.js']) expect((await fetch(base + path)).status).toBe(200);
     expect(await (await fetch(`${base}/chat/`)).text()).toContain('chat page');
-    for (const path of ['/', '/index.html', '/api/watch', '/api/admin/chat/users', '/api/dispatch', '/chat/%2e%2e%2findex.html']) expect((await fetch(base + path, { headers: auth })).status).toBe(404);
+    for (const path of ['/assets/panel-ijkl.js', '/assets/chat-abcd.js.map', '/sw.js', '/manifest.webmanifest', '/index.html', '/api/call', '/api/watch', '/api/admin/chat/users', '/api/dispatch', '/chat/%2e%2e%2findex.html']) expect((await fetch(base + path, { headers: auth })).status).toBe(404);
+  });
+});
+
+describe('service chat listener', () => {
+  const freePort = async () => {
+    const server = http.createServer();
+    await new Promise<void>(done => server.listen(0, '127.0.0.1', done));
+    const port = (server.address() as { port: number }).port;
+    await new Promise<void>(done => server.close(() => done()));
+    return port;
+  };
+
+  it('starts independently of the main listener and closes with the service', async () => {
+    const env = makeEnv(), port = await freePort();
+    writeFileSync(join(env.dir, 'config.json'), JSON.stringify({ engine: false, web: { chatPort: port, chatHost: '127.0.0.1', tlsAuto: 'off' } }));
+    const service = await startService({ dir: env.dir, home: env.home, engine: false, pipe: process.platform === 'win32' ? `\\\\.\\pipe\\augur-chat-test-${randomUUID()}` : join(env.dir, 'test.sock') });
+    try {
+      expect((await fetch(`http://127.0.0.1:${port}/`, { redirect: 'manual' })).status).toBe(302);
+      expect((await fetch(`http://127.0.0.1:${port}/api/chat/me`, { headers: { Authorization: `Bearer ${webToken(env.dir)}` } })).status).toBe(401);
+    } finally { await service.stop(); env.dispose(); }
+    await expect(fetch(`http://127.0.0.1:${port}/`)).rejects.toThrow();
+  });
+
+  it('shares the certificate between both listeners', async () => {
+    const env = makeEnv(), port = await freePort(), chatPort = await freePort();
+    writeFileSync(join(env.dir, 'config.json'), JSON.stringify({ engine: false, web: { enabled: true, host: '127.0.0.1', port, chatPort, chatHost: '127.0.0.1', tlsAuto: 'on' } }));
+    const service = await startService({ dir: env.dir, home: env.home, engine: false, pipe: process.platform === 'win32' ? `\\\\.\\pipe\\augur-chat-test-${randomUUID()}` : join(env.dir, 'test.sock') });
+    const get = (port: number) => new Promise<{ status: number | undefined; fingerprint: string | undefined }>((done, reject) => {
+      https.get(`https://127.0.0.1:${port}/api/chat/me`, { rejectUnauthorized: false, headers: { Authorization: `Bearer ${webToken(env.dir)}` } }, res => {
+        const fingerprint = (res.socket as TLSSocket).getPeerCertificate().fingerprint256;
+        res.resume(); res.on('end', () => done({ status: res.statusCode, fingerprint }));
+      }).on('error', reject);
+    });
+    try {
+      const full = await get(port), chat = await get(chatPort);
+      expect(full.status).toBe(200);
+      expect(chat.status).toBe(401);
+      expect(full.fingerprint).toBeTruthy();
+      expect(chat.fingerprint).toBe(full.fingerprint);
+    } finally { await service.stop(); env.dispose(); }
   });
 });
 

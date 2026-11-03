@@ -8,7 +8,8 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 import { ensureWebCert, webCertFingerprint, webCertNames } from './web-cert.js';
-import { timingSafeEqual } from 'node:crypto';
+import { AccessVerifier } from './chat/access.js';
+import { timingSafeEqual, X509Certificate } from 'node:crypto';
 import { hostname, networkInterfaces } from 'node:os';
 import { isIP } from 'node:net';
 import { dirname, extname, join, normalize, resolve, sep } from 'node:path';
@@ -78,6 +79,8 @@ export function originAllowed(origin: string | undefined, hostHeader: string | u
 
 export interface WebDeps {
   scope?: 'full' | 'chat';
+  accessFetcher?: import('./chat/access.js').AccessFetcher;
+  certNames?: string[];
   users?: UserStore;
   settings: WebSettings;
   engine(): EngineLink | null;
@@ -104,7 +107,27 @@ export class WebServer {
   /** The address once listening. */
   bound: { host: string; port: number; tls: boolean; fingerprint?: string } | null = null;
 
-  constructor(private deps: WebDeps) {}
+  private access: AccessVerifier | null;
+  private chatAssets = new Set<string>();
+
+  constructor(private deps: WebDeps) {
+    if (deps.scope === 'chat' && deps.staticDir) {
+      const visit = (path: string): void => {
+        if (this.chatAssets.has(path)) return;
+        this.chatAssets.add(path);
+        if (!/\.(?:html|js|css)$/.test(path)) return;
+        let body: string;
+        try { body = readFileSync(join(deps.staticDir!, path), 'utf8'); } catch { return; }
+        for (const match of body.matchAll(/["'`(]((?:\.\.?\/|\/)?(?:assets\/)?[A-Za-z0-9_-]+-[A-Za-z0-9_-]+\.(?:js|css|woff2|png|svg))["'`)]/g)) {
+          const asset = new URL(match[1]!, `http://local${path}`).pathname;
+          if (/^\/assets\/[A-Za-z0-9_-]+\.(?:js|css|woff2|png|svg)$/.test(asset)) visit(asset);
+        }
+      };
+      visit('/chat/index.html');
+    }
+    const s = deps.settings;
+    this.access = deps.scope === 'chat' && s.accessTeam && s.accessAud ? new AccessVerifier(s.accessTeam, s.accessAud, deps.accessFetcher) : null;
+  }
 
   private headers(extra: Record<string, string> = {}): Record<string, string> {
     return {
@@ -132,19 +155,27 @@ export class WebServer {
 
   private locked(addr: string): boolean { const f = this.fails.get(addr); return !!f && f.until > Date.now() && f.n > FAIL_LIMIT; }
 
-  private identify(req: http.IncomingMessage): Principal | null {
+  private async identify(req: http.IncomingMessage): Promise<Principal | 'unregistered' | null> {
     const m = /^Bearer\s+(\S+)$/.exec(req.headers.authorization ?? '');
-    if (!m) return null;
-    if (safeEqual(m[1]!, this.deps.token())) return { kind: 'owner' };
+    if (!m) {
+      const assertion = req.headers['cf-access-jwt-assertion'];
+      if (!this.access || /^Bearer\s+\S/i.test(req.headers.authorization ?? '') || typeof assertion !== 'string') return null;
+      const email = await this.access.email(assertion);
+      if (email === null) return null;
+      const user = this.deps.users?.findByEmail(email);
+      return user && !user.disabled ? { kind: 'user', user: user.id, via: 'access' } : 'unregistered';
+    }
+    if (this.deps.scope !== 'chat' && safeEqual(m[1]!, this.deps.token())) return { kind: 'owner' };
     const found = this.deps.users?.resolve(m[1]!);
     return found ? { kind: 'user', user: found.user.id, ...(found.device ? { device: found.device.id } : {}) } : null;
   }
 
   /** Failed credentials share one address lockout across every API path. */
-  private authorize(req: http.IncomingMessage, res: http.ServerResponse, path: string): Principal | null {
+  private async authorize(req: http.IncomingMessage, res: http.ServerResponse, path: string): Promise<Principal | null> {
     const addr = req.socket.remoteAddress ?? '?';
     if (this.locked(addr)) { this.send(res, 429, 'Too many wrong tokens. Wait a minute.', 'text/plain; charset=utf-8', { 'Retry-After': '60' }); return null; }
-    const principal = this.identify(req);
+    const principal = await this.identify(req);
+    if (principal === 'unregistered') { this.failed(addr); this.send(res, 403, 'This person is not set up for Augur Chat.'); return null; }
     if (principal && (principal.kind === 'owner' || path.startsWith('/api/chat/'))) { this.fails.delete(addr); return principal; }
     this.failed(addr);
     this.send(res, 401, 'Missing or wrong token.', 'text/plain; charset=utf-8', { 'WWW-Authenticate': 'Bearer' });
@@ -152,15 +183,18 @@ export class WebServer {
   }
 
   private handle = (req: http.IncomingMessage, res: http.ServerResponse): void => {
-    try { this.route(req, res); } catch (e) { this.deps.log(`web request failed: ${(e as Error).message}`); if (!res.headersSent) this.send(res, 500, 'The request failed.'); else res.destroy(); }
+    void this.route(req, res).catch(e => { this.deps.log(`web request failed: ${(e as Error).message}`); if (!res.headersSent) this.send(res, 500, 'The request failed.'); else res.destroy(); });
   };
 
-  private route(req: http.IncomingMessage, res: http.ServerResponse): void {
+  private async route(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     if (!hostAllowed(req.headers.host, this.deps.settings)) { this.send(res, 421, 'This address is not one the service serves. Open it by this computer\'s own name or address.'); return; }
     if (!originAllowed(req.headers.origin, req.headers.host) || req.headers['sec-fetch-site'] === 'cross-site') { this.send(res, 403, 'Cross-origin requests are refused.'); return; }
     const url = new URL(req.url ?? '/', 'http://x'), path = url.pathname;
-    if (this.deps.scope === 'chat' && !path.startsWith('/api/chat/') && !path.startsWith('/chat/')) { this.send(res, 404, 'No such call.'); return; }
-    const principal = path.startsWith('/api/') ? this.authorize(req, res, path) : null;
+    if (this.deps.scope === 'chat') {
+      if (path === '/') { this.send(res, 302, '', 'text/plain; charset=utf-8', { Location: '/chat/' }); return; }
+      if (!path.startsWith('/api/chat/') && !this.chatFile(path)) { this.send(res, 404, 'No such call.'); return; }
+    }
+    const principal = path.startsWith('/api/') ? await this.authorize(req, res, path) : null;
     if (path.startsWith('/api/') && !principal) return;
     if (path.startsWith('/api/admin/chat/')) { void this.adminChatRoute(req, res, url, principal!); return; }
     if (path === '/api/watch') { if (req.method !== 'GET') { this.send(res, 405, 'Use GET.'); return; } this.watch(req, res); return; }
@@ -199,13 +233,17 @@ export class WebServer {
     this.file(path, req.method === 'HEAD', res);
   }
 
+  private chatFile(path: string): boolean {
+    return path === '/chat/' || path === '/chat/index.html' || this.chatAssets.has(path) || ['/chat-theme.js', '/chat.webmanifest', '/icon-192.png', '/icon-512.png', '/icon-maskable-512.png', '/apple-touch-icon.png'].includes(path);
+  }
+
   private file(path: string, head: boolean, res: http.ServerResponse): void {
     const root = this.deps.staticDir;
     if (!root) { this.send(res, 404, 'This build of Augur does not include the web app.'); return; }
     let rel: string;
     try { rel = decodeURIComponent(path); } catch { this.send(res, 400, 'Bad path.'); return; }
     if (rel.includes('\0') || rel.includes('\\')) { this.send(res, 400, 'Bad path.'); return; }
-    if (this.deps.scope === 'chat' && !normalize(rel).replace(/\\/g, '/').startsWith('/chat/')) { this.send(res, 404, 'No such call.'); return; }
+    if (this.deps.scope === 'chat' && !this.chatFile(normalize(rel).replace(/\\/g, '/'))) { this.send(res, 404, 'No such call.'); return; }
     const full = resolve(root, '.' + normalize('/' + rel));
     if (full !== root && !full.startsWith(root + sep)) { this.send(res, 403, 'Not served.'); return; }
     let target = full;
@@ -430,11 +468,11 @@ export class WebServer {
     const tls = own || auto;
     let fingerprint: string | undefined;
     if (own) {
-      try { server = https.createServer({ cert: readFileSync(s.tlsCert), key: readFileSync(s.tlsKey) }, this.handle); }
+      try { const cert = readFileSync(s.tlsCert); fingerprint = new X509Certificate(cert).fingerprint256; server = https.createServer({ cert, key: readFileSync(s.tlsKey) }, this.handle); }
       catch (e) { return Promise.reject(new Error(`The web app's certificate or key could not be read (${(e as Error).message}).`)); }
     } else if (auto) {
       try {
-        const had = webCertFingerprint(this.deps.dir!) !== null, made = ensureWebCert(this.deps.dir!, webCertNames(s));
+        const had = webCertFingerprint(this.deps.dir!) !== null, made = ensureWebCert(this.deps.dir!, this.deps.certNames ?? webCertNames(s));
         fingerprint = made.fingerprint;
         if (made.created) this.deps.log(had ? 'web app made a new self-signed certificate, and browsers that trusted the old one will warn again' : 'web app made a new self-signed certificate');
         server = https.createServer({ cert: made.cert, key: made.key }, this.handle);

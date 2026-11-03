@@ -32,6 +32,10 @@ export interface WebSettings {
   /** The address to listen on. Loopback by default, so only this computer can connect; 0.0.0.0 or a LAN address opens it to the network. */
   host: string;
   port: number;
+  chatPort: number;
+  chatHost: string;
+  accessTeam: string;
+  accessAud: string;
   /** Host names besides this computer's own that a request may use, for a name that points here (a DNS name or a tunnel). */
   allowedHosts: string[];
   /** A certificate and key (PEM files) to serve HTTPS with. Without them the web app is plain HTTP. */
@@ -77,7 +81,7 @@ export interface ServiceConfig {
 
 export const DEFAULT_CONFIG: ServiceConfig = { retentionDays: 30, aliasRefreshHours: 24, persistPrompts: false, maxConcurrent: 8, maxDepth: 2, maxDescendants: 16, proseBatchSize: 10, proseBatchHours: 24, proseRoute: 'claude/opus', proseAutoRun: false,
   jobhostPath: null, adapters: ['codex-exec'], requirePick: true, promptRoots: [], verifyNamed: 'enforce', decision: { backend: 'none' }, learn: { recordTasks: false }, runnerStaleS: 20, engine: true,
-  web: { enabled: false, host: '127.0.0.1', port: 7420, allowedHosts: [], tlsCert: '', tlsKey: '', tlsAuto: 'auto' },
+  web: { enabled: false, host: '127.0.0.1', port: 7420, chatPort: 0, chatHost: '0.0.0.0', accessTeam: '', accessAud: '', allowedHosts: [], tlsCert: '', tlsKey: '', tlsAuto: 'auto' },
   runner: { charterDir: '', ambient: 'keep', failover: 'off' } };
 
 /** The launcher built by `pnpm build:jobhost` sits beside the package's sources, and a packaged install places it next to the service. */
@@ -117,6 +121,8 @@ export function plainHost(v: string): boolean {
   return isIP(v) !== 0 || /^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/.test(v);
 }
 
+export const accessTeam = (v: string): boolean => /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.cloudflareaccess\.com$/i.test(v);
+
 function webSettings(v: unknown): WebSettings {
   const d = (typeof v === 'object' && v !== null && !Array.isArray(v) ? v : {}) as Record<string, unknown>, c = DEFAULT_CONFIG.web;
   const names = (x: unknown) => (Array.isArray(x) ? x : typeof x === 'string' ? x.split(',') : []).map(h => String(h).trim().toLowerCase()).filter(h => h && plainHost(h));
@@ -124,6 +130,10 @@ function webSettings(v: unknown): WebSettings {
     enabled: d.enabled === true,
     host: typeof d.host === 'string' && plainHost(d.host.trim()) ? d.host.trim() : c.host,
     port: num(d.port, c.port, 1024, 65535),
+    chatPort: Number.isInteger(d.chatPort) && d.chatPort !== num(d.port, c.port, 1024, 65535) ? num(d.chatPort, 0, 1024, 65535) : 0,
+    chatHost: typeof d.chatHost === 'string' && plainHost(d.chatHost.trim()) ? d.chatHost.trim() : c.chatHost,
+    accessTeam: typeof d.accessTeam === 'string' && accessTeam(d.accessTeam.trim()) ? d.accessTeam.trim().toLowerCase() : '',
+    accessAud: typeof d.accessAud === 'string' ? d.accessAud.trim() : '',
     allowedHosts: names(d.allowedHosts),
     tlsCert: typeof d.tlsCert === 'string' ? d.tlsCert.trim() : '',
     tlsKey: typeof d.tlsKey === 'string' ? d.tlsKey.trim() : '',

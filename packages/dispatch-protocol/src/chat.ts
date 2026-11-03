@@ -161,4 +161,5 @@ export type ChatMeResponse = { kind: 'owner' } | {
   kind: 'user';
   user: Pick<ChatUser, 'id' | 'name' | 'models' | 'tierCap' | 'dailyMessages'>;
   device?: string;
+  via?: 'access';
 };

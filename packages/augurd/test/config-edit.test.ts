@@ -9,6 +9,20 @@ const fresh = () => { const d = mkdtempSync(join(tmpdir(), 'augur-config-')); di
 afterEach(() => { while (dirs.length) rmSync(dirs.pop()!, { recursive: true, force: true }); });
 
 describe('config editing', () => {
+  it('loads and edits the chat listener settings and refuses conflicting ports', () => {
+    const dir = fresh();
+    expect(loadConfig(dir).web).toMatchObject({ chatPort: 0, chatHost: '0.0.0.0', accessTeam: '', accessAud: '' });
+    for (const [key, value] of [['chatPort', '7443'], ['chatHost', '127.0.0.1'], ['accessTeam', 'team.cloudflareaccess.com'], ['accessAud', 'app']] as const) {
+      expect(setConfigValue(dir, `web.${key}`, value)).toMatchObject({ ok: true });
+      expect(configLines(dir).find(l => l.key === `web.${key}`)?.weakens).toBe(true);
+    }
+    expect(loadConfig(dir).web).toMatchObject({ chatPort: 7443, chatHost: '127.0.0.1', accessTeam: 'team.cloudflareaccess.com', accessAud: 'app' });
+    for (const [key, value] of [['chatPort', '7420'], ['port', '7443'], ['chatPort', '1023'], ['chatPort', '65536'], ['chatPort', '7443.5'], ['chatHost', 'https://host'], ['accessTeam', 'evil.example/path']] as const) expect(setConfigValue(dir, `web.${key}`, value)).toMatchObject({ ok: false });
+    writeFileSync(join(dir, 'config.json'), JSON.stringify({ web: { chatPort: 7420, chatHost: 'bad host', accessTeam: 'evil.example' } }));
+    expect(loadConfig(dir).web).toMatchObject({ chatPort: 0, chatHost: '0.0.0.0', accessTeam: '' });
+    expect(setConfigValue(dir, 'web.chatPort', '0')).toMatchObject({ ok: true });
+  });
+
   it('lists every prose setting from ServiceConfig', () => {
     for (const key of ['proseBatchSize', 'proseBatchHours', 'proseRoute', 'proseAutoRun']) expect(CONFIG_KEYS.some(entry => entry.key === key), key).toBe(true);
   });
