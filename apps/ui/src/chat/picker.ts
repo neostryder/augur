@@ -1,9 +1,10 @@
 // Popovers: the model picker, the data-level chooser, and the small ones. Each closes on a click outside, on Escape, and when it is chosen from.
 import type { ChatModelInfo } from '@augur/dispatch-protocol';
 import type { DataTier } from '@augur/core';
-import { TIER_COPY, TIER_LOCKED } from './copy';
+import { MULTI_USER, TIER_COPY, TIER_LOCKED } from './copy';
 import { clear, compact, h, icon } from './dom';
-import { TIERS, fits, state, tierRank } from './state';
+import { TIERS, fits, noAssignedModels, state, tierRank } from './state';
+import { tiersFor } from './session';
 
 /** A steady color for a route, so the same model always looks like itself. */
 export function hueOf(route: string): string {
@@ -59,7 +60,7 @@ export function openModelPicker(anchor: HTMLElement, o: PickOptions): void {
     clear(list);
     const q = input.value.trim().toLowerCase();
     const rows = state.models.filter(m => !q || `${m.label} ${m.model} ${m.route}`.toLowerCase().includes(q));
-    if (!rows.length) { list.append(h('p', { class: 'empty-list' }, state.models.length ? 'No model matches.' : 'No chat models are set up yet.')); return; }
+    if (!rows.length) { list.append(h('p', { class: 'empty-list' }, noAssignedModels() ? MULTI_USER.SESSION.noModels : state.models.length ? 'No model matches.' : 'No chat models are set up yet.')); return; }
     const groups: Array<[string, ChatModelInfo[]]> = [['On your network', rows.filter(m => m.local)], ['Hosted', rows.filter(m => !m.local)]];
     for (const [name, items] of groups) {
       if (!items.length) continue;
@@ -85,7 +86,7 @@ export function openModelPicker(anchor: HTMLElement, o: PickOptions): void {
 export function openTierMenu(anchor: HTMLElement, current: DataTier, locked: boolean, onPick: (t: DataTier) => void, up = false): void {
   const body = h('div', { class: 'tierlist', role: 'menu', 'aria-label': 'Data level' });
   body.append(h('h6', {}, 'How sensitive is this chat?'));
-  for (const t of TIERS) {
+  for (const t of tiersFor(state.identity)) {
     const below = locked && tierRank(t) < tierRank(current), anyone = state.models.some(m => fits(m, t));
     body.append(h('button', { class: `opt${t === current ? ' cur' : ''}`, type: 'button', role: 'menuitemradio', 'aria-checked': t === current, disabled: below, title: below ? TIER_LOCKED : '', on: { click: () => { closePop(); onPick(t); } } },
       pips(t), h('span', { class: 'tx' }, h('b', {}, TIER_COPY[t].name), h('small', {}, below ? TIER_LOCKED : TIER_COPY[t].blurb), !anyone && !below ? h('small', { style: 'color:var(--warn)' }, 'No model you have set up is cleared for this yet.') : null),

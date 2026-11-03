@@ -2,10 +2,20 @@
 import type { ChatSummary } from '@augur/dispatch-protocol';
 import { ago, clear, h, icon, iconButton } from './dom';
 import { closePop, popover } from './picker';
-import { PREF_TIPS } from './copy';
-import { loadChats, model, newChat, openChat, pin, remove, setPrefs, state, type Theme } from './state';
+import { MULTI_USER, PREF_TIPS } from './copy';
+import { openAdmin } from './admin';
+import { loadChats, model, newChat, openChat, pin, remove, setPrefs, signOut, state, type Theme } from './state';
 
-let list: HTMLElement, search: HTMLInputElement, timer: ReturnType<typeof setTimeout> | undefined;
+let list: HTMLElement, session: HTMLElement, search: HTMLInputElement, timer: ReturnType<typeof setTimeout> | undefined;
+
+export function renderSession(): void {
+  clear(session);
+  const identity = state.identity;
+  if (!identity) return;
+  session.append(h('span', { class: 'grow session-name' }, identity.kind === 'owner' ? MULTI_USER.SESSION.owner : identity.user.name));
+  if (identity.kind === 'owner') session.append(iconButton('sliders', MULTI_USER.ADMIN.title, openAdmin));
+  if (identity.kind === 'owner' || identity.via !== 'access') session.append(h('button', { class: 'btn', type: 'button', on: { click: signOut } }, MULTI_USER.SESSION.signOut));
+}
 
 function groupName(c: ChatSummary, now: Date): string {
   if (c.pinned) return 'Pinned';
@@ -64,6 +74,7 @@ export function mountSidebar(host: HTMLElement): void {
   search = h('input', { type: 'search', placeholder: 'Search chats', 'aria-label': 'Search chats', autocomplete: 'off' });
   search.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(() => { state.query = search.value; void loadChats(); }, 220); });
   list = h('div', { class: 'side-list' });
+  session = h('div', { class: 'side-foot session' });
   const prefs = iconButton('sliders', 'Preferences', e => openPrefs(e.currentTarget as HTMLElement));
   host.append(
     h('div', { class: 'side-head' }, h('div', { class: 'brand' }, h('span', { class: 'mark' }), 'Augur Chat'), iconButton('close', 'Close the list', () => document.querySelector('.chat-root')?.classList.remove('side-open'), 'only-narrow')),
@@ -72,6 +83,6 @@ export function mountSidebar(host: HTMLElement): void {
       h('button', { class: 'btn', type: 'button', 'aria-label': 'New temporary chat', 'data-card-title': 'Temporary chat', 'data-card': 'Held in the memory of the service and never saved to your chat history. Deleting it or restarting the service ends it for good.', on: { click: () => { newChat({ temporary: true }); document.querySelector('.chat-root')?.classList.remove('side-open'); } } }, icon('ghost', 16))),
     h('div', { class: 'side-search' }, icon('search', 16), search),
     list,
-    h('div', { class: 'side-foot' }, h('a', { href: '../', 'data-tip': 'Usage and settings' }, 'Usage'), h('span', { class: 'grow' }), prefs));
+    h('div', { class: 'side-foot' }, h('a', { href: '../', 'data-tip': 'Usage and settings' }, 'Usage'), h('span', { class: 'grow' }), prefs), session);
   renderList();
 }
