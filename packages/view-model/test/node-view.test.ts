@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ACTIVITIES, buildPolicyFile, emptyPolicy, fieldPath, migrateConfig, policyProviders, setField, undoChange, type AppConfig, type ModelEntry, type Rule, type Snapshot } from '@augur/core';
 import { rank } from '@augur/dispatch-protocol';
-import { clearedFor, copyMix, dragLevel, nodeActivityLabel, nodeCatalog, nodeCanRestore, nodeRemoveReason, NODE_TEXT, nodeMix, nodeSearch, nodeSlug, nodeTooltip, previewCatalog, previewLevel, roundShares, stepActivity, suggestedThree } from '../src/node-view.js';
+import { clearedFor, copyMix, layersFor, nodeLayers, dragLevel, nodeActivityLabel, nodeCatalog, nodeCanRestore, nodeRemoveReason, NODE_TEXT, nodeMix, nodeSearch, nodeSlug, nodeTooltip, initialNodeState, previewCatalog, previewLevel, roundShares, stepActivity, suggestedThree } from '../src/node-view.js';
 
 const now = new Date('2026-10-29T12:00:00Z');
 const entry = (id: string, rule: Rule = {}, status: ModelEntry['status'] = 'confirmed'): ModelEntry => ({ id, status, source: 'manual', firstSeen: now.toISOString(), rule });
@@ -222,5 +222,36 @@ describe('node mix removal and restoration', () => {
     delete entry.rule.pause; expect(allowed()).toBe(true);
     expect(entry.rule.activities.write_code).toBeNull();
     expect(c.policy!.history).toHaveLength(0);
+  });
+});
+
+describe('visual rings', () => {
+  function layered(): AppConfig {
+    const c = config(), models = c.policy!.providers.demo!.models;
+    models['demo/terra']!.rule.dataTier = 'regulated';
+    models['demo/luna']!.rule.dataTier = 'internal';
+    models['demo/sonnet']!.rule = { dataTier: 'public', activities: { write_code: 'normal' } };
+    return c;
+  }
+
+  it('makes one ring per data tier, the most restricted tier innermost', () => {
+    expect(nodeLayers(layered(), null, 'write_code', now).map(layer => layer.tier)).toEqual(['regulated', 'sensitive', 'internal', 'public']);
+    expect(layersFor('internal')).toEqual(['internal', 'public']);
+    expect(layersFor('regulated')).toEqual(['regulated', 'sensitive', 'internal', 'public']);
+  });
+
+  it('shows a model only in the rings it is cleared for, and each ring adds up to 100', () => {
+    const layers = nodeLayers(layered(), null, 'write_code', now), inMix = (tier: string) => layers.find(layer => layer.tier === tier)!.rows.filter(row => row.share > 0).map(row => row.label).sort();
+    expect(inMix('regulated')).toEqual(['demo/terra']);
+    expect(inMix('sensitive')).toEqual(['demo/terra']);
+    expect(inMix('internal')).toEqual(['demo/luna', 'demo/terra']);
+    expect(inMix('public')).toEqual(['demo/luna', 'demo/sonnet', 'demo/terra']);
+    for (const layer of layers) expect(layer.rows.reduce((sum, row) => sum + row.share, 0)).toBe(100);
+    expect(layers[0]!.rows.find(row => row.label === 'demo/terra')!.share).toBe(100);
+  });
+
+  it('starts the view at the outer ring', () => {
+    expect(initialNodeState().dataTier).toBe('public');
+    expect(NODE_TEXT.node).toBe('Visual');
   });
 });

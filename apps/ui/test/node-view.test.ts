@@ -30,6 +30,28 @@ describe('node view rendering', () => {
     expect(renderRules(m)).not.toContain('<augur-node-view>');
   });
 
+  it('draws four rings, Regulated inside and Public outside, with a model only in the rings it is cleared for', () => {
+    const m = model(), models = m.config.policy!.providers.openrouter!.models;
+    models['openrouter/terra']!.rule.dataTier = 'regulated';
+    models['openrouter/luna'] = { id: 'gpt-6-luna', source: 'manual', status: 'confirmed', firstSeen: '', rule: { dataTier: 'public', activities: { write_code: 'normal' } } } as ModelEntry;
+    const html = renderNodeView(m);
+    const order = ['regulated', 'sensitive', 'internal', 'public'].map(tier => html.indexOf(`class="nv-layer nv-layer-${tier}"`));
+    expect(order.every(at => at > 0) && order.every((at, i) => i === 0 || at > order[i - 1]!)).toBe(true);
+    const layer = (tier: string): string => html.slice(html.indexOf(`class="nv-layer nv-layer-${tier}"`)).split('</g></g>')[0]!;
+    expect(layer('regulated')).toContain('data-node-select="openrouter/terra"');
+    expect(layer('regulated')).not.toContain('openrouter/luna');
+    expect(layer('public')).toContain('openrouter/luna');
+    expect(html.match(/role="slider"/g)).toHaveLength(2);
+    expect(html).toContain('Rings: Regulated (inner) 1 / Sensitive 1 / Internal 1 / Public (outer) 2');
+  });
+
+  it('has no data tier selector and calls the view Visual', () => {
+    const html = renderNodeView(model());
+    expect(html).not.toContain('data-node-gate');
+    expect(renderRules(model())).toContain('>Visual<');
+    expect(renderRules(model())).not.toContain('Node view');
+  });
+
   it('renders the ring, accessible text equivalent, and five preview stops', () => {
     const html = renderNodeView(model());
     expect(html).toContain('<svg class="nv-ring"');
