@@ -4,7 +4,7 @@ import { genericProvider } from './generic.js';
 import { collect, dueProviders } from './engine.js';
 import { appendHistory } from './history.js';
 import { evaluateAlerts, type Alert } from './alerts.js';
-import { RULES_ONLY_PROVIDERS, resolveModel, resolveThresholds } from './policy.js';
+import { LEGACY_RULES_ONLY, RULES_ONLY_PROVIDERS, resolveModel, resolveThresholds } from './policy.js';
 import type { HistoryRow } from './history.js';
 import type { AppConfig, Host, ProviderPlugin, Snapshot } from './types.js';
 
@@ -22,7 +22,8 @@ export function allPlugins(config: AppConfig): ProviderPlugin[] {
 /** Every provider the rules page lists: the ones Augur reads usage for, then the rules-only ones. */
 export function policyProviders(config: AppConfig): Array<{ id: string; name: string; metered: boolean }> {
   const metered = allPlugins(config).map((p) => ({ id: p.id, name: p.name, metered: !p.rulesOnly }));
-  const rulesOnly = [...RULES_ONLY_PROVIDERS, ...(config.rulesOnly ?? [])];
+  const legacy = new Set(LEGACY_RULES_ONLY.map((r) => r.id));
+  const rulesOnly = [...RULES_ONLY_PROVIDERS, ...(config.rulesOnly ?? [])].filter((r) => !legacy.has(r.id) || Object.keys(config.policy?.providers[r.id]?.models ?? {}).length > 0);
   return [...metered, ...rulesOnly.filter((r, i) => !metered.some((m) => m.id === r.id) && rulesOnly.findIndex((x) => x.id === r.id) === i).map(({ id, name }) => ({ id, name, metered: false }))];
 }
 

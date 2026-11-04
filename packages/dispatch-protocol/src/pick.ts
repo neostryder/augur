@@ -1,7 +1,7 @@
 // Ranks the models a task may use, and checks a job against the picks made for its caller. Pure.
 import { DATA_TIERS, builtinProviders, pauseActive } from '@augur/core';
 import type { ActivityId, DataTier, PolicyFile, WeightLevel } from '@augur/core';
-import { boostFor, govern, listed, lookup, paceMeter, paceState, pacedProviders, reasonLine, resolveBalance, weeklyMeter } from './balance.js';
+import { boostFor, govern, listed, lookup, paceMeter, paceState, pacedProviders, reasonLine, resolveBalance, resolveLabel, weeklyMeter } from './balance.js';
 import type { Depth, ProseSwitch } from './balance.js';
 import { seatsFor } from './seats.js';
 import type { Seats } from './seats.js';
@@ -150,7 +150,10 @@ function drawFrom(pool: Ranked[], rnd: () => number): Ranked {
 }
 
 /** Score is fit, times the weight of the activity's level, times the usage factor, times the tilt, times the boost. A model that fails a rule is listed as blocked with the reason. */
-export function rank(policy: PolicyFile, usage: UsageSnapshot | null, req: PickRequest, now = new Date()): PickResult {
+export function rank(policy: PolicyFile, usage: UsageSnapshot | null, request: PickRequest, now = new Date()): PickResult {
+  // A model named by an earlier label is the model that label became.
+  const renamed = request.named ? resolveLabel(policy, request.named) : null;
+  const req: PickRequest = renamed && renamed !== request.named ? { ...request, named: renamed } : request;
   const press = pressure(policy, usage, now), notes: string[] = [];
   const role = req.role ? policy.roles?.[req.role] : undefined;
   if (req.role && !role) notes.push(`Unknown role ${req.role}.`);
@@ -186,7 +189,8 @@ export function rank(policy: PolicyFile, usage: UsageSnapshot | null, req: PickR
   // A route over its cap leaves the running, unless the caller named it.
   const caps = resolveBalance((policy as { balance?: unknown }).balance).caps;
   for (const r of [...rows]) {
-    const cap = lookup(caps, { label: r.model, provider: r.provider, id: policy.providers[r.provider]?.models[r.model]?.id ?? '' });
+    const own = policy.providers[r.provider]?.models[r.model];
+    const cap = lookup(caps, { label: r.model, provider: r.provider, id: own?.id ?? '', aliases: own?.aliases });
     if (!cap || r.model === req.named) continue;
     const day = req.spent?.day[r.model] ?? 0, session = req.spent?.session[r.model] ?? 0;
     const over = cap.perDay > 0 && day >= cap.perDay ? `${day} picks in the last 24 hours (limit ${cap.perDay})` : cap.perSession > 0 && session >= cap.perSession ? `${session} picks in this session (limit ${cap.perSession})` : '';
@@ -213,7 +217,7 @@ export function rank(policy: PolicyFile, usage: UsageSnapshot | null, req: PickR
     }
     // A caller fit under the floor means the route suits the task badly. No figure means the caller does not know.
     // Prose stays on the Opus routes: a drafting request does not boost a route that is not on the prose list, unless it is a snippet.
-    const offList = req.activity === 'draft_prose' && req.snippet !== true && rules.prose.models.length > 0 && !listed(rules.prose.models, { label: r.model, provider: r.provider, id: policy.providers[r.provider]?.models[r.model]?.id ?? '' });
+    const offList = req.activity === 'draft_prose' && req.snippet !== true && rules.prose.models.length > 0 && !listed(rules.prose.models, { label: r.model, provider: r.provider, id: policy.providers[r.provider]?.models[r.model]?.id ?? '', aliases: policy.providers[r.provider]?.models[r.model]?.aliases });
     const boost = !offList && (given === undefined || given >= rules.boostFitFloor) ? raw.boost : 1;
     const pressWhy = press[r.provider]?.why ?? '', nudgeWhy = local.get(r.model)?.why ?? '';
     const base =!nudgeWhy ? pressWhy : /^(plenty left|no Augur data)$/.test(pressWhy) || !pressWhy ? nudgeWhy : `${pressWhy}. ${nudgeWhy}`;
@@ -310,7 +314,7 @@ export function matchNamedModels(policy: PolicyFile, text: string): string[] {
   const out: string[] = [];
   for (const p of Object.values(policy.providers)) {
     for (const [label, m] of Object.entries(p.models)) {
-      const words = new Set<string>([label, label.split('/').pop() ?? label, m.id, m.name ?? ''].map(w => w.trim()).filter(w => w.length >= 2));
+      const words = new Set<string>([label, label.split('/').pop() ?? label, m.id, m.name ?? '', ...(m.aliases ?? [])].map(w => w.trim()).filter(w => w.length >= 2));
       const hit = [...words].some(w => new RegExp(String.raw`(?<![\w.-])${escapeRegex(w).replace(/[\s_-]+/g, String.raw`[\s_-]*`)}(?![\w-]|\.\w)`, 'i').test(text));
       if (hit) out.push(label);
     }

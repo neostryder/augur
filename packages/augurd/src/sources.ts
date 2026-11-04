@@ -1,7 +1,7 @@
 // Readers for the files Augur writes (policy.json, usage.json) and the user's route registry, cached by modification time and size.
 import { readFileSync, statSync } from 'node:fs';
 import type { PolicyFile } from '@augur/core';
-import { BUDGET_PERIODS } from '@augur/dispatch-protocol';
+import { BUDGET_PERIODS, resolveLabel } from '@augur/dispatch-protocol';
 import type { RouteBudget, RouteConfig, UsageSnapshot } from '@augur/dispatch-protocol';
 
 class JsonSource<T> {
@@ -60,4 +60,18 @@ export function parseRoutes(v: unknown): Record<string, RouteConfig> | null {
   }
   return out;
 }
+/**
+ * A route written against a model's earlier label runs the model that label became. Routes keep their own names and options; only the
+ * label they point to follows the rules, so renaming a model never leaves a route pointing at nothing.
+ */
+export function withCurrentLabels(routes: Record<string, RouteConfig> | null, policy: PolicyFile | null): Record<string, RouteConfig> | null {
+  if (!routes || !policy) return routes;
+  const out: Record<string, RouteConfig> = {};
+  for (const [name, route] of Object.entries(routes)) {
+    const current = resolveLabel(policy, route.model);
+    out[name] = current && current !== route.model ? { ...route, model: current } : route;
+  }
+  return out;
+}
+
 export const routeSource = (path: string) => new JsonSource<Record<string, RouteConfig>>(path, parseRoutes);

@@ -4,6 +4,7 @@
 import { FeedKeeper, UPDATE_ALERT_TEXT, type KeeperShell, type Raise } from './feed-keeper.js';
 import { createPairing, pairingUrl, pullPhoneState, pullRules, pushRules, pushSnapshot, readAsk, sharedConfig, SyncUploadError } from './sync.js';
 import { feedFor, feedFromUsage, type AlertFeed } from './feed.js';
+import { CATALOG_VERSION, applyCatalog, syncCogitator } from './catalog.js';
 import { RULES_ONLY_PROVIDERS, addModels, emptyPolicy, mergePolicy, policyDigest, policyFromFile, policyPathFor, buildPolicyFile } from './policy.js';
 import { genericProvider } from './generic.js';
 import { beginLogin, completeLogin, forgetAccess, isSignInProvider, ownSession, sessionSecretName, signInProviders, type LoginStart, type PendingLogin } from './signin.js';
@@ -197,6 +198,7 @@ export class UsageEngine implements EngineApi {
     syncProviderList(this.state.config);
     this.state.firstRun = !saved;
     await this.importRulesOnce();
+    await this.applyCatalogOnce();
     const [snapshot, history, alertState] = await Promise.all([this.shell.loadSnapshot(), this.shell.loadHistory() as Promise<HistoryRow[]>, this.shell.loadAlertState()]);
     this.state.snapshot = snapshot;
     this.state.history = history;
@@ -625,6 +627,22 @@ export class UsageEngine implements EngineApi {
   }
 
   /**
+   * A catalog.json beside the usage export asks for the standard model catalog (`{"catalog": "standard"}`). It is applied once, and the rules
+   * keep a marker so later edits stand. Without the file, no model is renamed or removed.
+   */
+  private async applyCatalogOnce(): Promise<void> {
+    const policy = this.config.policy, read = this.shell.host.readHomeFile;
+    if (!policy || !read || !this.config.exportPath || (policy.catalog ?? 0) >= CATALOG_VERSION) return;
+    const text = await read(policyPathFor(this.config.exportPath, 'catalog.json')).catch(() => null);
+    if (!text) return;
+    let asked = false;
+    try { asked = (JSON.parse(text) as { catalog?: unknown }).catalog === 'standard'; } catch { return; }
+    if (!asked) return;
+    const result = applyCatalog(policy);
+    if (result.moved.length || result.added.length || result.removed.length) await this.persist();
+  }
+
+  /**
    * While no rules exist yet, an existing policy.json beside the export is adopted as it stands, so hand-kept rules and pauses survive.
    * Without one, a policy-import.json is imported once, with every model left unconfirmed.
    */
@@ -663,6 +681,7 @@ export class UsageEngine implements EngineApi {
         this.state.catalog[plugin.id] = { fetchedAt, models, error: null };
         const mode = plugin.id === 'cogitator' ? 'catalog' : policy.providers[plugin.id]?.listMode ?? plugin.modelListMode ?? 'auto';
         if (mode === 'auto') added.push(...syncModelList(policy, plugin.id, plugin.labelPrefix ?? plugin.id, models));
+        else if (plugin.id === 'cogitator' && (policy.catalog ?? 0) >= CATALOG_VERSION && syncCogitator(policy, models).length) await this.persist();
       } catch (error) {
         this.state.catalog[plugin.id] = { fetchedAt, models: this.state.catalog[plugin.id]?.models ?? [], error: error instanceof Error ? error.message : String(error) };
       } finally {

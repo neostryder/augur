@@ -20,7 +20,7 @@ import { ChatService } from './chat/service.js';
 import { UserStore } from './chat/users.js';
 import { writeDailyReport, writeLabels } from './balance-files.js';
 import { augurHome, dataDir, pipeName } from './paths.js';
-import { policySource, routeSource, usageSource } from './sources.js';
+import { policySource, routeSource, usageSource, withCurrentLabels } from './sources.js';
 import { Store } from './store.js';
 import { Supervisor } from './supervisor.js';
 import { ViewHub } from './views.js';
@@ -107,6 +107,7 @@ export async function startService(opts: ServiceOptions = {}) {
   const policy = policySource(join(home, 'policy.json')), usage = usageSource(join(home, 'usage.json'));
   const routesPath = opts.routesPath ?? process.env.AUGURD_ROUTES ?? join(home, 'dispatch', 'routes.json');
   const routes = routeSource(routesPath);
+  const routesNow = () => withCurrentLabels(routes.read(), policy.read());
   const local = await loadLocalAdapters();
   if (local.error) log(`local adapters were not loaded: ${local.error}`);
   const signIns = await loadLocalSignIn(home);
@@ -118,10 +119,10 @@ export async function startService(opts: ServiceOptions = {}) {
   let engine: UsageEngine | null = null;
   const jobsOff = () => engine && engine.state.config.dispatch?.runJobs !== true ? 'Augur is set to usage only, so it does not run jobs. Choose Also run jobs in its settings to turn them on.' : null;
   const supervisor = new Supervisor({ rates, store, config, dir, home, adapters: enabledAdapters(config.adapters, local.adapters), ...(decision ? { decision } : {}), decisions,
-    routes: () => routes.read(), policy: () => policy.read(), usage: () => usage.read(), jobsOff });
-  const smokeAlias = createAliasSmoke({ home, routes: () => routes.read(), policy: () => policy.read(), submit: (request, route) => supervisor.submit(request, route), getJob: id => store.get(id) });
+    routes: routesNow, policy: () => policy.read(), usage: () => usage.read(), jobsOff });
+  const smokeAlias = createAliasSmoke({ home, routes: routesNow, policy: () => policy.read(), submit: (request, route) => supervisor.submit(request, route), getJob: id => store.get(id) });
   const runAliasRefresh = singleFlight(async (label?: string) => refreshAliasFiles(home, providerListings, label, new Date(), smokeAlias, (provider, modelId) => provider === 'openrouter' ? openRouterEndpoints(modelId) : Promise.resolve(null)));
-  const server = new IpcServer(supervisor, store, token, () => routes.read(), rates, {
+  const server = new IpcServer(supervisor, store, token, routesNow, rates, {
     read: () => { try { return readFileSync(routesPath, 'utf8'); } catch { return null; } },
     write: (text: string) => { mkdirSync(dirname(routesPath), { recursive: true }); const tmp = `${routesPath}.tmp`; writeFileSync(tmp, text, 'utf8'); renameSync(tmp, routesPath); },
   }, agentToken, runAliasRefresh);
@@ -135,7 +136,7 @@ export async function startService(opts: ServiceOptions = {}) {
   if (config.web.enabled || config.web.chatPort > 0) {
     ensureToken(dir, 'web-token');
     users = new UserStore(join(dir, 'chat-users.db'));
-    chat = new ChatService({ users, dir, routes: () => routes.read(), adapters: new Set(enabledAdapters(config.adapters, local.adapters).keys()), policy: () => policy.read(), usage: () => usage.read(), log });
+    chat = new ChatService({ users, dir, routes: routesNow, adapters: new Set(enabledAdapters(config.adapters, local.adapters).keys()), policy: () => policy.read(), usage: () => usage.read(), log });
   }
   const chatSettings = { ...config.web, host: config.web.chatHost, port: config.web.chatPort };
   const certNames = [...new Set([...webCertNames(config.web), ...(config.web.chatPort > 0 ? webCertNames(chatSettings) : [])])];

@@ -139,36 +139,38 @@ const DEEP: ActivityId[] = ['write_code', 'reason_critique', 'reverse_engineerin
 export const DEFAULT_BALANCE: BalanceRules = {
   profile: 'classic',
   enabled: true,
-  gate: { premium: ['codex/sol', 'claude/opus', 'xai/grok', 'copilot/gpt-6.1-sol', 'copilot/claude-opus-5.5', 'copilot/grok-4.7', 'copilot/gemini-4-argon'], paceLift: ['codex/sol', 'xai/grok', 'claude/opus'], open: 20, close: 10, surplus: { hours: 12, open: 10, close: 5, margin: 5, countdown: ['claude', 'xai'] } },
+  gate: { premium: ['codex/sol', 'claude/opus', 'xai/grok', 'copilot/gpt-6.1-sol', 'copilot/claude-opus-5.5', 'copilot/grok-4.7', 'copilot/gemini-4-argon', 'copilot/sol', 'copilot/opus', 'copilot/grok', 'copilot/argon'], paceLift: ['codex/sol', 'xai/grok', 'claude/opus'], open: 20, close: 10, surplus: { hours: 12, open: 10, close: 5, margin: 5, countdown: ['claude', 'xai'] } },
   boostFitFloor: BOOST.fitFloor,
   draw: { enabled: true, tail: 0.25 },
   depth: Object.fromEntries(ACTIVITIES.map(a => [a, DEEP.includes(a) ? 'deep' : 'everyday'])) as Record<ActivityId, Depth>,
   tiers: {
     'claude/live': 'strong', 'claude/opus': 'strong', 'codex/sol': 'strong', 'xai/grok': 'strong',
-    'copilot/claude-opus-5.5': 'strong', 'copilot/gpt-6.1-sol': 'strong', 'copilot/grok-4.7': 'strong',
+    'copilot/claude-opus-5.5': 'strong', 'copilot/gpt-6.1-sol': 'strong', 'copilot/grok-4.7': 'strong', 'copilot/opus': 'strong', 'copilot/sol': 'strong', 'copilot/grok': 'strong',
     'claude/claude-sonnet-5-5': 'light', 'claude/sonnet': 'light', 'codex/luna': 'light', 'minimax/*m3*': 'light', 'deepseek/v4.1-flash': 'light',
-    'copilot/claude-sonnet-5.5': 'light', 'copilot/gpt-6-luna': 'light', 'copilot/gemini-3.8-flash': 'light',
+    'copilot/claude-sonnet-5.5': 'light', 'copilot/gpt-6-luna': 'light', 'copilot/gemini-3.8-flash': 'light', 'copilot/sonnet': 'light', 'copilot/luna': 'light', 'openrouter/deepseek': 'light',
   },
   exclude: ['fable', 'astra'],
   tilt: { routine: { strong: 0.35, light: 1.3 }, everyday: { strong: 0.85, light: 1.15 }, deep: { strong: 1.4, light: 0.8 }, core: { strong: 1.6, light: 0.6 } },
   caps: {},
   training: { ...DEFAULT_TRAINING },
-  prose: { models: ['claude/live', 'claude/opus', 'copilot/claude-opus-5.5'], tilt: 1.3, pace: { enabled: true, ahead: 12, aheadAtReserve: 3, returnAt: 0 } },
+  prose: { models: ['claude/live', 'claude/opus', 'copilot/claude-opus-5.5', 'copilot/opus'], tilt: 1.3, pace: { enabled: true, ahead: 12, aheadAtReserve: 3, returnAt: 0 } },
   pace: { claude: CLAUDE_PACE },
   claude: { provider: 'claude', band: CLAUDE_PACE.band, reserve: CLAUDE_PACE.reserve, hot: CLAUDE_PACE.hot, behind: CLAUDE_PACE.behind },
-  fallback: { providers: ['copilot'], routes: { 'deepseek/v4.1-flash': ['write_code'] }, anthropic: ['copilot/claude-opus-5.5', 'copilot/claude-sonnet-5.5'], aim: 150, cap: 250, margin: 5 },
+  fallback: { providers: ['copilot'], routes: { 'deepseek/v4.1-flash': ['write_code'] }, anthropic: ['copilot/claude-opus-5.5', 'copilot/claude-sonnet-5.5', 'copilot/opus', 'copilot/sonnet'], aim: 150, cap: 250, margin: 5 },
   prefer: {
     'minimax/*m3*': { long_context: 1.6, summarize_extract: 1.4 },
     'codex/luna': { review_code: 1.2, research: 1.2 },
     'claude/claude-sonnet-5-5': { review_code: 1.2, research: 1.2 },
     'claude/sonnet': { review_code: 1.2, research: 1.2 },
     'deepseek/v4.1-flash': { review_code: 1.2 },
+    'openrouter/deepseek': { review_code: 1.2 },
     'chatgpt/web': { research: 1.3 },
+    'chatgpt/research': { research: 1.3 },
     'xai/grok': { write_code: 1.1, review_code: 1.1, research: 1.1 },
   },
   seats: {
     second: { models: ['minimax/*m3*'], skip: ['bulk_tagging', 'typed_decisions', 'speech', 'generate_images', 'generate_video', 'read_images'] },
-    web: { research: ['chatgpt/web', 'gemini/web'], generate_images: ['chatgpt/web', 'gemini/web'], read_images: ['gemini/web', 'chatgpt/web'], long_context: ['gemini/web'] },
+    web: { research: ['chatgpt/research', 'chatgpt/web', 'gemini/web'], generate_images: ['chatgpt/image', 'chatgpt/web', 'gemini/web'], read_images: ['gemini/web', 'chatgpt/research', 'chatgpt/web'], long_context: ['gemini/web'] },
     shadow: 'laya/laya',
     jev: { route: 'jev/jev-latest', activities: ['typed_decisions', 'bulk_tagging'], tilt: 3 },
   },
@@ -190,16 +192,16 @@ export const NEUTRAL_BALANCE: BalanceRules = {
   seats: { second: { models: [], skip: [...DEFAULT_BALANCE.seats.second.skip] }, web: {}, shadow: '', jev: { route: '', activities: [], tilt: 1 } },
 };
 
-/** A model as the rules see it: the person's label, and the standard name made of its provider and its model id. */
-export interface ModelRef { label: string; provider: string; id: string }
+/** A model as the rules see it: the person's label, and the standard name made of its provider and its model id. `aliases` are the labels it went by before, which still name it. */
+export interface ModelRef { label: string; provider: string; id: string; aliases?: readonly string[] }
 export const standardName = (provider: string, id: string): string => `${provider}/${id}`;
 const globs = new Map<string, RegExp>();
 const glob = (key: string): RegExp => { let re = globs.get(key); if (!re) { re = new RegExp(`^${key.split('*').map(x => x.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`, 'i'); globs.set(key, re); } return re; };
 
 /** Whether a rule's name stands for this model: its label, its standard name, or a pattern with `*` that either one fits. */
 export function nameMatches(key: string, ref: ModelRef): boolean {
-  if (key === ref.label || key === standardName(ref.provider, ref.id)) return true;
-  return key.includes('*') && (glob(key).test(ref.label) || glob(key).test(standardName(ref.provider, ref.id)));
+  if (key === ref.label || key === standardName(ref.provider, ref.id) || ref.aliases?.includes(key)) return true;
+  return key.includes('*') && (glob(key).test(ref.label) || glob(key).test(standardName(ref.provider, ref.id)) || !!ref.aliases?.some(alias => glob(key).test(alias)));
 }
 
 /** The entry a map holds for a model. A label's own entry wins over its standard name's, which wins over a pattern, so a rule written against a label keeps meaning what it did. */
@@ -207,6 +209,7 @@ export function lookup<T>(map: Record<string, T>, ref: ModelRef): T | undefined 
   if (Object.hasOwn(map, ref.label)) return map[ref.label];
   const standard = standardName(ref.provider, ref.id);
   if (Object.hasOwn(map, standard)) return map[standard];
+  for (const alias of ref.aliases ?? []) if (Object.hasOwn(map, alias)) return map[alias];
   for (const [key, value] of Object.entries(map)) if (key.includes('*') && nameMatches(key, ref)) return value;
   return undefined;
 }
@@ -218,7 +221,7 @@ export const listed = (list: readonly string[], ref: ModelRef): boolean => list.
 export function resolveLabel(policy: PolicyFile, key: string): string | null {
   if (!key) return null;
   for (const [provider, p] of Object.entries(policy.providers)) if (Object.hasOwn(p.models, key)) return key;
-  for (const [provider, p] of Object.entries(policy.providers)) for (const [label, m] of Object.entries(p.models)) if (nameMatches(key, { label, provider, id: m.id })) return label;
+  for (const [provider, p] of Object.entries(policy.providers)) for (const [label, m] of Object.entries(p.models)) if (nameMatches(key, { label, provider, id: m.id, aliases: m.aliases })) return label;
   return null;
 }
 
@@ -515,7 +518,7 @@ export function govern(policy: PolicyFile, activity: ActivityId, depth?: Depth, 
   const serves = (id: string): boolean => {
     const provider = policy.providers[id];
     if (!provider) return false;
-    return Object.entries(provider.models).some(([label, m]) => listed(rules.prose.models, { label, provider: id, id: m.id }));
+    return Object.entries(provider.models).some(([label, m]) => listed(rules.prose.models, { label, provider: id, id: m.id, aliases: m.aliases }));
   };
   const mute = (sw: ProseSwitch): ProseSwitch => rules.enabled ? sw : { ...sw, on: false };
   const raw: Record<string, ProseSwitch> = {};
@@ -533,7 +536,7 @@ export function govern(policy: PolicyFile, activity: ActivityId, depth?: Depth, 
       if (why) { out.blocks.push({ model: label, why }); continue; }
       let tilt = 1;
       const reasons: string[] = [];
-      const ref: ModelRef = { label, provider: providerId, id: m.id };
+      const ref: ModelRef = { label, provider: providerId, id: m.id, aliases: m.aliases };
       const tier = lookup(rules.tiers, ref);
       const isClaude = providerId === steeredId;
       candidates.push({ ...ref, claude: isClaude });

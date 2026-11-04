@@ -2,6 +2,7 @@
 // Stored in AppConfig.policy, resolved per model, and written to policy.json beside the usage export.
 
 import { obj } from './util.js';
+import { CATALOG_VERSION, applyCatalog } from './catalog.js';
 import { cogitatorEntry } from './cogitator-catalog.js';
 
 export const ACTIVITIES = ['write_code', 'review_code', 'research', 'reason_critique', 'draft_prose', 'summarize_extract', 'long_context',
@@ -76,6 +77,8 @@ export interface ModelEntry {
   /** The older version this model replaces. Confirming this model hides that one. */
   supersedes?: string;
   series?: { kind: 'llm' | 'image' | 'speech' | 'embed'; pattern: string };
+  /** Earlier labels of this model. They stay out of every list and still name it, so a rule, a route or a typed name written against one keeps working. */
+  aliases?: string[];
 }
 
 export interface PolicyRole { activity: ActivityId; candidates: string[]; callerChooses: boolean }
@@ -103,16 +106,25 @@ export interface PolicyConfig {
   /** Overrides for the automatic balance's standing rules. Kept as written; the balance reads what it recognizes. */
   balance?: Record<string, unknown>;
   roles?: Record<string, PolicyRole>;
+  /** The newest model catalog applied to these rules. A catalog newer than this one is applied once, so later edits are never undone. */
+  catalog?: number;
 }
 
 export const HISTORY_LIMIT = 1000;
 export const DEFAULT_THRESHOLDS: Thresholds = { warnPct: 90, denyPct: 98, minBalance: null };
 
+/** Rules-only providers kept under their earlier ids. They are listed only while their rules hold a model, since the catalog moves those models to `m365` and to Cogitator. */
+export const LEGACY_RULES_ONLY: Array<{ id: string; name: string; detail: string }> = [
+  { id: 'm365copilot', name: 'Microsoft 365 Copilot (earlier)', detail: 'Work account chat. Usage is not published.' },
+  { id: 'laya', name: 'Laya', detail: 'Local typed-judgment model on your own hardware. No usage limits.' },
+];
+
 /** Providers that have rules and no usage reader. Augur can't see their usage. */
 export const RULES_ONLY_PROVIDERS: Array<{ id: string; name: string; detail: string }> = [
   { id: 'chatgpt', name: 'ChatGPT', detail: 'chatgpt.com in a browser. Business plan usage is not published.' },
-  { id: 'm365copilot', name: 'Microsoft 365 Copilot', detail: 'Work account chat. Usage is not published.' },
-  { id: 'laya', name: 'Laya', detail: 'Local typed-judgment model on your own hardware. No usage limits.' },
+  { id: 'm365', name: 'Microsoft 365 Copilot', detail: 'Work account chat. Usage is not published.' },
+  { id: 'openai-api', name: 'OpenAI API', detail: 'The OpenAI API with your own key. Billed by the token.' },
+  ...LEGACY_RULES_ONLY,
 ];
 
 // ------------------------------------------------------------------ paths and edits
@@ -288,6 +300,9 @@ export function mergePolicy(local: PolicyConfig, remote: PolicyConfig): PolicyCo
   for (const change of remote.history) if (!seen.has(key(change))) out.history.push(change);
   out.history.sort((a, b) => (order(a) < order(b) ? -1 : order(a) > order(b) ? 1 : 0));
   if (out.history.length > HISTORY_LIMIT) out.history.splice(0, out.history.length - HISTORY_LIMIT);
+  // A device that has not applied the catalog brings its old labels back with the union above; they leave again here.
+  const catalog = Math.max(local.catalog ?? 0, remote.catalog ?? 0);
+  if (catalog >= CATALOG_VERSION) { out.catalog = catalog; applyCatalog(out, { again: true }); }
   return out;
 }
 /**
@@ -327,6 +342,7 @@ export interface ResolvedModel {
   /** Fields taken from the provider's defaults. */
   inherited: string[];
   series?: ModelEntry['series'];
+  aliases?: string[];
 }
 
 const FALLBACK: Required<Omit<Rule, 'activities' | 'dataHandling'>> = { dataTier: 'public', askFirst: false, output: 'text_only', sandbox: false, effort: null, cost: 'moderate', pause: null, useAfter: [], notes: '' };
@@ -357,7 +373,7 @@ export function resolveModel(provider: string, defaults: Rule, model: ModelEntry
   return { provider, id: model.id, name: model.name, status: model.status, source: model.source, activities,
     ...(catalogActivities.length ? { catalogActivities } : {}), ...(blockedActivities.length ? { blockedActivities } : {}),
     dataTier, askFirst: pick('askFirst'), output: pick('output'), sandbox: pick('sandbox'), effort: pick('effort'),
-    cost: pick('cost'), pause: pick('pause'), dataHandling, useAfter: [...pick('useAfter')], notes: pick('notes'), inherited, ...(model.series ? { series: model.series } : {}) };
+    cost: pick('cost'), pause: pick('pause'), dataHandling, useAfter: [...pick('useAfter')], notes: pick('notes'), inherited, ...(model.series ? { series: model.series } : {}), ...(model.aliases?.length ? { aliases: [...model.aliases] } : {}) };
 }
 
 export function resolveThresholds(p: ProviderPolicy | undefined): Thresholds { return { ...DEFAULT_THRESHOLDS, ...p?.thresholds }; }
@@ -441,7 +457,7 @@ export function policyFromFile(data: unknown, now = new Date()): PolicyConfig {
 }
 
 /** policy.json, and the policy-import.json read on first run, sit beside the usage export. */
-export function policyPathFor(exportPath: string, name: 'policy.json' | 'policy-import.json' = 'policy.json'): string {
+export function policyPathFor(exportPath: string, name: 'policy.json' | 'policy-import.json' | 'catalog.json' = 'policy.json'): string {
   const slash = exportPath.lastIndexOf('/');
   return (slash >= 0 ? exportPath.slice(0, slash + 1) : '') + name;
 }
@@ -482,6 +498,11 @@ function migrateRule(value: unknown): Rule {
   return rule;
 }
 
+function isSeries(v: unknown): v is NonNullable<ModelEntry['series']> {
+  const o = obj(v);
+  return ['llm', 'image', 'speech', 'embed'].includes(String(o.kind)) && typeof o.pattern === 'string' && o.pattern.length > 0;
+}
+
 export function migratePolicy(value: unknown): PolicyConfig {
   const s = obj(value), policy = emptyPolicy();
   for (const [id, raw] of Object.entries(obj(s.providers))) {
@@ -492,7 +513,9 @@ export function migratePolicy(value: unknown): PolicyConfig {
       if (typeof e.id !== 'string' || !label.includes('/')) continue;
       models[label] = { id: e.id, name: typeof e.name === 'string' ? e.name : undefined, source: oneOf(['live', 'manual', 'import'] as const, e.source) ?? 'manual',
         status: oneOf(MODEL_STATUSES, e.status) ?? 'unreviewed', rule: migrateRule(e.rule), firstSeen: typeof e.firstSeen === 'string' ? e.firstSeen : new Date(0).toISOString(),
-        ...(typeof e.supersedes === 'string' ? { supersedes: e.supersedes } : {}) };
+        ...(typeof e.supersedes === 'string' ? { supersedes: e.supersedes } : {}),
+        ...(isSeries(e.series) ? { series: { kind: e.series.kind, pattern: e.series.pattern } } : {}),
+        ...(Array.isArray(e.aliases) && e.aliases.some(a => typeof a === 'string') ? { aliases: [...new Set(e.aliases.filter((a): a is string => typeof a === 'string' && a.includes('/')))] } : {}) };
     }
     const t = obj(p.thresholds), thresholds: Partial<Thresholds> = {};
     for (const k of ['warnPct', 'denyPct'] as const) if (typeof t[k] === 'number' && t[k] >= 0 && t[k] <= 100) thresholds[k] = t[k];
@@ -508,5 +531,6 @@ export function migratePolicy(value: unknown): PolicyConfig {
   }
   policy.history.splice(0, Math.max(0, policy.history.length - HISTORY_LIMIT));
   if (s.balance && typeof s.balance === 'object' && !Array.isArray(s.balance)) policy.balance = s.balance as Record<string, unknown>;
+  if (typeof s.catalog === 'number' && Number.isInteger(s.catalog) && s.catalog > 0) policy.catalog = s.catalog;
   return policy;
 }
