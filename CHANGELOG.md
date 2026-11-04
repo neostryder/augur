@@ -4,6 +4,17 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+### Added
+
+- [Visible] [Providers] **An opt-in standard catalog trims the Rules list to a fixed set of models with uniform lower-case labels.** To turn it on, put `{"catalog":"standard"}` in `catalog.json` in `~/.augur`. Augur applies it once on the next start and keeps it from then on. Labels such as `claude/opus` and `openrouter/deepseek` carry no version, and the provider's versioned id appears beside each one, while a daily refresh moves the entry to the newest release in its series. Earlier labels still reach the same model as hidden aliases, models outside the catalog are removed, and an added model never gets a wider data level than the model it comes from.
+- [Visible] [Security] **OpenRouter models in the standard catalog (deepseek, glm, mimo) run only on DeepInfra in the US, with data collection denied and zero data retention.** The new opencode-sbx route option `host` pins an openrouter model to one host and turns off fallbacks, so OpenRouter fails the request rather than send it anywhere else. Each pinned model's rule records the host, its country, and that prompts are neither retained nor used for training. The option is listed as Pinned host in the adapter table in docs/configuring.md.
+- [Visible] [Providers] **The standard catalog adds `chatgpt/research`, `chatgpt/image`, `m365/claude`, `m365/gpt`, `openai-api/moderation`, and `cogitator/laya`.** Laya moved into Cogitator, and every Cogitator model now appears in the list.
+
+### Changed
+
+- [Visible] [UI] **The Node view in Model rules is renamed Visual and now draws a four-ring donut for each activity.** Regulated sits at the center and Public on the outside, and a model appears only in the rings its data level clears. MiniMax, for example, shows in Internal and Public only. Each ring's shares are recalculated to total 100 percent, hovering a model lights it up in every ring, and the old data-level selector on the dial is gone because all four levels are always on screen.
+- [Internal] [Platform] **A route that points at an earlier model label runs the model the label became and shows the new label.** Rule matching, models named in messages, and balance entries accept earlier labels too.
+
 ## [1.17.0] - 2026-11-03
 
 ### Added
