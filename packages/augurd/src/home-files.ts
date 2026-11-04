@@ -8,7 +8,7 @@ const LOGIN_FILES = ['.claude/.credentials.json', '.codex/auth.json', '.grok/aut
 /** The login files that hold tokens: written readable by their owner only. */
 const CREDENTIAL_FILES = new Set(['.claude/.credentials.json', '.codex/auth.json', '.grok/auth.json']);
 export const isCredentialFile = (rel: string): boolean => CREDENTIAL_FILES.has(rel);
-const BESIDE_EXPORT = ['policy.json', 'policy-import.json', 'policy-edits.jsonl', 'policy-edit-results.json', 'alerts.json', 'alerts-acks.jsonl'];
+const BESIDE_EXPORT = ['policy.json', 'policy-import.json', 'catalog.json', 'policy-edits.jsonl', 'policy-edit-results.json', 'alerts.json', 'alerts-acks.jsonl'];
 
 /** A path relative to home with forward slashes and only plain parts: no drive, no leading slash, no backslash, no `.` or `..`. */
 export function homeRelative(path: string): string {
