@@ -15,6 +15,7 @@ export * from './net.js';
 export * from './private-terms.js';
 export * from './changelog.js';
 export * from './policy.js';
+export * from './catalog.js';
 export * from './aliases.js';
 export * from './policy-import.js';
 export * from './models.js';

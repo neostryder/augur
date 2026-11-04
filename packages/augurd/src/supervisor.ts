@@ -994,7 +994,7 @@ export class Supervisor {
       if (!model) return 0;
       for (const [provider, p] of Object.entries(policy.providers)) {
         const entry = p.models[model];
-        if (entry) return lookup(caps, { label: model, provider, id: entry.id })?.parallel ?? 0;
+        if (entry) return lookup(caps, { label: model, provider, id: entry.id, aliases: entry.aliases })?.parallel ?? 0;
       }
       return 0;
     };
