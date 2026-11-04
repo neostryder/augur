@@ -232,6 +232,19 @@ describe('command lines', () => {
     expect(hard.args.slice(-3)).toEqual(['--variant', 'high', 'hi']);
     expect(hard.promptArgs).toEqual([hard.args.length - 1]);
   });
+  it('opencode: an OpenRouter model can be pinned to one US host with no fallback and no data retention', () => {
+    const r = route('opencode-sbx', { sandbox: 'oc-ds', workRoot: 'C:/w', model: 'openrouter/z-ai/glm-5.3-flash', host: 'DeepInfra', sbx: process.execPath });
+    const plan = opencodeSbx.plan(req(), r, ctx('hi', 'C:/jobs/j1', 'C:/w/jobs/j1'));
+    const at = plan.args.indexOf('OPENCODE_CONFIG_CONTENT=' + JSON.stringify(JSON.parse(plan.args.find(a => a.startsWith('OPENCODE_CONFIG_CONTENT='))!.slice(24))));
+    expect(at).toBeGreaterThan(0);
+    expect(plan.args[at - 1]).toBe('-e');
+    const config = JSON.parse(plan.args[at]!.slice(24));
+    expect(config.provider.openrouter.models['z-ai/glm-5.3-flash'].options.provider).toEqual({ order: ['DeepInfra'], allow_fallbacks: false, data_collection: 'deny', zdr: true });
+    expect(plan.promptArgs).toEqual([plan.args.length - 1]);
+    expect(opencodeSbx.plan(req(), route('opencode-sbx', { sandbox: 'oc-ds', workRoot: 'C:/w', model: 'openrouter/z-ai/glm-5.3-flash', sbx: process.execPath }), ctx('hi', 'C:/jobs/j1', 'C:/w/jobs/j1')).args.join(' ')).not.toContain('OPENCODE_CONFIG_CONTENT');
+    expect(opencodeSbx.validate(route('opencode-sbx', { sandbox: 'a', workRoot: 'b', model: 'anthropic/x', host: 'DeepInfra', sbx: process.execPath }))).toMatch(/openrouter/);
+    expect(opencodeSbx.validate(r)).toBeNull();
+  });
   it('finds a command without cmd.exe, and turns an npm shim into node plus its script', () => {
     const found = resolveExecutable('node');
     expect(found?.prefix).toEqual([]);
