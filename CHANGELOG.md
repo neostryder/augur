@@ -4,6 +4,8 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+## [1.18.0] - 2026-11-04
+
 ### Added
 
 - [Visible] [Providers] **An opt-in standard catalog trims the Rules list to a fixed set of models with uniform lower-case labels.** To turn it on, put `{"catalog":"standard"}` in `catalog.json` in `~/.augur`. Augur applies it once on the next start and keeps it from then on. Labels such as `claude/opus` and `openrouter/deepseek` carry no version, and the provider's versioned id appears beside each one, while a daily refresh moves the entry to the newest release in its series. Earlier labels still reach the same model as hidden aliases, models outside the catalog are removed, and an added model never gets a wider data level than the model it comes from.
