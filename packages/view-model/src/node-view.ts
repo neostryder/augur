@@ -16,7 +16,7 @@ export interface NodeState {
   candidate?: string;
 }
 
-export const initialNodeState = (): NodeState => ({ activity: 'write_code', dataTier: 'internal', tab: 'weight', switching: false, search: '', query: '' });
+export const initialNodeState = (): NodeState => ({ activity: 'write_code', dataTier: 'public', tab: 'weight', switching: false, search: '', query: '' });
 
 export interface NodeRow {
   provider: string;
@@ -87,6 +87,19 @@ export function nodeMix(config: AppConfig, snapshot: Snapshot | null, activity: 
   for (const row of rows) if (counts.get(row.slug)! > 1) row.tag = row.provider === 'cogitator' ? 'local' : providers.find(provider => provider.id === row.provider)?.name ?? row.provider;
   return rows.sort((a, b) => (b.ranked?.score ?? 0) - (a.ranked?.score ?? 0) || a.label.localeCompare(b.label));
 }
+
+export interface NodeLayer {
+  tier: DataTier;
+  rows: NodeRow[];
+}
+
+/** One mix per data tier, innermost (the most restricted tier) first. A model below a tier gets no share in that layer, and the shares in each layer add up to 100. */
+export function nodeLayers(config: AppConfig, snapshot: Snapshot | null, activity: ActivityId, now = new Date()): NodeLayer[] {
+  return [...DATA_TIERS].reverse().map(tier => ({ tier, rows: nodeMix(config, snapshot, activity, tier, now) }));
+}
+
+/** The tiers a model with this highest tier takes part in, innermost first. */
+export const layersFor = (highest: DataTier): DataTier[] => [...DATA_TIERS].reverse().filter(tier => clearedFor(highest, tier));
 
 export interface NodeCatalogItem {
   provider: string;
@@ -165,7 +178,7 @@ export function previewLevel(config: AppConfig, provider: string, label: string,
 
 export const NODE_TEXT = {
   list: 'List',
-  node: 'Node view',
+  node: 'Visual',
   weight: 'Weight',
   data: 'Data',
   behavior: 'Behavior',
@@ -182,6 +195,12 @@ export const NODE_TEXT = {
   inMix: 'In the mix',
   addHelp: 'Click or drag a catalog model to add it at Normal; a new model still needs confirmation.',
   refuseTier: 'The model cannot receive this activity\'s data tier.',
+  layers: 'Rings',
+  layersHelp: 'Each ring is one data tier. The inner ring is Regulated and the outer ring is Public. A model shows only in the rings it is cleared for, and each ring adds up to 100%.',
+  layerInner: 'inner',
+  layerOuter: 'outer',
+  layerOff: 'Not cleared',
+  appearsIn: 'In the rings',
   notInMix: 'Not in the mix',
   expended: 'Quota used up',
   clearance: 'Data clearance',

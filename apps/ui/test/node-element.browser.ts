@@ -65,8 +65,8 @@ export async function run(name: string): Promise<string> {
     }
     case 'drop refusals': {
       const policy = m.config.policy!, entry = policy.providers.openrouter!.models['openrouter/terra']!;
-      for (const test of ['duplicate', 'tier', 'activity', 'absent']) {
-        entry.rule = test === 'tier' ? { dataTier: 'public' } : test === 'activity' ? { activities: { write_code: null }, askFirst: true } : {};
+      for (const test of ['duplicate', 'pause', 'activity', 'absent']) {
+        entry.rule = test === 'pause' ? { pause: { until: '2099-01-01T00:00:00Z', weights: null } } : test === 'activity' ? { activities: { write_code: null }, askFirst: true } : {};
         f.redraw();
         const source = q(`[data-node-add="openrouter/${test === 'absent' ? 'new' : 'terra'}"]`);
         source.focus(); drag(source, q(test === 'absent' ? '.nv-tray' : '.nv-gauge'));
@@ -105,8 +105,8 @@ export async function run(name: string): Promise<string> {
       const policy = m.config.policy!, entry = policy.providers.openrouter!.models['openrouter/terra']!;
       entry.rule.activities = { write_code: null }; f.redraw();
       drag(q('[data-node-add="openrouter/terra"]'), q('.nv-gauge'));
-      entry.rule.dataTier = 'public'; click(q('[data-node-answer="ok"]'));
-      check(entry.rule.activities.write_code === null && policy.history.length === 0 && q('#nv-action-message').textContent === NODE_TEXT.refuseTier, 'Confirmation must recheck data clearance before restoring.');
+      entry.rule.askFirst = true; click(q('[data-node-answer="ok"]'));
+      check(entry.rule.activities.write_code === null && policy.history.length === 0 && !!q('#nv-action-message').textContent, 'Confirmation must recheck the other rules before restoring.');
       click(q('[data-node-answer="ok"]'));
       await app.addNodeModels(['openrouter/terra'], true);
       check(entry.rule.activities.write_code === null && policy.history.length === 0, 'The app must independently recheck confirmed additions.'); break;
@@ -189,8 +189,8 @@ export async function run(name: string): Promise<string> {
       check(!node.querySelector('.nv-switch') && document.activeElement?.id === 'nv-activity', 'Escape must close and restore focus.'); break;
     case 'focus trap': {
       node.openSwitcher(); const search = q<HTMLInputElement>('#nv-activity-search'); search.value = 'zzzz'; search.dispatchEvent(new Event('input', { bubbles: true }));
-      key(q('#nv-activity-search'), 'Tab', { shiftKey: true }); check(document.activeElement?.id === 'nv-gate-dialog', 'The gate must stay in the focus trap.');
-      key(q('#nv-gate-dialog'), 'Tab'); check(document.activeElement?.id === 'nv-activity-search', 'Tab must wrap to search.');
+      key(q('#nv-activity-search'), 'Tab', { shiftKey: true }); check(document.activeElement?.matches('[data-node-switch="close"]'), 'Shift Tab from search must wrap to Close.');
+      key(q('[data-node-switch="close"]'), 'Tab'); check(document.activeElement?.id === 'nv-activity-search', 'Tab must wrap to search.');
       click(q('[data-node-switch="close"]')); check(document.activeElement?.matches('.nv-phone-search'), 'Close must restore a live control.'); break;
     }
     case 'long press': {
@@ -218,9 +218,9 @@ export async function run(name: string): Promise<string> {
       click(q('[data-node-confirm-add]')); check(f.adds.length === 1, 'Add must work without drag events.'); break;
     case 'drag feedback': {
       const item = q('[data-node-add]'); item.dispatchEvent(new DragEvent('dragstart', { bubbles: true }));
-      m.node.dataTier = 'regulated'; m.config.policy!.providers.openrouter!.defaults.dataTier = 'public';
+      m.config.policy!.providers.openrouter!.defaults.askFirst = true;
       q('.nv-gauge').dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true }));
-      check(q('.nv-preview').textContent === NODE_TEXT.refuseTier, 'A refused hover must explain the gate.');
+      check(!!q('.nv-preview').textContent && q('.nv-preview').textContent !== NODE_TEXT.preview, 'A refused hover must explain the rule.');
       node.dispatchEvent(new DragEvent('dragend', { bubbles: true })); check(q('.nv-preview').textContent === NODE_TEXT.preview, 'Drag end must clear refusal feedback.');
       m.nodeNote = NODE_TEXT.refuseTier; node.model = m; node.activity = 'review_code'; check(q('.nv-preview').textContent === NODE_TEXT.preview, 'Activity changes must clear refusal feedback.'); break;
     }
@@ -228,7 +228,7 @@ export async function run(name: string): Promise<string> {
       const rules = m.config.policy!.providers.openrouter!, entry = rules.models['openrouter/terra']!;
       entry.rule.activities = { write_code: 'preferred' };
       await app.addNodeModels(['openrouter/terra']); check(entry.rule.activities.write_code === 'preferred' && app.nodeNote, 'Existing levels must not be overwritten.');
-      for (const rule of [{ askFirst: true }, { pause: { until: '2099-01-01T00:00:00Z', weights: null } }, { activities: { write_code: null } }, { dataTier: 'public' }]) {
+      for (const rule of [{ askFirst: true }, { pause: { until: '2099-01-01T00:00:00Z', weights: null } }, { activities: { write_code: null } }]) {
         rules.defaults.activities = {}; entry.rule = rule as ModelEntry['rule']; await app.addNodeModels(['openrouter/terra']);
         check(app.nodeNote && entry.rule.activities?.write_code !== 'normal', 'Refused additions must explain and preserve their rule.');
       }
