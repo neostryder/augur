@@ -2,19 +2,23 @@
 
 The app covers most of this. The Rules page says what each model may do, the Routes page connects a model to the program that runs it, and Settings holds providers and keys. This page covers the files and settings behind those screens, for when you adapt Augur by hand or have an agent do it. Its tables are generated from the code, and a test fails when they stop matching it.
 
-## Node view
+## Visual
 
-Copy and suggest each record one step in the undo history. When the source has no level for an entry, copy leaves the target entry inheriting its level. Positive scores stay visible.
+Visual draws each activity as a donut of four rings, one per data level, from Regulated at the center through Sensitive and Internal to Public on the outside. You add a model to the mix once, and it appears only in the rings for the levels it is cleared for. A model rated Public shows only in the Public ring, and a model rated Internal shows in Internal and Public. MiniMax, rated Public and Internal, shows in those two rings and is left out of Sensitive and Regulated. Each ring's shares are recalculated from the models in that ring, so every ring adds up to 100 percent. Hovering or selecting a model highlights it in every ring where it appears.
+
+Labels, the leader line, and the weight drag handle sit on the outer ring, and a weight change applies to that model in every ring. The legend lists the four rings with each ring's share total.
+
+Visual uses the existing pick preview with current usage and a neutral task fit of 0.5, so a real task can produce different shares. Drag a slice edge through five weight levels, press Ctrl K to search activities, or press [ and ] to step through them. The Weight, Data, and Behavior tabs edit the same policy fields as the list.
 
 Tap a catalog entry to select it, then press Add or drag it onto the dial. To remove a model, drag its slice, the selected card on the dial, or its mix chip onto the full model list. The Remove button and the Delete key on a focused slice or chip make the same undoable edit. Removing the last model asks first. A blocked model can be restored at Normal after you confirm if data clearance, review status, pauses, and other gates allow it. A drop that cannot work, such as adding a model already in the mix, opens a dialog that explains why and returns focus when it closes.
 
-In the ring, arrow keys move between slices and edge keys adjust levels. A run of edge-key presses is one edit until the keys go idle.
+Arrow keys move between slices and edge keys adjust levels. A run of edge-key presses is one edit until the keys go idle.
 
 Both searches update as you type and keep the cursor and selection. Model search covers names, providers, identifiers, and descriptions, including blocked models, ignoring case and punctuation. Escape clears a search first, then closes the activity switcher if the activity search is empty.
 
-The node view uses the existing pick preview with current usage and a neutral task fit of 0.5, so a real task can produce different shares. Drag a slice edge through five weight levels, use Ctrl K to search activities, or press [ and ] to step through them. The Weight, Data, and Behavior tabs edit the same policy fields as the list, and Rule changes can undo each edit.
+Rule changes can undo each edit, and copy and suggest each record one step in the undo history. When the source has no level for an entry, copy leaves the target entry inheriting its level. Positive scores stay visible.
 
-Settings has separate switches for sheen, animation, and tick marks under Node view. The mode switch builds the complete Node view before it replaces the page. Redraws do not replay an entrance animation, and reduced motion turns off slice animation. Models added from the catalog start unreviewed and need Confirm rules before they can run.
+Settings has separate switches for sheen, animation, and tick marks under Visual. The mode switch builds the complete Visual view before it replaces the page. Redraws do not replay an entrance animation, and reduced motion turns off slice animation. Models added from the catalog start unreviewed and need Confirm rules before they can run.
 
 Claude API appears in Settings with a password field and a Test key button. The key stays in the existing key store as claude-api.apiKey, and the test calls the provider's model listing without sending a prompt. Routes for claude-api models at https://api.anthropic.com keep their existing route key or environment key first and use this provider key only when that key is missing.
 
@@ -74,6 +78,39 @@ Every model has a route label of the form `<provider>/<model>`, such as `codex/s
 A model also has a standard name, its provider id and model id joined by a slash, such as `codex/gpt-6.1-sol`. Wherever the balance names a model (tiers, preferences, the prose models, the backup lists and the seats), it accepts either the label or the standard name. A `*` in a name matches any text, so `claude/*opus*` covers every Opus a Claude provider lists. A rule written against a label takes precedence over one written against the standard name, and a standard name takes precedence over a pattern. A label is only your own name for a model, so rules written with standard names work on an install whose labels differ from yours.
 
 Augur reads each provider's model list once a day and keeps the newest model of each family. You can also add a model by hand on the Rules page. A new model is never picked until you confirm it there and set which activities it may do and how sensitive the data it sees can be.
+
+## The standard catalog
+
+The standard catalog limits the Rules list to a fixed set of models and gives each one a uniform label. It is opt in. To turn it on, create `catalog.json` in the Augur data folder, `~/.augur` (the folder that holds the usage export), with this content:
+
+```json
+{"catalog":"standard"}
+```
+
+Augur applies the catalog once on the next start and keeps it after that.
+
+Each label is the provider in lower case, a slash, and the model's base name in lower case with no version: `claude/opus`, `claude-api/sonnet`, `codex/sol`, `copilot/haiku`, `xai/grok`, `minimax/minimax`, `jev/jev`, `openrouter/deepseek`. The displayed name is the base name capitalized with no version, such as Opus, Sonnet, or DeepSeek. The provider's real model id carries the version, for example `deepseek/deepseek-v4.1-flash-1017`. It stays on the entry and shows beside the label. Each entry has a series pattern, so the daily refresh moves it to the provider's newest version while the label stays the same.
+
+The catalog covers claude, claude-api, codex, chatgpt, m365, xai, minimax, jev, copilot, openrouter, cogitator, and openai-api, which supplies the moderation model as `openai-api/moderation`. Gemini and fal are left out, as are the Kimi and Gemini models on Copilot. Every Cogitator model is listed, and the Laya model is now `cogitator/laya`. New entries include `chatgpt/research`, `chatgpt/image`, `m365/claude`, and `m365/gpt`.
+
+Earlier labels keep working. Each entry records the labels it replaces as aliases, and no list shows them. A rule, balance entry, route, or model typed in a message that uses an earlier label reaches the same model. A route that points at an earlier label runs the model that label became and shows the new label. Rules, status, and history carry over to the new label. Models the catalog leaves out are removed completely.
+
+A model the catalog adds starts from the rules of the model it comes from and never gets a wider data level than that model had.
+
+All OpenRouter models in the catalog (deepseek, glm, and mimo) are pinned to DeepInfra, a US host, with data collection denied and zero data retention. Their rules record host country US, no prompt retention, no training on prompts, and the pinned host. The opencode-sbx adapter takes the route option `host`, listed as Pinned host in the option table. When `host` is set, the model must be an openrouter model. The job then passes OpenCode an inline config that sets the provider order to that host, turns off fallbacks, sets data_collection to deny, and sets zdr to true. If that host cannot serve the request, OpenRouter fails it instead of using another host.
+
+```json
+{
+  "name": "deepseek",
+  "model": "openrouter/deepseek",
+  "adapter": "opencode-sbx",
+  "options": {
+    "sandbox": "oc-ds",
+    "model": "openrouter/deepseek/deepseek-v4.1-flash-1017",
+    "host": "DeepInfra"
+  }
+}
+```
 
 ## Model series and roles
 
