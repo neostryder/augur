@@ -61,6 +61,13 @@ describe('model catalog', () => {
     expect(policy.catalog).toBe(CATALOG_VERSION);
   });
 
+  it('takes the rules of a listed earlier model over a hidden leftover under the new label', () => {
+    const policy = before();
+    policy.providers.claude!.models['claude/sonnet'] = entry('claude-sonnet-5-5', { cost: 'very_cheap' }, 'hidden') as never;
+    applyCatalog(policy);
+    expect(policy.providers.claude!.models['claude/sonnet']).toMatchObject({ status: 'confirmed', rule: { cost: 'moderate' } });
+  });
+
   it('removes what the catalog leaves out, and the providers that left', () => {
     const policy = before();
     applyCatalog(policy);
