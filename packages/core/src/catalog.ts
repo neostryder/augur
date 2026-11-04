@@ -146,8 +146,10 @@ export function applyCatalog(policy: PolicyConfig, options: { again?: boolean; n
   if (!done) {
     const made: Array<[CatalogModel, ModelEntry]> = [];
     for (const m of CATALOG) {
-      const own = find(m.label);
-      const source = own ?? m.aliases.map(find).find(Boolean) ?? (m.from ? find(m.from) : null);
+      // A hidden entry under the catalog's own label is a leftover. An earlier label that is still listed holds the rules in use.
+      const listed = m.aliases.map(find).find(x => x && x.entry.status !== 'hidden');
+      const found = find(m.label), own = found && (found.entry.status !== 'hidden' || !listed) ? found : null;
+      const source = own ?? listed ?? m.aliases.map(find).find(Boolean) ?? found ?? (m.from ? find(m.from) : null);
       const aliases = [...m.aliases];
       const fresh = !own && !m.aliases.some(a => find(a));
       const entry: ModelEntry = source
