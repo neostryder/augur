@@ -10,6 +10,7 @@ import type { BriefResult, DecisionBackend, GradeVerdictLabel } from '@augur/dec
 import { BUDGET_WINDOW_MS, NAMED_PROMPT_WINDOW, PICK_WINDOW_MIN, TOOL_TIERS, account, agreement, attachmentKind, balanceReport, budgetStatus, calibrateRoutes, copilotSpend, checkLineage, routeSecretName, checkNamed, checkPick, evaluate, isTerminal, learnedShares, learnedTilt, lookup, matchNamedModels, pressure, propose, rank, resolveBalance, surplusWindowStatus, trainingKey, usageFactors, schemaPrompt, validateRunOptions, validateSchemaAnswer } from '@augur/dispatch-protocol';
 import type { Adapter, BalanceReport, BudgetStatus, Conversation, Depth, GradeAnswer, GradeParams, GradeReport, JobRecord, JobRequest, LaunchPlan, PickAnswer, PickParams, RateCard, Rejection, ResolvedAttachment, RouteCapabilities, RouteConfig, UsageSnapshot } from '@augur/dispatch-protocol';
 import { MAX_COMMAND_LINE, optNum, optStr } from './adapters/util.js';
+import { atomicWrite } from './home-files.js';
 import { realInside, realInsideAny, realOf } from './real-paths.js';
 import type { ServiceConfig } from './config.js';
 import { buildEnv } from './env.js';
@@ -374,8 +375,7 @@ export class Supervisor {
     const surplus = { ...(state?.surplus ?? {}) }, old = surplus[provider];
     if (!old?.open) return;
     surplus[provider] = { ...old, spent: old.spent + points };
-    const tmp = `${path}.${randomUUID()}.tmp`;
-    writeFileSync(tmp, JSON.stringify({ ...state, surplus }) + '\n'); renameSync(tmp, path);
+    atomicWrite(path, JSON.stringify({ ...state, surplus }) + '\n');
   }
   private gateKeep(state: Record<string, boolean>, surplus?: Record<string, { open: boolean; hoursLeft: number | null; unused: number; budgetLeft: number; spent: boolean; resetsAt: string | null; stale: boolean }>): void {
     try {
@@ -395,7 +395,9 @@ export class Supervisor {
       }
       if (sameWeek && JSON.stringify(state) === JSON.stringify(old?.state ?? {}) && JSON.stringify(spent) === JSON.stringify(old?.surplus ?? {})) return;
       const body = JSON.stringify({ state, at: new Date(now).toISOString(), week, openMs, openedAt, surplus: spent }) + '\n';
-      try { if (readFileSync(path, 'utf8') !== body) { const tmp = `${path}.${randomUUID()}.tmp`; writeFileSync(tmp, body); renameSync(tmp, path); } } catch { writeFileSync(path, body); }
+      let same = false;
+      try { same = readFileSync(path, 'utf8') === body; } catch { /* missing or held open for a moment: write it below */ }
+      if (!same) { try { atomicWrite(path, body); } catch { writeFileSync(path, body); } }
     } catch { /* the next report tries again */ }
   }
   /** Whether the prose pace switch was on at the last pick, read from `prose-switch.json` the first time. It turns off at a lower lead than it turns on at, so the last answer has to outlive a restart. */
