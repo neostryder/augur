@@ -4,6 +4,10 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+### Added
+
+- [Visible] [Platform] **Another program on the same machine can free Laya's video memory with `POST /yield`.** The server drops its checkpoints and adapters from video memory and empties the CUDA cache, and the next /v1/systemone request loads them again. Cogitator sends it before refusing a large model load for lack of video memory. The route serves loopback requests only and answers 403 to any request with an Origin header.
+
 ## [1.18.0] - 2026-11-04
 
 ### Added

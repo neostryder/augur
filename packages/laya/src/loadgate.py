@@ -17,8 +17,11 @@ holds none (0 turns this off). The first request after that loads them again bef
 started holds none either: the first request loads them.
 
 GET /load reports the same state for a client that wants to choose a server before it asks.
+
+POST /yield unloads the checkpoints and adapters immediately, empties the CUDA cache, and answers 200 with JSON: `yielded` says whether anything was loaded, and `checkpoints_in_memory` is false. It counts as an idle unload, so GET /load still reports ready and the next /v1/systemone request reloads them first. The unload waits for a running request without blocking the event loop. Only loopback requests are served, and a request with an Origin header gets 403, since a web page could send it without a preflight when the server binds to all interfaces.
 """
 
+import asyncio
 import json
 import os
 import statistics
@@ -60,6 +63,19 @@ def running_games(names):
     finally:
         k32.CloseHandle(wintypes.HANDLE(snap))
     return sorted(found)
+
+
+def empty_cuda_cache():
+    """Hand cached video memory back to the driver. It does nothing without torch or a CUDA card."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except ImportError:
+        pass
+
+
+LOCAL_CLIENTS = {"127.0.0.1", "::1", "::ffff:127.0.0.1"}
 
 
 class LoadWatch:
@@ -177,6 +193,19 @@ class LoadWatch:
             self.on_reload()
             self.unloaded, self.unload_reason = False, None
 
+    def yield_now(self):
+        """Unload now, counted as an idle unload, and return whether anything was in memory."""
+        with self.lock:
+            was_loaded = not self.unloaded
+        if was_loaded and self.on_unload:
+            self.on_unload()
+            with self.lock:
+                self.unloaded = True
+                if self.unload_reason is None:
+                    self.unload_reason = "idle"
+        empty_cuda_cache()
+        return was_loaded
+
     def status(self):
         with self.lock:
             # An idle unload still answers: the next request loads the checkpoints first, and a client that skipped a
@@ -199,6 +228,13 @@ class LoadGate:
         path, method = scope["path"], scope["method"]
         if path == "/load" and method == "GET":
             return await self._json(send, 200, self.watch.status())
+        if path == "/yield" and method == "POST":
+            client = (scope.get("client") or ("", 0))[0]
+            if client not in LOCAL_CLIENTS or any(k == b"origin" for k, _ in scope.get("headers") or []):
+                return await self._json(send, 403, {"error": "forbidden"})
+            # The unload waits for a running request to finish, so it runs in an executor to keep the event loop free.
+            was_loaded = await asyncio.get_running_loop().run_in_executor(None, self.watch.yield_now)
+            return await self._json(send, 200, {"yielded": was_loaded, "checkpoints_in_memory": False})
         if path == "/v1/systemone" and method == "POST":
             if self.watch.busy:
                 body = {"error": "busy", "reasons": self.watch.reasons, "retry_after_s": 5}

@@ -17,6 +17,8 @@ default keeps every request on the native positions.
 GET /adapters returns the registry and what is loaded. GET /load reports whether this server is busy
 (see loadgate.py), and while it is, /v1/systemone answers 503 so a client tries its next server.
 
+POST /yield frees the video memory at once for another program on this machine, and the next /v1/systemone request loads the checkpoints again.
+
 Browsers: /v1/systemone answers CORS preflights for any origin (POST and OPTIONS, Content-Type and
 Authorization headers, no credentials) and sends Access-Control-Allow-Private-Network, so a web
 page such as the Squire mod can call it. A request that carries an Origin header (so came from a

@@ -1,10 +1,12 @@
+import asyncio
+import json
 import os
 import sys
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
 
-from loadgate import LoadWatch  # noqa: E402
+from loadgate import LoadGate, LoadWatch  # noqa: E402
 
 
 def watch():
@@ -122,6 +124,106 @@ class LoadWatchTests(unittest.TestCase):
         w.idle_unload_after = 0
         w.touch(0)
         w.step(5, 20, 100000)
+        self.assertEqual(calls, [])
+
+    def test_yield_unloads_at_once_as_an_idle_unload_that_nothing_reverses(self):
+        w, calls = watch()
+        w.mark_loaded()
+        self.assertTrue(w.yield_now())
+        self.assertEqual(calls, ["unload"])
+        self.assertTrue(w.unloaded)
+        self.assertEqual(w.unload_reason, "idle")
+        status = w.status()
+        self.assertTrue(status["ready"])
+        self.assertFalse(status["checkpoints_in_memory"])
+        w.step(5, 20, 100)
+        w.step(5, 20, 100000)
+        self.assertEqual(calls, ["unload"])   # no reload and no second unload on its own
+
+    def test_yield_with_nothing_in_memory_answers_false_and_unloads_nothing(self):
+        w, calls = watch()
+        w.unloaded, w.unload_reason = True, "idle"   # how serve_lora.py starts: nothing in memory until a request
+        self.assertFalse(w.yield_now())
+        w.mark_loaded()
+        w.yield_now()
+        self.assertFalse(w.yield_now())
+        self.assertEqual(calls, ["unload"])
+
+    def test_yield_during_a_busy_unload_keeps_the_busy_reason(self):
+        w, calls = watch()
+        for t in range(0, 31):
+            w.step(5, 90, t)
+        self.assertEqual(calls, ["unload"])
+        self.assertFalse(w.yield_now())
+        self.assertEqual(w.unload_reason, "busy")
+        self.assertEqual(calls, ["unload"])
+
+class YieldRouteTests(unittest.TestCase):
+    def call(self, w, client=("127.0.0.1", 50000), headers=(), method="POST", path="/yield"):
+        reached = []
+
+        async def app(scope, receive, send):
+            reached.append(scope["path"])
+            await send({"type": "http.response.start", "status": 204, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+
+        sent = []
+
+        async def send(message):
+            sent.append(message)
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        scope = {"type": "http", "path": path, "method": method, "client": client, "headers": list(headers)}
+        asyncio.run(LoadGate(app, w)(scope, receive, send))
+        status = sent[0]["status"]
+        body = b"".join(m.get("body", b"") for m in sent[1:])
+        return status, (json.loads(body) if body else None), reached
+
+    def test_a_local_request_frees_the_memory_and_answers_with_json(self):
+        w, calls = watch()
+        w.mark_loaded()
+        status, body, reached = self.call(w)
+        self.assertEqual(status, 200)
+        self.assertEqual(body, {"yielded": True, "checkpoints_in_memory": False})
+        self.assertEqual(calls, ["unload"])
+        self.assertEqual(reached, [])
+
+    def test_it_answers_200_when_nothing_was_loaded(self):
+        w, calls = watch()
+        w.unloaded, w.unload_reason = True, "idle"
+        status, body, _ = self.call(w, client=("::1", 50000))
+        self.assertEqual((status, body), (200, {"yielded": False, "checkpoints_in_memory": False}))
+        self.assertEqual(calls, [])
+
+    def test_a_request_from_another_machine_is_refused(self):
+        w, calls = watch()
+        w.mark_loaded()
+        status, _, _ = self.call(w, client=("192.168.2.40", 50000))
+        self.assertEqual(status, 403)
+        self.assertEqual(calls, [])
+        self.assertFalse(w.unloaded)
+
+    def test_a_request_with_an_origin_header_is_refused(self):
+        w, calls = watch()
+        w.mark_loaded()
+        status, _, _ = self.call(w, headers=[(b"origin", b"https://example.com")])
+        self.assertEqual(status, 403)
+        self.assertEqual(calls, [])
+
+    def test_a_missing_client_address_is_refused(self):
+        w, calls = watch()
+        w.mark_loaded()
+        status, _, _ = self.call(w, client=None)
+        self.assertEqual(status, 403)
+        self.assertEqual(calls, [])
+
+    def test_only_post_reaches_the_route(self):
+        w, calls = watch()
+        w.mark_loaded()
+        _, _, reached = self.call(w, method="GET")
+        self.assertEqual(reached, ["/yield"])
         self.assertEqual(calls, [])
 
 
