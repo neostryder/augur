@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, statSync, writeFileSync, chmodSync } from 'node:fs
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { atomicWrite, isCredentialFile } from '../src/home-files.js';
+import { allowedPaths, atomicWrite, isCredentialFile } from '../src/home-files.js';
 
 describe('login files', () => {
   it('name the three token files and nothing else', () => {
@@ -20,5 +20,13 @@ describe('login files', () => {
       atomicWrite(file, '{"a":1}', 0o600);
       expect(statSync(file).mode & 0o777).toBe(0o600);
     } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
+describe('files beside the export', () => {
+  it('include the catalog file, so the engine can read a request for the standard catalog', () => {
+    const allowed = allowedPaths('.augur/usage.json');
+    for (const f of ['.augur/policy.json', '.augur/catalog.json', '.augur/dispatch/routes.json']) expect(allowed.has(f)).toBe(true);
+    expect(allowed.has('.augur/other.json')).toBe(false);
   });
 });
