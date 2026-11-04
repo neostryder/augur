@@ -7,6 +7,10 @@ import { newProvider } from './policy.js';
  * visible without being part of the name. A model's `series` pattern is how the newest version is found; the older labels it used to go
  * by stay on the entry as aliases, hidden from every list, so a rule, a route or a typed name written against one keeps working.
  */
+/** Every OpenRouter model is served by one US host that keeps no prompts and does not train on them. The routes carry the same pin as the route option `host`. */
+export const OPENROUTER_HOST = 'DeepInfra';
+const OPENROUTER_RULE: ModelEntry['rule'] = { dataHandling: { hostCountry: 'US', retainsPrompts: false, trainsOnPrompts: false, pinnedHost: OPENROUTER_HOST } };
+
 export const CATALOG_VERSION = 1;
 
 export interface CatalogModel {
@@ -53,9 +57,9 @@ export const CATALOG: CatalogModel[] = [
   { provider: 'copilot', label: 'copilot/sol', name: 'Sol', id: 'gpt-6.1-sol', aliases: ['copilot/gpt-6.1-sol', 'copilot/gpt-6-sol'] },
   { provider: 'copilot', label: 'copilot/argon', name: 'Argon', id: 'gemini-4-argon', aliases: ['copilot/gemini-4-argon'] },
   { provider: 'copilot', label: 'copilot/grok', name: 'Grok', id: 'grok-4.7', aliases: ['copilot/grok-4.7'] },
-  { provider: 'openrouter', label: 'openrouter/deepseek', name: 'DeepSeek', id: 'deepseek/deepseek-v4.1-flash-1017', series: llm('deepseek/deepseek-v*-flash*'), aliases: ['openrouter/deepseek-v4.1-flash-1017', 'openrouter/DeepSeekFlash'] },
-  { provider: 'openrouter', label: 'openrouter/glm', name: 'GLM', id: 'z-ai/glm-5.3-flash', series: llm('z-ai/glm-*-flash'), aliases: ['openrouter/glm-5.3-flash'] },
-  { provider: 'openrouter', label: 'openrouter/mimo', name: 'MiMo', id: 'xiaomi/mimo-v2.6-flash', series: llm('xiaomi/mimo-*-flash'), aliases: ['openrouter/mimo-v2.6-flash'] },
+  { provider: 'openrouter', label: 'openrouter/deepseek', name: 'DeepSeek', id: 'deepseek/deepseek-v4.1-flash-1017', series: llm('deepseek/deepseek-v*-flash*'), aliases: ['openrouter/deepseek-v4.1-flash-1017', 'openrouter/DeepSeekFlash'], rule: OPENROUTER_RULE },
+  { provider: 'openrouter', label: 'openrouter/glm', name: 'GLM', id: 'z-ai/glm-5.3-flash', series: llm('z-ai/glm-*-flash'), aliases: ['openrouter/glm-5.3-flash'], rule: OPENROUTER_RULE },
+  { provider: 'openrouter', label: 'openrouter/mimo', name: 'MiMo', id: 'xiaomi/mimo-v2.6-flash', series: llm('xiaomi/mimo-*-flash'), aliases: ['openrouter/mimo-v2.6-flash'], rule: OPENROUTER_RULE },
   { provider: 'openai-api', label: 'openai-api/moderation', name: 'Moderation', id: 'omni-moderation-latest', aliases: ['openai/omni-moderation-latest'],
     rule: { dataTier: 'public', askFirst: false, output: 'text_only', sandbox: false, cost: 'very_cheap', activities: { moderate: 'preferred' } } },
   { provider: 'cogitator', label: 'cogitator/laya', name: 'Laya', id: 'laya', aliases: ['laya/laya'] },

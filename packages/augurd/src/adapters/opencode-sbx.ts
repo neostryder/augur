@@ -12,14 +12,19 @@ interface OpencodeEvent { type?: string; part?: { type?: string; text?: string; 
 
 /**
  * OpenCode (`opencode run`) inside a Docker Sandboxes sandbox, on a copy of the working directory. What it changes comes back as a patch.
- * Route options: `sandbox`, `workRoot`, `model` (provider/model), `effort`, `sbx`, `envAllow`.
+ * Route options: `sandbox`, `workRoot`, `model` (provider/model), `effort`, `host`, `sbx`, `envAllow`.
+ * `host` pins an OpenRouter model to one host: no other host is tried, no host that keeps or trains on prompts is used, and only zero data retention endpoints serve it.
  */
 export const opencodeSbx: Adapter = {
   id: 'opencode-sbx', charterEngine: 'opencode', transport: 'exec',
   capabilities: { permissionRequests: false, sessions: false, reportsUsage: true, sandboxed: true, isolatesWorkspace: true, enforcesReadOnly: false },
   envAllow: [],
   isolation: { root: workRoot },
-  validate: sandboxOptions,
+  validate(route: RouteConfig): string | null {
+    const problem = sandboxOptions(route);
+    if (problem) return problem;
+    return optStr(route.options, 'host') && !(optStr(route.options, 'model') as string).startsWith('openrouter/') ? 'route option host pins an OpenRouter model, so model must start with openrouter/' : null;
+  },
   plan(request: JobRequest, route: RouteConfig, ctx: PlanContext): LaunchPlan {
     const sbx = sbxCommand(route) as string, ws = ctx.workspace as string;
     const framed = tierNote(request.tools === 'read' ? 'read' : 'full', ctx.prompt), files: NonNullable<LaunchPlan['files']> = [];
@@ -28,7 +33,8 @@ export const opencodeSbx: Adapter = {
       files.push({ name: TASK_FILE, content: framed, inWorkspace: true });
       message = `Your complete task is in the file ${TASK_FILE} in the current directory. Read it in full and follow it. Do not edit or delete that file.`;
     }
-    const args = [...sbxPrefix(route), 'exec', '-e', 'NO_COLOR=1', '-w', insidePath(ws), optStr(route.options, 'sandbox') as string, 'opencode', 'run', '--format', 'json', '--model', optStr(route.options, 'model') as string];
+    const pin = hostPin(optStr(route.options, 'model') as string, optStr(route.options, 'host'));
+    const args = [...sbxPrefix(route), 'exec', '-e', 'NO_COLOR=1', ...(pin ? ['-e', `OPENCODE_CONFIG_CONTENT=${pin}`] : []), '-w', insidePath(ws), optStr(route.options, 'sandbox') as string, 'opencode', 'run', '--format', 'json', '--model', optStr(route.options, 'model') as string];
     // OpenCode names reasoning levels variants, and has none above high.
     const effort = request.effort ?? optStr(route.options, 'effort');
     if (effort) args.push('--variant', effort === 'xhigh' ? 'high' : effort);
@@ -40,6 +46,13 @@ export const opencodeSbx: Adapter = {
     return readEvents(input.stdoutPath, input.stdout);
   },
 };
+
+/** The inline OpenCode config that sends one OpenRouter model to one host, with no fallback, no prompt retention and no training on prompts. */
+export function hostPin(model: string, host: string | undefined): string | null {
+  if (!host || !model.startsWith('openrouter/')) return null;
+  const provider = { order: [host], allow_fallbacks: false, data_collection: 'deny', zdr: true };
+  return JSON.stringify({ provider: { openrouter: { models: { [model.slice('openrouter/'.length)]: { options: { provider } } } } } });
+}
 
 /** Reads the whole captured output, up to 64 MB, and otherwise the tail the service passed in. */
 function transcript(path: string, tail: string): string {

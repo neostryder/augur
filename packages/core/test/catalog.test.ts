@@ -87,6 +87,14 @@ describe('model catalog', () => {
     expect(policy.providers['openai-api']!.models['openai-api/moderation']).toMatchObject({ status: 'confirmed', rule: { activities: { moderate: 'preferred' } } });
   });
 
+  it('pins every OpenRouter model to one US host that keeps and trains on nothing', () => {
+    const policy = before();
+    applyCatalog(policy);
+    for (const label of ['openrouter/deepseek', 'openrouter/glm', 'openrouter/mimo']) {
+      expect(policy.providers.openrouter!.models[label]!.rule.dataHandling).toEqual({ hostCountry: 'US', retainsPrompts: false, trainsOnPrompts: false, pinnedHost: 'DeepInfra' });
+    }
+  });
+
   it('never widens what data a model may see', () => {
     const policy = before();
     applyCatalog(policy);
