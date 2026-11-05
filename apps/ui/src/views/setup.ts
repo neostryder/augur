@@ -73,6 +73,7 @@ export interface SetupModel {
   /** Steps the person has left. A ready step stays a number until then. */
   seen: StepId[];
   routeNotes: Record<string, string>;
+  webSessionNotice?: string | null;
   testing: string | null;
   busy: boolean;
 }
@@ -526,6 +527,6 @@ export function renderSetup(model: SetupModel): string {
           : stackStep(model);
   return `<div class="setup"><header class="top"><div><h1>Set up Augur</h1><div class="sub">Nothing is saved until you press Apply.</div></div></header>
     <div class="setup-cols"><div class="setup-steps">${steps(model, plan)}</div>
-      <div class="setup-main">${body}${model.step === 'review' ? '' : nav(model)}</div>
+      <div class="setup-main">${model.webSessionNotice ? `<div class="rnote" role="status">${esc(model.webSessionNotice)}</div>` : ''}${body}${model.step === 'review' ? '' : nav(model)}</div>
       <div class="setup-summary" aria-live="polite"><p class="lab">What Augur will set</p><div class="card">${summary(plan)}</div></div></div></div>`;
 }

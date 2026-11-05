@@ -4,7 +4,7 @@ import type { PolicyConfig } from '@augur/core';
 import type { UsageSnapshot } from '@augur/dispatch-protocol';
 import { HOLD_BACK, afterApply, answersFromCurrent, applySteps, planSetup } from '@augur/view-model';
 import type { SetupAnswers, SetupCurrent, StepId } from '@augur/view-model';
-import { renderSettings, type SettingsModel } from '../src/views/settings';
+import { WEB_SESSION_TEXT, renderSettings, type SettingsModel } from '../src/views/settings';
 import {
   goStep, initialView, loadProfile, moveRank, openSetup, renderSetup, runApply, selectStack, setHold, setListAnswer, setPayAmount, togglePayProvider,
 } from '../src/views/setup';
@@ -49,6 +49,25 @@ function settingsModel(firstRun: boolean): SettingsModel {
     platform: 'windows', push: null, claude: null,
   };
 }
+
+it.each([WEB_SESSION_TEXT.reopened, WEB_SESSION_TEXT.closed])('shows the interrupted sign-in notice in settings and setup: %s', (notice) => {
+  const message = `claude: ${notice}`;
+  const settings = renderSettings({ ...settingsModel(false), webSessionNotice: message });
+  const setup = renderSetup({ ...openSetup({ firstRun: true, current: blank, tracks: [], routes: new Set() }), webSessionNotice: message });
+  for (const html of [settings, setup]) {
+    expect(html).toContain(`<div class="rnote" role="status">${message}</div>`);
+  }
+});
+
+it('escapes interrupted sign-in notices in settings and setup', () => {
+  const message = '<site> & sign-in';
+  const settings = renderSettings({ ...settingsModel(false), webSessionNotice: message });
+  const setup = renderSetup({ ...openSetup({ firstRun: true, current: blank, tracks: [], routes: new Set() }), webSessionNotice: message });
+  for (const html of [settings, setup]) {
+    expect(html).toContain('&lt;site&gt; &amp; sign-in');
+    expect(html).not.toContain(message);
+  }
+});
 
 it('shows the idle alert grid row and bounded settings in the desktop settings view', () => {
   const html = renderSettings(settingsModel(false));

@@ -4,7 +4,7 @@ import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { getVersion } from '@tauri-apps/api/app';
-import type { Host, Platform, Shell, TrayUpdate, UpdateChannel } from '@augur/core';
+import type { Host, Platform, Shell, TrayUpdate, UpdateChannel, WebSessionInterrupted } from '@augur/core';
 let engineListener: Promise<() => void> | null = null;
 
 function platform(): Platform {
@@ -86,7 +86,7 @@ export function createTauriShell(): Shell {
     on: (event, handler) => {
       let closed = false;
       let unlisten: (() => void) | undefined;
-      void listen(event, handler).then(stop => {
+      void listen<WebSessionInterrupted | undefined>(event, (e) => handler(e.payload)).then(stop => {
         if (closed) stop();
         else unlisten = stop;
       });

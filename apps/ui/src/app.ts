@@ -7,7 +7,7 @@ import type { HistoryRow } from './core';
 import { renderDashboard, tightest, updateTip, type DashboardModel } from './views/dashboard';
 import { BULK_FIELDS, RULES_TEXT, type AwaitingItem, dialEndChoices, heldRows, localPage, parseCustom, parsePercents, pauseResets, pauseValue, planDialBack, previewBulk, validModelId, type BulkPreview, type DialBackPlan } from '@augur/view-model';
 import { renderPair } from './views/pair';
-import { CUSTOM_EXAMPLE, PUSH_TEXT, renderSettings, type LoginUi, type SettingsModel } from './views/settings';
+import { CUSTOM_EXAMPLE, PUSH_TEXT, WEB_SESSION_TEXT, renderSettings, type LoginUi, type SettingsModel } from './views/settings';
 import { addUnfound, applyDetection, fillRank, goStep, initialView, loadProfile, moveRank, noteAdded, openSetup, providerHasWindow, refreshPlan, renderSetup, runApply, selectStack, setConfirmed, setHold, setListAnswer, setPayAmount, setPayNone, setStrength, shiftStep, toggleListModel, togglePayProvider, useStrongFor, modelsOf, type SetupModel, type SetupTrack } from './views/setup';
 import { renderRules, type RulesFilter, type RulesModel } from './views/rules';
 import { JOBS_ACTIVITY_TEXT, renderJobs, type JobsModel } from './views/jobs';
@@ -80,6 +80,7 @@ export class App {
   private customDraft = '[]';
   private customError = '';
   private savedFlash: string | null = null;
+  private webSessionNotice: string | null = null;
   /** Set while the last policy.json write failed. Agents keep enforcing the older file until a write succeeds. */
   private policyError: string | null = null;
   private jobs: JobsModel = { service: null, serviceNote: '', unavailable: '', jobs: null, accounted: {}, sel: null, detail: null, busy: false };
@@ -214,7 +215,16 @@ export class App {
     this.wireEvents();
     if (this.shell.kind === 'pwa') attachPullToRefresh(() => this.pullRefresh());
     this.shell.on('refresh-requested', () => void this.refresh(true));
-    this.shell.on('web-session-ready', () => void this.engine?.refreshSignIns());
+    this.shell.on('web-session-ready', () => {
+      this.webSessionNotice = null;
+      void this.engine?.refreshSignIns();
+      if (this.view === 'settings' || this.view === 'setup') void this.render();
+    });
+    this.shell.on('web-session-interrupted', (event) => {
+      if (!event) return;
+      this.webSessionNotice = `${event.site}: ${event.reopened ? WEB_SESSION_TEXT.reopened : WEB_SESSION_TEXT.closed}`;
+      if (this.view === 'settings' || this.view === 'setup') void this.render();
+    });
     this.shell.on('settings-requested', () => { if (this.firstRun) { if (this.view !== 'setup') void this.openInterview(true); else void this.render(); return; } this.view = 'settings'; void this.render(); });
     if (this.shell.kind === 'desktop') this.resizeWatch.observe(this.root);
     this.shell.on('popup-shown', () => {
@@ -491,7 +501,7 @@ export class App {
     return {
       config: this.config, plugins: this.pluginMap(), snapshot: this.snapshot, keyTests: this.keyTests, secrets: this.secrets, shellKind: this.shell.kind,
       autostart: this.autostart, update: this.update, openProvider: this.openProvider, customDraft: this.customDraft, customError: this.customError,
-      firstRun: this.firstRun, savedFlash: this.savedFlash, canDispatch: this.shell.dispatch !== undefined, runJobs: this.config.dispatch?.runJobs === true,
+      firstRun: this.firstRun, savedFlash: this.savedFlash, webSessionNotice: this.webSessionNotice, canDispatch: this.shell.dispatch !== undefined, runJobs: this.config.dispatch?.runJobs === true,
       classifier: this.servicePage.lines?.find((l) => l.key === 'decision.backend')?.value ?? null,
       sync: this.sync, relay: this.relay(), pwaUrl: this.pwaUrl(), pairQr: this.pairQr, pairUrl: this.pairUrl,
       scanError: this.scanError, iosInstallHint: iosInstallHint(), hotkeyError: this.hotkeyError, canHotkey: !!this.shell.setHotkey,
@@ -542,7 +552,7 @@ export class App {
       this.root.innerHTML = renderPair({ scanError: this.scanError, ...iosState() });
     } else if (this.view === 'setup' && this.setup) {
       this.twoColumns = true;
-      this.root.innerHTML = renderSetup(this.setup);
+      this.root.innerHTML = renderSetup({ ...this.setup, webSessionNotice: this.webSessionNotice });
     } else {
       this.twoColumns = false;
       this.root.innerHTML = renderSettings(this.settingsModel());
@@ -1491,7 +1501,7 @@ export class App {
     if (t.dataset.route) { this.openRoute(t.dataset.route); await this.render(); return; }
     if (t.dataset.providerKind) { const add = this.activeAdd(); if (add) { add.form = { ...emptyProviderForm(t.dataset.providerKind), key: '' }; add.picked = true; add.error = ''; await this.render(); return; } }
     if (t.dataset.open) { e.preventDefault(); await this.shell.openUrl(t.dataset.open); return; }
-    if (t.dataset.signin) { await this.shell.openSignIn?.(t.dataset.signin); return; }
+    if (t.dataset.signin) { this.webSessionNotice = null; await this.shell.openSignIn?.(t.dataset.signin); await this.render(); return; }
     if (t.dataset.collapse) {
       const pid = t.dataset.collapse, list = this.config.layout.collapsed;
       this.config.layout.collapsed = list.includes(pid) ? list.filter((x) => x !== pid) : [...list, pid];

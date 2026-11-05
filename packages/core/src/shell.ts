@@ -14,6 +14,8 @@ export type PushStatus = 'unsupported' | 'needs-install' | 'denied' | 'off' | 'o
 export interface ClaudeStatus { code: string | null; bundled: string | null; desktop: boolean; desktopPossible: boolean }
 export type ClaudeTarget = 'code' | 'desktop';
 
+export interface WebSessionInterrupted { site: string; reopened: boolean }
+
 export interface TrayUpdate {
   /** PNG of the tray icon at the requested size, base64 without a data: prefix. */
   pngBase64?: string;
@@ -124,5 +126,5 @@ export interface Shell {
    * Fires when the popup is shown, when the tray menu asks for a refresh or for settings, and when a
    * sign-in window first shows a signed-in account page.
    */
-  on(event: 'popup-shown' | 'refresh-requested' | 'settings-requested' | 'web-session-ready', handler: () => void): () => void;
+  on(event: 'popup-shown' | 'refresh-requested' | 'settings-requested' | 'web-session-ready' | 'web-session-interrupted', handler: (payload?: WebSessionInterrupted) => void): () => void;
 }

@@ -11,6 +11,11 @@ export { ALERT_TEXT, CLAUDE_TEXT, CUSTOM_EXAMPLE, KIND_LABELS, STARTER_RULES_TEX
 /** A sign-in that Augur has started and is waiting on: a link to open, and a code to paste (Claude) or to type there (Codex). */
 export interface LoginUi { provider: string; mode: 'paste' | 'device'; url: string; code?: string; error: string; busy: boolean }
 
+export const WEB_SESSION_TEXT = {
+  reopened: 'Sign-in window closed early, so Augur reopened it. Sign in there.',
+  closed: 'Sign-in window closed before you signed in. Open it again to retry.',
+};
+
 export interface SettingsModel {
   config: AppConfig;
   plugins: Map<string, ProviderPlugin>;
@@ -24,6 +29,7 @@ export interface SettingsModel {
   customError: string;
   firstRun: boolean;
   savedFlash: string | null;
+  webSessionNotice?: string | null;
   sync: NonNullable<AppConfig['sync']> | null;
   relay: string;
   pwaUrl: string;
@@ -217,6 +223,7 @@ export function renderSettings(m: SettingsModel): string {
     <div><h1>${m.firstRun ? 'Set up Augur' : 'Settings'}</h1>${m.firstRun ? '<div class="sub">Turn on what you want to track. You can change this any time.</div>' : ''}</div>
     <span class="grow"></span>${m.savedFlash ? `<span class="saved">${esc(m.savedFlash)}</span>` : ''}</header>`;
 
+  if (m.webSessionNotice) html += `<div class="rnote" role="status">${esc(m.webSessionNotice)}</div>`;
   if (m.firstRun && m.shellKind === 'pwa') html += phoneSection(m);
   html += `<h2 class="sec">${PROVIDER_TEXT.heading}</h2><div id="provider-list">${c.providers.map((p) => providerCard(m, p.id)).join('')}</div>`;
 
