@@ -74,13 +74,14 @@ export interface ServiceConfig {
   learn: LearnSettings;
   /** Seconds after which a runner with no heartbeat counts as gone. */
   runnerStaleS: number;
+  stallMinutes: number;
   /** Run the usage engine (provider readings, alerts, phone sync) in the service. The window app and the terminal app show it. AUGURD_ENGINE=0 or 1 overrides it for one start. */
   engine: boolean;
   web: WebSettings;
 }
 
 export const DEFAULT_CONFIG: ServiceConfig = { retentionDays: 30, aliasRefreshHours: 24, persistPrompts: false, maxConcurrent: 8, maxDepth: 2, maxDescendants: 16, proseBatchSize: 10, proseBatchHours: 24, proseRoute: 'claude/opus', proseAutoRun: false,
-  jobhostPath: null, adapters: ['codex-exec'], requirePick: true, promptRoots: [], verifyNamed: 'enforce', decision: { backend: 'none' }, learn: { recordTasks: false }, runnerStaleS: 20, engine: true,
+  jobhostPath: null, adapters: ['codex-exec'], requirePick: true, promptRoots: [], verifyNamed: 'enforce', decision: { backend: 'none' }, learn: { recordTasks: false }, runnerStaleS: 20, stallMinutes: 10, engine: true,
   web: { enabled: false, host: '127.0.0.1', port: 7420, chatPort: 0, chatHost: '0.0.0.0', accessTeam: '', accessAud: '', allowedHosts: [], tlsCert: '', tlsKey: '', tlsAuto: 'auto' },
   runner: { charterDir: '', ambient: 'keep', failover: 'off' } };
 
@@ -158,6 +159,7 @@ export function loadConfig(dir: string): ServiceConfig {
     runner: runnerSettings(raw.runner),
     learn: { recordTasks: (raw.learn as { recordTasks?: unknown } | undefined)?.recordTasks === true },
     runnerStaleS: num(raw.runnerStaleS, c.runnerStaleS, 5, 600),
+    stallMinutes: num(raw.stallMinutes, c.stallMinutes, 1, Number.MAX_SAFE_INTEGER),
     engine: typeof raw.engine === 'boolean' ? raw.engine : c.engine,
     web: webSettings(raw.web),
   };

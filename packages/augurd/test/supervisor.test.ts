@@ -1,6 +1,6 @@
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, renameSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { JOBHOST, killEverything, makeEnv, processesWith, request, sleep, submitOk, terminal, until } from './harness.js';
 import type { Env } from './harness.js';
@@ -330,6 +330,25 @@ describe('concurrency', () => {
 });
 
 describe('the service goes away and comes back', () => {
+  it.skipIf(process.platform !== 'win32')('keeps a child alive while its runtime moves aside and a replacement takes its name', async () => {
+    const e = setup(), runtime = join(e.root, 'augur-node.exe'), ready = join(e.root, 'ready.json'), done = join(e.root, 'done.json');
+    copyFileSync(process.execPath, runtime);
+    const childCode = `setTimeout(() => require('node:fs').writeFileSync(${JSON.stringify(done)}, JSON.stringify(process.pid)), 2000)`;
+    const code = `const child = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(childCode)}], { windowsHide: true, detached: true, stdio: 'ignore' }); require('node:fs').writeFileSync(${JSON.stringify(ready)}, JSON.stringify(child.pid)); child.on('exit', () => process.exit(0));`;
+    const runner = spawn(runtime, ['-e', code], { windowsHide: true, detached: true, stdio: 'ignore' });
+    const exited = new Promise<number | null>((resolve, reject) => { runner.once('error', reject); runner.once('exit', resolve); });
+    try {
+      const deadline = Date.now() + 15000;
+      while (!existsSync(ready) && Date.now() < deadline) await sleep(50);
+      expect(existsSync(ready)).toBe(true);
+      renameSync(runtime, runtime + '.old0');
+      copyFileSync(process.execPath, runtime);
+      expect(existsSync(runtime)).toBe(true);
+      expect(await exited).toBe(0);
+      expect(readFileSync(done, 'utf8')).toBe(readFileSync(ready, 'utf8'));
+    } finally { runner.kill(); }
+  });
+
   it('re-adopts a running job and notes that it was reconciled', async () => {
     const e = setup();
     const id = submitOk(e.sup, request({ text: 'WRITE kept.txt\nSLEEP 4', expectFile: 'kept.txt', cwd: e.root }));
@@ -339,6 +358,23 @@ describe('the service goes away and comes back', () => {
     const job = await until(second, () => { const j = e.store.get(id); return j && j.state === 'completed' ? j : null; });
     expect(job.state).toBe('completed');
     expect(kinds(e, id)).toContain('reconciled');
+  });
+
+  it('re-adopts an older running job without newer fields', async () => {
+    const e = setup({ runnerStaleS: 1 });
+    const id = submitOk(e.sup, request({ text: 'SLEEP 4', cwd: e.root }));
+    const dir = join(e.dir, 'jobs', id);
+    await until(e.sup, () => existsSync(join(dir, 'state.json')));
+    const path = join(dir, 'job.json'), file = JSON.parse(readFileSync(path, 'utf8'));
+    for (const key of ['files', 'promptArgs', 'redact', 'env', 'scope', 'scopeEnv']) delete file[key];
+    writeFileSync(path, JSON.stringify(file));
+    const second = e.make();
+    second.reconcile();
+    expect(second.status(id)?.state).toBe('running');
+    const job = await until(second, () => { const j = second.status(id); return j?.state === 'completed' ? j : null; });
+    expect(job.state).toBe('completed');
+    expect(kinds(e, id)).toContain('reconciled');
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual(file);
   });
 
   it('finalizes a job that ended while no service was watching', async () => {
@@ -665,5 +701,76 @@ describe('route budgets and fallback routes', () => {
     withRoutes(e, { fallback: ['raw'] });
     const tooHigh = e.sup.submit({ ...request({ text: 'x', cwd: e.root }), dataTier: 'regulated' });
     expect(tooHigh).toMatchObject({ rejected: { code: 'data_tier_too_high' } });
+  });
+});
+
+
+describe('job activity', () => {
+  const activityJob = (e: Env, at: number, adapter = 'exec') => {
+    const id = 'activity-job';
+    e.store.insert({ id, route: 'raw', adapter, activity: 'write_code', dataTier: 'internal', tools: 'read', output: 'text_only', cwd: e.root,
+      createdAt: at, rootJobId: id, parentJobId: null, depth: 0, caller: { kind: 'cli' }, named: false, expectFile: null, timeoutS: null, harnessVersion: null, workspace: null });
+    e.store.transition(id, 'running', { startedAt: at }, at);
+    const dir = join(e.dir, 'jobs', id);
+    mkdirSync(dir, { recursive: true });
+    return { id, dir };
+  };
+  const touch = (path: string, at: number, text = '') => { writeFileSync(path, text); utimesSync(path, at / 1000, at / 1000); };
+
+  it('flags inactivity only past the threshold while the heartbeat is fresh', () => {
+    const e = setup({ stallMinutes: 1 }), start = Date.now() - 120000;
+    const { id, dir } = activityJob(e, start);
+    let now = start + 60000;
+    vi.spyOn(e.sup as unknown as { now(): number }, 'now').mockImplementation(() => now);
+    touch(join(dir, 'heartbeat'), now);
+    expect(e.sup.status(id)).toMatchObject({ lastActivityAt: start, activityLine: '', stalled: false });
+    now++;
+    expect(e.sup.list()[0]?.stalled).toBe(true);
+    now += 21000;
+    expect(e.sup.status(id)?.stalled).toBe(false);
+    now += 3000;
+    touch(join(dir, 'heartbeat'), now);
+    expect(e.sup.status(id)?.stalled).toBe(true);
+  });
+
+  it('uses the newest log or event time, strips controls, and caches bounded tails', () => {
+    const e = setup(), start = Date.now() - 120000, { id, dir } = activityJob(e, start);
+    let now = Date.now();
+    vi.spyOn(e.sup as unknown as { now(): number }, 'now').mockImplementation(() => now);
+    touch(join(dir, 'stdout.log'), start + 1000, 'old\n');
+    touch(join(dir, 'stderr.log'), start + 2000, 'x\n'.repeat(6000) + '\x1b[31mChecking files\x1b[0m\n\n');
+    const tail = vi.spyOn(e.sup as unknown as { tail(path: string, bytes: number): string }, 'tail');
+    expect(e.sup.status(id)).toMatchObject({ lastActivityAt: start + 2000, activityLine: 'Checking files', stalled: false });
+    expect(tail.mock.calls.every(c => c[1] <= 8192)).toBe(true);
+    const calls = tail.mock.calls.length;
+    e.sup.list(); e.sup.status(id);
+    expect(tail).toHaveBeenCalledTimes(calls);
+    e.store.event(id, 'first_tool', 'private request', start + 3000);
+    now += 3000;
+    expect(e.sup.status(id)).toMatchObject({ lastActivityAt: start + 3000, activityLine: 'Checking files' });
+  });
+
+  it('reads output items, skips request events, and limits summaries', () => {
+    const e = setup(), start = Date.now(), { id, dir } = activityJob(e, start, 'codex-exec');
+    const command = 'read files '.repeat(30);
+    touch(join(dir, 'stdout.log'), start, [
+      { type: 'item.started', item: { type: 'command_execution', command } },
+      { type: 'item.completed', item: { type: 'user_message', text: 'private request' } },
+      { type: 'request', prompt: 'private request' },
+    ].map(x => JSON.stringify(x)).join('\n'));
+    expect(e.sup.status(id)?.activityLine).toBe(command.slice(0, 120));
+    touch(join(dir, 'stdout.log'), start, JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'Reading\nfiles' } }));
+    expect(e.make().status(id)?.activityLine).toBe('Reading files');
+  });
+
+  it('omits activity on terminal jobs even when cached, and filters before limiting', () => {
+    const e = setup(), start = Date.now(), { id } = activityJob(e, start);
+    expect(e.sup.status(id)?.lastActivityAt).toBe(start);
+    e.store.transition(id, 'completed', {}, start + 1);
+    for (const j of [e.sup.status(id), e.sup.list()[0], e.sup.result(id)?.job]) {
+      expect(j).not.toHaveProperty('lastActivityAt'); expect(j).not.toHaveProperty('activityLine'); expect(j).not.toHaveProperty('stalled');
+    }
+    expect(e.sup.list({ running: true })).toEqual([]);
+    expect(e.sup.status('missing')).toBeNull();
   });
 });

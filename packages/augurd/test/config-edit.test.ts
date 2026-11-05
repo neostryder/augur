@@ -102,3 +102,17 @@ describe('config editing', () => {
     expect(setConfigValue(dir, 'adapters', 'codex-exec, grok-exec,codex-exec')).toEqual({ ok: true, value: 'codex-exec,grok-exec' });
   });
 });
+
+
+it('loads, lists and edits stallMinutes with a minimum of one', () => {
+  const dir = fresh();
+  expect(loadConfig(dir).stallMinutes).toBe(10);
+  expect(configLines(dir).find(l => l.key === 'stallMinutes')).toMatchObject({ value: '10', default: '10', min: 1 });
+  expect(setConfigValue(dir, 'stallMinutes', '1')).toEqual({ ok: true, value: '1' });
+  expect(loadConfig(dir).stallMinutes).toBe(1);
+  for (const value of ['0', '-1', 'many', '1.5']) expect(setConfigValue(dir, 'stallMinutes', value)).toMatchObject({ ok: false });
+  for (const value of [0, -1, '2', null]) {
+    writeFileSync(join(dir, 'config.json'), JSON.stringify({ stallMinutes: value }));
+    expect(loadConfig(dir).stallMinutes).toBe(10);
+  }
+});

@@ -10,7 +10,7 @@ import { renderPair } from './views/pair';
 import { CUSTOM_EXAMPLE, PUSH_TEXT, renderSettings, type LoginUi, type SettingsModel } from './views/settings';
 import { addUnfound, applyDetection, fillRank, goStep, initialView, loadProfile, moveRank, noteAdded, openSetup, providerHasWindow, refreshPlan, renderSetup, runApply, selectStack, setConfirmed, setHold, setListAnswer, setPayAmount, setPayNone, setStrength, shiftStep, toggleListModel, togglePayProvider, useStrongFor, modelsOf, type SetupModel, type SetupTrack } from './views/setup';
 import { renderRules, type RulesFilter, type RulesModel } from './views/rules';
-import { renderJobs, type JobsModel } from './views/jobs';
+import { JOBS_ACTIVITY_TEXT, renderJobs, type JobsModel } from './views/jobs';
 import { renderRoutes, type RoutesModel } from './views/routes';
 import { planHtml } from './views/add-provider';
 import { renderBalance, type BalanceModel } from './views/balance';
@@ -1087,7 +1087,7 @@ export class App {
       this.jobs.unavailable = '';
       this.jobs.service = { running: st.data?.running === true, pid: st.data?.pid ?? null };
       if (this.jobs.service.running) {
-        const list = await this.augur<JobRecord[]>(['jobs', '--json', '--limit', '50']);
+        const list = await this.augur<JobRecord[]>(['jobs', '--json', '--limit', '50', ...(this.jobs.runningOnly ? ['--running'] : [])]);
         this.jobs.jobs = Array.isArray(list.data) ? list.data : [];
         const acc = await this.augur<{ jobs: Array<{ id: string; accounted: Accounted }> }>(['usage', '--json', '--limit', '50']).catch(() => null);
         this.jobs.accounted = Object.fromEntries((acc?.data?.jobs ?? []).map((j) => [j.id, j.accounted]));
@@ -1096,6 +1096,10 @@ export class App {
     } catch (e) { this.jobs.unavailable = e instanceof Error ? e.message : String(e); }
     // The page is drawn again only when something on it changed, so a scrolled log is not sent back to the top every few seconds.
     const sig = JSON.stringify([this.jobs.service, this.jobs.unavailable, this.jobs.serviceNote, this.jobs.jobs, this.jobs.accounted, this.jobs.detail, this.jobs.busy]);
+    for (const el of this.root.querySelectorAll<HTMLElement>('[data-job-activity]')) {
+      const j = this.jobs.jobs?.find(j => j.id === el.dataset.jobActivity) ?? (this.jobs.detail && this.jobs.detail.job.id === el.dataset.jobActivity ? this.jobs.detail.job : undefined);
+      if (j?.lastActivityAt !== undefined) el.textContent = `${JOBS_ACTIVITY_TEXT.age(j.lastActivityAt)}${j.activityLine ? ` - ${j.activityLine}` : ''}`;
+    }
     if (this.view === 'jobs' && sig !== this.jobsSig) { this.jobsSig = sig; await this.render(); }
   }
 
@@ -1599,6 +1603,7 @@ export class App {
       case 'route-ask-delete': this.routesPage.confirmDelete = true; await this.render(); break;
       case 'route-delete': await this.deleteRoute(); break;
       case 'job-close': this.closeJob(); await this.render(); break;
+      case 'jobs-running': this.jobs.runningOnly = !this.jobs.runningOnly; await this.loadJobs(); await this.render(); break;
       case 'jobs-refresh': await this.loadJobs(); break;
       case 'service-start': await this.controlService('start'); break;
       case 'job-cancel': await this.cancelJob(t.dataset.id!); break;

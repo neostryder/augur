@@ -10,39 +10,72 @@
   Pop $R9
 !macroend
 
-; The dispatch service runs from the install folder, so an upgrade or an uninstall has to stop it first.
-; It is stopped only when no job is running, since a job's process tree also runs from these files.
+; Windows permits a running executable to move aside while its process keeps the old image.
+!macro AugurAside FILE ID
+  IfFileExists "$INSTDIR\service\${FILE}" 0 augur_${ID}_done
+  StrCpy $R0 0
+  augur_${ID}_aside:
+    IfFileExists "$INSTDIR\service\${FILE}.old$R0" 0 augur_${ID}_rename
+    IntOp $R0 $R0 + 1
+    Goto augur_${ID}_aside
+  augur_${ID}_rename:
+    ClearErrors
+    Rename "$INSTDIR\service\${FILE}" "$INSTDIR\service\${FILE}.old$R0"
+    IfErrors augur_aside_failed
+    !if "${ID}" == "host"
+      StrCpy $R1 "$INSTDIR\service\${FILE}.old$R0"
+    !endif
+  augur_${ID}_done:
+!macroend
+
 !macro AugurStopService
   !insertmacro AugurTrace "AugurStopService start"
   IfFileExists "$INSTDIR\service\augur.cmd" 0 augur_skip_stop
-    ; It names the running jobs and waits for them to end (up to two hours), so the install goes on by itself once they finish.
-    DetailPrint "Waiting for Augur's running jobs to finish before updating..."
+    DetailPrint "Stopping the Augur service. Running jobs keep running."
+    nsExec::ExecToStack '"$INSTDIR\service\augur.cmd" service stop --keep-jobs'
+    Pop $0
+    Pop $1
+    StrCmp $0 "0" augur_kept 0
+    ; The installed command may be older than this installer and not know --keep-jobs. It stops the service the old way: wait for the jobs, then end every augur-node.exe.
+    DetailPrint "Waiting for running jobs to finish before updating Augur."
     nsExec::ExecToStack '"$INSTDIR\service\augur.cmd" service stop --wait --timeout 7200'
     Pop $0
     Pop $1
-    !insertmacro AugurTrace "service stop result exit_code=$0"
-    StrCmp $0 "0" augur_stopped
-    MessageBox MB_ICONEXCLAMATION|MB_OK "Augur is still running these jobs after two hours, so the update cannot replace its files:$\r$\n$\r$\n$1$\r$\n$\r$\nCancel them with augur cancel <job>, then run the update again."
-    Abort
-  augur_stopped:
-    ; With no job running, the only processes left on augur-node.exe are MCP servers that open Claude sessions started. They run from the same file and
-    ; block its replacement, and a client starts a fresh one the next time it needs the tools.
+    StrCmp $0 "0" 0 augur_stop_failed
     nsExec::ExecToStack 'taskkill /F /IM augur-node.exe'
     Pop $0
     Pop $1
-    !insertmacro AugurTrace "taskkill finished exit_code=$0"
-    ; An open Claude session starts its MCP server again within a second of the kill, so the file can be locked again by the time it is copied.
-    ; Windows lets a running program be renamed but not overwritten, so the old file moves aside and the copy lands in a free name.
-    ; Copies set aside by an earlier run go once nothing runs them.
+  augur_kept:
     Delete "$INSTDIR\service\augur-node.exe.old*"
-    StrCpy $R0 0
-  augur_aside:
-    IfFileExists "$INSTDIR\service\augur-node.exe.old$R0" 0 augur_rename
-      IntOp $R0 $R0 + 1
-      Goto augur_aside
-  augur_rename:
-    Rename "$INSTDIR\service\augur-node.exe" "$INSTDIR\service\augur-node.exe.old$R0"
-    !insertmacro AugurTrace "rename finished suffix=$R0"
+    Delete "$INSTDIR\service\jobhost.exe.old*"
+    StrCpy $R2 0
+  augur_try_aside:
+    StrCpy $R1 ""
+    !insertmacro AugurAside "jobhost.exe" "host"
+    !insertmacro AugurAside "augur-node.exe" "node"
+    Goto augur_skip_stop
+  augur_aside_failed:
+    ; Restore the host so the fallback service has both executable names available.
+    StrCmp $R1 "" augur_fallback
+    ClearErrors
+    Rename "$R1" "$INSTDIR\service\jobhost.exe"
+    IfErrors augur_stop_failed
+  augur_fallback:
+    StrCmp $R2 "1" augur_stop_failed
+    StrCpy $R2 1
+    ; The service was stopped above, so start it to re-adopt jobs before waiting.
+    nsExec::ExecToStack '"$INSTDIR\service\augur.cmd" service start'
+    Pop $0
+    Pop $1
+    StrCmp $0 "0" 0 augur_stop_failed
+    DetailPrint "Waiting for running jobs to finish before updating Augur."
+    nsExec::ExecToStack '"$INSTDIR\service\augur.cmd" service stop --wait --timeout 7200'
+    Pop $0
+    Pop $1
+    StrCmp $0 "0" augur_try_aside
+  augur_stop_failed:
+    MessageBox MB_ICONEXCLAMATION|MB_OK "Update stopped and nothing changed. Run the installer again later."
+    Abort
   augur_skip_stop:
 !macroend
 
@@ -64,6 +97,7 @@
 !macro NSIS_HOOK_POSTUNINSTALL
   ; A copy still running when Augur is removed goes at the next restart.
   Delete /REBOOTOK "$INSTDIR\service\augur-node.exe.old*"
+  Delete /REBOOTOK "$INSTDIR\service\jobhost.exe.old*"
   RMDir "$INSTDIR\service"
   RMDir "$INSTDIR"
 !macroend

@@ -4,7 +4,19 @@ import type { Accounted, JobRecord, JobState } from '@augur/dispatch-protocol';
 import { JOB_OUTPUT_LABELS, STATE_LABELS, TOOL_LABELS, duration, isBad, isLive, servedText } from '@augur/view-model';
 import { ICON, ago, esc } from '../util';
 
+export const JOBS_ACTIVITY_TEXT = {
+  running: 'Running',
+  stalled: 'Stalled',
+  lastActivity: 'Last activity',
+  empty: 'No jobs are running. A job shows here while it is queued, waiting for approval, running, or being cancelled. Start one from an agent or with augur run.',
+  age: (at: number, now = Date.now()): string => {
+    const s = Math.max(0, Math.floor((now - at) / 1000));
+    return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.floor(s / 60)}m ago` : s < 86400 ? `${Math.floor(s / 3600)}h ago` : `${Math.floor(s / 86400)}d ago`;
+  },
+};
+
 export interface JobsModel {
+  runningOnly?: boolean;
   /** What the service answered to `service status`; null until the first answer. */
   service: { running: boolean; pid: number | null } | null;
   /** The line under the service card after the last Start or Stop. */
@@ -39,14 +51,17 @@ function serviceCard(m: JobsModel): string {
   return `<div class="card rbanner ${s?.running ? 'ok' : ''}"><span class="grow">${esc(state)}${m.serviceNote ? ` <span class="rnote" role="status">${esc(m.serviceNote)}</span>` : ''}</span>${button}</div>`;
 }
 
+const stalledChip = (j: JobRecord) => isLive(j.state) && j.stalled ? `<span class="jchip bad">${JOBS_ACTIVITY_TEXT.stalled}</span>` : '';
+const activity = (j: JobRecord) => isLive(j.state) && j.lastActivityAt !== undefined ? `${JOBS_ACTIVITY_TEXT.age(j.lastActivityAt)}${j.activityLine ? ` - ${j.activityLine}` : ''}` : '';
+
 function row(m: JobsModel, j: JobRecord): string {
   const when = j.startedAt ? `${duration(j)}` : ago(new Date(j.createdAt).toISOString());
   return `<button class="jrow ${m.sel === j.id ? 'on' : ''}" data-job="${esc(j.id)}" aria-pressed="${m.sel === j.id}">
-    <span class="jmain"><b>${esc(j.route)}</b><span class="jsub">${esc(ACTIVITY_LABELS[j.activity] ?? j.activity)}, ${esc((DATA_TIER_LABELS[j.dataTier] ?? j.dataTier).toLowerCase())} data</span></span>
-    ${chip(j.state)}<span class="jwhen">${esc(when)}</span></button>`;
+    <span class="jmain"><b>${esc(j.route)}</b><span class="jsub">${esc(ACTIVITY_LABELS[j.activity] ?? j.activity)}, ${esc((DATA_TIER_LABELS[j.dataTier] ?? j.dataTier).toLowerCase())} data</span>${activity(j) ? `<span class="jsub" data-job-activity="${esc(j.id)}">${esc(activity(j))}</span>` : ''}</span>
+    ${stalledChip(j)}${chip(j.state)}<span class="jwhen">${esc(when)}</span></button>`;
 }
 
-const field = (label: string, value: string, wide = false) => `<div class="jf${wide ? ' wide' : ''}"><span>${esc(label)}</span><b>${esc(value)}</b></div>`;
+const field = (label: string, value: string, wide = false, activityId?: string) => `<div class="jf${wide ? ' wide' : ''}"><span>${esc(label)}</span><b${activityId ? ` data-job-activity="${esc(activityId)}"` : ''}>${esc(value)}</b></div>`;
 
 function detail(m: JobsModel): string {
   const d = m.detail;
@@ -56,11 +71,11 @@ function detail(m: JobsModel): string {
   const usage = acc && (acc.inputTokens || acc.outputTokens) ? `${describeFigure(acc.inputTokens, 'tokens')} in, ${describeFigure(acc.outputTokens, 'tokens')} out` : '';
   const cost = acc?.costUsd ? describeFigure(acc.costUsd, 'usd') : '';
   const block = (title: string, text: string) => text.trim() ? `<h3>${esc(title)}</h3><pre class="jlog" tabindex="0">${esc(text.length > 6000 ? '...' + text.slice(-6000) : text)}</pre>` : '';
-  return `<div class="jdetail"><div class="jhead"><h2>${esc(j.route)}</h2>${chip(j.state)}
+  return `<div class="jdetail"><div class="jhead"><h2>${esc(j.route)}</h2>${chip(j.state)}${stalledChip(j)}
     ${isLive(j.state) ? `<button class="btn small" data-action="job-cancel" data-id="${esc(j.id)}" ${m.busy ? 'disabled' : ''}>Cancel</button>` : ''}</div>
     ${j.reason ? `<p class="jreason">${esc(j.reason)}</p>` : ''}
     <div class="jfields">${field('Activity', ACTIVITY_LABELS[j.activity] ?? j.activity)}${field('Data', DATA_TIER_LABELS[j.dataTier] ?? j.dataTier)}
-      ${field('Tools', TOOL_LABELS[j.tools] ?? j.tools)}${field('Output', JOB_OUTPUT_LABELS[j.output] ?? j.output)}${field('Adapter', j.adapter)}
+      ${activity(j) ? field(JOBS_ACTIVITY_TEXT.lastActivity, activity(j), true, j.id) : ''}${field('Tools', TOOL_LABELS[j.tools] ?? j.tools)}${field('Output', JOB_OUTPUT_LABELS[j.output] ?? j.output)}${field('Adapter', j.adapter)}
       ${field('Started by', j.caller.label ?? j.caller.kind)}${field('Folder', j.cwd, true)}
       ${j.served ? field('Served by', servedText(j.served)) : ''}${j.startedAt ? field('Took', duration(j)) : ''}${j.exitCode !== null ? field('Exit code', String(j.exitCode)) : ''}${usage ? field('Tokens', usage, true) : ''}${cost ? field('Cost', cost) : ''}
       ${j.patch ? field('Patch', `${j.patch.files} ${j.patch.files === 1 ? 'file' : 'files'}, apply with augur apply ${j.id}`) : ''}</div>
@@ -68,12 +83,14 @@ function detail(m: JobsModel): string {
 }
 
 export function renderJobs(m: JobsModel): string {
-  const list = m.jobs === null ? '<div class="rempty big">Loading jobs.</div>'
-    : m.jobs.length ? m.jobs.map((j) => row(m, j)).join('') : '<div class="rempty big">No jobs yet. Agents start them with the augur command.</div>';
+  const jobs = m.runningOnly ? m.jobs?.filter(j => isLive(j.state)) ?? null : m.jobs;
+  const list = jobs === null ? '<div class="rempty big">Loading jobs.</div>'
+    : jobs.length ? jobs.map((j) => row(m, j)).join('') : m.runningOnly ? `<div class="rempty big">${JOBS_ACTIVITY_TEXT.empty}</div>` : '<div class="rempty big">No jobs yet. Agents start them with the augur command.</div>';
   return `<div class="rules-page jobs-page ${m.sel ? 'has-sel' : ''}"><header class="top">
     <button class="icon" data-action="${m.sel ? 'job-close' : 'back'}" title="${m.sel ? 'Back to the jobs' : 'Back to usage'}" aria-label="${m.sel ? 'Back to the jobs' : 'Back to usage'}">${ICON.back}</button>
     <div><h1>Jobs</h1><div class="sub">Work agents started through Augur</div></div><span class="grow"></span>
     <button class="icon" data-action="jobs-refresh" title="Refresh" aria-label="Refresh the jobs">${ICON.refresh}</button></header>
     ${m.sel ? '' : dispatchTabs('jobs')}${serviceCard(m)}
+    <button class="btn small" data-action="jobs-running" aria-pressed="${!!m.runningOnly}">${JOBS_ACTIVITY_TEXT.running}</button>
     <div class="rules ${m.sel ? 'has-sel' : ''}"><div class="rlist jlist">${list}</div><div class="rdetail">${detail(m)}</div></div></div>`;
 }

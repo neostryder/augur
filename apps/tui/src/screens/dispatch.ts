@@ -25,6 +25,17 @@ export interface DispatchDeps {
   wait?: (ms: number) => Promise<void>;
 }
 
+export const JOBS_ACTIVITY_TEXT = {
+  running: 'Running',
+  stalled: 'STALLED',
+  lastActivity: 'Last activity',
+  empty: 'No jobs are running. A job shows here while it is queued, waiting for approval, running, or being cancelled. Start one from an agent or with augur run.',
+  age: (at: number, now = Date.now()): string => {
+    const s = Math.max(0, Math.floor((now - at) / 1000));
+    return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.floor(s / 60)}m ago` : s < 86400 ? `${Math.floor(s / 3600)}h ago` : `${Math.floor(s / 86400)}d ago`;
+  },
+};
+
 export const DISPATCH_TUI_TEXT = {
   tabs: ['Jobs', 'Routes', 'Service'],
   open: 'Open',
@@ -92,9 +103,9 @@ export class DispatchPage implements Page {
   readonly forms: Record<FormKey, Form> = { jobs: new Form(), job: new Form(), routes: new Form(), route: new Form(), provider: new Form(), service: new Form() };
 
   jobs: {
-    list: JobRecord[] | null; accounted: Record<string, Accounted>; sel: string | null; error: string; off: boolean;
+    runningOnly: boolean; list: JobRecord[] | null; accounted: Record<string, Accounted>; sel: string | null; error: string; off: boolean;
     detail: { job: JobRecord; result: string; stdout: string; stderr: string } | null;
-  } = { list: null, accounted: {}, sel: null, error: '', off: false, detail: null };
+  } = { runningOnly: false, list: null, accounted: {}, sel: null, error: '', off: false, detail: null };
 
   routes: {
     file: RoutesFile | null; error: string; health: Record<string, string | null> | null; sel: string | null; draft: RouteDraft | null; formError: string; note: string;
@@ -189,7 +200,7 @@ export class DispatchPage implements Page {
   private async loadJobs(ctx: Ctx): Promise<void> {
     const j = this.jobs;
     try {
-      j.list = await ctx.link.call('list', { limit: 50 });
+      j.list = await ctx.link.call('list', { limit: 50, running: j.runningOnly });
       j.error = ''; j.off = false;
       const acc = await ctx.link.call('accounting', { limit: 50 }).catch(() => null);
       j.accounted = Object.fromEntries((acc?.jobs ?? []).map((x) => [x.id, x.accounted]));
@@ -233,12 +244,14 @@ export class DispatchPage implements Page {
     if (j.off) { rows.push({ kind: 'note', text: DISPATCH_TUI_TEXT.jobsOff, style: 'warn' }); return rows; }
     if (j.error) rows.push({ kind: 'note', text: j.error, style: 'crit' });
     if (j.list === null) { rows.push({ kind: 'note', text: DISPATCH_TUI_TEXT.loading }); return rows; }
-    if (!j.list.length) rows.push({ kind: 'note', text: DISPATCH_TEXT.jobsEmpty });
-    for (const job of j.list) {
+    rows.push({ kind: 'toggle', id: 'jobs-running', label: JOBS_ACTIVITY_TEXT.running, on: j.runningOnly, set: async on => { j.runningOnly = on; await this.refresh(ctx); } });
+    const list = j.runningOnly ? j.list.filter(job => isLive(job.state)) : j.list;
+    if (!list.length) rows.push({ kind: 'note', text: j.runningOnly ? JOBS_ACTIVITY_TEXT.empty : DISPATCH_TEXT.jobsEmpty });
+    for (const job of list) {
       const style = isLive(job.state) ? theme.accent : isBad(job.state) ? theme.crit : theme.muted;
       rows.push({
-        kind: 'item', id: `j:${job.id}`, label: job.route, sub: `${ACTIVITY_LABELS[job.activity] ?? job.activity}, ${(DATA_TIER_LABELS[job.dataTier] ?? job.dataTier).toLowerCase()} data`,
-        chips: [[STATE_LABELS[job.state], style]], right: job.startedAt ? duration(job, ctx.now) : ago(new Date(job.createdAt).toISOString(), ctx.now),
+        kind: 'item', id: `j:${job.id}`, label: job.route, sub: isLive(job.state) && job.activityLine ? job.activityLine : `${ACTIVITY_LABELS[job.activity] ?? job.activity}, ${(DATA_TIER_LABELS[job.dataTier] ?? job.dataTier).toLowerCase()} data`,
+        chips: [[STATE_LABELS[job.state], style], ...(isLive(job.state) && job.stalled ? [[JOBS_ACTIVITY_TEXT.stalled, theme.crit] as [string, typeof style]] : [])], right: isLive(job.state) && job.lastActivityAt !== undefined ? JOBS_ACTIVITY_TEXT.age(job.lastActivityAt, ctx.now) : job.startedAt ? duration(job, ctx.now) : ago(new Date(job.createdAt).toISOString(), ctx.now),
         enter: () => this.openJob(ctx, job.id), enterLabel: DISPATCH_TUI_TEXT.open,
       });
     }
@@ -258,7 +271,8 @@ export class DispatchPage implements Page {
     const usage = acc && (acc.inputTokens || acc.outputTokens) ? `${describeFigure(acc.inputTokens, 'tokens')} in, ${describeFigure(acc.outputTokens, 'tokens')} out` : '';
     const cost = acc?.costUsd ? describeFigure(acc.costUsd, 'usd') : '';
     const fact = (label: string, value: string): Row => ({ kind: 'note', text: `${label}: ${value}` });
-    const rows: Row[] = [{ kind: 'heading', text: `${j.route}  ${STATE_LABELS[j.state]}` }];
+    const rows: Row[] = [{ kind: 'heading', text: `${j.route}  ${STATE_LABELS[j.state]}${isLive(j.state) && j.stalled ? `  ${JOBS_ACTIVITY_TEXT.stalled}` : ''}` }];
+    if (isLive(j.state) && j.lastActivityAt !== undefined) rows.push(fact(JOBS_ACTIVITY_TEXT.lastActivity, `${JOBS_ACTIVITY_TEXT.age(j.lastActivityAt, ctx.now)}${j.activityLine ? ` - ${j.activityLine}` : ''}`));
     if (j.reason) rows.push({ kind: 'note', text: j.reason, style: isBad(j.state) ? 'crit' : 'muted' });
     rows.push({ kind: 'buttons', id: 'job-actions', label: '', buttons: [
       ...(isLive(j.state) ? [{ button: DISPATCH_TUI_TEXT.cancel, run: () => this.cancelJob(ctx, j.id) }] : []),

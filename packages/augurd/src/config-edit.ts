@@ -20,7 +20,13 @@ export interface ConfigKey {
   check?(text: string): string | null;
 }
 
+export const JOBS_ACTIVITY_TEXT = {
+  label: 'Stall time (minutes)',
+  help: 'Augur flags a live job as stalled after it produces no output for this many minutes, and never cancels it on its own. The default is 10 and the minimum is 1.',
+};
+
 export const CONFIG_KEYS: readonly ConfigKey[] = [
+  { key: 'stallMinutes', label: JOBS_ACTIVITY_TEXT.label, help: JOBS_ACTIVITY_TEXT.help, kind: 'number', min: 1, max: Number.MAX_SAFE_INTEGER },
   { key: 'aliasRefreshHours', label: 'Alias refresh interval', help: 'Refresh model series listings every 24 hours. 0 turns scheduled refresh off.', kind: 'number', min: 0, max: 8760 },
   { key: 'retentionDays', label: 'Keep finished jobs', help: "Logs and results stay on disk this many days after a job ends, 30 by default. The job's record stays.", kind: 'number', min: 0, max: 3650 },
   { key: 'persistPrompts', label: 'Keep prompts', help: "Saves each job's prompt in its folder. Off by default, so a prompt is deleted as soon as the job starts.", kind: 'bool' },
