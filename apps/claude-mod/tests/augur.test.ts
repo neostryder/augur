@@ -1,10 +1,12 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
+import { jobStatus, liveJobs, paneRows, statusLine } from '../hooks/view'
 
 const HOME = 'C:/Users/test'
 const USAGE = `${HOME}/.augur/usage.json`
 const FEED = `${HOME}/.augur/alerts.json`
 const ACKS = `${HOME}/.augur/alerts-acks.jsonl`
+const JOBS = `${HOME}/.augur/jobs-live.json`
 const NOW = Date.parse('2026-10-03T20:00:00Z')
 
 const usage = (generatedAt = '2026-10-03T19:59:00Z') => JSON.stringify({
@@ -22,15 +24,18 @@ const alert = (id: string, outlets: string[], raisedAt: string, body = `Claude: 
 const feed = (...alerts: object[]) => JSON.stringify({ schema: 1, generatedAt: '2026-10-03T19:59:00Z', alerts })
 
 /** Files, toasts and the status line beneath the plugin, kept in memory. */
-function world(on: On, files: Map<string, string>, seen?: string[], app?: object) {
+function world(on: On, files: Map<string, string>, seen?: string[], app?: object, placed = true) {
   const clock = mock.clock(on, { now: NOW })
   mock.store(on, seen ? { seen } : {})
   mock.env(on, { USERPROFILE: HOME })
   const toasts: string[] = []
   const status: Array<string | undefined> = []
+  const opened: string[] = []
+  const reads: string[] = []
   // The engine hands paths over with the platform's separator.
   const at = (path: string) => path.replace(/\\/g, '/')
   on('fs.read', async (_$, e) => {
+    reads.push(at(e.path))
     // augur-app.json sits beside the mod, wherever the test runs it from.
     const text = app && at(e.path).endsWith('/augur-app.json') ? JSON.stringify(app) : files.get(at(e.path))
     return text === undefined ? { deny: `ENOENT: ${e.path}` } : { value: text }
@@ -38,10 +43,12 @@ function world(on: On, files: Map<string, string>, seen?: string[], app?: object
   on('fs.write', async (_$, e) => { files.set(at(e.path), e.text); return { value: undefined } })
   on('ui.toast', async (_$, e) => { toasts.push(e.text); return { value: undefined } })
   on('ui.status', async (_$, e) => { status.push(e.text); return { value: undefined } })
+  on('command.register', async (_$, e) => ({ value: { command: e.name } }))
+  on('ui.open', async (_$, e) => { opened.push(e.id); return { value: placed ? { isPlaced: true } : { isPlaced: false, reason: 'no-surface' } } })
   on('session.start', async (_$, e) => ({ cwd: e.cwd }))
   // The engine draws nothing of its own above the prompt.
   on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
-  return { clock, toasts, status }
+  return { clock, toasts, status, opened, reads }
 }
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 100, scroll: { offset: 0, bodyRows: 10 }, view: {} } } as const
@@ -128,5 +135,122 @@ describe('the Augur mod', () => {
     await $.session.start({ cwd: HOME, surface: 'terminal', isInteractive: true })
     const ui = await $.ui.mount({ plugin: 'augur', surface: 'terminal', ...BAND })
     expect(await ui.find({ key: 'dismiss' })).toBeUndefined()
+  })
+})
+
+const liveJob = (id = 'a', stalled = false) => ({ id, route: 'local', activity: 'write_code', state: 'running', startedAt: NOW - 120000,
+  lastActivityAt: NOW - 90000, activityLine: 'Running checks', stalled })
+const jobsFeed = (updatedAt = NOW, jobs = [liveJob()]) => JSON.stringify({ updatedAt, stallMinutes: 10, jobs })
+const PANE = { plugin: 'augur', component: 'Pane', requestId: 'augur-jobs', props: { title: 'Augur jobs', isFocused: false,
+  bodyColumns: 80, placement: 'dock', scroll: { offset: 0, bodyRows: 20 }, view: {} } } as const
+
+describe('live jobs', () => {
+  test('adds job counts to the existing status and omits an empty job list', () => {
+    expect(jobStatus([])).toBeUndefined()
+    expect(jobStatus([liveJob()])).toBe('1 job')
+    const jobs = [liveJob(), liveJob('b', true)]
+    expect(jobStatus(jobs)).toBe('2 jobs (1 stalled)')
+    expect(statusLine(JSON.parse(usage()), 1, NOW, 5, jobs)).toBe('Claude 5h 27% | wk 48% | Grok wk 81% | 1 Augur alert | 2 jobs (1 stalled)')
+  })
+
+  test('puts stalled rows first and formats last activity ages', () => {
+    const jobs = [liveJob(), { ...liveJob('b', true), lastActivityAt: NOW - 7200000 }, { ...liveJob('c'), lastActivityAt: NOW - 3000 }]
+    const rows = paneRows(jobs, NOW)
+    expect(rows.map((row) => row.id)).toEqual(['b', 'a', 'c'])
+    expect(rows.map((row) => row.text)).toEqual(['local | write_code | 2h ago | stalled | Running checks', 'local | write_code | 1m ago | Running checks', 'local | write_code | 3s ago | Running checks'])
+    expect(jobs[0]?.id).toBe('a')
+  })
+
+  test('rejects missing, malformed, stale and invalid job snapshots', () => {
+    for (const text of [null, '', '{', 'null', '{}', jobsFeed(NOW - 60001), JSON.stringify({ updatedAt: NOW, jobs: [null] }), jobsFeed(NOW, [{ ...liveJob(), activityLine: 'x'.repeat(121) }])]) {
+      expect(liveJobs(text, NOW)).toEqual([])
+    }
+    expect(liveJobs(jobsFeed(NOW - 60000), NOW)).toEqual([liveJob()])
+  })
+
+  test('draws live jobs on every surface and removes a stale snapshot', async ($, on) => {
+    const files = new Map([[JOBS, jobsFeed(NOW, [liveJob(), liveJob('b', true)])]])
+    const w = world(on, files)
+    await $.session.start({ cwd: HOME, surface: 'terminal', isInteractive: true })
+    expect(w.status.at(-1)).toBe('2 jobs (1 stalled)')
+    for (const surface of ['terminal', 'desktop', 'vscode', 'mobile'] as const) {
+      const ui = await $.ui.mount({ ...PANE, surface })
+      expect((await ui.find({ type: 'Text', text: /stalled/ }))?.text).toBe('local | write_code | 1m ago | stalled | Running checks')
+      await ui.unmount()
+    }
+    await w.clock.advance(65000)
+    expect(w.status.at(-1)).toBeUndefined()
+    const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+    expect((await ui.find({ type: 'Text', text: 'No jobs are running.' }))?.text).toBe('No jobs are running.')
+    await ui.unmount()
+  })
+
+  test('opens once per session and allows the slash command', async ($, on) => {
+    const files = new Map<string, string>()
+    const w = world(on, files)
+    await $.session.start({ cwd: HOME, surface: 'terminal', isInteractive: true })
+    expect(w.opened).toEqual([])
+    files.set(JOBS, jobsFeed())
+    await w.clock.advance(30000)
+    expect(w.opened).toEqual(['augur-jobs'])
+    const command = { args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } } as const
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    await ui.unmount()
+    await w.clock.advance(5000)
+    expect(w.opened).toEqual(['augur-jobs'])
+    files.set(JOBS, jobsFeed(NOW + 35000, []))
+    await w.clock.advance(5000)
+    files.set(JOBS, jobsFeed(NOW + 40000))
+    await w.clock.advance(30000)
+    expect(w.opened).toEqual(['augur-jobs'])
+    expect((await $.command.run({ ...command, command: 'augur-jobs' })).text).toBe('The live jobs pane is open.')
+    expect(w.opened).toHaveLength(2)
+    await $.session.start({ cwd: HOME, surface: 'terminal', isInteractive: true })
+    expect(w.opened).toHaveLength(3)
+  })
+
+  test('polls live jobs every five seconds and idle jobs every thirty seconds', async ($, on) => {
+    const files = new Map<string, string>()
+    const w = world(on, files)
+    await $.session.start({ cwd: HOME, surface: 'terminal', isInteractive: true })
+    const reads = () => w.reads.filter((path) => path === JOBS).length
+    await w.clock.advance(29000)
+    expect(reads()).toBe(1)
+    files.set(JOBS, jobsFeed(NOW + 29000))
+    await w.clock.advance(1000)
+    expect(reads()).toBe(2)
+    await w.clock.advance(5000)
+    expect(reads()).toBe(3)
+    files.delete(JOBS)
+    await w.clock.advance(5000)
+    expect(w.status.at(-1)).toBeUndefined()
+    await w.clock.advance(29000)
+    expect(reads()).toBe(4)
+    await w.clock.advance(1000)
+    expect(reads()).toBe(5)
+  })
+
+  test('updates a mounted pane when activity changes and when the snapshot expires', async ($, on) => {
+    const files = new Map([[JOBS, jobsFeed()]])
+    const w = world(on, files)
+    await $.session.start({ cwd: HOME, surface: 'desktop', isInteractive: true })
+    const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+    files.set(JOBS, jobsFeed(NOW + 5000, [{ ...liveJob(), activityLine: 'Waiting', lastActivityAt: NOW + 5000 }]))
+    await w.clock.advance(5000)
+    expect((await ui.find({ type: 'Text', text: /Waiting/ }))?.text).toBe('local | write_code | 0s ago | Waiting')
+    await w.clock.advance(65000)
+    expect((await ui.find({ type: 'Text', text: 'No jobs are running.' }))?.text).toBe('No jobs are running.')
+    await ui.unmount()
+  })
+
+  test('does not repeat an automatic open when a surface cannot place the pane', async ($, on) => {
+    const files = new Map([[JOBS, jobsFeed()]])
+    const w = world(on, files, undefined, undefined, false)
+    await $.session.start({ cwd: HOME, surface: 'terminal', isInteractive: true })
+    await w.clock.advance(5000)
+    expect(w.opened).toEqual(['augur-jobs'])
+    const result = await $.command.run({ command: 'augur-jobs', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 80 } })
+    expect(result.text).toBe('Waiting for a place to show the pane.')
+    expect(w.opened).toHaveLength(2)
   })
 })

@@ -87,6 +87,9 @@ export interface JobRecord {
   cwd: string;
   createdAt: number;
   startedAt: number | null;
+  lastActivityAt?: number;
+  activityLine?: string;
+  stalled?: boolean;
   endedAt: number | null;
   exitCode: number | null;
   reason: string | null;

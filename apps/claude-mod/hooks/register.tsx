@@ -1,13 +1,18 @@
 import type { EngineInterface, Register } from 'claude-code'
+import { atom, read, update } from 'claude-code'
 
 import type { ModAlert } from '../types'
-import { PACE_BAND, alertText, claudeAlerts, folderOf, statusLine, withAck, type Usage } from './view'
+import { JOBS_TEXT, PACE_BAND, alertText, claudeAlerts, folderOf, liveJobs, paneRows, statusLine, withAck, type Usage } from './view'
 
 const ALERTS = { plugin: 'augur', key: 'alerts' } as const
 const CAN_OPEN = { plugin: 'augur', key: 'canOpen' } as const
+const PANE = 'augur-jobs'
+const jobs = atom({ plugin: 'augur', key: 'jobs' } as const, [], { shape: 'jobs-1' })
+const jobsOpened = atom({ plugin: 'augur', key: 'jobsOpened' } as const, false)
 
 /** Augur rewrites usage.json about once a minute, so a 30-second poll keeps the status line close to it. */
 const POLL_MS = 30_000
+const LIVE_POLL_MS = 5000
 /** Toasted alert ids are remembered across sessions, so a new session does not toast old alerts again. */
 const SEEN_KEEP = 200
 
@@ -19,18 +24,18 @@ let exe = ''
 let lastAlerts: string | null = null
 let usage: Usage | null = null
 let band = PACE_BAND
+let pollTimer: ReturnType<EngineInterface['clock']['after']> | undefined
 
 async function readText($: EngineInterface, path: string): Promise<string | null> {
   return $.fs.read(path).then((t) => t as string, () => null)
 }
 
-// State goes through $.state directly: the validator follows $ into functions in this file, never into an import such as atom and read.
 async function currentAlerts($: EngineInterface): Promise<ModAlert[]> {
   return (await $.state.get(ALERTS)).value ?? []
 }
 
 async function showStatus($: EngineInterface) {
-  $.ui.status(statusLine(usage, (await currentAlerts($)).length, await $.clock.now(), band))
+  $.ui.status(statusLine(usage, (await currentAlerts($)).length, await $.clock.now(), band, await read($, jobs)))
 }
 
 async function poll($: EngineInterface) {
@@ -55,7 +60,14 @@ async function poll($: EngineInterface) {
     await $.store.set('seen', [...new Set([...list.map((a) => a.id), ...(seen ?? [])])].slice(0, SEEN_KEEP))
     await $.state.set(ALERTS, list)
   }
+  const list = liveJobs(await readText($, `${folderOf(usageFile)}/jobs-live.json`), await $.clock.now())
+  await update($, jobs, () => list)
+  if (list.length && !await read($, jobsOpened)) {
+    await update($, jobsOpened, () => true)
+    await $.ui.open({ id: PANE, title: JOBS_TEXT.title })
+  }
   await showStatus($)
+  pollTimer = $.clock.after(list.length ? LIVE_POLL_MS : POLL_MS, () => { void poll($) })
 }
 
 async function dismiss($: EngineInterface, id: string) {
@@ -73,6 +85,9 @@ async function openAugur($: EngineInterface) {
 }
 
 async function start($: EngineInterface) {
+  pollTimer?.cancel()
+  lastAlerts = null
+  await update($, jobsOpened, () => false)
   const home = (await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME')) ?? '~'
   let info: AppInfo = {}
   try { info = JSON.parse((await readText($, `${$.plugin.root}/augur-app.json`)) ?? '{}') as AppInfo } catch { /* defaults below */ }
@@ -80,14 +95,31 @@ async function start($: EngineInterface) {
   exe = info.exe ?? ''
   await $.state.set(CAN_OPEN, !!exe)
   await poll($)
-  $.clock.every(POLL_MS, () => { void poll($) })
 }
 
 export const register: Register = (on) => {
   on('session.start', async ($, e, next) => {
+    await $.command.register({ name: PANE, description: JOBS_TEXT.description })
     const started = await next(e)
     await start($)
     return started
+  })
+
+  on('command.run', { command: PANE }, async ($) => {
+    await update($, jobsOpened, () => true)
+    const opened = await $.ui.open({ id: PANE, title: JOBS_TEXT.title })
+    return { text: opened.isPlaced ? JOBS_TEXT.opened : JOBS_TEXT.waiting }
+  })
+
+  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    const { Box, Text } = $.ui.resolve(e)
+    const rows = paneRows(await read($, jobs), await $.clock.now())
+    return (
+      <Box flexDirection="column">
+        <Text bold>{JOBS_TEXT.title}</Text>
+        {rows.length ? rows.map((row) => <Text color={row.stalled ? 'yellow' : undefined}>{row.text}</Text>) : <Text dimColor>{JOBS_TEXT.empty}</Text>}
+      </Box>
+    )
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {

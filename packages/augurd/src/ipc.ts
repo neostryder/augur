@@ -131,8 +131,8 @@ export class IpcServer {
       case 'backlog_status': return this.sup.backlogStatus();
       case 'backlog_run': return this.sup.backlogRun(p.dryRun === true);
       case 'backlog_drop': return this.sup.backlogDrop(String(p.id ?? ''));
-      case 'status': return this.store.get(String(p.id));
-      case 'list': return this.store.list({ state: p.state as never, root: p.root as string | undefined, limit: p.limit as number | undefined });
+      case 'status': return this.sup.status(String(p.id));
+      case 'list': return this.sup.list({ state: p.state as never, running: p.running === true, root: p.root as string | undefined, limit: p.limit as number | undefined });
       case 'conversations': return this.sup.conversations();
       case 'forget_conversation': return this.sup.forgetConversation(String(p.name ?? ''));
       case 'events': return this.store.events(String(p.id), Number(p.since ?? 0));

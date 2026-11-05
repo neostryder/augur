@@ -10,12 +10,13 @@ import type { AliasRefreshResult } from '@augur/core';
 import type { ActivityId, DataTier, EngineState, OutputMode, ProviderAdded, Snapshot } from '@augur/core';
 import { EXIT_CODES, MAX_SCHEMA_BYTES, TOOL_TIERS, validateRunOptions, describeCapabilities, describeFigure, exitCodeForState, isTerminal, renderReport, renderResets, seatLines } from '@augur/dispatch-protocol';
 import type { Conversation, Depth, JobRecord, JobRequest, ProseAddParams, ProseStatus, ToolTier } from '@augur/dispatch-protocol';
-import { STATUS_TEXT, duration, servedText, statusLine } from '@augur/view-model';
+import { STATUS_TEXT, duration, isLive, servedText, statusLine } from '@augur/view-model';
 import { bridge, stdioBridge } from './bridge.js';
 import { SERVICE_VERSION, ServiceError, call, configLines, dataDir, disableLogin, enableLogin, ensureToken, loadConfig, loginState, rotateWebToken, setConfigValue, startViaLogin, webAddresses, webCertFingerprint } from '@augur/augurd';
 import { appendPolicyEdits, augurHome, readAliasFlags, readAliasOffers, settleAliasOffer } from '@augur/augurd';
 import { subagentHook } from './claude-hook.js';
 import { KEY_HELP, keyCmd } from './key.js';
+import { SERVICE_STOP_TEXT, stopMcpServers } from './keep-jobs.js';
 import { LOGIN_HELP, loginCmd } from './signin.js';
 import { WEB_HELP, webCmd } from './web.js';
 import { PROFILE_HELP, profileCmd } from './profile.js';
@@ -23,6 +24,15 @@ import { PROVIDER_HELP, providerCmd } from './provider.js';
 import { installOf, realFetch, updateAdvice, updateScriptInstall, versionOf } from './update.js';
 
 export interface Io { out(text: string): void; err(text: string): void; stdin(): string; env: NodeJS.ProcessEnv; cwd: string; /** A person is at the terminal: input and output are both attached to it. */ interactive?: boolean; /** Reads one line with no echo, for a key typed at the terminal. */ readSecret?(prompt: string): Promise<string> }
+
+export const JOBS_ACTIVITY_TEXT = {
+  stalled: 'STALLED',
+  help: 'augur jobs [--running] [--state <s>] [--root <id>] [--limit <n>]  List jobs; --running lists only live jobs',
+  age: (at: number, now = Date.now()): string => {
+    const s = Math.max(0, Math.floor((now - at) / 1000));
+    return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.floor(s / 60)}m ago` : s < 86400 ? `${Math.floor(s / 3600)}h ago` : `${Math.floor(s / 86400)}d ago`;
+  },
+};
 
 const HELP = `augur                   at a terminal, opens the full-screen app
 augur run <route> --prompt-file <file|-> | --prompt <text> [options]
@@ -45,7 +55,7 @@ augur run <route> --prompt-file <file|-> | --prompt <text> [options]
   --attach <file>    send a file with the prompt: text, an image, or audio to transcribe. Repeat for more than one
   --urgent           the job is wanted now, so a local gateway gives it its normal priority instead of the low one background work gets
   --wait             wait for the job, following any retry, and print its result
-augur jobs [--state <s>] [--root <id>] [--limit <n>]
+${JOBS_ACTIVITY_TEXT.help}
 augur conversations [--forget <name>]   list named conversations, or forget one
 augur status                          one line: Claude's use, anything running hot, and the alert count (--waybar for a status bar's JSON)
 augur status <job>
@@ -99,14 +109,14 @@ augur claude hook subagent           the plugin's pick-before-subagent hook: rea
 augur test <route> [--wait]          send a fixed one-word prompt through a route to check it works
 augur config [--json]                 the service's settings and what each is now
 augur config set <setting> <value>    change one; a running service needs augur service stop then start to read it
-augur service status | start | stop [--if-idle | --wait [--timeout <s>]]     --if-idle stops the service only when no job is running, so an upgrade never cuts one off; --wait names the running jobs, waits for them to end, then stops
+${SERVICE_STOP_TEXT.help}
 augur service enable | disable    start the service at each login (systemd on Linux, launchd on macOS), or stop that
 Every command takes --json. Exit codes: 0 completed, 1 usage, 2 rejected, 3 needs approval, 4 failed, 5 artifact check failed, 6 cancelled, 7 lost, 124 wait timed out.`;
 
 interface Parsed { cmd: string[]; flags: Map<string, string | true>; /** Values of the flags that may be given more than once, in order. */ repeated: Map<string, string[]> }
 const REPEATABLE = new Set(['attach', 'fact', 'must-include', 'must-avoid']);
 export function parse(argv: string[]): Parsed {
-  const cmd: string[] = [], flags = new Map<string, string | true>(), repeated = new Map<string, string[]>(), boolean = new Set(['json', 'wait', 'named', 'follow', 'stderr', 'help', 'if-idle', 'no-failover', 'no-charter', 'urgent', 'waybar', 'all', 'force', 'stdin', 'dry-run', 'no-key', 'best', 'snippet', 'report', 'can-land-later', 'caller-chooses', 'untested', 'yes', 'enable', 'disable', 'purge']);
+  const cmd: string[] = [], flags = new Map<string, string | true>(), repeated = new Map<string, string[]>(), boolean = new Set(['json', 'running', 'wait', 'named', 'follow', 'stderr', 'help', 'if-idle', 'keep-jobs', 'no-failover', 'no-charter', 'urgent', 'waybar', 'all', 'force', 'stdin', 'dry-run', 'no-key', 'best', 'snippet', 'report', 'can-land-later', 'caller-chooses', 'untested', 'yes', 'enable', 'disable', 'purge']);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] as string;
     if (a === '-') { cmd.push(a); continue; }
@@ -123,7 +133,7 @@ export function parse(argv: string[]): Parsed {
 }
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
-const describe = (j: JobRecord) => `${j.id}  ${j.state.padEnd(26)} ${j.route.padEnd(12)} ${new Date(j.createdAt).toISOString().slice(0, 19)}Z${servedText(j.served) ? `  on ${servedText(j.served)}` : ''}${j.startedAt && j.endedAt ? `  ${duration(j)}` : ''}${j.reason ? '  ' + j.reason : ''}`;
+const describe = (j: JobRecord) => `${j.id}  ${j.state.padEnd(26)} ${j.route.padEnd(12)} ${new Date(j.createdAt).toISOString().slice(0, 19)}Z${servedText(j.served) ? `  on ${servedText(j.served)}` : ''}${j.startedAt && j.endedAt ? `  ${duration(j)}` : ''}${j.reason ? '  ' + j.reason : ''}${isLive(j.state) ? `${j.stalled ? `  ${JOBS_ACTIVITY_TEXT.stalled}` : ''}${j.lastActivityAt !== undefined ? `  ${JOBS_ACTIVITY_TEXT.age(j.lastActivityAt)}` : ''}${j.activityLine ? `  ${j.activityLine}` : ''}` : ''}`;
 
 export async function main(argv: string[], io: Io): Promise<number> {
   let p: Parsed;
@@ -145,7 +155,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
       case 'run': return await run(rest, p, io, opts, say, opt, json);
       case 'backlog': return await backlogCmd(rest, p, io, opts, say, opt);
       case 'jobs': {
-        const list = await call('list', { state: opt('state') as never, root: opt('root'), limit: opt('limit') ? Number(opt('limit')) : 25 }, opts);
+        const list = await call('list', { running: p.flags.has('running'), state: opt('state') as never, root: opt('root'), limit: opt('limit') ? Number(opt('limit')) : 25 }, opts);
         say(list.map(describe).join('\n') || 'No jobs.', list); return 0;
       }
       case 'conversations': return await conversationsCmd(p, io, opts, say, opt, json);
@@ -310,7 +320,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
         const lines = configLines(opts.dir);
         say(lines.map(l => `${l.key.padEnd(20)} ${l.value.padEnd(24)} ${l.value === l.default ? '' : `(default ${l.default}) `}${l.weakens ? '[lowers checks] ' : ''}${l.label}`).join('\n'), lines); return 0;
       }
-      case 'service': return await service(rest[0], io, opts, json, p.flags.has('if-idle'), p.flags.has('wait'), opt('timeout') ? Number(opt('timeout')) : 0);
+      case 'service': return await service(rest[0], io, opts, json, p.flags.has('if-idle'), p.flags.has('wait'), opt('timeout') ? Number(opt('timeout')) : 0, p.flags.has('keep-jobs'));
       // The window app's link to the engine; it runs until the app closes its input.
       case 'bridge': return await bridge(stdioBridge(io.env), opts, opt('app-exe'));
       default: io.err(`Unknown command ${cmd}.\n${HELP}\n`); return EXIT_CODES.usage;
@@ -783,7 +793,7 @@ async function restartService(io: Io, opts: Opts): Promise<string> {
   return 'Restarted. Jobs that were running kept going.';
 }
 
-async function service(action: string | undefined, io: Io, opts: Opts, json: boolean, ifIdle = false, wait = false, timeoutS = 0): Promise<number> {
+async function service(action: string | undefined, io: Io, opts: Opts, json: boolean, ifIdle = false, wait = false, timeoutS = 0, keepJobs = false): Promise<number> {
   const say = (text: string, data: unknown) => io.out(json ? JSON.stringify(data) + '\n' : text + '\n');
   if (action === 'status') {
     const login = loginState(), atLogin = !login.supported ? '.' : login.enabled ? ', and starts at login.' : '. To start it at login, run augur service enable.';
@@ -802,8 +812,11 @@ async function service(action: string | undefined, io: Io, opts: Opts, json: boo
     io.err('augurd did not come up. See service.log in its data folder.\n'); return EXIT_CODES.failed;
   }
   if (action === 'stop') {
+    if (keepJobs && (ifIdle || wait)) { io.err(SERVICE_STOP_TEXT.conflict + '\n'); return EXIT_CODES.usage; }
+    let servicePid: number | undefined, stopping = false;
     try {
       const r = await call('ping', undefined, { ...opts, timeoutMs: 2000 });
+      servicePid = r.pid;
       if (wait) {
         // Names what is holding the service, then waits for those jobs to end. A job that ends during the wait drops off the list.
         const deadline = timeoutS > 0 ? Date.now() + timeoutS * 1000 : Infinity;
@@ -821,9 +834,16 @@ async function service(action: string | undefined, io: Io, opts: Opts, json: boo
         const busy = (await call('list', { limit: 500 }, opts)).filter(j => !isTerminal(j.state));
         if (busy.length) { say(`${busy.length} job${busy.length === 1 ? ' is' : 's are'} still running. The service was left running.`, { stopping: false, running: busy.length }); return EXIT_CODES.failed; }
       }
-      if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(r.pid), '/F'], { windowsHide: true, stdio: 'ignore' }); else process.kill(r.pid);
-      say('Stopping augurd. Running jobs keep going.', { stopping: true }); return 0;
-    } catch { say('augurd is not running.', { running: false }); return 0; }
+      if (process.platform === 'win32') {
+        const killed = spawnSync('taskkill', ['/PID', String(r.pid), '/F'], { windowsHide: true, stdio: 'ignore' });
+        if (keepJobs && (killed.error || killed.status !== 0)) throw new Error(SERVICE_STOP_TEXT.stopFailed);
+      } else process.kill(r.pid);
+      stopping = true;
+    } catch (e) { if (keepJobs && servicePid !== undefined) throw e; }
+    const killedPids = keepJobs ? stopMcpServers(servicePid) : undefined;
+    if (stopping) say('Stopping augurd. Running jobs keep going.', { stopping: true, ...(keepJobs ? { killedPids } : {}) });
+    else say('augurd is not running.', { running: false, ...(keepJobs ? { killedPids } : {}) });
+    return 0;
   }
   io.err('Use: augur service status | start | stop | enable | disable\n'); return EXIT_CODES.usage;
 }

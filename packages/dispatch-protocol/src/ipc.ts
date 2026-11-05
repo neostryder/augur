@@ -53,7 +53,7 @@ export interface Methods {
   ping: { params: undefined; result: { pid: number; version: number; startedAt: number } };
   submit: { params: JobRequest; result: { id: string; warnings: string[] } | { rejected: Rejection } };
   status: { params: { id: string }; result: JobRecord | null };
-  list: { params: { state?: JobState; root?: string; limit?: number }; result: JobRecord[] };
+  list: { params: { state?: JobState; running?: boolean; root?: string; limit?: number }; result: JobRecord[] };
   /** Named conversations, newest first. */
   conversations: { params: undefined; result: Conversation[] };
   /** Drops a named conversation. A running job that holds it is left in place and the name stays. */

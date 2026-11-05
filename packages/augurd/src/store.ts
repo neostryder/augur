@@ -75,6 +75,7 @@ export class Store {
       create index if not exists jobs_root on jobs(root_job_id);
       create table if not exists events(seq integer primary key autoincrement, job_id text, at integer not null, kind text not null, detail text not null default '');
       create index if not exists events_job on events(job_id, seq);
+      create index if not exists events_job_at on events(job_id, at desc);
       create table if not exists picks(id integer primary key autoincrement, at integer not null, session text, model text not null, activity text not null, data_tier text not null, named text, cleared text not null);
       create table if not exists prompts(id integer primary key autoincrement, at integer not null, session text not null, models text not null);
       create table if not exists conversations(
@@ -104,9 +105,10 @@ export class Store {
     const r = this.row(id); return r ? { runnerPid: r.runner_pid, childPid: r.child_pid, expectFile: r.expect_file, timeoutS: r.timeout_s, purged: r.purged === 1 } : null;
   }
 
-  list(filter: { state?: JobState; root?: string; limit?: number } = {}): JobRecord[] {
+  list(filter: { state?: JobState; running?: boolean; root?: string; limit?: number } = {}): JobRecord[] {
     const where: string[] = [], args: Array<string | number> = [];
     if (filter.state) { where.push('state=?'); args.push(filter.state); }
+    if (filter.running) where.push("state in ('queued','needs_approval','running','cancel_requested')");
     if (filter.root) { where.push('root_job_id=?'); args.push(filter.root); }
     const sql = `select * from jobs ${where.length ? 'where ' + where.join(' and ') : ''} order by created_at desc, rowid desc limit ?`;
     return (this.db.prepare(sql).all(...args, filter.limit ?? 100) as unknown as Row[]).map(toRecord);
@@ -185,6 +187,9 @@ export class Store {
 
   event(jobId: string | null, kind: string, detail = '', at = Date.now()): void {
     this.db.prepare('insert into events(job_id,at,kind,detail) values(?,?,?,?)').run(jobId, at, kind, detail);
+  }
+  lastEventAt(jobId: string): number | null {
+    return (this.db.prepare('select at from events where job_id=? order by at desc limit 1').get(jobId) as { at: number } | undefined)?.at ?? null;
   }
   events(jobId: string, since = 0): JobEvent[] {
     return (this.db.prepare('select seq, job_id, at, kind, detail from events where job_id=? and seq>? order by seq').all(jobId, since) as Array<{ seq: number; job_id: string; at: number; kind: string; detail: string }>)

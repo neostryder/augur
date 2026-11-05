@@ -1,6 +1,6 @@
-import type { ModAlert } from '../types'
+import type { ModAlert, ModJob } from '../types'
 
-type Meter = { id?: string; usedPct?: number | null; windowKind?: string; windowSeconds?: number | null }
+type Meter = { id?: string; usedPct?: number | null; windowKind?: string; windowSeconds?: number | null; resetsAt?: string }
 type Provider = { id?: string; name?: string; ok?: boolean; stale?: boolean; meters?: Meter[] }
 export type Usage = { generatedAt?: string; providers?: Record<string, Provider> }
 
@@ -10,6 +10,50 @@ export const HOT_PCT = 70
 export const STALE_MS = 15 * 60_000
 /** Points of use ahead of or behind the share of a window that has passed that still count as on pace. Augur's own default; the mod reads the owner's value from policy.json. */
 export const PACE_BAND = 5
+
+export const JOBS_TEXT = {
+  title: 'Augur live jobs',
+  description: 'Open the Augur live jobs pane',
+  opened: 'The live jobs pane is open.',
+  waiting: 'Waiting for a place to show the pane.',
+  empty: 'No jobs are running.',
+  job: 'job',
+  jobs: 'jobs',
+  stalled: 'stalled',
+  ago: 'ago',
+  seconds: 's',
+  minutes: 'm',
+  hours: 'h',
+} as const
+
+export function liveJobs(text: string | null, now: number): ModJob[] {
+  try {
+    const feed = JSON.parse(text ?? '')
+    if (!feed || typeof feed.updatedAt !== 'number' || !Number.isFinite(feed.updatedAt) || now - feed.updatedAt > 60_000 || !Array.isArray(feed.jobs)) return []
+    if (typeof feed.stallMinutes !== 'number' || !Number.isFinite(feed.stallMinutes) || feed.stallMinutes < 0) return []
+    const valid = (job: ModJob) => job && typeof job.id === 'string' && typeof job.route === 'string' && typeof job.activity === 'string'
+      && ['queued', 'needs_approval', 'running', 'cancel_requested'].includes(job.state)
+      && (job.startedAt === null || (typeof job.startedAt === 'number' && Number.isFinite(job.startedAt)))
+      && typeof job.lastActivityAt === 'number' && Number.isFinite(job.lastActivityAt)
+      && typeof job.activityLine === 'string' && job.activityLine.length <= 120 && typeof job.stalled === 'boolean'
+    return feed.jobs.every(valid) ? feed.jobs.slice(0, 50) : []
+  } catch { return [] }
+}
+
+export function jobStatus(jobs: readonly ModJob[]): string | undefined {
+  if (!jobs.length) return undefined
+  const stalled = jobs.filter((job) => job.stalled).length
+  return `${jobs.length} ${jobs.length === 1 ? JOBS_TEXT.job : JOBS_TEXT.jobs}${stalled ? ` (${stalled} ${JOBS_TEXT.stalled})` : ''}`
+}
+
+export function paneRows(jobs: readonly ModJob[], now: number): Array<{ id: string; text: string; stalled: boolean }> {
+  return [...jobs].sort((a, b) => Number(b.stalled) - Number(a.stalled) || (b.startedAt ?? 0) - (a.startedAt ?? 0)).map((job) => {
+    const seconds = Math.max(0, Math.floor((now - job.lastActivityAt) / 1000))
+    const age = seconds < 60 ? `${seconds}${JOBS_TEXT.seconds}` : seconds < 3600 ? `${Math.floor(seconds / 60)}${JOBS_TEXT.minutes}` : `${Math.floor(seconds / 3600)}${JOBS_TEXT.hours}`
+    return { id: job.id, stalled: job.stalled,
+      text: `${job.route} | ${job.activity} | ${age} ${JOBS_TEXT.ago}${job.stalled ? ` | ${JOBS_TEXT.stalled}` : ''}${job.activityLine ? ` | ${job.activityLine}` : ''}` }
+  })
+}
 
 function windowName(m: Meter): string {
   if (m.windowKind === 'session') return m.windowSeconds ? `${Math.round(m.windowSeconds / 3600)}h` : 'session'
@@ -52,7 +96,7 @@ export function claudePace(usage: Usage | null, now: number, band = PACE_BAND): 
 const paceText = (p: Pace): string => (p.stance === 'on pace' ? 'on pace' : `${p.stance} ${p.ahead > 0 ? '+' : ''}${p.ahead}`)
 
 /** Claude's session and weekly use, then its pace, then any provider running hot or stale, then the alert count. */
-export function statusLine(usage: Usage | null, alerts: number, now: number, band = PACE_BAND): string | undefined {
+export function statusLine(usage: Usage | null, alerts: number, now: number, band = PACE_BAND, jobs: readonly ModJob[] = []): string | undefined {
   const parts: string[] = []
   const providers = Object.values(usage?.providers ?? {})
   const claude = usage?.providers?.claude
@@ -74,6 +118,8 @@ export function statusLine(usage: Usage | null, alerts: number, now: number, ban
   const at = usage?.generatedAt ? Date.parse(usage.generatedAt) : NaN
   if (usage && Number.isFinite(at) && now - at > STALE_MS) parts.push(`as of ${age(now - at)} ago`)
   if (alerts) parts.push(alerts === 1 ? '1 Augur alert' : `${alerts} Augur alerts`)
+  const jobPart = jobStatus(jobs)
+  if (jobPart) parts.push(jobPart)
   return parts.length ? parts.join(' | ') : undefined
 }
 

@@ -1,6 +1,6 @@
 import type { JobRecord } from '@augur/dispatch-protocol';
 import { describe, expect, it } from 'vitest';
-import { duration, renderJobs, type JobsModel } from '../src/views/jobs';
+import { JOBS_ACTIVITY_TEXT, duration, renderJobs, type JobsModel } from '../src/views/jobs';
 
 const job = (over: Partial<JobRecord> = {}): JobRecord => ({
   id: '0d26110efa99', state: 'running', route: 'luna', adapter: 'codex-exec', activity: 'write_code', dataTier: 'internal', tools: 'read', output: 'text_only',
@@ -53,4 +53,19 @@ describe('the jobs page', () => {
     expect(duration(job({ startedAt: 1_000, endedAt: 4_000 }), 999_999)).toBe('3s');
     expect(duration(job({ startedAt: null }))).toBe('');
   });
+});
+
+
+it('filters live jobs, escapes activity, and marks stalls in the list and detail', () => {
+  const j = job({ lastActivityAt: Date.now() - 12000, activityLine: 'Reading <files>', stalled: true });
+  const m = model({ jobs: [j, job({ id: 'done', state: 'completed' })], detail: { job: j, result: '', stdout: '', stderr: '' } });
+  expect(renderJobs(m)).toContain('aria-pressed="false">Running');
+  const html = renderJobs({ ...m, runningOnly: true });
+  expect(html).toContain('data-job="0d26110efa99"'); expect(html).not.toContain('data-job="done"');
+  expect(html).toContain('Stalled'); expect(html).toContain('12s ago'); expect(html).toContain('Reading &lt;files&gt;');
+  expect(html).toContain('Last activity');
+  expect(JOBS_ACTIVITY_TEXT.age(1000, 241000)).toBe('4m ago');
+  expect(JOBS_ACTIVITY_TEXT.age(1000, 0)).toBe('0s ago');
+  expect(renderJobs(model({ jobs: [job({ state: 'completed', stalled: true, lastActivityAt: 1, activityLine: 'hidden' })] }))).not.toContain('hidden');
+  expect(renderJobs(model({ jobs: [], runningOnly: true }))).toContain('No jobs are running.');
 });

@@ -3,6 +3,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { appendFileSync, closeSync, cpSync, existsSync, mkdtempSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { stripVTControlCharacters } from 'node:util';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES } from '@augur/core';
 import type { PolicyFile } from '@augur/core';
 import { BRIEF_RESULTS, GRADE_LABELS, STUDENT_RE, classifyDepth, classifyTask, decide as decideGrade, fitScores, grade as gradeText, gradeStats, gradeTier } from '@augur/decision';
@@ -97,6 +98,12 @@ interface JobFile { command: string; args: string[]; cwd: string; stdin: 'prompt
 /** What systemd-run and systemctl need to reach the user's systemd. A job's own environment leaves these out, so the runner is handed them. */
 export const SCOPE_ENV = ['XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS'] as const;
 
+function readJobFile(path: string): JobFile | null {
+  const file = readJson<JobFile>(path);
+  if (!file) return null;
+  return { ...file, files: file.files ?? [], promptArgs: file.promptArgs ?? [], env: file.env ?? {}, redact: file.redact ?? false, timeoutS: file.timeoutS ?? null, jobhost: file.jobhost ?? null };
+}
+
 const MAX_ATTACHMENTS = 16;
 /** A route's size cap for one kind of attachment, in megabytes. */
 const optMb = (route: RouteConfig, key: string, fallback: number): number => optNum(route.options, key) ?? fallback;
@@ -109,6 +116,7 @@ export class Supervisor {
   private readonly backlog: PremiumBacklog;
   private adopted = new Set<string>();
   private outputSeen = new Set<string>();
+  private readonly activityCache = new Map<string, { at: number; lastActivityAt: number; activityLine: string; heartbeatAt: number }>();
   /** The request and the routes already used for each job this process launched. A restart drops the map, and then that job is not retried. */
   private readonly submitted = new Map<string, { req: JobRequest; hops: string[] }>();
   private releasingBacklog = false;
@@ -932,7 +940,7 @@ export class Supervisor {
     const rec = this.d.store.get(id);
     if (!rec || rec.state !== 'queued') return;
     const dir = this.jobDir(id), adapter = this.d.adapters.get(rec.adapter);
-    const file = readJson<JobFile>(join(dir, 'job.json'));
+    const file = readJobFile(join(dir, 'job.json'));
     if (!adapter || !file) { if (this.d.store.transition(id, 'failed', { reason: 'job files missing at launch' }, this.now())) this.settleConversation(rec, false, null); return; }
     if (rec.workspace) {
       const problem = this.prepareWorkspace(rec, rec.workspace);
@@ -1016,7 +1024,7 @@ export class Supervisor {
     const store = this.d.store, dir = this.jobDir(rec.id), inner = store.internal(rec.id);
     if (!inner) return;
     const state = readJson<{ childPid: number; runnerPid: number }>(join(dir, 'state.json'));
-    if (state && inner.childPid !== state.childPid) store.setPids(rec.id, { childPid: state.childPid, runnerPid: state.runnerPid });
+    if (state && (inner.childPid !== state.childPid || inner.runnerPid !== state.runnerPid)) store.setPids(rec.id, { childPid: state.childPid ?? inner.childPid, runnerPid: state.runnerPid ?? inner.runnerPid });
     if (!this.outputSeen.has(rec.id)) {
       try { if (statSync(join(dir, 'stdout.log')).size > 0) { this.outputSeen.add(rec.id); store.event(rec.id, 'first_update', '', this.now()); } } catch { /* no output yet */ }
     }
@@ -1025,13 +1033,13 @@ export class Supervisor {
     let age = Infinity;
     try { age = this.now() - statSync(join(dir, 'heartbeat')).mtimeMs; } catch { /* runner not started yet */ }
     const seen = age !== Infinity, since = this.now() - (rec.startedAt ?? rec.createdAt), pid = inner.runnerPid;
-    const gone = (!alive(pid) && (seen ? age > 3000 : since > 8000)) || (seen ? age > this.d.config.runnerStaleS * 1000 : since > this.d.config.runnerStaleS * 1000);
+    const gone = (!alive(pid) && (seen ? age > 3000 : since > 8000)) || (seen && age > this.d.config.runnerStaleS * 1000);
     if (!gone) return;
     const child = state?.childPid ?? inner.childPid, orphan = alive(child);
     if (orphan) this.killTree(child as number);
     this.killFollowed(dir);
     // A scope can hold processes that outlived the child, so it is stopped whether or not the child is still there.
-    const scope = readJson<JobFile>(join(dir, 'job.json'))?.scope;
+    const scope = readJobFile(join(dir, 'job.json'))?.scope;
     if (scope) spawnSync('systemctl', ['--user', 'kill', '--signal=SIGKILL', `${scope}.scope`], { stdio: 'ignore', timeout: 10000 });
     if (store.transition(rec.id, rec.state === 'cancel_requested' ? 'cancelled' : 'lost', { reason: `runner gone, child ${orphan ? 'orphaned and killed' : 'not running'}` }, this.now())) {
       this.settleConversation(rec, false, null);
@@ -1134,7 +1142,7 @@ export class Supervisor {
     this.submitted.delete(id);
     if (this.d.config.persistPrompts && request?.persistPrompt !== false) return;
     try { unlinkSync(join(this.jobDir(id), 'prompt.in')); } catch { /* already read by the runner */ }
-    const file = readJson<JobFile>(join(this.jobDir(id), 'job.json')), rec = this.d.store.get(id);
+    const file = readJobFile(join(this.jobDir(id), 'job.json')), rec = this.d.store.get(id);
     for (const f of file?.files ?? []) {
       try { unlinkSync(f.inWorkspace && rec?.workspace ? join(rec.workspace, f.name) : join(this.jobDir(id), f.name)); } catch { /* not written or already gone */ }
     }
@@ -1175,6 +1183,56 @@ export class Supervisor {
 
   // ------------------------------------------------------------------ callers
 
+  list(filter: Parameters<Store['list']>[0] = {}): JobRecord[] {
+    return this.d.store.list(filter).map(rec => this.activity(rec));
+  }
+
+  status(id: string): JobRecord | null {
+    const rec = this.d.store.get(id);
+    return rec ? this.activity(rec) : null;
+  }
+
+  private activity(rec: JobRecord): JobRecord {
+    if (isTerminal(rec.state)) { this.activityCache.delete(rec.id); return rec; }
+    const now = this.now();
+    let cached = this.activityCache.get(rec.id);
+    if (!cached || now < cached.at || now - cached.at >= 3000) {
+      const dir = this.jobDir(rec.id);
+      let lastActivityAt = Math.max(rec.startedAt ?? rec.createdAt, this.d.store.lastEventAt(rec.id) ?? 0), heartbeatAt = -Infinity;
+      const logs: Array<{ path: string; mtime: number; size: number }> = [];
+      for (const stream of ['stdout', 'stderr']) {
+        const path = join(dir, `${stream}.log`);
+        try { const s = statSync(path); lastActivityAt = Math.max(lastActivityAt, s.mtimeMs); if (s.size) logs.push({ path, mtime: s.mtimeMs, size: s.size }); } catch { /* no output yet */ }
+      }
+      try { heartbeatAt = statSync(join(dir, 'heartbeat')).mtimeMs; } catch { /* runner not started yet */ }
+      let activityLine = '';
+      for (const log of logs.sort((a, b) => b.mtime - a.mtime)) {
+        const lines = this.tail(log.path, 8192).split(/[\r\n]/);
+        if (log.size > 8192) lines.shift();
+        for (const line of lines.reverse()) {
+          const clean = stripVTControlCharacters(line).trim();
+          if (!clean) continue;
+          if ((rec.adapter === 'codex-exec' && log.path.endsWith('stdout.log')) || /^[{[]/.test(clean)) {
+            // Only output items carry display text; request and user events can carry the prompt.
+            try {
+              const event = JSON.parse(clean), item = event.item;
+              if (item?.type === 'command_execution' && typeof item.command === 'string') activityLine = item.command;
+              else if (item?.type === 'agent_message' && typeof item.text === 'string') activityLine = item.text;
+            } catch { /* incomplete event */ }
+          } else activityLine = clean;
+          if (activityLine) break;
+        }
+        if (activityLine) break;
+      }
+      activityLine = stripVTControlCharacters(activityLine).replace(/[\x00-\x1f\x7f-\x9f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
+      cached = { at: now, lastActivityAt, activityLine, heartbeatAt };
+      if (this.activityCache.size >= 1000) this.activityCache.delete(this.activityCache.keys().next().value!);
+      this.activityCache.set(rec.id, cached);
+    }
+    return { ...rec, lastActivityAt: cached.lastActivityAt, activityLine: cached.activityLine,
+      stalled: now - cached.heartbeatAt <= this.d.config.runnerStaleS * 1000 && now - cached.lastActivityAt > this.d.config.stallMinutes * 60000 };
+  }
+
   cancel(id: string): { ok: boolean; state: JobRecord['state'] } | null {
     const store = this.d.store, rec = store.get(id);
     if (!rec) return null;
@@ -1206,7 +1264,7 @@ export class Supervisor {
   }
 
   result(id: string): { job: JobRecord; answer: string | null } | null {
-    const job = this.d.store.get(id);
+    const job = this.status(id);
     if (!job) return null;
     const p = join(this.jobDir(id), 'answer.txt');
     let answer: string | null = null;

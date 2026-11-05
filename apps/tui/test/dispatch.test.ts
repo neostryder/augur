@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ServiceError } from '@augur/augurd';
 import type { JobRecord } from '@augur/dispatch-protocol';
-import { DispatchPage, tail } from '../src/screens/dispatch.js';
+import { JOBS_ACTIVITY_TEXT, DispatchPage, tail } from '../src/screens/dispatch.js';
 import { pages } from '../src/index.js';
 import { NOW, ch, k, setup, state } from './fixtures.js';
 
@@ -247,4 +247,22 @@ describe('dispatch page: service', () => {
     expect(text).toContain('Require a pick');
     expect(text).toContain('augur config set');
   });
+});
+
+
+it('toggles the Running filter and shows activity ages and a stalled chip', async () => {
+  const j = job({ lastActivityAt: NOW - 12000, activityLine: 'Reading files', stalled: true });
+  const t = dispatch({ list: [j, job({ id: 'done', state: 'completed', route: 'finished' })], result: { job: j, answer: '' }, logs: { text: '', next: 0, done: false } });
+  await t.load();
+  expect(t.page.jobs.runningOnly).toBe(false);
+  expect(t.draw(120, 40)).toContain('finished');
+  t.page.form.focus = 'jobs-running';
+  await t.app.key(k('enter'));
+  expect(t.page.jobs.runningOnly).toBe(true);
+  expect(t.calls).toContainEqual(['list', [{ limit: 50, running: true }]]);
+  const text = t.draw(120, 40);
+  expect(text).not.toContain('finished'); expect(text).toContain('Reading files'); expect(text).toContain('12s ago'); expect(text).toContain('STALLED');
+  t.page.form.focus = `j:${j.id}`; await t.app.key(k('enter')); await t.load();
+  expect(t.draw(120, 40)).toContain('Last activity: 12s ago - Reading files');
+  expect(JOBS_ACTIVITY_TEXT.age(1000, 241000)).toBe('4m ago');
 });

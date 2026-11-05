@@ -5,7 +5,7 @@ import { startService } from '@augur/augurd';
 import { call } from '../../augurd/src/client.js';
 import { JOBHOST, ROUTES, makeEnv } from '../../augurd/test/harness.js';
 import type { Env } from '../../augurd/test/harness.js';
-import { main, parse } from '../src/cli.js';
+import { JOBS_ACTIVITY_TEXT, main, parse } from '../src/cli.js';
 import { readFleet } from '@augur/core';
 
 vi.setConfig({ testTimeout: 90000 });
@@ -618,5 +618,43 @@ describe('grade flags', () => {
     expect(p.cmd).toEqual(['grade', 'answer']);
     expect(p.flags.get('report')).toBe(true);
     expect(parse(['grade', '--report']).flags.get('report')).toBe(true);
+  });
+});
+
+
+describe('job activity output', () => {
+  it('formats activity ages in seconds, minutes, hours and days', () => {
+    for (const [ms, text] of [[-1000, '0s ago'], [12000, '12s ago'], [240000, '4m ago'], [3600000, '1h ago'], [86400000, '1d ago']] as const) {
+      expect(JOBS_ACTIVITY_TEXT.age(100000000 - ms, 100000000)).toBe(text);
+    }
+    expect(parse(['jobs', '--running', '--json']).flags.get('running')).toBe(true);
+  });
+
+  it('lists only live jobs before limiting and shows activity in status and JSON', async () => {
+    const { e, run } = await boot({ maxConcurrent: 1, stallMinutes: 1 });
+    const start = Date.now() - 120000;
+    const insert = (id: string, state: 'running' | 'completed' | 'queued' | 'needs_approval' | 'cancel_requested', at: number) => {
+      e.store.insert({ id, route: 'raw', adapter: 'exec', activity: 'write_code', dataTier: 'internal', tools: 'read', output: 'text_only', cwd: e.root,
+        createdAt: at, rootJobId: id, parentJobId: null, depth: 0, caller: { kind: 'cli' }, named: false, expectFile: null, timeoutS: null, harnessVersion: null, workspace: null });
+      if (state === 'needs_approval') e.store.transition(id, state, {}, at);
+      else if (state !== 'queued') { e.store.transition(id, 'running', { startedAt: at }, at); if (state !== 'running') e.store.transition(id, state, {}, at); }
+    };
+    insert('live', 'running', start);
+    const dir = join(e.dir, 'jobs', 'live'); mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'heartbeat'), '');
+    writeFileSync(join(dir, 'stdout.log'), 'Reading files\n');
+    const fs = await import('node:fs'); fs.utimesSync(join(dir, 'stdout.log'), start / 1000, start / 1000);
+    insert('done', 'completed', start + 1);
+    const list = await run(['jobs', '--running', '--limit', '1']);
+    expect(list.code).toBe(0); expect(list.out).toContain('live'); expect(list.out).not.toContain('done');
+    expect(list.out).toContain('STALLED'); expect(list.out).toContain('2m ago'); expect(list.out).toContain('Reading files');
+    const status = await run(['status', 'live']); expect(status.out).toContain('STALLED'); expect(status.out).toContain('Reading files');
+    const json = JSON.parse((await run(['jobs', '--running', '--json'])).out);
+    expect(json).toMatchObject([{ id: 'live', lastActivityAt: start, activityLine: 'Reading files', stalled: true }]);
+    expect(JSON.parse((await run(['status', 'done', '--json'])).out)).not.toHaveProperty('stalled');
+    expect(JSON.parse((await run(['jobs', '--running', '--state', 'completed', '--json'])).out)).toEqual([]);
+    for (const state of ['queued', 'needs_approval', 'cancel_requested'] as const) insert(state, state, start + 2);
+    const live = JSON.parse((await run(['jobs', '--running', '--json'])).out);
+    expect(live.map((j: { id: string }) => j.id).sort()).toEqual(['cancel_requested', 'live', 'needs_approval', 'queued']);
   });
 });
