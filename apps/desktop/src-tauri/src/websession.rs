@@ -100,6 +100,8 @@ struct SignInWindow {
     opened: Instant,
     seen_off_site: AtomicBool,
     signed_in: AtomicBool,
+    last_location: Mutex<(String, String)>,
+    close_requested: AtomicBool,
     retry: bool,
 }
 
@@ -170,6 +172,8 @@ fn open_sign_in(app: &tauri::AppHandle, site: String, retry: bool) -> Result<(),
         opened: Instant::now(),
         seen_off_site: AtomicBool::new(false),
         signed_in: AtomicBool::new(false),
+        last_location: Mutex::new(Default::default()),
+        close_requested: AtomicBool::new(false),
         retry,
     });
     app.state::<WebSessions>()
@@ -189,6 +193,13 @@ fn open_sign_in(app: &tauri::AppHandle, site: String, retry: bool) -> Result<(),
             let succeeded = closing_sign_in.signed_in.load(Ordering::SeqCst);
             let elapsed = closing_sign_in.opened.elapsed();
             let seen_off_site = closing_sign_in.seen_off_site.load(Ordering::SeqCst);
+            let close_requested = closing_sign_in.close_requested.load(Ordering::SeqCst);
+            // The watcher keeps this up to date. Reading the window here would run on the UI thread during teardown.
+            let (last_host, last_path) = closing_sign_in
+                .last_location
+                .lock()
+                .map(|location| location.clone())
+                .unwrap_or_default();
             let sessions = handle.state::<WebSessions>();
             if let Ok(mut sign_ins) = sessions.sign_ins.lock() {
                 sign_ins.remove(&closing_site);
@@ -196,7 +207,7 @@ fn open_sign_in(app: &tauri::AppHandle, site: String, retry: bool) -> Result<(),
             trace(
                 &handle,
                 &format!(
-                    "window destroyed site={closing_site} succeeded={succeeded} elapsed={} seen_off_site={seen_off_site} retry={}",
+                    "window destroyed site={closing_site} succeeded={succeeded} elapsed={} seen_off_site={seen_off_site} retry={} last_host={last_host} last_path={last_path} close_requested={close_requested}",
                     elapsed.as_secs(), closing_sign_in.retry
                 ),
             );
@@ -240,6 +251,7 @@ fn open_sign_in(app: &tauri::AppHandle, site: String, retry: bool) -> Result<(),
             );
         }
         WindowEvent::CloseRequested { .. } => {
+            closing_sign_in.close_requested.store(true, Ordering::SeqCst);
             trace(
                 &handle,
                 &format!("window close requested site={closing_site}"),
@@ -292,6 +304,9 @@ fn open_sign_in(app: &tauri::AppHandle, site: String, retry: bool) -> Result<(),
             };
             let now = Instant::now();
             if last_url.as_ref() != Some(&current) {
+                if let Ok(mut location) = sign_in.last_location.lock() {
+                    *location = location_for_trace(&current);
+                }
                 trace(
                     &watcher,
                     &format!(
@@ -556,6 +571,13 @@ fn should_clear_cache_on_destroy(succeeded: bool) -> bool {
     !succeeded
 }
 
+fn location_for_trace(url: &Url) -> (String, String) {
+    (
+        url.host_str().unwrap_or("").to_string(),
+        url.path().to_string(),
+    )
+}
+
 /// Whether the sign-in window, already on the site's own host, is showing a page that follows a sign-in.
 /// It is after a visit to another host (Google, an identity provider), or on a page other than the root
 /// and the sign-in paths, which is where a session that is still valid lands.
@@ -613,6 +635,15 @@ fn deliver(app: &tauri::AppHandle, site: &str, target: &Url) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn trace_location_excludes_query_and_fragment() {
+        let url = Url::parse("https://example.com/auth/callback?code=secret#token=secret").unwrap();
+        assert_eq!(
+            location_for_trace(&url),
+            ("example.com".to_string(), "/auth/callback".to_string()),
+        );
+    }
 
     #[test]
     fn sign_in_guard_disables_window_close_without_fetching() {
@@ -742,6 +773,8 @@ mod tests {
             opened: Instant::now(),
             seen_off_site: AtomicBool::new(false),
             signed_in: AtomicBool::new(false),
+            last_location: Mutex::new(Default::default()),
+            close_requested: AtomicBool::new(false),
             retry: false,
         };
         assert!(window.should_reopen());
