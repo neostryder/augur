@@ -22,6 +22,32 @@ describe('classifyFailure', () => {
     expect(classifyFailure(base({ failure: `stopped: ${phrase}` })).retry).toBe(true);
   });
 
+  it.each(['stderrTail', 'failure'] as const)('retries a spent allowance in %s as a provider limit', (field) => {
+    const message = 'example.com says the free allowance is used up.';
+    expect(classifyFailure(base({ exitCode: 70, [field]: message }))).toEqual({ retry: true, why: 'provider limit' });
+    expect(classifyFailure(base({ tools: 'none', exitCode: 70, [field]: message }))).toEqual({ retry: true, why: 'provider limit' });
+    expect(classifyFailure(base({ tools: 'write', exitCode: 70, [field]: message, answer: 'partial' })).retry).toBe(false);
+    expect(classifyFailure(base({ tools: 'full', exitCode: 70, [field]: message, changed: true })).retry).toBe(false);
+  });
+
+  it.each(['stderrTail', 'failure'] as const)('retries a lost browser connection in %s only for a read or none tier', (field) => {
+    const message = 'the connection to the browser was lost';
+    expect(classifyFailure(base({ exitCode: 71, [field]: message }))).toEqual({ retry: true, why: 'connection lost' });
+    expect(classifyFailure(base({ tools: 'none', exitCode: 71, [field]: message }))).toEqual({ retry: true, why: 'connection lost' });
+    expect(classifyFailure(base({ tools: 'write', exitCode: 71, [field]: message }))).toEqual({ retry: false, why: 'connection lost' });
+    expect(classifyFailure(base({ tools: 'full', exitCode: 71, [field]: message }))).toEqual({ retry: false, why: 'connection lost' });
+  });
+
+  it.each([
+    'the connection to the browser was lost',
+    'no finished reply from example.com within 60 seconds',
+    'no finished picture from example.com within 60 seconds',
+  ])('keeps cancel, spawn error, and preempted precedence for %s', (message) => {
+    expect(classifyFailure(base({ killedBy: 'cancel', stderrTail: message }))).toEqual({ retry: false, why: 'cancelled' });
+    expect(classifyFailure(base({ tools: 'write', spawnError: 'spawn ENOENT', stderrTail: message }))).toEqual({ retry: true, why: 'spawn error' });
+    expect(classifyFailure(base({ tools: 'write', failure: 'preempted: another request', stderrTail: message }))).toEqual({ retry: true, why: 'preempted' });
+  });
+
   it('does not treat a 429 inside another number as a limit', () => {
     expect(classifyFailure(base({ stderrTail: 'code 14290' })).retry).toBe(false);
     expect(classifyFailure(base({ failure: 'error 429' })).retry).toBe(true);
@@ -34,6 +60,19 @@ describe('classifyFailure', () => {
     expect(classifyFailure(base({ killedBy: 'timeout', tools: 'full' })).retry).toBe(false);
   });
 
+  it.each([
+    ['stderrTail', 'reply'],
+    ['failure', 'reply'],
+    ['stderrTail', 'picture'],
+    ['failure', 'picture'],
+  ] as const)('retries an unfinished %s %s only for a read or none tier', (field, kind) => {
+    const message = `no finished ${kind} from example.com within 60 seconds`;
+    expect(classifyFailure(base({ exitCode: 69, [field]: message }))).toEqual({ retry: true, why: 'timed out' });
+    expect(classifyFailure(base({ tools: 'none', exitCode: 69, [field]: message }))).toEqual({ retry: true, why: 'timed out' });
+    expect(classifyFailure(base({ tools: 'write', exitCode: 69, [field]: message }))).toEqual({ retry: false, why: 'timed out' });
+    expect(classifyFailure(base({ tools: 'full', exitCode: 69, [field]: message }))).toEqual({ retry: false, why: 'timed out' });
+  });
+
   it('retries a write or full limit only while the answer is empty and nothing was recorded as changed', () => {
     expect(classifyFailure(base({ tools: 'write', stderrTail: 'quota exceeded', answer: null })).retry).toBe(true);
     expect(classifyFailure(base({ tools: 'full', failure: 'overloaded', answer: '' })).retry).toBe(true);
@@ -44,6 +83,7 @@ describe('classifyFailure', () => {
 
   it('does not retry a plain exit, an empty answer, or a cancel', () => {
     expect(classifyFailure(base({ failure: 'exit 1' })).retry).toBe(false);
+    expect(classifyFailure(base({ exitCode: 69, failure: 'exit 69' }))).toEqual({ retry: false, why: 'not retryable' });
     expect(classifyFailure(base({ exitCode: 0, failure: 'exited cleanly but produced no answer' })).retry).toBe(false);
     expect(classifyFailure(base({ killedBy: 'cancel', stderrTail: 'rate limit', failure: 'quota' }))).toEqual({ retry: false, why: 'cancelled' });
   });
