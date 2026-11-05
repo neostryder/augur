@@ -43,6 +43,12 @@ Before Claude Code starts a subagent, it runs any PreToolUse hooks. The plugin's
 
 The hook is off until you turn it on. Open `/plugin`, choose Augur and turn on Note Augur's pick before each subagent. The hook sends the service the subagent's one-line description and the session id, and never its prompt. It only adds the note: it never allows, denies or rewrites the call, so your permission settings work as before. If Augur is not running, the hook adds nothing and the subagent starts as usual.
 
+## Live jobs
+
+While Augur jobs are running, the status line adds a count such as `3 jobs (1 stalled)`, and the `augur-jobs` pane lists one row per live job with its route, activity, time since its last output, a stalled marker, and its activity line, stalled jobs first. The pane opens by itself the first time a live job appears in a Claude Code session and stays closed after you close it until the next session; run `/augur-jobs` to open it again. It draws in the terminal, the desktop app, or VS Code, wherever Claude Code places it, and if nothing can draw it yet the command says it is waiting.
+
+The service writes this data to `jobs-live.json` in `~/.augur`, next to `usage.json`. The file holds up to 50 live jobs, newest first, with each job's id, route, activity, state, start time, last activity time, activity line, and stalled flag, and never the prompt or the answer. If the file is missing, malformed, or more than 60 seconds old, the pane shows no jobs.
+
 ## What it reads and writes
 
 The status line and the alerts come from `usage.json` and `alerts.json` in `~/.augur`. Augur reads each provider on its own schedule, every 15 minutes by default, and rewrites `usage.json` each time it does. Dismissing an alert appends a line to `alerts-acks.jsonl` in the same folder. The skills and the hook go through the dispatch service, so they follow the same rules and the same approval setting as the `augur` command and the [MCP server](mcp.md).

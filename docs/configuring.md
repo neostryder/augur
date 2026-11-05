@@ -48,6 +48,10 @@ The idle alert fires for a provider that Augur spends in full when all of its we
 
 Idle time counts back through usage history to the last reading at or above the percent, so a window that has not started counts as idle. The alert waits while the provider's last read failed, its figures are stale, or its status page reports a problem. It names the provider, its usage, the hours idle, and the hours until the reset, repeats at most once a day, and clears when usage climbs past the percent, the window ends, or the provider stops reading ok. Out of the box it goes to the bell and Claude Code, and not to your computer's notifications or a phone's push.
 
+### Stalled jobs
+
+The stall time (`stallMinutes`, 10 minutes by default, minimum 1) sets how long a live job can go without producing output before Augur flags it as stalled. A job counts as stalled only while its process is still alive, and Augur never cancels a stalled job on its own, so you decide whether to cancel it. Set it in the app's Service settings or with `augur config`. Stalled jobs carry a marker on the app's Jobs page, in the terminal app's Jobs tab, and in `augur jobs`.
+
 ## Cogitator catalog
 
 `augur models` and the read-only `augur_models` tool list the live Cogitator entries and roles, with the uses, strengths, and limits of each, plus the ordered chain for each role. Both report when the reading was taken and whether the provider marked it stale. The catalog in `packages/core/src/cogitator-catalog.ts` supplies descriptions for the known Gemmas, the reasoning distill, Apple on-device text, embeddings, transcription, diarization, Laya, prose rewriting, prompt guarding, and image generation. When an entry reports no parameter count, its size stays unknown. Augur never invents a chain, and it does not treat a seed as proof that an entry is installed.
