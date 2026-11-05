@@ -58,7 +58,7 @@ export function rotateWebToken(dir: string): string {
 export type Role = 'owner' | 'agent';
 
 /** What an agent token may call. Everything else, including every request that records a person's word (a prompt, a pick answer, a grade label) and the engine's settings, is the owner's. */
-export const AGENT_METHODS: ReadonlySet<string> = new Set(['ping', 'submit', 'status', 'list', 'events', 'logs', 'result', 'cancel', 'pick', 'pressure', 'balance', 'gate_status', 'gate_report', 'resets', 'routes', 'route_add', 'prose_add', 'prose_list', 'prose_status', 'backlog_add', 'backlog_list', 'backlog_status']);
+export const AGENT_METHODS: ReadonlySet<string> = new Set(['ping', 'submit', 'replay', 'status', 'list', 'events', 'logs', 'result', 'cancel', 'pick', 'pressure', 'balance', 'gate_status', 'gate_report', 'resets', 'routes', 'route_add', 'prose_add', 'prose_list', 'prose_status', 'backlog_add', 'backlog_list', 'backlog_status']);
 
 /** A job request as an agent may make it: it cannot say a person is at the terminal or named the model, and it cannot waive the pick or quota checks. */
 export function attestAgentRequest(req: JobRequest): JobRequest {
@@ -69,7 +69,7 @@ export function attestAgentRequest(req: JobRequest): JobRequest {
 }
 
 /** The calls the web server's dispatch endpoint passes on. They are the agent methods that run and read jobs, and nothing that edits routes or rules. */
-export const HTTP_DISPATCH_METHODS: ReadonlySet<string> = new Set(['submit', 'status', 'list', 'events', 'logs', 'result', 'cancel', 'pick', 'routes']);
+export const HTTP_DISPATCH_METHODS: ReadonlySet<string> = new Set(['submit', 'replay', 'status', 'list', 'events', 'logs', 'result', 'cancel', 'pick', 'routes']);
 
 export class IpcServer {
   private server: net.Server | null = null;
@@ -123,6 +123,10 @@ export class IpcServer {
         if (request?.released !== undefined) throw new Error('Only the service runner may set released.');
         if (role === 'agent' && request?.allow?.includes('unpicked')) throw new Error('An agent cannot skip the pick check.');
         return this.sup.submit(role === 'agent' ? attestAgentRequest(request) : request);
+      }
+      case 'replay': {
+        const caller = role === 'agent' ? attestAgentRequest({ caller: p.caller } as JobRequest).caller : p.caller as JobRequest['caller'];
+        return this.sup.replay(p.job as string, p.route as string, caller, p.parent as JobRequest['parent']);
       }
       case 'alias_refresh': if (role !== 'owner') throw new Error('Alias refresh is for the owner.'); return this.aliasRefresh?.(typeof p.label === 'string' ? p.label : undefined) ?? { error: 'Alias refresh is unavailable.' };
       case 'backlog_add': return this.sup.backlogAdd(p.item, role);

@@ -16,7 +16,7 @@ export interface Caller {
 }
 export interface Lineage { jobId: string; rootJobId: string; depth: number }
 
-/** What a caller asks for. The prompt is delivered to the harness and is not stored unless the service is set to keep prompts. */
+/** The caller can override the service's prompt storage setting for one job. */
 export interface JobRequest {
   route: string;
   activity: ActivityId;
@@ -26,7 +26,7 @@ export interface JobRequest {
   output: OutputMode;
   cwd: string;
   prompt: { text?: string; file?: string };
-  /** Keep this prompt out of the job folder even when prompt persistence is on. */
+  /** True keeps this job's prompt and input files, false discards them, and undefined follows the service setting. */
   persistPrompt?: boolean;
   expectFile?: string;
   effort?: string;
@@ -95,6 +95,7 @@ export interface JobRecord {
   reason: string | null;
   rootJobId: string;
   parentJobId: string | null;
+  replayOf: string | null;
   depth: number;
   caller: Caller;
   named: boolean;
@@ -149,7 +150,7 @@ export interface JobEvent { seq: number; jobId: string | null; at: number; kind:
 export interface Rejection { code: RejectionCode; reason: string }
 export const REJECTION_CODES = ['unknown_route', 'unknown_model', 'model_unreviewed', 'model_paused', 'ask_first', 'activity_not_permitted',
   'data_tier_too_high', 'sandbox_required', 'isolation_required', 'text_only', 'quota_denied', 'no_policy', 'depth_exceeded',
-  'descendants_exceeded', 'adapter_unavailable', 'bad_request', 'delegation_not_granted', 'prompt_too_large', 'pace_denied', 'not_picked', 'read_not_enforceable', 'budget_exhausted', 'jobs_off', 'attachment_rejected'] as const;
+  'descendants_exceeded', 'adapter_unavailable', 'bad_request', 'delegation_not_granted', 'prompt_too_large', 'pace_denied', 'not_picked', 'read_not_enforceable', 'budget_exhausted', 'jobs_off', 'attachment_rejected', 'unknown_job', 'no_saved_prompt', 'job_not_finished', 'inputs_not_replayable'] as const;
 export type RejectionCode = typeof REJECTION_CODES[number];
 
 export type AttachmentKind = 'text' | 'image' | 'audio';

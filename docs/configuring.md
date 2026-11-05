@@ -52,6 +52,12 @@ Idle time counts back through usage history to the last reading at or above the 
 
 The stall time (`stallMinutes`, 10 minutes by default, minimum 1) sets how long a live job can go without producing output before Augur flags it as stalled. A job counts as stalled only while its process is still alive, and Augur never cancels a stalled job on its own, so you decide whether to cancel it. Set it in the app's Service settings or with `augur config`. Stalled jobs carry a marker on the app's Jobs page, in the terminal app's Jobs tab, and in `augur jobs`.
 
+### Keeping prompts
+
+**Keep prompts** (`persistPrompts`) is off by default, so the service deletes a job's prompt and input files as soon as the job has started. When it is on, the service keeps the prompt as `prompt.txt` in the job folder next to the input files. A kept prompt is deleted with its job when retention runs (`retentionDays`, 30 by default).
+
+One request can override the setting. `--keep-prompt` on `augur run`, or `persistPrompt` true in `augur_run`, keeps that job's prompt and input files with the setting off, and `persistPrompt` false discards them with the setting on. A job needs a saved prompt before `augur replay` or `augur_replay` can run it again on another route.
+
 ## Cogitator catalog
 
 `augur models` and the read-only `augur_models` tool list the live Cogitator entries and roles, with the uses, strengths, and limits of each, plus the ordered chain for each role. Both report when the reading was taken and whether the provider marked it stale. The catalog in `packages/core/src/cogitator-catalog.ts` supplies descriptions for the known Gemmas, the reasoning distill, Apple on-device text, embeddings, transcription, diarization, Laya, prose rewriting, prompt guarding, and image generation. When an entry reports no parameter count, its size stays unknown. Augur never invents a chain, and it does not treat a seed as proof that an entry is installed.

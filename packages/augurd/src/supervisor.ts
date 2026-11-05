@@ -22,7 +22,7 @@ import { buildCharter, resolveAmbient, resolveCharterDir } from './charter.js';
 // Route and install failures stay queued; item-specific rule failures end the item.
 export const REJECTION_CATEGORIES = {
   transient: ['model_unreviewed', 'no_policy', 'adapter_unavailable', 'sandbox_required', 'isolation_required', 'text_only', 'read_not_enforceable', 'unknown_route', 'unknown_model', 'model_paused', 'ask_first', 'quota_denied', 'pace_denied', 'not_picked', 'budget_exhausted', 'jobs_off'],
-  permanent: ['activity_not_permitted', 'data_tier_too_high', 'bad_request', 'prompt_too_large', 'attachment_rejected', 'depth_exceeded', 'descendants_exceeded', 'delegation_not_granted'],
+  permanent: ['activity_not_permitted', 'data_tier_too_high', 'bad_request', 'prompt_too_large', 'attachment_rejected', 'depth_exceeded', 'descendants_exceeded', 'delegation_not_granted', 'unknown_job', 'no_saved_prompt', 'job_not_finished', 'inputs_not_replayable'],
 } as const;
 import { loadToolkits } from './toolkits.js';
 import { MAX_HOPS, classifyFailure } from './failover.js';
@@ -34,6 +34,18 @@ import type { ProseItem, ProseStatus } from './prose-queue.js';
 import { appendGate, gateTotals, readGate } from './balance-files.js';
 import { PremiumBacklog } from './premium-backlog.js';
 import type { BacklogItem, BacklogStatus } from './premium-backlog.js';
+
+export const REPLAY_TEXT = {
+  unknownJob: 'No job has that id.',
+  noSavedPrompt: 'This job has no saved prompt to replay.',
+  notFinished: 'This job has not finished yet.',
+  inputs: (items: string[]) => `Replay cannot reproduce ${items.join(', ')} yet.`,
+  inputFile: (name: string) => `input file ${name}`,
+  schema: 'response schema',
+  missingInputs: 'missing input details',
+  badPersistence: 'persistPrompt must be true or false.',
+  badReplay: 'Replay needs a job, a route, and a caller.',
+};
 
 export interface SupervisorDeps {
   store: Store; config: ServiceConfig; dir: string; adapters: Map<string, Adapter>;
@@ -93,7 +105,7 @@ const CONVERSATION_NAME = /^[A-Za-z0-9._-]{1,64}$/;
 
 interface RunnerResult { exitCode: number | null; signal?: string | null; killedBy: 'cancel' | 'timeout' | null; endedAt: number; spawnError?: string }
 interface JobFile { command: string; args: string[]; cwd: string; stdin: 'prompt' | 'none'; timeoutS: number | null; jobhost: string | null; env: Record<string, string>;
-  files: NonNullable<LaunchPlan['files']>; promptArgs: number[]; redact: boolean; scope?: string | null; scopeEnv?: Record<string, string> }
+  files: NonNullable<LaunchPlan['files']>; promptArgs: number[]; redact: boolean; replayInputs?: string[]; inputFiles?: string[]; scope?: string | null; scopeEnv?: Record<string, string> }
 
 /** What systemd-run and systemctl need to reach the user's systemd. A job's own environment leaves these out, so the runner is handed them. */
 export const SCOPE_ENV = ['XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS'] as const;
@@ -227,15 +239,15 @@ export class Supervisor {
    * Submits to the route named. When that route cannot take the job for a reason that may pass, each fallback route is tried in order, and every one is
    * checked against every rule as if it had been asked for, so a fallback never gets around a data tier, a pick or a pause. `failover: false` keeps the job put.
    */
-  submit(input: JobRequest, routeOverride?: RouteConfig): SubmitResult {
+  submit(input: JobRequest, routeOverride?: RouteConfig, replayOf: string | null = null): SubmitResult {
     const off = this.d.jobsOff?.() ?? null;
     if (off) return reject('jobs_off', off);
-    const first = this.submitTo(input, undefined, routeOverride);
+    const first = this.submitTo(input, undefined, routeOverride, replayOf);
     // A named conversation stays on the route it was opened on, including when that route refuses the job.
     if (!('rejected' in first) || input.failover === false || input.conversation || !Supervisor.FAILOVER.has(first.rejected.code)) return first;
     for (const next of this.d.routes()?.[input.route]?.fallback ?? []) {
       if (next === input.route) continue;
-      const r = this.submitTo({ ...input, route: next });
+      const r = this.submitTo({ ...input, route: next }, undefined, undefined, replayOf);
       if ('rejected' in r) continue;
       const note = `${input.route} could not take the job (${first.rejected.reason}), so ${next} did.`;
       this.d.store.event(r.id, 'failover', `${input.route} to ${next}: ${first.rejected.code}`, this.now());
@@ -244,10 +256,34 @@ export class Supervisor {
     return first;
   }
 
-  private submitTo(input: JobRequest, chain?: { req: JobRequest; hops: string[] }, routeOverride?: RouteConfig): SubmitResult {
+  replay(job: string, route: string, caller: JobRequest['caller'], parent?: JobRequest['parent']): SubmitResult {
+    if (typeof job !== 'string' || !job || typeof route !== 'string' || !route || !caller || typeof caller !== 'object') return reject('bad_request', REPLAY_TEXT.badReplay);
+    const original = this.d.store.get(job);
+    if (!original) return reject('unknown_job', REPLAY_TEXT.unknownJob);
+    if (!isTerminal(original.state)) return reject('job_not_finished', REPLAY_TEXT.notFinished);
+    let prompt: string;
+    try { prompt = readFileSync(join(this.jobDir(job), 'prompt.txt'), 'utf8'); } catch { return reject('no_saved_prompt', REPLAY_TEXT.noSavedPrompt); }
+    const file = readJobFile(join(this.jobDir(job), 'job.json'));
+    const inputs = file ? [...(file.replayInputs ?? []), ...file.files.map(f => f.name === 'output-schema.json' ? REPLAY_TEXT.schema : REPLAY_TEXT.inputFile(f.name))] : [REPLAY_TEXT.missingInputs];
+    // Older saved jobs recorded attachments in the launch arguments only.
+    const attachedAt = file?.args.indexOf('--attachments-json') ?? -1;
+    if (file?.replayInputs === undefined && attachedAt >= 0) {
+      try { for (const a of JSON.parse(file!.args[attachedAt + 1]!) as Array<{ path: string }>) inputs.push(REPLAY_TEXT.inputFile(basename(a.path))); }
+      catch { inputs.push(REPLAY_TEXT.missingInputs); }
+    }
+    if (inputs.length) return reject('inputs_not_replayable', REPLAY_TEXT.inputs([...new Set(inputs)]));
+    const internal = this.d.store.internal(job);
+    return this.submit({ route, activity: original.activity, dataTier: original.dataTier, tools: original.tools, output: original.output, cwd: original.cwd,
+      prompt: { text: prompt }, persistPrompt: true, caller, ...(parent ? { parent } : {}),
+      ...(internal?.timeoutS != null ? { timeoutS: internal.timeoutS } : {}), ...(internal?.expectFile != null ? { expectFile: internal.expectFile } : {}),
+    }, undefined, job);
+  }
+
+  private submitTo(input: JobRequest, chain?: { req: JobRequest; hops: string[] }, routeOverride?: RouteConfig, replayOf: string | null = null): SubmitResult {
     let req = input;
     const bad = this.validate(req);
     if (bad) return reject('bad_request', bad);
+    req = { ...req, persistPrompt: req.persistPrompt ?? this.d.config.persistPrompts };
     const routes = this.d.routes();
     const route = req.route === input.route && routeOverride ? routeOverride : routes?.[req.route];
     if (!route) return reject('unknown_route', `Route ${req.route} is not in routes.json.`);
@@ -328,25 +364,29 @@ export class Supervisor {
       engine: adapter.charterEngine, tools: req.tools, cwd: req.cwd, packs: [...(req.packs ?? []), ...(kit?.pack ? [kit.pack] : [])],
     });
     const sent = schemaPrompt(charter?.text ? charter.text + prompt : prompt, req.schema, adapter.id);
+    const inputFiles = req.persistPrompt ? attached.items.map((a, i) => `input-${i}-${basename(a.path)}`) : [];
+    const attachments = attached.items.map((a, i) => inputFiles[i] ? { ...a, path: join(dir, inputFiles[i]!) } : a);
     let plan: LaunchPlan;
-    try { plan = adapter.plan(req, route, { jobDir: dir, prompt: sent, workspace, ambient: this.d.config.runner.ambient, ...(conv.resume ? { resume: conv.resume } : {}), ...(attached.items.length ? { attachments: attached.items } : {}), ...(kit && adapter.toolkit ? { toolkit: kit } : {}) }); } catch (e) { return reject('bad_request', `Route ${req.route}: ${(e as Error).message}`); }
+    try { plan = adapter.plan(req, route, { jobDir: dir, prompt: sent, workspace, ambient: this.d.config.runner.ambient, ...(conv.resume ? { resume: conv.resume } : {}), ...(attachments.length ? { attachments } : {}), ...(kit && adapter.toolkit ? { toolkit: kit } : {}) }); } catch (e) { return reject('bad_request', `Route ${req.route}: ${(e as Error).message}`); }
     if (req.schema && !plan.files?.some(f => f.name === 'output-schema.json')) plan.files = [...(plan.files ?? []), { name: 'output-schema.json', content: JSON.stringify(req.schema) }];
     if (process.platform === 'win32') {
       const len = plan.command.length + 1 + plan.args.reduce((n, a) => n + a.length + 3, 0);
       if (len > MAX_COMMAND_LINE) return reject('prompt_too_large', `The command for ${adapter.id} would be ${len} characters, over the Windows limit of about 32767. This harness takes its prompt as an argument.`);
     }
     mkdirSync(dir, { recursive: true });
+    for (let i = 0; i < inputFiles.length; i++) cpSync(attached.items[i]!.path, join(dir, inputFiles[i]!));
     const file: JobFile = { command: plan.command, args: plan.args, cwd: plan.cwd, stdin: plan.stdin === null ? 'none' : 'prompt', timeoutS: req.timeoutS ?? null,
-      jobhost: this.d.config.jobhostPath, env: plan.env, files: plan.files ?? [], promptArgs: plan.promptArgs ?? [], redact: !this.d.config.persistPrompts,
+      jobhost: this.d.config.jobhostPath, env: plan.env, files: plan.files ?? [], promptArgs: plan.promptArgs ?? [], redact: !req.persistPrompt, inputFiles,
+      replayInputs: attached.items.map(a => REPLAY_TEXT.inputFile(basename(a.path))),
       ...((this.d.scopes ?? systemdScopes)()
         ? { scope: `augur-job-${id}`, scopeEnv: Object.fromEntries(SCOPE_ENV.flatMap(k => process.env[k] ? [[k, process.env[k] as string]] : [])) }
         : { scope: null }) };
     writeFileSync(join(dir, 'job.json'), JSON.stringify(file));
     if (plan.stdin !== null) writeFileSync(join(dir, 'prompt.in'), plan.stdin);
-    if (this.d.config.persistPrompts && req.persistPrompt !== false) writeFileSync(join(dir, 'prompt.txt'), prompt);
+    if (req.persistPrompt) writeFileSync(join(dir, 'prompt.txt'), prompt);
     const createdAt = this.now();
     this.d.store.insert({ id, route: req.route, adapter: adapter.id, activity: req.activity, dataTier: req.dataTier, tools: req.tools, output: req.output, cwd: req.cwd,
-      createdAt, rootJobId: root ?? id, parentJobId: parentId, depth, caller: req.caller, named: !!req.named, expectFile: req.expectFile ?? null,
+      createdAt, rootJobId: root ?? id, parentJobId: parentId, replayOf, depth, caller: req.caller, named: !!req.named, expectFile: req.expectFile ?? null,
       timeoutS: req.timeoutS ?? null, harnessVersion: null, workspace, conversation: req.conversation ?? null, turn: conv.turn ?? null, released: req.released === true });
     if (req.conversation && conv.resume) {
       if (!conv.existing) this.d.store.insertConversation({
@@ -814,6 +854,7 @@ export class Supervisor {
   }
 
   private validate(req: JobRequest): string | null {
+    if (req.persistPrompt !== undefined && typeof req.persistPrompt !== 'boolean') return REPLAY_TEXT.badPersistence;
     const badOptions = validateRunOptions(req);
     if (badOptions) return badOptions;
     if (!ACTIVITIES.includes(req.activity)) return 'Unknown activity.';
@@ -1138,11 +1179,13 @@ export class Supervisor {
 
   private cleanup(id: string): void {
     this.outputSeen.delete(id);
-    const request = this.submitted.get(id)?.req;
     this.submitted.delete(id);
-    if (this.d.config.persistPrompts && request?.persistPrompt !== false) return;
-    try { unlinkSync(join(this.jobDir(id), 'prompt.in')); } catch { /* already read by the runner */ }
     const file = readJobFile(join(this.jobDir(id), 'job.json')), rec = this.d.store.get(id);
+    if (file && !file.redact) return;
+    if (file) atomicWrite(join(this.jobDir(id), 'job.json'), JSON.stringify({ ...file,
+      args: file.args.map((a, i) => file.promptArgs.includes(i) ? '<prompt>' : a), files: file.files.map(f => ({ ...f, content: '' })),
+    }));
+    try { unlinkSync(join(this.jobDir(id), 'prompt.in')); } catch { /* already read by the runner */ }
     for (const f of file?.files ?? []) {
       try { unlinkSync(f.inWorkspace && rec?.workspace ? join(rec.workspace, f.name) : join(this.jobDir(id), f.name)); } catch { /* not written or already gone */ }
     }

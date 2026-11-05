@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { call, readToken, ServiceError } from '../src/client.js';
 import { startService } from '../src/main.js';
-import { AGENT_METHODS, HTTP_DISPATCH_METHODS, attestAgentRequest } from '../src/ipc.js';
+import { AGENT_METHODS, HTTP_DISPATCH_METHODS, IpcServer, attestAgentRequest } from '../src/ipc.js';
 import { JOBHOST, makeEnv, request, sleep } from './harness.js';
 import type { Env } from './harness.js';
 
@@ -34,6 +34,18 @@ describe('the dispatch calls the web server may pass on', () => {
   it('are agent calls that run and read jobs, and never edit routes or rules', () => {
     for (const m of HTTP_DISPATCH_METHODS) expect(AGENT_METHODS.has(m), m).toBe(true);
     for (const m of ['route_add', 'balance', 'pick_answer', 'human_prompt', 'engine_call']) expect(HTTP_DISPATCH_METHODS.has(m), m).toBe(false);
+  });
+
+  it('validates prompt storage and attests replay callers on the web dispatch path', async () => {
+    const { e, svc, o } = await boot();
+    const server = new IpcServer(svc.supervisor, svc.store, '', () => null);
+    const bad = await server.dispatch('submit', request({ cwd: e.root, persistPrompt: 'true' as never }));
+    expect(bad).toMatchObject({ rejected: { code: 'bad_request' } });
+    const original = await server.dispatch('submit', request({ cwd: e.root, text: 'ENV CODEX_HOME', persistPrompt: true })) as { id: string };
+    expect(original).toHaveProperty('id');
+    await finished(o, original.id);
+    const replay = await server.dispatch('replay', { job: original.id, route: 'raw', caller: { kind: 'cli', interactive: true, session: 'web-session' } }) as { id: string };
+    expect(await finished(o, replay.id)).toMatchObject({ state: 'completed', replayOf: original.id, caller: { kind: 'cli', intent: 'automated', session: 'web-session' } });
   });
 });
 
@@ -139,6 +151,19 @@ describe('the control endpoint', () => {
     expect((await call('result', { id }, o))!.answer).toBe('final message');
     expect((await call('list', { limit: 5 }, o)).map(j => j.id)).toContain(id);
     expect(await call('status', { id: 'missing' }, o)).toBeNull();
+  });
+
+  it('keeps and replays a job through the pipe for an attested caller', async () => {
+    const { o, e } = await boot(), agent = { ...o, role: 'agent' as const };
+    const original = await call('submit', request({ cwd: e.root, text: 'ENV CODEX_HOME', persistPrompt: true }), o) as { id: string };
+    await finished(o, original.id);
+    const caller = { kind: 'cli' as const, interactive: true, session: 'replay-session' };
+    const replay = await call('replay', { job: original.id, route: 'raw', caller }, agent) as { id: string };
+    expect(replay).toHaveProperty('id');
+    expect(await finished(o, replay.id)).toMatchObject({ state: 'completed', replayOf: original.id, caller: { kind: 'cli', session: 'replay-session', intent: 'automated' } });
+    expect(readFileSync(join(e.dir, 'jobs', replay.id, 'prompt.txt'), 'utf8')).toBe('ENV CODEX_HOME');
+    expect((await call('status', { id: original.id }, o))?.replayOf).toBeNull();
+    expect(await call('replay', { job: original.id, route: 'pub', caller }, agent)).toMatchObject({ rejected: { code: 'data_tier_too_high' } });
   });
 
   it('records text lengths and labels each figure in the accounting answer, using the owner\'s rate card', async () => {

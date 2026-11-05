@@ -4,7 +4,7 @@ import type { JobRecord } from '../src/spec.js';
 
 const job = (o: Partial<JobRecord> & { id: string }): JobRecord => ({
   state: 'completed', route: 'luna', adapter: 'exec', activity: 'write_code', dataTier: 'internal', tools: 'read', output: 'text_only', cwd: '/w', createdAt: 0, startedAt: 0, endedAt: 1,
-  exitCode: 0, reason: null, rootJobId: o.id, parentJobId: null, depth: 0, caller: { kind: 'cli' }, named: false, harnessVersion: null, usage: null, workspace: null, patch: null, ...o,
+  exitCode: 0, reason: null, rootJobId: o.id, parentJobId: null, replayOf: null, depth: 0, caller: { kind: 'cli' }, named: false, harnessVersion: null, usage: null, workspace: null, patch: null, ...o,
 }) as JobRecord;
 const reported = (input: number, output: number, extra: object = {}) => ({ inputTokens: input, outputTokens: output, source: 'reported' as const, ...extra });
 /** Ten jobs whose answer runs 4 characters per token, give or take a little. */

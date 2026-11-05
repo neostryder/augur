@@ -52,6 +52,7 @@ export interface Methods {
   resets: { params: ResetQuery | undefined; result: ResetLedger };
   ping: { params: undefined; result: { pid: number; version: number; startedAt: number } };
   submit: { params: JobRequest; result: { id: string; warnings: string[] } | { rejected: Rejection } };
+  replay: { params: { job: string; route: string; caller: JobRequest['caller']; parent?: JobRequest['parent'] }; result: Methods['submit']['result'] };
   status: { params: { id: string }; result: JobRecord | null };
   list: { params: { state?: JobState; running?: boolean; root?: string; limit?: number }; result: JobRecord[] };
   /** Named conversations, newest first. */

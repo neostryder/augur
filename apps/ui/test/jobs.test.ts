@@ -4,7 +4,7 @@ import { JOBS_ACTIVITY_TEXT, duration, renderJobs, type JobsModel } from '../src
 
 const job = (over: Partial<JobRecord> = {}): JobRecord => ({
   id: '0d26110efa99', state: 'running', route: 'luna', adapter: 'codex-exec', activity: 'write_code', dataTier: 'internal', tools: 'read', output: 'text_only',
-  cwd: 'C:/work', createdAt: 1_000, startedAt: 2_000, endedAt: null, exitCode: null, reason: null, rootJobId: '0d26110efa99', parentJobId: null, depth: 0,
+  cwd: 'C:/work', createdAt: 1_000, startedAt: 2_000, endedAt: null, exitCode: null, reason: null, rootJobId: '0d26110efa99', parentJobId: null, replayOf: null, depth: 0,
   caller: { kind: 'cli', label: 'claude' }, named: false, harnessVersion: null, usage: null, workspace: null, patch: null, ...over,
 });
 const model = (over: Partial<JobsModel> = {}): JobsModel => ({ service: { running: true, pid: 4242 }, serviceNote: '', unavailable: '', jobs: [], accounted: {}, sel: null, detail: null, busy: false, ...over });
