@@ -12,6 +12,7 @@ export const LIMIT_PATTERNS: readonly string[] = [
   'rate limit',
   'rate-limit',
   'quota',
+  'allowance',
   'usage limit',
   '429',
   'overloaded',
@@ -45,7 +46,8 @@ export function classifyFailure(input: FailureInput): { retry: boolean; why: str
   if (input.spawnError) return { retry: true, why: 'spawn error' };
   // A gateway that gave the model to a person's request ran nothing of this job, so it is safe to move whatever the tool tier.
   if (/(?:^|\W)preempted:/.test(`${input.failure ?? ''}\n${input.stderrTail ?? ''}`)) return { retry: true, why: 'preempted' };
-  if (input.killedBy === 'timeout') return { retry: input.tools === 'read' || input.tools === 'none', why: 'timed out' };
+  if (input.killedBy === 'timeout' || /no finished (?:reply|picture) from/i.test(`${input.failure ?? ''}\n${input.stderrTail ?? ''}`)) return { retry: input.tools === 'read' || input.tools === 'none', why: 'timed out' };
+  if (/the connection to the browser was lost/i.test(`${input.failure ?? ''}\n${input.stderrTail ?? ''}`)) return { retry: input.tools === 'read' || input.tools === 'none', why: 'connection lost' };
   if (limited(`${input.failure ?? ''}\n${input.stderrTail ?? ''}`)) {
     // A write or full job may have changed files. Retry a limit only when it left no answer and no recorded change.
     if (input.tools === 'write' || input.tools === 'full') {
