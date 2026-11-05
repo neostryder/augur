@@ -72,6 +72,8 @@ To see your TypeSafe balance, open Jev in settings and choose Sign in. Augur kee
 
 To count your Claude limit resets, open Claude in settings, turn on Read resets from claude.ai and choose Sign in. Augur keeps that session in its own window and uses it only to read your usage page, about every six hours. Without the sign-in, enter the count under Limit resets in hand.
 
+If the sign-in window closes within 90 seconds, before it reaches your identity provider and before you sign in, Augur reopens it once, one second later. Whenever the window closes without a signed-in reading, the settings and setup screens show a notice that names the site and says whether the window was reopened.
+
 ## Signing in to Claude and Codex
 
 Augur can use the login already held by Claude Code or Codex, or keep its own separate session for either provider. This is useful on a computer without the provider CLI login and prevents Augur and the CLI from rotating the same single-use refresh token and signing each other out.

@@ -96,8 +96,27 @@ struct CachedReading {
     after_sign_in: bool,
 }
 
+struct SignInWindow {
+    opened: Instant,
+    seen_off_site: AtomicBool,
+    signed_in: AtomicBool,
+    retry: bool,
+}
+
+impl SignInWindow {
+    fn should_reopen(&self) -> bool {
+        !self.retry
+            && closed_early(
+                self.opened.elapsed(),
+                self.seen_off_site.load(Ordering::SeqCst),
+                self.signed_in.load(Ordering::SeqCst),
+            )
+    }
+}
+
 #[derive(Default)]
 pub struct WebSessions {
+    sign_ins: Mutex<HashMap<String, Arc<SignInWindow>>>,
     pending: Mutex<HashMap<String, oneshot::Sender<Value>>>,
     cache: Mutex<HashMap<String, CachedReading>>,
     // An update holds this through installation and restart, after existing sign-ins have ended.
@@ -109,6 +128,10 @@ pub async fn web_session_sign_in(app: tauri::AppHandle, site: String) -> Result<
     trace(&app, &format!("sign-in requested site={site}"));
     let sessions = app.state::<WebSessions>();
     let _gate = sessions.window_gate.lock().await;
+    open_sign_in(&app, site, false)
+}
+
+fn open_sign_in(app: &tauri::AppHandle, site: String, retry: bool) -> Result<(), String> {
     let spec = self::site(&site).ok_or("Unknown site")?;
     let label = format!("signin-{site}");
     if let Some(window) = app.get_webview_window(&label) {
@@ -121,8 +144,8 @@ pub async fn web_session_sign_in(app: tauri::AppHandle, site: String) -> Result<
         .parse()
         .map_err(|_| "Bad sign-in address")?;
     let window = with_popup_args(
-        &app,
-        WebviewWindowBuilder::new(&app, &label, WebviewUrl::External(url)),
+        app,
+        WebviewWindowBuilder::new(app, &label, WebviewUrl::External(url)),
     )
     .title(spec.title)
     .inner_size(520.0, 760.0)
@@ -134,37 +157,80 @@ pub async fn web_session_sign_in(app: tauri::AppHandle, site: String) -> Result<
     .build()
     .map_err(|e| {
         trace(
-            &app,
+            app,
             &format!("sign-in window build failed site={site} error={e}"),
         );
         e.to_string()
     })?;
     trace(
-        &app,
+        app,
         &format!("window opened site={site} start_url={}", spec.sign_in_url),
     );
-    let succeeded = Arc::new(AtomicBool::new(false));
+    let sign_in = Arc::new(SignInWindow {
+        opened: Instant::now(),
+        seen_off_site: AtomicBool::new(false),
+        signed_in: AtomicBool::new(false),
+        retry,
+    });
+    app.state::<WebSessions>()
+        .sign_ins
+        .lock()
+        .map_err(|e| e.to_string())?
+        .insert(site.clone(), sign_in.clone());
     let destroyed = Arc::new(AtomicBool::new(false));
     let handle = app.clone();
     let closing_site = site.clone();
-    let closing_succeeded = succeeded.clone();
+    let closing_sign_in = sign_in.clone();
     let closing_destroyed = destroyed.clone();
     // A successful reading is already cached. Only a manual close needs another refresh.
     window.on_window_event(move |event| match event {
         WindowEvent::Destroyed => {
             closing_destroyed.store(true, Ordering::SeqCst);
-            let succeeded = closing_succeeded.load(Ordering::SeqCst);
+            let succeeded = closing_sign_in.signed_in.load(Ordering::SeqCst);
+            let elapsed = closing_sign_in.opened.elapsed();
+            let seen_off_site = closing_sign_in.seen_off_site.load(Ordering::SeqCst);
+            let sessions = handle.state::<WebSessions>();
+            if let Ok(mut sign_ins) = sessions.sign_ins.lock() {
+                sign_ins.remove(&closing_site);
+            }
             trace(
                 &handle,
-                &format!("window destroyed site={closing_site} succeeded={succeeded}"),
+                &format!(
+                    "window destroyed site={closing_site} succeeded={succeeded} elapsed={} seen_off_site={seen_off_site} retry={}",
+                    elapsed.as_secs(), closing_sign_in.retry
+                ),
             );
             if should_clear_cache_on_destroy(succeeded) {
                 if let Ok(mut cache) = handle.state::<WebSessions>().cache.lock() {
                     cache.remove(&closing_site);
                 }
-                if let Some(popup) = handle.get_webview_window("popup") {
-                    let _ = popup.emit("refresh-requested", ());
+                let reopen = closing_sign_in.should_reopen();
+                if reopen {
+                    eprintln!(
+                        "Sign-in window closed early site={closing_site} elapsed={}s; retrying once",
+                        elapsed.as_secs()
+                    );
                 }
+                let app = handle.clone();
+                let site = closing_site.clone();
+                tauri::async_runtime::spawn(async move {
+                    let mut reopened = false;
+                    if reopen {
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        let sessions = app.state::<WebSessions>();
+                        let _gate = sessions.window_gate.lock().await;
+                        if app.get_webview_window(&format!("signin-{site}")).is_none() {
+                            reopened = open_sign_in(&app, site.clone(), true).is_ok();
+                        }
+                    }
+                    if let Some(popup) = app.get_webview_window("popup") {
+                        let _ = popup.emit(
+                            "web-session-interrupted",
+                            serde_json::json!({ "site": site, "reopened": reopened }),
+                        );
+                        let _ = popup.emit("refresh-requested", ());
+                    }
+                });
             }
         }
         WindowEvent::Focused(focused) => {
@@ -187,7 +253,6 @@ pub async fn web_session_sign_in(app: tauri::AppHandle, site: String) -> Result<
     let watched = site;
     let home = Url::parse(spec.sign_in_url).ok();
     tauri::async_runtime::spawn(async move {
-        let mut seen_off_site = false;
         let mut settled = 0;
         let mut last_url = None;
         let mut last_url_change = Instant::now();
@@ -239,13 +304,13 @@ pub async fn web_session_sign_in(app: tauri::AppHandle, site: String) -> Result<
                 last_url = Some(current.clone());
             }
             if current.host_str() != home.host_str() {
-                seen_off_site = true;
+                sign_in.seen_off_site.store(true, Ordering::SeqCst);
                 settled = 0;
                 continue;
             }
             // Redirects can pass through several pages on the site. Require two consecutive checks
             // on post-sign-in pages, including after an unsuccessful reading.
-            if !landed_after_sign_in(&current, seen_off_site) {
+            if !landed_after_sign_in(&current, sign_in.seen_off_site.load(Ordering::SeqCst)) {
                 settled = 0;
                 continue;
             }
@@ -257,7 +322,7 @@ pub async fn web_session_sign_in(app: tauri::AppHandle, site: String) -> Result<
                 &watcher,
                 &format!("settled and about to read site={watched}"),
             );
-            let reading = read_site(&watcher, &watched, Some(&destroyed), true).await;
+            let reading = read_site(&watcher, &watched, Some(&destroyed), true, true).await;
             match &reading {
                 Ok(Some(value)) => {
                     let signed_in = value.get("signedIn") == Some(&Value::Bool(true));
@@ -288,7 +353,7 @@ pub async fn web_session_sign_in(app: tauri::AppHandle, site: String) -> Result<
                 return;
             }
             if reading_succeeded(&reading) {
-                succeeded.store(true, Ordering::SeqCst);
+                sign_in.signed_in.store(true, Ordering::SeqCst);
                 trace(
                     &watcher,
                     &format!("destroying window after success site={watched}"),
@@ -312,7 +377,7 @@ pub async fn web_session_read(
     site: String,
     fresh: Option<bool>,
 ) -> Result<Option<Value>, String> {
-    read_site(&app, &site, None, fresh.unwrap_or(false)).await
+    read_site(&app, &site, None, fresh.unwrap_or(false), false).await
 }
 
 async fn read_site(
@@ -320,12 +385,13 @@ async fn read_site(
     site: &str,
     sign_in_destroyed: Option<&AtomicBool>,
     skip_cache: bool,
+    watching_sign_in: bool,
 ) -> Result<Option<Value>, String> {
     let site = site.to_string();
     // A reading loads the account page in a second window on the same profile. While the sign-in window is open that
     // page redirects to the sign-in flow, and the second flow replaces the first one's cookie, so the first fails
     // with "We couldn't verify your browser". The sign-in window's own watcher is the only reader until it closes.
-    if sign_in_destroyed.is_none() && app.get_webview_window(&format!("signin-{site}")).is_some() {
+    if !watching_sign_in && app.get_webview_window(&format!("signin-{site}")).is_some() {
         trace(
             app,
             &format!("read skipped site={site} sign-in window exists"),
@@ -348,7 +414,7 @@ async fn read_site(
         let signed_in = cached.value.get("signedIn") == Some(&Value::Bool(true));
         let keep = if signed_in {
             spec.cache_for
-        } else if sign_in_destroyed.is_some() {
+        } else if watching_sign_in {
             Duration::ZERO
         } else {
             SIGNED_OUT_CACHE_FOR
@@ -358,7 +424,7 @@ async fn read_site(
             keep,
             skip_cache,
             cached.after_sign_in,
-            sign_in_destroyed.is_some(),
+            watching_sign_in,
         ) {
             if skip_cache {
                 cached.after_sign_in = false;
@@ -444,7 +510,7 @@ async fn read_site(
             CachedReading {
                 at: Instant::now(),
                 value: value.clone(),
-                after_sign_in: sign_in_destroyed.is_some()
+                after_sign_in: watching_sign_in
                     && value.get("signedIn") == Some(&Value::Bool(true)),
             },
         );
@@ -480,6 +546,10 @@ fn should_read(
 
 fn reading_succeeded(reading: &Result<Option<Value>, String>) -> bool {
     matches!(reading, Ok(Some(value)) if value.get("signedIn") == Some(&Value::Bool(true)))
+}
+
+fn closed_early(elapsed: Duration, seen_off_site: bool, signed_in: bool) -> bool {
+    elapsed < Duration::from_secs(90) && !seen_off_site && !signed_in
 }
 
 fn should_clear_cache_on_destroy(succeeded: bool) -> bool {
@@ -642,6 +712,41 @@ mod tests {
         assert!(reading_succeeded(&Ok(Some(serde_json::json!({
             "signedIn": true, "balance": 0,
         })))));
+    }
+
+    #[test]
+    fn only_an_unsigned_window_on_its_original_host_closes_early() {
+        assert!(closed_early(Duration::ZERO, false, false));
+        assert!(closed_early(
+            Duration::from_secs(90) - Duration::from_nanos(1),
+            false,
+            false,
+        ));
+        for elapsed in [Duration::ZERO, Duration::from_secs(89)] {
+            assert!(!closed_early(elapsed, true, false));
+            assert!(!closed_early(elapsed, false, true));
+            assert!(!closed_early(elapsed, true, true));
+        }
+    }
+
+    #[test]
+    fn a_window_that_lived_ninety_seconds_or_longer_does_not_close_early() {
+        for elapsed in [Duration::from_secs(90), Duration::from_secs(120)] {
+            assert!(!closed_early(elapsed, false, false));
+        }
+    }
+
+    #[test]
+    fn a_retried_window_never_reopens_again() {
+        let mut window = SignInWindow {
+            opened: Instant::now(),
+            seen_off_site: AtomicBool::new(false),
+            signed_in: AtomicBool::new(false),
+            retry: false,
+        };
+        assert!(window.should_reopen());
+        window.retry = true;
+        assert!(!window.should_reopen());
     }
 
     #[test]
