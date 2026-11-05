@@ -11,6 +11,10 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 - [Visible] [UI] **The Jobs page, the terminal Jobs tab, and `augur jobs` show each live job's last activity and a stalled marker.** The activity line sums up the job's latest output in at most 120 characters, such as the command a model is running, and a job is stalled when its process is alive but has produced no output for `stallMinutes` (10 by default, minimum 1, set in Service settings or `augur config`). Augur only flags a stalled job and never cancels it, and the new Running filter (`augur jobs --running`) lists only queued, awaiting-approval, running, and cancelling jobs.
 - [Visible] [Platform] **The Claude Code plugin shows live Augur jobs.** The status line adds the live job count with stalled jobs, such as `3 jobs (1 stalled)`, and the `augur-jobs` pane lists one row per job with stalled jobs first. The pane opens the first time a live job appears in a session, and `/augur-jobs` opens it again. The service writes `jobs-live.json` in `~/.augur` for the plugin, with up to 50 live jobs and never the prompt or the answer.
 
+### Changed
+
+- [Internal] [Providers] **The `window destroyed` line in `signin.log` now records the sign-in window's last address and whether a close was requested.** `last_host=` and `last_path=` hold the last address the watcher saw, without the query string or fragment, so a page that closes in under one watcher check is not captured. `close_requested=` is true when a close request came before the window was destroyed, and this tells a person closing the window apart from the page closing itself.
+
 ### Fixed
 
 - [Visible] [Providers] **A sign-in window that closes by itself within seconds of opening now reopens once.** Before, the provider's reading stayed missing with no message until you tried again. A window that closes within 90 seconds, before it reaches another host and without a signed-in reading, reopens one second later, and the settings and setup screens now show a notice naming the site whenever a sign-in window closes without a signed-in reading.
