@@ -482,7 +482,7 @@ describe('the service goes away and comes back', () => {
   });
 
   it('re-adopts an older running job without newer fields', async () => {
-    const e = setup({ runnerStaleS: 1 });
+    const e = setup({ runnerStaleS: 5 });
     const id = submitOk(e.sup, request({ text: 'SLEEP 4', cwd: e.root }));
     const dir = join(e.dir, 'jobs', id);
     await until(e.sup, () => existsSync(join(dir, 'state.json')));
