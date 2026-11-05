@@ -3,6 +3,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES } from '@augur/core';
 import { z } from 'zod';
 import type { ToolResult, Tools } from './tools.js';
+import { REPLAY_TEXT } from './tools.js';
 
 export const INSTRUCTIONS = [
   'Augur runs work on other models under the rules its owner set. List the models, pick one for the task, then run it.',
@@ -15,6 +16,7 @@ export const INSTRUCTIONS = [
 
 const out = (r: ToolResult) => ({ content: [{ type: 'text' as const, text: r.text }], ...(r.data ? { structuredContent: r.data } : {}), ...(r.isError ? { isError: true } : {}) });
 const runSchema = z.object({
+  persistPrompt: z.boolean().optional().describe(REPLAY_TEXT.persistPrompt),
   route: z.string().describe('A route name from augur_pick or augur_models.'),
   prompt: z.string().describe('The full prompt for the model.'),
   activity: z.enum(ACTIVITIES).describe('What the work is.'),
@@ -70,6 +72,11 @@ export function buildServer(tools: Tools, version: string): McpServer {
     description: 'Runs a prompt on a route and returns the answer. It waits for the job up to wait_s seconds; a longer job keeps running and is read later with augur_job. Tools default to read only and output to text.',
     inputSchema: runSchema,
   }, async (a) => out(await tools.run(a)));
+
+  server.registerTool('augur_replay', {
+    title: REPLAY_TEXT.title, description: REPLAY_TEXT.description,
+    inputSchema: { job: z.string().describe(REPLAY_TEXT.job), route: z.string().describe(REPLAY_TEXT.route) },
+  }, async (a) => out(await tools.replay(a)));
 
   server.registerTool('augur_job', {
     title: 'Read a job', annotations: readOnly,

@@ -10,6 +10,17 @@ import type { JobRecord, JobRequest, ProseAddParams, ProseQueueStatus, ProseStat
 
 export interface ToolResult { text: string; isError?: boolean; data?: Record<string, unknown> }
 
+export const REPLAY_TEXT = {
+  title: 'Replay a job',
+  description: 'Runs a finished job again on another route, using its saved prompt and the same job settings. The new job goes through the usual pick, rules, data tier, and route limits, and can be refused like any request. Jobs that used input files or a response schema cannot be replayed.',
+  job: 'Id of the finished job to replay.',
+  route: 'Route to run the new job on.',
+  persistPrompt: "true keeps this job's prompt and input files, false discards them, and leaving it out follows the Keep prompts setting.",
+  started: (id: string) => `Replay started as job ${id}.`,
+  rejected: (code: string, reason: string) => `Replay refused (${code}): ${reason}`,
+  link: (id: string) => `Replay of ${id}.`,
+};
+
 export interface McpDeps {
   call: typeof serviceCall;
   opts: ClientOptions;
@@ -49,7 +60,7 @@ export interface RouteAddArgs {
 
 export interface RunArgs {
   route: string; prompt: string; activity: string; data_tier: string; tools?: string; output?: string; cwd?: string; timeout_s?: number; wait_s?: number;
-  effort?: string; schema?: Record<string, unknown>;
+  effort?: string; schema?: Record<string, unknown>; persistPrompt?: boolean;
   packs?: string[]; no_charter?: boolean; conversation?: string; attachments?: string[]; urgent?: boolean;
 }
 
@@ -68,7 +79,7 @@ async function guarded<T>(work: () => Promise<T>, then: (v: T) => ToolResult): P
 export function createTools(d: McpDeps) {
   const sleep = d.sleep ?? ((ms: number) => new Promise<void>(r => setTimeout(r, ms)));
 
-  const jobLine = (j: JobRecord) => `${j.id}  ${j.state}  ${j.route}  ${j.activity}  ${new Date(j.createdAt).toISOString().slice(0, 19)}Z${j.reason ? `  ${j.reason}` : ''}`;
+  const jobLine = (j: JobRecord) => `${j.id}  ${j.state}  ${j.route}  ${j.activity}  ${new Date(j.createdAt).toISOString().slice(0, 19)}Z${j.replayOf ? `  ${REPLAY_TEXT.link(j.replayOf)}` : ''}${j.reason ? `  ${j.reason}` : ''}`;
 
   async function models(): Promise<ToolResult> {
     const text = d.policyText();
@@ -137,6 +148,7 @@ export function createTools(d: McpDeps) {
     if (badOptions) return fail(badOptions);
     const req: JobRequest = { route: a.route, activity: activity as ActivityId, dataTier: dataTier as DataTier, tools: tools as ToolTier, output: output as OutputMode, cwd: a.cwd ?? d.cwd,
       ...(a.effort !== undefined ? { effort: a.effort } : {}), ...(a.schema !== undefined ? { schema: a.schema } : {}),
+      ...(a.persistPrompt !== undefined ? { persistPrompt: a.persistPrompt } : {}),
       prompt: { text: a.prompt }, ...(a.timeout_s ? { timeoutS: a.timeout_s } : {}), ...(a.packs ? { packs: a.packs } : {}), ...(a.no_charter ? { noCharter: true } : {}), ...(a.conversation ? { conversation: a.conversation } : {}),
       ...(a.attachments?.length ? { attach: a.attachments } : {}), ...(a.urgent ? { urgent: true } : {}),
       caller: { kind: 'mcp', label: 'augur-mcp', session: d.session, intent: 'interactive' } };
@@ -152,6 +164,11 @@ export function createTools(d: McpDeps) {
       await sleep(POLL_MS);
     }
     return { text: `Job ${lastId} is still running. Read it later with augur_job.${sub.warnings.length ? `\nWarnings: ${sub.warnings.join(' ')}` : ''}`, data: { id: lastId, state: 'running', warnings: sub.warnings } };
+  }
+
+  async function replay(a: { job: string; route: string }): Promise<ToolResult> {
+    return guarded(() => d.call('replay', { job: a.job, route: a.route, caller: { kind: 'mcp', label: 'augur-mcp', session: d.session, intent: 'interactive' } }, d.opts), r =>
+      'rejected' in r ? fail(REPLAY_TEXT.rejected(r.rejected.code, r.rejected.reason), { rejected: r.rejected }) : { text: REPLAY_TEXT.started(r.id), data: { ...r } });
   }
 
   /** Walks `retriedAs` while each job has finished. A successor that is still running stops the walk. */
@@ -180,9 +197,9 @@ export function createTools(d: McpDeps) {
   function describeResult(job: JobRecord, answer: string | null, warnings: string[] = [], notes: string[] = [], chain: string[] = []): ToolResult {
     const ok = job.state === 'completed';
     warnings = [...new Set([...warnings, ...(job.warnings ?? [])])];
-    const head = [...(warnings.length ? [`Warnings: ${warnings.join(' ')}`] : []), ...notes];
+    const head = [...(job.replayOf ? [REPLAY_TEXT.link(job.replayOf)] : []), ...(warnings.length ? [`Warnings: ${warnings.join(' ')}`] : []), ...notes];
     const body = ok ? (answer ?? '(no answer text)') : `The job ended as ${job.state}.${job.reason ? ` ${job.reason}` : ''}${answer ? `\n${answer}` : ''}`;
-    return { text: head.length ? `${head.join('\n')}\n${body}` : body, ...(ok ? {} : { isError: true }), data: { id: job.id, state: job.state, answer, reason: job.reason, patch: job.patch, usage: job.usage, ...(chain.length > 1 ? { chain, retriedAs: job.id } : {}) } };
+    return { text: head.length ? `${head.join('\n')}\n${body}` : body, ...(ok ? {} : { isError: true }), data: { id: job.id, state: job.state, replayOf: job.replayOf ?? null, answer, reason: job.reason, patch: job.patch, usage: job.usage, ...(chain.length > 1 ? { chain, retriedAs: job.id } : {}) } };
   }
 
   async function job(a: { id: string }): Promise<ToolResult> {
@@ -190,7 +207,7 @@ export function createTools(d: McpDeps) {
       if (!r) return fail('No such job.');
       if (!isTerminal(r.job.state)) {
         const note = r.notes.length ? `${r.notes.join('\n')}\n` : '';
-        return { text: `${note}Job ${r.job.id} is ${r.job.state}.`, data: { id: r.job.id, state: r.job.state, ...(r.chain.length > 1 ? { chain: r.chain } : {}) } };
+        return { text: `${note}${r.job.replayOf ? REPLAY_TEXT.link(r.job.replayOf) + '\n' : ''}Job ${r.job.id} is ${r.job.state}.`, data: { id: r.job.id, state: r.job.state, replayOf: r.job.replayOf ?? null, ...(r.chain.length > 1 ? { chain: r.chain } : {}) } };
       }
       return describeResult(r.job, r.answer, [], r.notes, r.chain);
     });
@@ -392,7 +409,7 @@ export function createTools(d: McpDeps) {
     return `${x.id}  ${x.author}  ${x.status}  ${x.route}  activity=${x.activity} requester=${x.requester} repo=${x.repo}  data=${x.data} tools=${x.tools} output=${x.output} cwd=${x.cwd} prompt=${source} estimate=${x.estimate ?? 1} deadline=${x.deadline ?? 'none'}  ${x.task}`;
   }
 
-  return { models, aliases, pick, run, job, jobs, cancel, pressure, balance, resets, routes, routeAdd, policy, editPolicy, pickPreview, proseAdd, proseList, proseStatus, gateStatus, gateReport, backlogAdd, backlogList, backlogStatus };
+  return { models, aliases, pick, run, replay, job, jobs, cancel, pressure, balance, resets, routes, routeAdd, policy, editPolicy, pickPreview, proseAdd, proseList, proseStatus, gateStatus, gateReport, backlogAdd, backlogList, backlogStatus };
 }
 
 export type Tools = ReturnType<typeof createTools>;

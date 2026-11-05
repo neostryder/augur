@@ -16,10 +16,10 @@ const atomic = (name: string, value: unknown) => { const tmp = join(dir, name + 
 if (job.redact) atomic('job.json', { ...job, args: job.args.map((a, i) => (job.promptArgs ?? []).includes(i) ? '<prompt>' : a),
   files: (job.files ?? []).map(f => ({ name: (f as { name: string }).name, inWorkspace: (f as { inWorkspace?: boolean }).inWorkspace, content: '' })) });
 
-// The prompt is read into memory and its file removed before the child starts, so it is never on disk while the job runs.
+// A discarded prompt leaves disk before the child starts.
 let prompt: string | null = null;
 const promptFile = join(dir, 'prompt.in');
-if (job.stdin === 'prompt' && existsSync(promptFile)) { prompt = readFileSync(promptFile, 'utf8'); try { unlinkSync(promptFile); } catch { /* left for the service to remove */ } }
+if (job.stdin === 'prompt' && existsSync(promptFile)) { prompt = readFileSync(promptFile, 'utf8'); if (job.redact !== false) { try { unlinkSync(promptFile); } catch { /* left for the service to remove */ } } }
 
 const out = openSync(join(dir, 'stdout.log'), 'a'), err = openSync(join(dir, 'stderr.log'), 'a');
 const win = process.platform === 'win32';

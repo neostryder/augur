@@ -34,6 +34,16 @@ export const JOBS_ACTIVITY_TEXT = {
   },
 };
 
+export const REPLAY_TEXT = {
+  help: 'augur replay <job> <route> [--json]   Run a finished job again on another route',
+  jobHelp: "augur job <job>                       Show one job's status (same as augur status)",
+  keepPromptHelp: "  --keep-prompt      Keep this job's prompt and input files, whatever the setting",
+  usage: 'Give a job and a route, as in augur replay <job> <route> [--json].',
+  link: (id: string) => `replay of ${id}`,
+  rejected: (code: string, reason: string) => `Replay refused (${code}): ${reason}`,
+  warning: (text: string) => `Warning: ${text}`,
+};
+
 const HELP = `augur                   at a terminal, opens the full-screen app
 augur run <route> --prompt-file <file|-> | --prompt <text> [options]
   --activity <a>     required. One of: ${ACTIVITIES.join(', ')}
@@ -55,6 +65,9 @@ augur run <route> --prompt-file <file|-> | --prompt <text> [options]
   --attach <file>    send a file with the prompt: text, an image, or audio to transcribe. Repeat for more than one
   --urgent           the job is wanted now, so a local gateway gives it its normal priority instead of the low one background work gets
   --wait             wait for the job, following any retry, and print its result
+${REPLAY_TEXT.keepPromptHelp}
+${REPLAY_TEXT.help}
+${REPLAY_TEXT.jobHelp}
 ${JOBS_ACTIVITY_TEXT.help}
 augur conversations [--forget <name>]   list named conversations, or forget one
 augur status                          one line: Claude's use, anything running hot, and the alert count (--waybar for a status bar's JSON)
@@ -116,7 +129,7 @@ Every command takes --json. Exit codes: 0 completed, 1 usage, 2 rejected, 3 need
 interface Parsed { cmd: string[]; flags: Map<string, string | true>; /** Values of the flags that may be given more than once, in order. */ repeated: Map<string, string[]> }
 const REPEATABLE = new Set(['attach', 'fact', 'must-include', 'must-avoid']);
 export function parse(argv: string[]): Parsed {
-  const cmd: string[] = [], flags = new Map<string, string | true>(), repeated = new Map<string, string[]>(), boolean = new Set(['json', 'running', 'wait', 'named', 'follow', 'stderr', 'help', 'if-idle', 'keep-jobs', 'no-failover', 'no-charter', 'urgent', 'waybar', 'all', 'force', 'stdin', 'dry-run', 'no-key', 'best', 'snippet', 'report', 'can-land-later', 'caller-chooses', 'untested', 'yes', 'enable', 'disable', 'purge']);
+  const cmd: string[] = [], flags = new Map<string, string | true>(), repeated = new Map<string, string[]>(), boolean = new Set(['json', 'running', 'wait', 'named', 'follow', 'stderr', 'help', 'if-idle', 'keep-jobs', 'keep-prompt', 'no-failover', 'no-charter', 'urgent', 'waybar', 'all', 'force', 'stdin', 'dry-run', 'no-key', 'best', 'snippet', 'report', 'can-land-later', 'caller-chooses', 'untested', 'yes', 'enable', 'disable', 'purge']);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] as string;
     if (a === '-') { cmd.push(a); continue; }
@@ -133,7 +146,7 @@ export function parse(argv: string[]): Parsed {
 }
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
-const describe = (j: JobRecord) => `${j.id}  ${j.state.padEnd(26)} ${j.route.padEnd(12)} ${new Date(j.createdAt).toISOString().slice(0, 19)}Z${servedText(j.served) ? `  on ${servedText(j.served)}` : ''}${j.startedAt && j.endedAt ? `  ${duration(j)}` : ''}${j.reason ? '  ' + j.reason : ''}${isLive(j.state) ? `${j.stalled ? `  ${JOBS_ACTIVITY_TEXT.stalled}` : ''}${j.lastActivityAt !== undefined ? `  ${JOBS_ACTIVITY_TEXT.age(j.lastActivityAt)}` : ''}${j.activityLine ? `  ${j.activityLine}` : ''}` : ''}`;
+const describe = (j: JobRecord) => `${j.id}  ${j.state.padEnd(26)} ${j.route.padEnd(12)} ${new Date(j.createdAt).toISOString().slice(0, 19)}Z${j.replayOf ? `  ${REPLAY_TEXT.link(j.replayOf)}` : ''}${servedText(j.served) ? `  on ${servedText(j.served)}` : ''}${j.startedAt && j.endedAt ? `  ${duration(j)}` : ''}${j.reason ? '  ' + j.reason : ''}${isLive(j.state) ? `${j.stalled ? `  ${JOBS_ACTIVITY_TEXT.stalled}` : ''}${j.lastActivityAt !== undefined ? `  ${JOBS_ACTIVITY_TEXT.age(j.lastActivityAt)}` : ''}${j.activityLine ? `  ${j.activityLine}` : ''}` : ''}`;
 
 export async function main(argv: string[], io: Io): Promise<number> {
   let p: Parsed;
@@ -153,12 +166,25 @@ export async function main(argv: string[], io: Io): Promise<number> {
   try {
     switch (cmd) {
       case 'run': return await run(rest, p, io, opts, say, opt, json);
+      case 'replay': {
+        if (rest.length !== 2) { io.err(REPLAY_TEXT.usage + '\n'); return EXIT_CODES.usage; }
+        const parentId = io.env.AUGUR_JOB_ID;
+        const res = await call('replay', { job: rest[0]!, route: rest[1]!,
+          caller: { kind: parentId ? 'job' : 'cli', intent: runsInsideJob(io) || io.env.AUGUR_CALLER === 'automated' ? 'automated' : 'interactive',
+            ...(parentId ? { label: parentId } : {}), ...(io.env.CLAUDE_CODE_SESSION_ID ? { session: io.env.CLAUDE_CODE_SESSION_ID } : {}), ...(io.interactive ? { interactive: true } : {}) },
+          ...(parentId ? { parent: { jobId: parentId, rootJobId: io.env.AUGUR_ROOT_JOB_ID ?? parentId, depth: 0 } } : {}),
+        }, opts);
+        if ('rejected' in res) { io.err(REPLAY_TEXT.rejected(res.rejected.code, res.rejected.reason) + '\n'); if (json) io.out(JSON.stringify(res) + '\n'); return EXIT_CODES.rejected; }
+        for (const warning of res.warnings) io.err(REPLAY_TEXT.warning(warning) + '\n');
+        say(res.id, res); return EXIT_CODES.completed;
+      }
       case 'backlog': return await backlogCmd(rest, p, io, opts, say, opt);
       case 'jobs': {
         const list = await call('list', { running: p.flags.has('running'), state: opt('state') as never, root: opt('root'), limit: opt('limit') ? Number(opt('limit')) : 25 }, opts);
         say(list.map(describe).join('\n') || 'No jobs.', list); return 0;
       }
       case 'conversations': return await conversationsCmd(p, io, opts, say, opt, json);
+      case 'job':
       case 'status': {
         if (!rest[0]) return await statusCmd(p.flags.has('waybar'), io, opts, say);
         const j = await call('status', { id: need(rest[0], 'job id') }, opts);
@@ -628,6 +654,7 @@ async function run(rest: string[], p: Parsed, io: Io, opts: Opts, say: (h: strin
   const req: JobRequest = {
     route, activity: activity as ActivityId, dataTier: dataTier as DataTier, tools: tools as ToolTier, output: output as OutputMode, cwd: resolve(io.cwd, opt('cwd') ?? '.'),
     prompt: { text: promptText as string }, ...(effort !== undefined ? { effort } : {}), ...(schema !== undefined ? { schema } : {}),
+    ...(p.flags.has('keep-prompt') ? { persistPrompt: true } : {}),
     ...(opt('expect-file') ? { expectFile: opt('expect-file') as string } : {}), ...(opt('timeout') ? { timeoutS: Number(opt('timeout')) } : {}),
     ...(p.flags.has('named') ? { named: true } : {}), ...(attach.length ? { attach } : {}), ...(p.flags.has('urgent') ? { urgent: true } : {}),
     caller: { kind: parentId ? 'job' : 'cli', intent: caller, ...(parentId ? { label: parentId } : {}), ...(io.env.CLAUDE_CODE_SESSION_ID ? { session: io.env.CLAUDE_CODE_SESSION_ID } : {}), ...(io.interactive ? { interactive: true } : {}) },

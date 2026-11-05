@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { buildServer } from '../src/server.js';
-import { createTools } from '../src/tools.js';
+import { REPLAY_TEXT, createTools } from '../src/tools.js';
 import type { McpDeps } from '../src/tools.js';
 import { readFleet } from '@augur/core';
 
@@ -270,7 +270,7 @@ describe('the server', () => {
     const client = new Client({ name: 'test', version: '1' });
     await Promise.all([server.connect(a), client.connect(b)]);
     const { tools } = await client.listTools();
-    expect(tools.map(t => t.name).sort()).toEqual(['alias_list', 'augur_backlog_add', 'augur_backlog_list', 'augur_backlog_status', 'augur_balance', 'augur_cancel', 'augur_job', 'augur_jobs', 'augur_models', 'augur_pick', 'augur_pick_preview', 'augur_policy', 'augur_policy_edit', 'augur_pressure', 'augur_prose_add', 'augur_prose_list', 'augur_prose_status', 'augur_resets', 'augur_route_add', 'augur_routes', 'augur_run', 'gate_report', 'gate_status']);
+    expect(tools.map(t => t.name).sort()).toEqual(['alias_list', 'augur_backlog_add', 'augur_backlog_list', 'augur_backlog_status', 'augur_balance', 'augur_cancel', 'augur_job', 'augur_jobs', 'augur_models', 'augur_pick', 'augur_pick_preview', 'augur_policy', 'augur_policy_edit', 'augur_pressure', 'augur_prose_add', 'augur_prose_list', 'augur_prose_status', 'augur_replay', 'augur_resets', 'augur_route_add', 'augur_routes', 'augur_run', 'gate_report', 'gate_status']);
     expect(tools.map(t => t.name)).not.toContain('prose_approve');
     expect(tools.some(t => /alias_(accept|reject)/.test(t.name))).toBe(false);
     expect(tools.some(t => /backlog_(run|drop|release)/.test(t.name))).toBe(false);
@@ -294,6 +294,8 @@ describe('the server', () => {
     expect(add.inputSchema.properties).toHaveProperty('balance_url');
     expect(add.inputSchema.properties).toHaveProperty('balance_path');
     const run = tools.find(t => t.name === 'augur_run')!;
+    expect(run.inputSchema.properties).toHaveProperty('persistPrompt', { type: 'boolean', description: REPLAY_TEXT.persistPrompt });
+    expect(tools.find(t => t.name === 'augur_replay')?.inputSchema.required).toEqual(['job', 'route']);
     expect(JSON.stringify(run.inputSchema)).toContain('"enum":["read","write","full"]');
     expect(run.inputSchema.properties).not.toHaveProperty('allow');
     expect(tools.find(t => t.name === 'gate_status')?.annotations).toMatchObject({ readOnlyHint: true });
@@ -328,6 +330,52 @@ describe('the server', () => {
     expect(res.isError).toBe(true);
     expect(calls).toHaveLength(0);
     await client.close();
+  });
+});
+
+describe('replay and prompt storage', () => {
+  it('passes all three prompt storage states to submit', async () => {
+    const calls: Calls[] = [], tools = createTools(deps({ submit: { id: 'new', warnings: [] } }, calls));
+    for (const persistPrompt of [true, false, undefined]) {
+      await tools.run({ route: 'raw', prompt: 'hello', activity: 'write_code', data_tier: 'internal', persistPrompt, wait_s: 0 });
+      const req = calls.at(-1)?.params as Record<string, unknown>;
+      expect(req.persistPrompt).toBe(persistPrompt);
+      expect(Object.hasOwn(req, 'persistPrompt')).toBe(persistPrompt !== undefined);
+    }
+  });
+
+  it('starts a replay for this session and returns service refusals', async () => {
+    const calls: Calls[] = [];
+    const tools = createTools(deps({ replay: { id: 'new', warnings: [] } }, calls));
+    expect(await tools.replay({ job: 'original', route: 'raw' })).toMatchObject({ text: REPLAY_TEXT.started('new'), data: { id: 'new' } });
+    expect(calls).toEqual([{ method: 'replay', params: { job: 'original', route: 'raw', caller: { kind: 'mcp', label: 'augur-mcp', session: 'mcp-test', intent: 'interactive' } } }]);
+    const refusal = { code: 'inputs_not_replayable', reason: 'input file source.txt' };
+    expect(await createTools(deps({ replay: { rejected: refusal } })).replay({ job: 'original', route: 'raw' })).toMatchObject({ isError: true, data: { rejected: refusal } });
+  });
+
+  it('shows the replay link in job results and lists', async () => {
+    const job = { id: 'new', state: 'completed', route: 'raw', activity: 'write_code', createdAt: 1000, replayOf: 'original' };
+    const tools = createTools(deps({ result: { job, answer: 'done' }, list: [job] }));
+    const result = await tools.job({ id: 'new' });
+    expect(result.text).toContain(REPLAY_TEXT.link('original'));
+    expect(result.data?.replayOf).toBe('original');
+    expect((await tools.jobs({})).text).toContain(REPLAY_TEXT.link('original'));
+  });
+
+  it('calls replay and validates prompt storage through an MCP client', async () => {
+    const calls: Calls[] = [], [a, b] = InMemoryTransport.createLinkedPair();
+    const server = buildServer(createTools(deps({ replay: { id: 'new', warnings: [] }, submit: { id: 'kept', warnings: [] } }, calls)), 'test');
+    const client = new Client({ name: 'test', version: '1' });
+    await Promise.all([server.connect(a), client.connect(b)]);
+    try {
+      expect((await client.callTool({ name: 'augur_replay', arguments: { job: 'original', route: 'raw' } })).structuredContent).toEqual({ id: 'new', warnings: [] });
+      const args = { route: 'raw', prompt: 'hello', activity: 'write_code', data_tier: 'internal', wait_s: 0 };
+      await client.callTool({ name: 'augur_run', arguments: { ...args, persistPrompt: true } });
+      expect(calls.at(-1)?.params).toMatchObject({ persistPrompt: true });
+      const count = calls.length;
+      expect((await client.callTool({ name: 'augur_run', arguments: { ...args, persistPrompt: 'true' } })).isError).toBe(true);
+      expect(calls).toHaveLength(count);
+    } finally { await client.close(); }
   });
 });
 

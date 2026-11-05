@@ -10,7 +10,7 @@ import { NOW, ch, k, setup, state } from './fixtures.js';
 
 const job = (over: Partial<JobRecord> = {}): JobRecord => ({
   id: '0d26110efa99', state: 'running', route: 'luna', adapter: 'codex-exec', activity: 'write_code', dataTier: 'internal', tools: 'read', output: 'text_only',
-  cwd: 'C:/work', createdAt: NOW - 60_000, startedAt: NOW - 30_000, endedAt: null, exitCode: null, reason: null, rootJobId: '0d26110efa99', parentJobId: null, depth: 0,
+  cwd: 'C:/work', createdAt: NOW - 60_000, startedAt: NOW - 30_000, endedAt: null, exitCode: null, reason: null, rootJobId: '0d26110efa99', parentJobId: null, replayOf: null, depth: 0,
   caller: { kind: 'cli', label: 'claude' }, named: false, harnessVersion: null, usage: null, workspace: null, patch: null, ...over,
 });
 

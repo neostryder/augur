@@ -2,11 +2,11 @@ import { copyFileSync, renameSync, existsSync, mkdirSync, readFileSync, readdirS
 import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { JOBHOST, killEverything, makeEnv, processesWith, request, sleep, submitOk, terminal, until } from './harness.js';
+import { JOBHOST, ROUTES, killEverything, makeEnv, processesWith, request, sleep, submitOk, terminal, until } from './harness.js';
 import type { Env } from './harness.js';
 import { REJECTION_CATEGORIES, systemdScopes } from '../src/supervisor.js';
 import { genericExec } from '../src/adapters/exec.js';
-import { REJECTION_CODES } from '@augur/dispatch-protocol';
+import { REJECTION_CODES, type Adapter } from '@augur/dispatch-protocol';
 
 vi.setConfig({ testTimeout: 90000 });
 const envs: Env[] = [];
@@ -224,6 +224,36 @@ describe('cancel', () => {
 });
 
 describe('what a job can see', () => {
+  for (const setting of [false, true]) for (const switchValue of [undefined, false, true]) {
+    it(`uses effective prompt storage for setting ${setting} and switch ${switchValue}`, async () => {
+      const adapter: Adapter = { ...genericExec, id: 'with-input', plan(req, route, ctx) {
+        return { ...genericExec.plan(req, route, ctx), files: [{ name: 'input.txt', content: 'saved input' }] };
+      } };
+      const e = setup({ persistPrompts: setting, adapters: ['with-input'] }, undefined, { extra: [adapter] });
+      e.writeRoutes({ raw: { ...ROUTES.raw, adapter: adapter.id } });
+      const id = submitOk(e.sup, request({ route: 'raw', persistPrompt: switchValue, cwd: e.root, text: '# saved prompt\nSLEEP 1' }));
+      const dir = join(e.dir, 'jobs', id), keep = switchValue ?? setting;
+      expect(JSON.parse(readFileSync(join(dir, 'job.json'), 'utf8')).redact).toBe(!keep);
+      expect(existsSync(join(dir, 'prompt.txt'))).toBe(keep);
+      await until(e.sup, () => existsSync(join(dir, 'state.json')));
+      expect(existsSync(join(dir, 'prompt.in'))).toBe(keep);
+      const restarted = e.make({ persistPrompts: !setting });
+      restarted.reconcile();
+      await terminal(restarted, e.store, id);
+      expect(existsSync(join(dir, 'input.txt'))).toBe(keep);
+      expect(existsSync(join(dir, 'prompt.in'))).toBe(keep);
+      const file = JSON.parse(readFileSync(join(dir, 'job.json'), 'utf8'));
+      expect(file.files[0].content).toBe(keep ? 'saved input' : '');
+      if (keep) expect(readFileSync(join(dir, 'prompt.txt'), 'utf8')).toBe('# saved prompt\nSLEEP 1');
+    });
+  }
+
+  it('refuses non-boolean prompt storage switches', () => {
+    const e = setup();
+    for (const persistPrompt of [null, 0, 'true']) expect(e.sup.submit(request({ cwd: e.root, persistPrompt: persistPrompt as never }))).toMatchObject({ rejected: { code: 'bad_request', reason: expect.stringContaining('persistPrompt') } });
+    expect(e.store.list()).toEqual([]);
+  });
+
   it('receives only its adapter allowlist, not the rest of the service environment', async () => {
     const e = setup({}, { ...process.env, AUGUR_TEST_SECRET: 'do-not-pass', CODEX_HOME: 'C:/codex-home' });
     const id = submitOk(e.sup, request({ text: 'ENV AUGUR_TEST_SECRET\nENV CODEX_HOME\nENV AUGUR_JOB_ID', cwd: e.root }));
@@ -264,6 +294,97 @@ describe('what a job can see', () => {
     await terminal(e.sup, e.store, id);
     expect(e.sup.logs(id)!.text).toContain('TIER read');
     expect(readFileSync(join(e.dir, 'jobs', id, 'prompt.txt'), 'utf8')).toBe('SLEEP 0');
+  });
+});
+
+describe('replay', () => {
+  const caller = { kind: 'cli' as const, session: 'replay-test' };
+
+  it('refuses unknown, live and unsaved jobs', async () => {
+    const e = setup();
+    expect(e.sup.replay('missing', 'raw', caller)).toMatchObject({ rejected: { code: 'unknown_job' } });
+    const id = submitOk(e.sup, request({ cwd: e.root, text: 'SLEEP 1' }));
+    expect(e.sup.replay(id, 'raw', caller)).toMatchObject({ rejected: { code: 'job_not_finished' } });
+    await terminal(e.sup, e.store, id);
+    expect(e.sup.replay(id, 'raw', caller)).toMatchObject({ rejected: { code: 'no_saved_prompt' } });
+    expect(e.store.list()).toHaveLength(1);
+  });
+
+  it('creates a new job with the saved request and leaves the original untouched', async () => {
+    const e = setup();
+    const prompt = 'ENV CODEX_HOME\nWRITE replay.txt\nSLEEP 0';
+    const original = submitOk(e.sup, request({ cwd: e.root, persistPrompt: true, text: prompt, timeoutS: 30, expectFile: 'replay.txt' }));
+    await terminal(e.sup, e.store, original);
+    const before = e.store.get(original), events = e.store.events(original);
+    const dir = join(e.dir, 'jobs', original), files = readdirSync(dir).map(name => [name, readFileSync(join(dir, name), 'utf8')]);
+    const replayed = e.sup.replay(original, 'raw', caller);
+    expect(replayed).toHaveProperty('id');
+    const id = (replayed as { id: string }).id;
+    expect(id).not.toBe(original);
+    expect(e.store.get(id)).toMatchObject({ replayOf: original, route: 'raw', activity: before!.activity, dataTier: before!.dataTier, tools: before!.tools, output: before!.output, cwd: before!.cwd, caller, parentJobId: null, rootJobId: id });
+    expect(e.store.internal(id)).toMatchObject({ expectFile: 'replay.txt', timeoutS: 30 });
+    expect((await terminal(e.sup, e.store, id)).state).toBe('completed');
+    expect(readFileSync(join(e.dir, 'jobs', id, 'prompt.txt'), 'utf8')).toBe(prompt);
+    expect(e.store.get(original)).toEqual(before);
+    expect(e.store.events(original)).toEqual(events);
+    expect(readdirSync(dir).map(name => [name, readFileSync(join(dir, name), 'utf8')])).toEqual(files);
+    expect(e.make().status(id)?.replayOf).toBe(original);
+    const again = e.sup.replay(id, 'fake', caller);
+    expect(again).toHaveProperty('id');
+    await terminal(e.sup, e.store, (again as { id: string }).id);
+    expect(e.store.get((again as { id: string }).id)?.replayOf).toBe(id);
+  });
+
+  it('applies the destination data tier and pick checks', async () => {
+    const e = setup();
+    const original = submitOk(e.sup, request({ cwd: e.root, persistPrompt: true }));
+    await terminal(e.sup, e.store, original);
+    expect(e.sup.replay(original, 'pub', caller)).toMatchObject({ rejected: { code: 'data_tier_too_high' } });
+    const gated = e.make({ requirePick: true });
+    expect(gated.replay(original, 'raw', caller)).toMatchObject({ rejected: { code: 'not_picked' } });
+    expect(gated.replay(original, 'ask', caller)).toMatchObject({ rejected: { code: 'ask_first' } });
+    expect(e.store.list()).toHaveLength(1);
+  });
+
+  it('lists response schemas and input files it cannot reproduce', async () => {
+    const adapter: Adapter = { ...genericExec, id: 'with-input', plan(req, route, ctx) {
+      return { ...genericExec.plan(req, route, ctx), files: [{ name: 'source.txt', content: 'input' }] };
+    } };
+    const e = setup({ adapters: ['with-input'] }, undefined, { extra: [adapter] });
+    e.writeRoutes({ raw: { ...ROUTES.raw, adapter: adapter.id } });
+    const original = submitOk(e.sup, request({ route: 'raw', cwd: e.root, persistPrompt: true, schema: { type: 'object' } }));
+    await terminal(e.sup, e.store, original);
+    expect(e.sup.replay(original, 'raw', caller)).toMatchObject({ rejected: { code: 'inputs_not_replayable', reason: expect.stringContaining('input file source.txt, response schema') } });
+  });
+
+  it('keeps attachment copies and refuses to replay them', async () => {
+    const adapter: Adapter = { ...genericExec, id: 'with-attachments', attachmentKinds: () => ['text'] };
+    const e = setup({ adapters: ['with-attachments'] }, undefined, { extra: [adapter] });
+    e.writeRoutes({ raw: { ...ROUTES.raw, adapter: adapter.id } });
+    writeFileSync(join(e.root, 'source.txt'), 'original input');
+    const original = submitOk(e.sup, request({ route: 'raw', cwd: e.root, persistPrompt: true, attach: ['source.txt'] }));
+    await terminal(e.sup, e.store, original);
+    writeFileSync(join(e.root, 'source.txt'), 'changed input');
+    expect(readFileSync(join(e.dir, 'jobs', original, 'input-0-source.txt'), 'utf8')).toBe('original input');
+    expect(e.sup.replay(original, 'raw', caller)).toMatchObject({ rejected: { code: 'inputs_not_replayable', reason: expect.stringContaining('source.txt') } });
+  });
+
+  it('migrates older job rows with a null replay link', async () => {
+    const e = setup();
+    const id = submitOk(e.sup, request({ cwd: e.root }));
+    await terminal(e.sup, e.store, id);
+    e.store.db.exec('alter table jobs drop column replay_of');
+    expect(e.make().status(id)?.replayOf).toBeNull();
+  });
+
+  it('purges saved prompts and inputs at the retention cutoff', async () => {
+    const e = setup({ retentionDays: 0 });
+    const id = submitOk(e.sup, request({ cwd: e.root, persistPrompt: true }));
+    await terminal(e.sup, e.store, id);
+    await sleep(5);
+    expect(e.sup.purge()).toBe(1);
+    expect(existsSync(join(e.dir, 'jobs', id))).toBe(false);
+    expect(e.sup.replay(id, 'raw', caller)).toMatchObject({ rejected: { code: 'no_saved_prompt' } });
   });
 });
 

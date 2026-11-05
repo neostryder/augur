@@ -5,7 +5,7 @@ import { startService } from '@augur/augurd';
 import { call } from '../../augurd/src/client.js';
 import { JOBHOST, ROUTES, makeEnv } from '../../augurd/test/harness.js';
 import type { Env } from '../../augurd/test/harness.js';
-import { JOBS_ACTIVITY_TEXT, main, parse } from '../src/cli.js';
+import { JOBS_ACTIVITY_TEXT, REPLAY_TEXT, main, parse } from '../src/cli.js';
 import { readFleet } from '@augur/core';
 
 vi.setConfig({ testTimeout: 90000 });
@@ -115,6 +115,49 @@ describe('run effort and schema', () => {
     expect(plan.args).toContain('model_reasoning_effort=high');
     expect(plan.files).toContainEqual({ name: 'output-schema.json', content: JSON.stringify(schema) });
     expect(readFileSync(e.routesPath, 'utf8')).toBe(before);
+  });
+});
+
+describe('replay and prompt storage', () => {
+  it('parses keep-prompt as a boolean and lists both commands in help', async () => {
+    expect(parse(['run', 'fake', '--keep-prompt']).flags.get('keep-prompt')).toBe(true);
+    const { run } = await boot();
+    const help = await run(['run', '--help']);
+    expect(help.out).toContain(REPLAY_TEXT.keepPromptHelp);
+    expect(help.out).toContain(REPLAY_TEXT.help);
+  });
+
+  it('keeps a prompt with the setting off and replays it with a visible link', async () => {
+    const { e, run } = await boot({ persistPrompts: false });
+    const prompt = 'ENV CODEX_HOME\nSLEEP 0';
+    const first = await run(['run', 'fake', '--prompt', prompt, '--keep-prompt', '--wait', '--json']);
+    expect(first.code).toBe(0);
+    const original = JSON.parse(first.out).job.id;
+    expect(readFileSync(join(e.dir, 'jobs', original, 'prompt.txt'), 'utf8')).toBe(prompt);
+    const replay = await run(['replay', original, 'raw', '--json']);
+    expect(replay.code).toBe(0);
+    const id = JSON.parse(replay.out).id;
+    expect(id).not.toBe(original);
+    expect((await run(['wait', id])).code).toBe(0);
+    const job = await run(['job', id, '--json']);
+    expect(JSON.parse(job.out)).toMatchObject({ replayOf: original, route: 'raw' });
+    expect((await run(['job', id])).out).toContain(REPLAY_TEXT.link(original));
+    expect((await run(['jobs'])).out).toContain(REPLAY_TEXT.link(original));
+    const human = await run(['replay', original, 'raw']);
+    expect(human.code).toBe(0);
+    expect(human.out.trim()).toMatch(/^[a-f0-9]{12}$/);
+    expect((await run(['wait', human.out.trim()])).code).toBe(0);
+  });
+
+  it('prints coded refusals in JSON and text and rejects missing arguments', async () => {
+    const { run } = await boot();
+    const refusal = await run(['replay', 'missing', 'raw', '--json']);
+    expect(refusal.code).toBe(2);
+    expect(JSON.parse(refusal.out)).toMatchObject({ rejected: { code: 'unknown_job' } });
+    expect(refusal.err).toContain('Replay refused (unknown_job)');
+    const usage = await run(['replay', 'missing']);
+    expect(usage.code).toBe(1);
+    expect(usage.err).toContain(REPLAY_TEXT.usage);
   });
 });
 
