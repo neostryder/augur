@@ -21,6 +21,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Fixed
 
+- [Internal] [Platform] **The Laya server's model resolver accepts the resolve function Laya 0.4 passes in.** Laya 0.3 calls the same function with the model name alone. A name that starts with `laya:` is returned unchanged, and any other name is forwarded to the stock resolver with the extra arguments.
 - [Visible] [Providers] **A sign-in window that closes by itself within seconds of opening now reopens once.** Before, the provider's reading stayed missing with no message until you tried again. A window that closes within 90 seconds, before it reaches another host and without a signed-in reading, reopens one second later, and the settings and setup screens now show a notice naming the site whenever a sign-in window closes without a signed-in reading.
 - [Visible] [Platform] **The game check and idle unload keep working when Laya cannot read the graphics card.** Before this fix, a missing `nvidia-ml-py` package turned off every load-gate protection, so Laya stayed in video memory while a game ran and the game stuttered. Now only the GPU-use and video-memory readings are missing, and GET /load shows the error in a new `sample_error` field. The README install command now installs `nvidia-ml-py` alongside `laya`.
 

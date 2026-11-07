@@ -68,10 +68,11 @@ S.MAX_STATE_CHARS = max(S.MAX_STATE_CHARS, HARD_MAX_LEN * STATE_CHARS_PER_TOKEN)
 _stock_resolve = S._resolve_model
 
 
-def _resolve_model(model):
+def _resolve_model(model, *rest):
+    # laya 0.4.x passes the router's resolve function as a second argument. laya 0.3.x passes only the model.
     if isinstance(model, str) and model.startswith("laya:"):
         return model
-    return _stock_resolve(model)
+    return _stock_resolve(model, *rest)
 
 
 S._resolve_model = _resolve_model
