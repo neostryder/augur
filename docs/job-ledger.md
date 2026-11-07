@@ -155,6 +155,7 @@ Settings includes Job alerts in the existing Alerts area. The terminal Settings 
 | `ledgerAlerts.usualMultiple` | `3` | Whole multiplier from 1 through 1000 |
 | `ledgerAlerts.minSamples` | `8` | Whole sample count from 1 through 10000 |
 | `ledgerAlerts.webhookUrl` | Empty | Optional HTTPS URL without credentials, query, or fragment |
+| `ledgerAlerts.webhookFormat` | `augur` | `augur` or `cresset`; unknown values load as `augur` |
 | `ledgerAlerts.webhookKeyName` | Empty | Optional `ledger-alerts.name` secret-store reference |
 
 The switches control creation of new events. They do not discard an already pending event. A node reports its own remote stall state. A missing or unreachable node does not become a failed-job alert. Duration alerts compare the same node, kind, and route and require elapsed time above both the configured multiple of the median and one minute.
@@ -163,7 +164,7 @@ The owner-only calls `ledger_settings`, `ledger_settings_set` with `{ "key": "le
 
 ## Public alert JSON contract, version 1
 
-Each outbox line and webhook body is exactly one `LedgerAlert` object. Consumers use `version` to select the schema and `id` to deduplicate. The stable id is the qualified job id followed by `:` and the event type. A job can produce one event of each type. Delivery retries reuse the same object and id.
+Each outbox line and each webhook body in the default `augur` format is exactly one `LedgerAlert` object. Consumers use `version` to select the schema and `id` to deduplicate. The stable id is the qualified job id followed by `:` and the event type. A job can produce one event of each type. Delivery retries reuse the same object and id.
 
 | Field | JSON type and meaning |
 | --- | --- |
@@ -197,6 +198,48 @@ A job over its usual time:
 {"version":1,"id":"eru:26:job.over-usual-time","type":"job.over-usual-time","at":1794049200000,"jobId":"eru:26","node":"eru","state":"running","route":"local","sessionId":"review-42","summary":"Index archive metadata","elapsedMs":190000,"usualMs":60000,"samples":12}
 ```
 
+## Cresset webhook format
+
+Set `ledgerAlerts.webhookFormat` to `cresset` and `ledgerAlerts.webhookUrl` to your Cresset intake URL ending in `/v1/events`. Store the per-source bearer token under a `ledger-alerts.name` reference and set `ledgerAlerts.webhookKeyName` to that reference. The app and terminal expose the format under Alerts. The JSONL outbox keeps the public Augur contract.
+
+| Cresset field | Job alert mapping |
+| --- | --- |
+| `host` | `node`, at most 255 characters |
+| `component` | `augur.job:<route>` for a non-empty route, otherwise `augur.job`; at most 120 characters |
+| `class`, `severity` | `job.failed`: `failed`, 2; `job.stalled`: `stalled`, 3; `job.over-usual-time`: `over_usual_time`, 4 |
+| `title` | `summary`, at most 120 characters; an empty summary uses a fixed sentence naming the alert type |
+| `description` | Structured type, node, route, state, elapsed time, usual time when available, and sample count; at most 1000 characters |
+| `assessment`, `owner` | `unknown`, `Augur` |
+| `next_step` | `Open the job in the Augur job ledger (<jobId>).`, at most 500 characters |
+| `fingerprint` | `augur:<node>:<route or none>:<type>`, at most 256 characters |
+| `evidence_tail` | `jobId=<jobId> alertId=<id>`, at most 2000 characters |
+| `first_seen`, `last_seen` | `at` as the same UTC ISO 8601 string with a `Z` offset |
+| `count`, `kind` | `1`, `alert` |
+
+Text fields replace control characters with spaces, trim surrounding whitespace, and use fixed fallbacks when empty. Descriptions format durations as human text, such as `12 min`, and include no prompt or answer text. The body contains only the fields in this table. The request retains the bearer credential, idempotency header, redirect refusal, and timeout described below.
+
+The stalled example above becomes:
+
+```json
+{
+  "host": "eru",
+  "component": "augur.job:local",
+  "class": "stalled",
+  "severity": 3,
+  "title": "Review release metadata",
+  "description": "The job stalled on node eru using route local, with state stalled and elapsed time 12 min. There are 2 completed duration samples.",
+  "assessment": "unknown",
+  "owner": "Augur",
+  "next_step": "Open the job in the Augur job ledger (eru:24).",
+  "fingerprint": "augur:eru:local:job.stalled",
+  "evidence_tail": "jobId=eru:24 alertId=eru:24:job.stalled",
+  "first_seen": "2026-11-07T11:00:00.000Z",
+  "last_seen": "2026-11-07T11:00:00.000Z",
+  "count": 1,
+  "kind": "alert"
+}
+```
+
 ## Delivery and recovery
 
 The service records one SQLite delivery receipt per alert id and sink. It recovers missing queue entries from the durable alert log after restart, keeps at most 1000 pending entries per sink, and leaves excess events in that log until queue space opens. Each pass attempts up to 20 events per enabled sink. Sinks run independently, and jobs do not wait for delivery. A failed attempt retries after 1, 2, 4, and then successively doubled seconds, capped at five minutes. Only fixed failure messages reach delivery state; transport response text and credentials do not.
@@ -207,4 +250,4 @@ The outbox is `~/.augur/alerts-outbox.jsonl`, under `AUGUR_HOME` when overridden
 
 The optional webhook sends `POST` with `Content-Type: application/json` and `Idempotency-Key: <alert id>`. A configured key reference supplies `Authorization: Bearer <secret>` from the existing secret store. The dedicated `ledger-alerts` namespace prevents reuse of a provider credential. Config stores only the reference. The request refuses redirects and times out after ten seconds. Any non-2xx response or transport error leaves delivery pending. No response body enters the ledger or service log.
 
-A crash after a remote receiver or operating system accepts delivery but before SQLite records the receipt can repeat an attempt. Webhook receivers must honor the idempotency key or deduplicate the JSON id. Desktop operating systems do not offer a transaction shared with the service database. A recorded delivery is not repeated after restart. Delivery receipts and alert events remain in SQLite independently of outbox rotation.
+A crash after a remote receiver or operating system accepts delivery but before SQLite records the receipt can repeat an attempt. Webhook receivers must honor the idempotency key or, for the `augur` format, deduplicate the JSON id. Desktop operating systems do not offer a transaction shared with the service database. A recorded delivery is not repeated after restart. Delivery receipts and alert events remain in SQLite independently of outbox rotation.

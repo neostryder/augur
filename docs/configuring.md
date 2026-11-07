@@ -46,6 +46,8 @@ The settings folder is `%APPDATA%\com.neostryder.augur` on Windows, `~/Library/A
 
 Job alert settings are in the service's `config.json`, under `ledgerAlerts`, with `stallMinutes` for local inactivity. Settings shows their switches, duration thresholds, optional webhook URL, and secret-store reference under Job alerts. The Service page shows per-sink delivery failures. The [job ledger guide](job-ledger.md#job-alert-settings) lists defaults, delivery recovery, outbox rotation, and the public alert JSON contract. These settings are service behavior, so they do not add balance rules or adapter options.
 
+`ledgerAlerts.webhookFormat` defaults to `augur`. Select `cresset` in Alerts to send the [Cresset event format](job-ledger.md#cresset-webhook-format) to an intake URL ending in `/v1/events`, with its per-source bearer token stored under the webhook key reference. The outbox format stays unchanged.
+
 ### Idle alert settings
 
 The idle alert fires for a provider that Augur spends in full when all of its weekly limits have stayed under `alerts.idlePct` percent for at least `alerts.idleHours` hours. `alerts.idlePct` runs from 0 to 100 and defaults to 5, and `alerts.idleHours` runs from 0 to 168 and defaults to 6. A value outside its range falls back to the default. Both sit in `config.json` with the other alert settings, and Settings shows them under Alerts.

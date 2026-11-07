@@ -121,6 +121,7 @@ export interface LedgerAlertSettings {
   usualMultiple: number;
   minSamples: number;
   webhookUrl: string;
+  webhookFormat: 'augur' | 'cresset';
   webhookKeyName: string;
 }
 export interface LedgerDeliveryState {

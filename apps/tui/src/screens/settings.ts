@@ -199,6 +199,7 @@ export class SettingsPage implements Page {
         catch (error) { ctx.flash((error as Error).message, true); }
       };
       out.push({ kind: 'heading', text: 'Job alerts' });
+      out.push({ kind: 'choice', id: 'job-alert-webhookFormat', label: 'Webhook payload format', value: settings.webhookFormat ?? 'augur', options: [['augur', 'augur'], ['cresset', 'cresset']], set: value => save('ledgerAlerts.webhookFormat', value) });
       for (const [key, label] of [['stalled', 'Stalled jobs'], ['failed', 'Failed jobs'], ['overUsualTime', 'Jobs over usual time']] as const) out.push({ kind: 'toggle', id: 'job-alert-' + key, label, on: settings[key], set: on => save('ledgerAlerts.' + key, String(on)) });
       for (const [key, label] of [['stallMinutes', 'Stall threshold (minutes)'], ['usualMultiple', 'Usual time multiple'], ['minSamples', 'Minimum duration samples'], ['webhookUrl', 'Webhook HTTPS URL'], ['webhookKeyName', 'Webhook key reference']] as const) out.push({ kind: 'text', id: 'job-alert-' + key, label, value: String(settings[key]), save: value => save(key === 'stallMinutes' ? key : 'ledgerAlerts.' + key, value) });
     }

@@ -67,6 +67,7 @@ export const CONFIG_KEYS: readonly ConfigKey[] = [
   { key: 'ledgerAlerts.usualMultiple', label: 'Usual time multiple', help: 'The route median is multiplied by this number, with a one-minute floor.', kind: 'number', min: 1, max: 1000 },
   { key: 'ledgerAlerts.minSamples', label: 'Duration samples', help: 'Minimum completed jobs on the same node, kind, and route before duration alerts start.', kind: 'number', min: 1, max: 10000 },
   { key: 'ledgerAlerts.webhookUrl', label: 'Alert webhook URL', help: 'Optional HTTPS endpoint. Credentials, query strings, and fragments are refused.', kind: 'text', check: value => webhookAddress(value) ? null : 'The webhook needs an HTTPS URL without credentials, a query, or a fragment.' },
+  { key: 'ledgerAlerts.webhookFormat', label: 'Webhook payload format', help: 'augur sends the public job alert contract by default. cresset sends events to Cresset intake at /v1/events.', kind: 'choice', choices: ['augur', 'cresset'] },
   { key: 'ledgerAlerts.webhookKeyName', label: 'Webhook key reference', help: 'Optional ledger-alerts.name secret-store reference used as a Bearer credential.', kind: 'text', check: value => !value || /^ledger-alerts\.[A-Za-z0-9_]+$/.test(value) ? null : 'The webhook key reference must have the form ledger-alerts.name.' },
 ];
 

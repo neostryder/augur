@@ -1,13 +1,51 @@
 import { appendFile, open, readFile, rename, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import type { LedgerAlert, LedgerDeliveryState } from '@augur/dispatch-protocol';
+import type { LedgerAlert, LedgerAlertSettings, LedgerDeliveryState } from '@augur/dispatch-protocol';
 import type { AlertSink } from './job-ledger.js';
 import type { ViewHub } from './views.js';
 
 export function alertPayload(event: LedgerAlert): LedgerAlert {
   const { version, id, type, at, jobId, node, state, route, sessionId, summary, elapsedMs, usualMs, samples } = event;
   return { version, id, type, at, jobId, node, state, route, sessionId, summary, elapsedMs, usualMs, samples };
+}
+
+export function cressetPayload(event: LedgerAlert) {
+  const clean = (value: string) => value.replace(/[\x00-\x1f\x7f-\x9f]/g, ' ').trim();
+  const text = (value: string, limit: number, fallback: string) => (clean(value) || fallback).slice(0, limit);
+  const duration = (ms: number) => {
+    for (const [unit, size] of [['day', 86400000], ['hr', 3600000], ['min', 60000], ['sec', 1000]] as const) if (ms >= size) {
+      const value = Math.round(ms / size);
+      return `${value} ${unit === 'day' && value !== 1 ? 'days' : unit}`;
+    }
+    return `${ms} ms`;
+  };
+  const details = {
+    'job.failed': { class: 'failed', severity: 2, words: 'failed', action: 'failed' },
+    'job.stalled': { class: 'stalled', severity: 3, words: 'stalled', action: 'stalled' },
+    'job.over-usual-time': { class: 'over_usual_time', severity: 4, words: 'over usual time', action: 'exceeded its usual time' },
+  }[event.type];
+  const node = clean(event.node) || 'unknown', route = clean(event.route ?? '');
+  const jobId = clean(event.jobId) || 'unknown', id = clean(event.id) || 'unknown';
+  const description = `The job ${details.action} on node ${node}${route ? ` using route ${route}` : ''}, with state ${clean(event.state) || 'unknown'} and elapsed time ${duration(event.elapsedMs)}. There are ${event.samples} completed duration samples${event.usualMs === null ? '' : ` with a usual time of ${duration(event.usualMs)}`}.`;
+  const at = new Date(event.at).toISOString();
+  return {
+    host: text(node, 255, 'unknown'),
+    component: text(route ? `augur.job:${route}` : 'augur.job', 120, 'augur.job'),
+    class: details.class,
+    severity: details.severity,
+    title: text(event.summary, 120, `Augur job ${details.words}.`),
+    description: text(description, 1000, 'An Augur job needs attention.'),
+    assessment: 'unknown',
+    owner: 'Augur',
+    next_step: text(`Open the job in the Augur job ledger (${jobId}).`, 500, 'Open the Augur job ledger.'),
+    fingerprint: text(`augur:${node}:${route || 'none'}:${event.type}`, 256, 'augur:unknown:none:job.failed'),
+    evidence_tail: text(`jobId=${jobId} alertId=${id}`, 2000, 'Job identifiers are unavailable.'),
+    first_seen: at,
+    last_seen: at,
+    count: 1,
+    kind: 'alert',
+  };
 }
 
 export class OutboxAlertSink implements AlertSink {
@@ -76,13 +114,13 @@ export class DesktopAlertSink implements AlertSink {
 }
 
 export class WebhookAlertSink implements AlertSink {
-  constructor(private url: () => string, private keyName: () => string, private secret: (name: string) => Promise<string | null>, private fetcher: typeof fetch = fetch) {}
+  constructor(private url: () => string, private keyName: () => string, private secret: (name: string) => Promise<string | null>, private format: () => LedgerAlertSettings['webhookFormat'] = () => 'augur', private fetcher: typeof fetch = fetch) {}
   async emit(event: LedgerAlert): Promise<void> {
     const keyName = this.keyName(), key = keyName ? await this.secret(keyName) : null;
     if (keyName && !key) throw new Error('The webhook credential is unavailable.');
     const headers: Record<string, string> = { 'Content-Type': 'application/json', 'Idempotency-Key': event.id };
     if (key) headers.Authorization = `Bearer ${key}`;
-    const response = await this.fetcher(this.url(), { method: 'POST', headers, body: JSON.stringify(alertPayload(event)), redirect: 'error', signal: AbortSignal.timeout(10000) });
+    const response = await this.fetcher(this.url(), { method: 'POST', headers, body: JSON.stringify(this.format() === 'cresset' ? cressetPayload(event) : alertPayload(event)), redirect: 'error', signal: AbortSignal.timeout(10000) });
     try { if (!response.ok) throw new Error('The webhook refused the alert.'); }
     finally { await response.body?.cancel().catch(() => undefined); }
   }

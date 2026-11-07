@@ -18,16 +18,22 @@ function settings(deps: Partial<SettingsDeps> = {}, s: EngineState = state(), re
 
 describe('settings page', () => {
   it('round trips job alert switches through the owner settings calls', async () => {
-    const t = settings(), values = { stalled: true, failed: true, overUsualTime: true, usualMultiple: 3, minSamples: 8, stallMinutes: 10, webhookUrl: '', webhookKeyName: '' };
+    const t = settings(), values = { stalled: true, failed: true, overUsualTime: true, usualMultiple: 3, minSamples: 8, stallMinutes: 10, webhookUrl: '', webhookKeyName: '', webhookFormat: 'augur' };
     const calls: unknown[] = [];
     vi.spyOn(t.link, 'call').mockImplementation((async (method: string, params: { key: string; value: string }) => {
       if (method === 'ledger_settings') return { ...values };
-      calls.push(params); values.failed = params.value === 'true'; return { ok: true };
+      calls.push(params);
+      if (params.key === 'ledgerAlerts.webhookFormat') values.webhookFormat = params.value;
+      else values.failed = params.value === 'true';
+      return { ok: true };
     }) as never);
     await t.page.refresh(t.app.ctx()!);
     t.page.form.focus = 'job-alert-failed'; await t.app.key(ch(' '));
     expect(calls).toEqual([{ key: 'ledgerAlerts.failed', value: 'false' }]);
     expect(values.failed).toBe(false);
+    t.page.form.focus = 'job-alert-webhookFormat'; await t.app.key(k('right'));
+    expect(calls[1]).toEqual({ key: 'ledgerAlerts.webhookFormat', value: 'cresset' });
+    expect(t.page.rows(t.app.ctx()!).find(row => 'id' in row && row.id === 'job-alert-webhookFormat')).toMatchObject({ value: 'cresset' });
     expect(t.page.rows(t.app.ctx()!).find(row => 'id' in row && row.id === 'job-alert-failed')).toMatchObject({ on: false });
   });
   it('lists the providers with their switches, then each section', () => {

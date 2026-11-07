@@ -45,8 +45,8 @@ describe('the ledger Jobs page', () => {
   });
 
   it('renders alert switches, thresholds, and a key reference field', () => {
-    const html = jobAlertControls({ stalled: true, failed: false, overUsualTime: true, usualMultiple: 3, minSamples: 8, stallMinutes: 10, webhookUrl: '', webhookKeyName: 'ledger-alerts.token' });
-    for (const key of ['stalled', 'failed', 'overUsualTime', 'usualMultiple', 'minSamples', 'webhookUrl', 'webhookKeyName']) expect(html).toContain('data-job-alert="ledgerAlerts.' + key + '"');
-    expect(html).toContain('data-job-alert="stallMinutes"'); expect(html).toContain('ledger-alerts.token');
+    const html = jobAlertControls({ stalled: true, failed: false, overUsualTime: true, usualMultiple: 3, minSamples: 8, stallMinutes: 10, webhookUrl: '', webhookFormat: 'cresset', webhookKeyName: 'ledger-alerts.token' });
+    for (const key of ['stalled', 'failed', 'overUsualTime', 'usualMultiple', 'minSamples', 'webhookUrl', 'webhookFormat', 'webhookKeyName']) expect(html).toContain('data-job-alert="ledgerAlerts.' + key + '"');
+    expect(html).toContain('data-job-alert="stallMinutes"'); expect(html).toContain('ledger-alerts.token'); expect(html).toContain('<option value="cresset" selected>cresset</option>');
   });
 });

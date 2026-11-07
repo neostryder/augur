@@ -6,6 +6,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Added
 
+- [Visible] [Alerts] Job webhooks can send the Cresset event format through the Webhook payload format setting in the app and terminal.
 - [Visible] [UI] The desktop, service-served PWA, and terminal Jobs pages show ledger metadata, session scopes, filters, paging, and node health.
 - [Visible] [Alerts] Job alerts have editable rules, desktop job links, a rotating JSONL outbox, optional HTTPS webhooks, and durable delivery receipts.
 

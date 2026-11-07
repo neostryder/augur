@@ -52,11 +52,13 @@ describe('the dispatch calls the web server may pass on', () => {
 describe('the control endpoint', () => {
   it('lets only the owner round trip live job alert settings and inspect delivery status', async () => {
     const { o, svc } = await boot();
-    expect(await call('ledger_settings', undefined, o)).toMatchObject({ stalled: true, usualMultiple: 3, minSamples: 8, stallMinutes: 10 });
+    expect(await call('ledger_settings', undefined, o)).toMatchObject({ stalled: true, usualMultiple: 3, minSamples: 8, stallMinutes: 10, webhookFormat: 'augur' });
     await call('ledger_settings_set', { key: 'ledgerAlerts.failed', value: 'false' }, o);
     await call('ledger_settings_set', { key: 'stallMinutes', value: '5' }, o);
+    await call('ledger_settings_set', { key: 'ledgerAlerts.webhookFormat', value: 'cresset' }, o);
+    expect(svc.config.ledgerAlerts.webhookFormat).toBe('cresset');
     expect(svc.config.ledgerAlerts.failed).toBe(false); expect(svc.config.stallMinutes).toBe(5);
-    expect(await call('ledger_settings', undefined, o)).toMatchObject({ failed: false, stallMinutes: 5 });
+    expect(await call('ledger_settings', undefined, o)).toMatchObject({ failed: false, stallMinutes: 5, webhookFormat: 'cresset' });
     expect(await call('ledger_delivery', undefined, o)).toEqual(expect.arrayContaining([expect.objectContaining({ sink: 'outbox' })]));
     await expect(call('ledger_settings_set', { key: 'requirePick', value: 'false' }, o)).rejects.toThrow('invalid');
     for (const method of ['ledger_settings', 'ledger_settings_set', 'ledger_delivery'] as const) await expect(call(method, undefined as never, { ...o, role: 'agent' })).rejects.toThrow("owner's");

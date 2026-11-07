@@ -178,7 +178,7 @@ export async function startService(opts: ServiceOptions = {}) {
   const delivery = new LedgerDelivery(store.db, [
     { name: 'desktop', sink: new DesktopAlertSink(() => server.engineLink()?.views ?? null) },
     { name: 'outbox', sink: new OutboxAlertSink(home) },
-    { name: 'webhook', enabled: () => !!config.ledgerAlerts.webhookUrl, sink: new WebhookAlertSink(() => config.ledgerAlerts.webhookUrl, () => config.ledgerAlerts.webhookKeyName, name => ledgerKeys.get(name)) },
+    { name: 'webhook', enabled: () => !!config.ledgerAlerts.webhookUrl, sink: new WebhookAlertSink(() => config.ledgerAlerts.webhookUrl, () => config.ledgerAlerts.webhookKeyName, name => ledgerKeys.get(name), () => config.ledgerAlerts.webhookFormat) },
   ]);
   store.ledger.setSink(delivery);
   server.ledgerDelivery = () => delivery.status();
