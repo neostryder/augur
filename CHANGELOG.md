@@ -4,6 +4,8 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+## [1.19.1] - 2026-11-07
+
 ### Changed
 
 - [Visible] [Platform] `--timeout` and `timeout_s` now stop a job only after it has been inactive for that many seconds, never while it is still working, instead of after that much wall time.
