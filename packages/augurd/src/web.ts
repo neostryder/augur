@@ -90,7 +90,7 @@ export interface WebDeps {
   staticDir: string | null;
   log(message: string): void;
   /** Runs one dispatch call for POST /api/dispatch. Absent when the service has no dispatch to offer. */
-  dispatch?(method: string, params: unknown): Promise<unknown>;
+  dispatch?(method: string, params: unknown, peer?: { address?: string; userAgent?: string }): Promise<unknown>;
   /** The service's data folder, where web.tlsAuto keeps its certificate. */
   dir?: string;
   /** The chat service behind /api/chat. Absent when this service has none. */
@@ -457,7 +457,7 @@ export class WebServer {
       if (typeof body !== 'object' || body === null || typeof body.method !== 'string') { this.json(res, 400, { error: 'The request needs a method.' }); return; }
       const run = this.deps.dispatch;
       if (!run) { this.json(res, 503, { error: 'This service has no dispatch to offer.' }); return; }
-      run(body.method, body.params).then(result => this.json(res, 200, { result: result ?? null }), (e: Error) => this.json(res, 400, { error: e.message || 'failed' }));
+      run(body.method, body.params, { address: req.socket.remoteAddress, userAgent: req.headers['user-agent'] }).then(result => this.json(res, 200, { result: result ?? null }), (e: Error) => this.json(res, 400, { error: e.message || 'failed' }));
     });
   }
 

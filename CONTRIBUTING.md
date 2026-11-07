@@ -29,6 +29,8 @@ The premium gate and the surplus window are worked out in `packages/dispatch-pro
 
 A provider with a JSON usage endpoint usually needs no code. Add it as a custom provider, as the README describes. A provider that has to refresh a sign-in or read a command-line login goes in `packages/core/src/providers`, with a fixture and a test in `packages/core/test`. Fixtures use made-up numbers.
 
+The job ledger contract is in `packages/dispatch-protocol/src/job-ledger.ts`, and [docs/job-ledger.md](docs/job-ledger.md) describes the node endpoint and service calls. Its store, polling, attribution, and summary tests are in `packages/augurd/test/job-ledger.test.ts`; the protocol tests are in `packages/dispatch-protocol/test/job-ledger.test.ts`. Windows peer attribution uses the existing native job host, so build it with `pnpm --filter @augur/augurd build:jobhost` before running the service tests on Windows. Ledger fixtures use temporary databases and fake node responses.
+
 ## Before opening a pull request
 
 Run these from the repository root:

@@ -2,12 +2,13 @@
 import { readFileSync } from 'node:fs';
 import net from 'node:net';
 import { join } from 'node:path';
-import type { EngineEvent, Methods, MethodName, RpcResponse, ViewHello, ViewInfo } from '@augur/dispatch-protocol';
+import type { EngineEvent, Methods, MethodName, RpcResponse, Stamp, ViewHello, ViewInfo } from '@augur/dispatch-protocol';
 import type { EngineKey, EngineState } from '@augur/core';
+import type { LedgerChange, LedgerWatchEvent } from '@augur/dispatch-protocol';
 import { dataDir, pipeName } from './paths.js';
 
 /** `agent` reads the agent token, for a tool server an agent drives; the default is the owner's token. */
-export interface ClientOptions { pipe?: string; token?: string; dir?: string; timeoutMs?: number; role?: 'owner' | 'agent' }
+export interface ClientOptions { pipe?: string; token?: string; dir?: string; timeoutMs?: number; role?: 'owner' | 'agent'; stamp?: Stamp }
 
 export class ServiceError extends Error { constructor(public code: string, message: string) { super(message); } }
 
@@ -22,7 +23,7 @@ export function call<M extends MethodName>(method: M, params?: Methods[M]['param
     let buf = '';
     const timer = setTimeout(() => { sock.destroy(); reject(new ServiceError('timeout', 'The service did not answer in time.')); }, opts.timeoutMs ?? 10000);
     sock.setEncoding('utf8');
-    sock.on('connect', () => sock.write(JSON.stringify({ id: 1, token, method, params }) + '\n'));
+    sock.on('connect', () => sock.write(JSON.stringify({ id: 1, token, method, params, ...(opts.stamp ? { stamp: opts.stamp } : {}) }) + '\n'));
     sock.on('data', (chunk: string) => {
       buf += chunk;
       const i = buf.indexOf('\n');
@@ -85,5 +86,44 @@ export function watchEngine(hello: ViewHello, handlers: EngineWatchHandlers = {}
       if (!started) { clearTimeout(timer); reject(new ServiceError('unreachable', `The service is not running (${(e as NodeJS.ErrnoException).code ?? e.message}).`)); }
     });
     sock.on('close', () => { if (started) handlers.closed?.(closing ? undefined : new ServiceError('closed', 'The service closed the connection.')); });
+  });
+}
+
+export interface LedgerWatchHandlers { change(change: LedgerChange): void; closed?(error?: Error): void }
+export interface LedgerWatch { close(): void }
+
+export function watchLedger(since: string, handlers: LedgerWatchHandlers, opts: ClientOptions = {}): Promise<LedgerWatch> {
+  return new Promise((resolve, reject) => {
+    let token: string;
+    try { token = opts.token ?? readToken(opts.dir ?? dataDir(), opts.role); }
+    catch { reject(new ServiceError('no_token', 'The service token is missing.')); return; }
+    const sock = net.connect(opts.pipe ?? pipeName(opts.dir ?? dataDir()));
+    let buffer = '', ready = false, closing = false;
+    const timer = setTimeout(() => { sock.destroy(); reject(new ServiceError('timeout', 'The ledger watch did not start in time.')); }, opts.timeoutMs ?? 10000);
+    sock.setEncoding('utf8');
+    sock.on('connect', () => sock.write(JSON.stringify({ id: 1, token, method: 'ledger_watch', params: { since } }) + '\n'));
+    sock.on('data', (chunk: string) => {
+      buffer += chunk;
+      if (buffer.length > 4 * 1024 * 1024) { sock.destroy(); return; }
+      let end: number;
+      while ((end = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, end); buffer = buffer.slice(end + 1);
+        let message: RpcResponse<{ cursor: string }> | LedgerWatchEvent;
+        try { message = JSON.parse(line) as typeof message; }
+        catch { sock.destroy(); return; }
+        if (!ready) {
+          if (!('id' in message)) continue;
+          clearTimeout(timer);
+          if ('error' in message) { reject(new ServiceError(message.error.code, message.error.message)); sock.destroy(); return; }
+          ready = true; resolve({ close: () => { closing = true; sock.end(); } });
+        } else if ('event' in message && message.event === 'ledger_change') handlers.change(message.change);
+      }
+    });
+    sock.on('error', () => { if (!ready) { clearTimeout(timer); reject(new ServiceError('unreachable', 'The ledger service is unavailable.')); } });
+    sock.on('close', () => {
+      clearTimeout(timer);
+      if (!ready) reject(new ServiceError('closed', 'The ledger connection closed.'));
+      else handlers.closed?.(closing ? undefined : new ServiceError('closed', 'The ledger connection closed.'));
+    });
   });
 }

@@ -1,6 +1,8 @@
 // `augur-mcp`: an MCP server on standard input and output, for Claude Code, Claude Desktop and other MCP clients. Nothing but the protocol may be written to
 // standard output, so anything else goes to standard error.
+import { stampFromEnv } from '@augur/dispatch-protocol';
 import { randomUUID } from 'node:crypto';
+import { hostname } from 'node:os';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -14,12 +16,14 @@ const version = typeof __AUGUR_VERSION__ === 'string' ? __AUGUR_VERSION__ : 'dev
 
 const dir = dataDir();
 const read = (name: string): string | null => { try { return readFileSync(join(augurHome(), name), 'utf8'); } catch { return null; } };
+const stamp = { ...stampFromEnv(process.env, 'mcp'), origin: 'mcp' as const, originLabel: 'augur-mcp', host: hostname(), pid: process.pid, parentPid: process.ppid };
 const tools = createTools({
+  stamp,
   call, opts: { dir, role: 'agent' as const, ...(process.env.AUGURD_PIPE ? { pipe: process.env.AUGURD_PIPE } : {}) },
   policyText: () => read('policy.json'), usageText: () => read('usage.json'), inboxText: () => read(INBOX_FILE), editStateText: () => read(RESULTS_FILE),
   aliasStateText: () => read('alias-refresh.json'), aliasInboxText: () => read('alias-inbox.jsonl'), aliasFlagsText: () => read('alias-flags.json'),
   appendInbox: (lines) => appendPolicyEdits(lines),
-  session: `mcp-${randomUUID()}`, cwd: process.cwd(),
+  session: stamp.sessionId ?? `mcp-${randomUUID()}`, cwd: process.cwd(),
 });
 
 await buildServer(tools, version).connect(new StdioServerTransport());

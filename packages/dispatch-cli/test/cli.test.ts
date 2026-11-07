@@ -79,6 +79,25 @@ async function boot(extra: Record<string, unknown> = {}) {
   return { e, run, pipe };
 }
 
+describe('run attribution', () => {
+  it('takes stamp flags over the four environment fallbacks and stores no other environment field', async () => {
+    const { e, run } = await boot({ maxConcurrent: 1 });
+    const result = await run(['run', 'fake', '--prompt', 'hi', '--session', 'flag-session', '--session-title', 'Flag title', '--origin', 'claude-code', '--summary', 'Read notes', '--json'], '', { AUGUR_SESSION: 'env-session', AUGUR_SESSION_TITLE: 'Env title', AUGUR_ORIGIN: 'other', AUGUR_SUMMARY: 'Env summary', PRIVATE_STAMP_TEST: 'private-sentinel' });
+    expect(result.code).toBe(0);
+    const id = JSON.parse(result.out).id;
+    expect(e.store.get(id)?.ledger).toMatchObject({ stamp: { sessionId: 'flag-session', sessionTitle: 'Flag title', origin: 'claude-code' }, summary: 'Read notes', summarySource: 'caller' });
+    expect(JSON.stringify(e.store.get(id)?.ledger)).not.toContain('private-sentinel');
+    const envOnly = await run(['run', 'fake', '--prompt', 'hi', '--json'], '', { AUGUR_SESSION: 'env-session', AUGUR_SESSION_TITLE: 'Env title', AUGUR_ORIGIN: 'service', AUGUR_SUMMARY: 'Read notes' });
+    expect(envOnly.code).toBe(0);
+    expect(e.store.get(JSON.parse(envOnly.out).id)?.ledger?.stamp).toMatchObject({ sessionId: 'env-session', sessionTitle: 'Env title', origin: 'service' });
+  });
+  it('rejects a multiline summary or unknown origin without submitting', async () => {
+    const { e, run } = await boot();
+    for (const flags of [['--summary', 'two\nlines'], ['--origin', 'invalid']]) expect((await run(['run', 'fake', '--prompt', 'hi', ...flags])).code).toBe(1);
+    expect(e.store.list()).toEqual([]);
+  });
+});
+
 describe('run effort and schema', () => {
   it('parses both options', () => {
     const parsed = parse(['run', 'fake', '--effort', 'xhigh', '--schema', 'answer.json']);

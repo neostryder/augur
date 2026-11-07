@@ -1,4 +1,5 @@
 {
+  "ledger": { "retentionDays": 90 },
   "profile": "classic",
   "enabled": true,
   "gate": {

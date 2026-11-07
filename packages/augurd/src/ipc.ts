@@ -8,6 +8,8 @@ import { dirname, join } from 'node:path';
 import { PROTOCOL_VERSION, planRouteAdd, resetLedger, routeAddShapeProblems } from '@augur/dispatch-protocol';
 import type { EngineEvent, JobRequest, MethodName, RateCard, RouteAddAnswer, RouteConfig, RpcRequest, RpcResponse, ViewHello, ViewReply } from '@augur/dispatch-protocol';
 import { DEFAULT_APPROVAL, RULES_ONLY_PROVIDERS, allPlugins, callEngine, cogitatorBase, fleetOf, fleetOffers, type EngineApi, type EngineKey, type EngineState, type ProviderAddition } from '@augur/core';
+import { pipePeer, readPipePeer, type PeerInfo } from './job-stamp.js';
+import { validStamp } from '@augur/dispatch-protocol';
 import { buildAccounting } from './accounting.js';
 import type { Store } from './store.js';
 import type { Supervisor } from './supervisor.js';
@@ -58,7 +60,7 @@ export function rotateWebToken(dir: string): string {
 export type Role = 'owner' | 'agent';
 
 /** What an agent token may call. Everything else, including every request that records a person's word (a prompt, a pick answer, a grade label) and the engine's settings, is the owner's. */
-export const AGENT_METHODS: ReadonlySet<string> = new Set(['ping', 'submit', 'replay', 'status', 'list', 'events', 'logs', 'result', 'cancel', 'pick', 'pressure', 'balance', 'gate_status', 'gate_report', 'resets', 'routes', 'route_add', 'prose_add', 'prose_list', 'prose_status', 'backlog_add', 'backlog_list', 'backlog_status']);
+export const AGENT_METHODS: ReadonlySet<string> = new Set(['ledger_list', 'ledger_get', 'ledger_counts', 'ledger_changes', 'ledger_watch', 'ledger_nodes', 'ledger_refresh', 'ledger_alerts', 'ping', 'submit', 'replay', 'status', 'list', 'events', 'logs', 'result', 'cancel', 'pick', 'pressure', 'balance', 'gate_status', 'gate_report', 'resets', 'routes', 'route_add', 'prose_add', 'prose_list', 'prose_status', 'backlog_add', 'backlog_list', 'backlog_status']);
 
 /** A job request as an agent may make it: it cannot say a person is at the terminal or named the model, and it cannot waive the pick or quota checks. */
 export function attestAgentRequest(req: JobRequest): JobRequest {
@@ -69,19 +71,20 @@ export function attestAgentRequest(req: JobRequest): JobRequest {
 }
 
 /** The calls the web server's dispatch endpoint passes on. They are the agent methods that run and read jobs, and nothing that edits routes or rules. */
-export const HTTP_DISPATCH_METHODS: ReadonlySet<string> = new Set(['submit', 'replay', 'status', 'list', 'events', 'logs', 'result', 'cancel', 'pick', 'routes']);
+export const HTTP_DISPATCH_METHODS: ReadonlySet<string> = new Set(['ledger_list', 'ledger_get', 'ledger_counts', 'ledger_changes', 'ledger_nodes', 'ledger_refresh', 'ledger_alerts', 'submit', 'replay', 'status', 'list', 'events', 'logs', 'result', 'cancel', 'pick', 'routes']);
 
 export class IpcServer {
   private server: net.Server | null = null;
   private sockets = new Set<net.Socket>();
   private readonly startedAt = Date.now();
   private engine: EngineLink | null = null;
+  refreshLedger: () => Promise<void> = async () => {};
   constructor(private sup: Supervisor, private store: Store, private token: string, private routes: () => Record<string, RouteConfig> | null, private rates: () => RateCard = () => ({}), private routeFile: { read(): string | null; write(text: string): void } | null = null, private agentToken: string | null = null, private aliasRefresh?: (label?: string) => Promise<unknown>) {}
 
   /** A dispatch call from the web server. It runs as an agent, so the request cannot name a model or waive the pick, and only the methods in HTTP_DISPATCH_METHODS are served. */
-  async dispatch(method: string, params: unknown): Promise<unknown> {
+  async dispatch(method: string, params: unknown, peer: PeerInfo = {}): Promise<unknown> {
     if (!HTTP_DISPATCH_METHODS.has(method)) throw new Error(`No dispatch call named ${method}.`);
-    return this.handle(method as MethodName, params, 'agent');
+    return this.handle(method as MethodName, params, 'agent', peer);
   }
 
   /** Serves the usage engine's methods from now on. Before this they are refused. */
@@ -113,16 +116,25 @@ export class IpcServer {
     return { view, stop, result: { state: engine.api.state, views: engine.views.info() } };
   }
 
-  private handle(method: MethodName, params: unknown, role: Role = 'owner'): unknown | Promise<unknown> {
+  private handle(method: MethodName, params: unknown, role: Role = 'owner', peer: PeerInfo = {}): unknown | Promise<unknown> {
     const p = (params ?? {}) as Record<string, unknown>;
     if (role === 'agent' && !AGENT_METHODS.has(method)) throw new Error(`This caller may not use ${String(method)}. It is for the owner's terminal and app.`);
     switch (method) {
+      case 'ledger_list': return this.store.ledger.list(params as never);
+      case 'ledger_get': return this.store.ledger.get(String(p.id ?? ''));
+      case 'ledger_counts': return this.store.ledger.counts(params as never);
+      case 'ledger_changes': return this.store.ledger.changes(p.since as string | undefined, p.limit as number | undefined);
+      case 'ledger_nodes': return this.store.ledger.nodes();
+      case 'ledger_alerts': return this.store.ledger.alerts();
+      case 'ledger_refresh': return this.refreshLedger().then(() => this.store.ledger.nodes());
       case 'ping': return { pid: process.pid, version: PROTOCOL_VERSION, startedAt: this.startedAt };
       case 'submit': {
         const request = params as JobRequest;
         if (request?.released !== undefined) throw new Error('Only the service runner may set released.');
         if (role === 'agent' && request?.allow?.includes('unpicked')) throw new Error('An agent cannot skip the pick check.');
-        return this.sup.submit(role === 'agent' ? attestAgentRequest(request) : request);
+        const result = this.sup.submit(role === 'agent' ? attestAgentRequest(request) : request);
+        if ('id' in result) this.sup.attributeJob(result.id, peer);
+        return result;
       }
       case 'replay': {
         const caller = role === 'agent' ? attestAgentRequest({ caller: p.caller } as JobRequest).caller : p.caller as JobRequest['caller'];
@@ -291,8 +303,9 @@ export class IpcServer {
     return new Promise((resolve, reject) => {
       const oldMask = process.platform === 'win32' ? null : process.umask(0o077);
       const server = net.createServer(sock => {
+        let ledgerStop: (() => void) | null = null;
         let watching: { view: ViewLink; stop: () => void } | null = null;
-        this.sockets.add(sock); sock.on('close', () => { this.sockets.delete(sock); watching?.stop(); watching = null; });
+        this.sockets.add(sock); sock.on('close', () => { this.sockets.delete(sock); ledgerStop?.(); watching?.stop(); watching = null; });
         let buf = '';
         sock.setEncoding('utf8');
         sock.on('error', () => { /* a caller that vanished */ });
@@ -316,7 +329,7 @@ export class IpcServer {
             if (req.method === 'engine_watch') {
               let res: RpcResponse;
               if (this.roleOf(req.token) !== 'owner') res = { id: req.id, error: { code: 'unauthorized', message: 'Missing or wrong token.' } };
-              else if (watching) res = { id: req.id, error: { code: 'failed', message: 'This connection is already watching.' } };
+              else if (watching || ledgerStop) res = { id: req.id, error: { code: 'failed', message: 'This connection is already watching.' } };
               else {
                 try { const w = this.watch(sock, req.params); watching = w; res = { id: req.id, result: w.result }; }
                 catch (e) { res = { id: req.id, error: { code: 'failed', message: (e as Error).message } }; }
@@ -324,10 +337,41 @@ export class IpcServer {
               sock.write(JSON.stringify(res) + '\n');
               continue;
             }
+            if (req.method === 'ledger_watch') {
+              const role = this.roleOf(req.token);
+              try {
+                if (!role) throw new Error('Missing or wrong token.');
+                if (ledgerStop || watching) throw new Error('This connection is already watching.');
+                let cursor = ((req.params ?? {}) as { since?: string }).since ?? '0';
+                this.store.ledger.changes(cursor, 1);
+                sock.write(JSON.stringify({ id: req.id, result: { cursor } }) + '\n');
+                const pump = () => {
+                  try {
+                    const page = this.store.ledger.changes(cursor, 100);
+                    for (const change of page.changes) {
+                      if (sock.writableLength > 4 * 1024 * 1024) { sock.destroy(); return; }
+                      sock.write(JSON.stringify({ event: 'ledger_change', change }) + '\n');
+                    }
+                    cursor = page.cursor;
+                  } catch { sock.destroy(); }
+                };
+                const timer = setInterval(pump, 250);
+                ledgerStop = () => clearInterval(timer);
+                pump();
+              } catch (error) { sock.write(JSON.stringify({ id: req.id, error: { code: 'failed', message: (error as Error).message } }) + '\n'); }
+              continue;
+            }
             const respond = async (): Promise<RpcResponse> => {
               const role = this.roleOf(req.token);
               if (!role) return { id: req.id, error: { code: 'unauthorized', message: 'Missing or wrong token.' } };
-              try { return { id: req.id, result: (await this.handle(req.method, req.params, role)) ?? null }; } catch (e) { return { id: req.id, error: { code: 'failed', message: (e as Error).message } }; }
+              try {
+                if (req.stamp !== undefined && !validStamp(req.stamp)) throw new Error('The connection stamp is invalid.');
+                let params = req.params;
+                if (req.method === 'submit' && isObj(params) && params.stamp !== undefined && !validStamp(params.stamp)) throw new Error('The job stamp is invalid.');
+                if (req.method === 'submit' && isObj(params) && isObj(params.caller) && params.caller.stamp !== undefined && !validStamp(params.caller.stamp)) throw new Error('The job stamp is invalid.');
+                if (req.method === 'submit' && isObj(params) && req.stamp) params = { ...params, stamp: { ...req.stamp, ...(isObj(params.caller) && isObj(params.caller.stamp) ? params.caller.stamp : {}), ...(isObj(params.stamp) ? params.stamp : {}) } };
+                return { id: req.id, result: (await this.handle(req.method, params, role, req.method === 'submit' ? await readPipePeer(sock) : pipePeer(sock))) ?? null };
+              } catch (e) { return { id: req.id, error: { code: 'failed', message: (e as Error).message } }; }
             };
             void respond().then(res => { if (!sock.destroyed) sock.write(JSON.stringify(res) + '\n'); });
           }

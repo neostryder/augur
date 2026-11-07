@@ -10,6 +10,7 @@ import type { PickRequest, PickResult } from './pick.js';
 import type { Proposal } from './pick-training.js';
 import type { Conversation, JobEvent, JobRecord, JobRequest, Rejection } from './spec.js';
 import type { JobState } from './states.js';
+import type { LedgerAlert, LedgerChain, LedgerNode, LedgerPage, LedgerQuery, LedgerState, LedgerWatchPage, Stamp } from './job-ledger.js';
 
 export const PROTOCOL_VERSION = 1;
 
@@ -38,10 +39,18 @@ export type PickAnswer = (PickResult & {
   decision?: { backend: string; classified?: unknown; fitError?: string };
 }) | { error: string };
 
-export interface RpcRequest { id: number; token: string; method: keyof Methods; params?: unknown }
+export interface RpcRequest { id: number; token: string; method: keyof Methods; params?: unknown; stamp?: Stamp }
 export type RpcResponse<T = unknown> = { id: number; result: T } | { id: number; error: { code: string; message: string } };
 
 export interface Methods {
+  ledger_list: { params: LedgerQuery | undefined; result: LedgerPage };
+  ledger_get: { params: { id: string }; result: LedgerChain | null };
+  ledger_counts: { params: LedgerQuery | undefined; result: Record<LedgerState, number> };
+  ledger_changes: { params: { since?: string; limit?: number } | undefined; result: LedgerWatchPage };
+  ledger_watch: { params: { since?: string } | undefined; result: { cursor: string } };
+  ledger_nodes: { params: undefined; result: LedgerNode[] };
+  ledger_refresh: { params: undefined; result: LedgerNode[] };
+  ledger_alerts: { params: undefined; result: LedgerAlert[] };
   alias_refresh: { params: { label?: string } | undefined; result: unknown };
   backlog_add: { params: { item: unknown }; result: unknown };
   backlog_approve: { params: { id: string }; result: unknown };

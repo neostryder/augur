@@ -38,6 +38,7 @@ export interface McpDeps {
   /** Names this server's calls to the service, so a pick and the run that follows it are matched. */
   session: string;
   cwd: string;
+  stamp?: import('@augur/dispatch-protocol').Stamp;
   sleep?: (ms: number) => Promise<void>;
 }
 
@@ -146,7 +147,7 @@ export function createTools(d: McpDeps) {
     if (!a.route || !a.prompt) return fail('A route and a prompt are required.');
     const badOptions = validateRunOptions(a);
     if (badOptions) return fail(badOptions);
-    const req: JobRequest = { route: a.route, activity: activity as ActivityId, dataTier: dataTier as DataTier, tools: tools as ToolTier, output: output as OutputMode, cwd: a.cwd ?? d.cwd,
+    const req: JobRequest = { stamp: { ...d.stamp, origin: 'mcp', originLabel: 'augur-mcp', ...(d.stamp?.sessionId ? {} : { sessionId: d.session }) }, route: a.route, activity: activity as ActivityId, dataTier: dataTier as DataTier, tools: tools as ToolTier, output: output as OutputMode, cwd: a.cwd ?? d.cwd,
       ...(a.effort !== undefined ? { effort: a.effort } : {}), ...(a.schema !== undefined ? { schema: a.schema } : {}),
       ...(a.persistPrompt !== undefined ? { persistPrompt: a.persistPrompt } : {}),
       prompt: { text: a.prompt }, ...(a.timeout_s ? { timeoutS: a.timeout_s } : {}), ...(a.packs ? { packs: a.packs } : {}), ...(a.no_charter ? { noCharter: true } : {}), ...(a.conversation ? { conversation: a.conversation } : {}),

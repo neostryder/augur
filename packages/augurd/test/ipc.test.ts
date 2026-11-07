@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { call, readToken, ServiceError } from '../src/client.js';
+import { watchLedger, call, readToken, ServiceError } from '../src/client.js';
 import { startService } from '../src/main.js';
 import { AGENT_METHODS, HTTP_DISPATCH_METHODS, IpcServer, attestAgentRequest } from '../src/ipc.js';
 import { JOBHOST, makeEnv, request, sleep } from './harness.js';
@@ -50,6 +50,28 @@ describe('the dispatch calls the web server may pass on', () => {
 });
 
 describe('the control endpoint', () => {
+  it('serves session queries, counts, chains, and a replayable ledger watch to agent callers', async () => {
+    const { o, svc, e } = await boot();
+    svc.config.maxConcurrent = 0;
+    const stamp = { sessionId: 'host-session', sessionTitle: 'Review', origin: 'mcp' as const, summary: 'Read notes' };
+    const agent = { ...o, role: 'agent' as const, stamp };
+    const first = await call('submit', request({ text: 'PRIVATE_PROMPT', cwd: e.root }), agent) as { id: string };
+    const found = await call('ledger_list', { session: stamp.sessionId }, agent);
+    expect(found.jobs).toMatchObject([{ localId: first.id, summary: 'Read notes', summarySource: 'caller', stamp: { sessionId: stamp.sessionId } }]);
+    expect(await call('ledger_counts', { session: stamp.sessionId }, agent)).toMatchObject({ queued: 1 });
+    expect(await call('ledger_get', { id: found.jobs[0]!.id }, agent)).toMatchObject({ job: { localId: first.id }, children: [], retries: [] });
+    const before = await call('ledger_changes', {}, agent), seen: Array<{ cursor: string; job: { localId: string } }> = [];
+    const watch = await watchLedger(before.cursor, { change: change => seen.push(change) }, agent);
+    cleanup.push(() => watch.close());
+    const second = await call('submit', request({ text: 'PRIVATE_PROMPT_2', cwd: e.root }), agent) as { id: string };
+    for (let i = 0; i < 30 && !seen.some(change => change.job.localId === second.id); i++) await sleep(50);
+    expect(seen.some(change => change.job.localId === second.id)).toBe(true);
+    expect(JSON.stringify(await call('ledger_changes', {}, agent))).not.toContain('PRIVATE_PROMPT');
+    expect(await call('ledger_nodes', undefined, agent)).toEqual([]);
+    expect(await call('ledger_refresh', undefined, agent)).toEqual([]);
+    await expect(call('ledger_list', { limit: 0 }, agent)).rejects.toBeInstanceOf(ServiceError);
+    await expect(watchLedger('0', { change: () => {} }, { ...o, token: 'wrong' })).rejects.toBeInstanceOf(ServiceError);
+  });
   it('turns away JSON that is not an object without stopping the service', async () => {
     const { o, pipe } = await boot();
     const net = await import('node:net');

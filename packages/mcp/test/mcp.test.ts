@@ -28,6 +28,15 @@ function deps(answers: Record<string, unknown | (() => unknown)>, calls: Calls[]
 const TEXT_ONLY = { attachments: [], vision: false, embed: false, transcribe: false };
 const ROUTES = [{ name: 'luna', model: 'codex/luna', adapter: 'codex-exec', problem: null, capabilities: TEXT_ONLY }, { name: 'grok', model: 'xai/grok', adapter: 'exec', problem: 'no program', capabilities: TEXT_ONLY }];
 
+describe('run attribution', () => {
+  it('stamps the tool origin and passes through the host session and caller summary', async () => {
+    const calls: Calls[] = [], d = deps({ submit: { id: 'job', warnings: [] } }, calls);
+    d.stamp = { sessionId: 'host-session', sessionTitle: 'Review', summary: 'Read notes', origin: 'other' };
+    await createTools(d).run({ route: 'luna', prompt: 'private', activity: 'research', data_tier: 'public', wait_s: 0 });
+    expect(calls.find(c => c.method === 'submit')?.params).toMatchObject({ stamp: { sessionId: 'host-session', sessionTitle: 'Review', summary: 'Read notes', origin: 'mcp', originLabel: 'augur-mcp' } });
+  });
+});
+
 describe('models', () => {
   it('lists every model with its routes, and counts the ones that can take jobs', async () => {
     const r = await createTools(deps({ routes: ROUTES })).models();

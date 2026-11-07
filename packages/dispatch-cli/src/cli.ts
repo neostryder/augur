@@ -2,14 +2,14 @@
 import { X509Certificate } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES, feedFor, fleetCatalog, fleetOf, fleetOffers } from '@augur/core';
 import type { AliasRefreshResult } from '@augur/core';
 import type { ActivityId, DataTier, EngineState, OutputMode, ProviderAdded, Snapshot } from '@augur/core';
-import { EXIT_CODES, MAX_SCHEMA_BYTES, TOOL_TIERS, validateRunOptions, describeCapabilities, describeFigure, exitCodeForState, isTerminal, renderReport, renderResets, seatLines } from '@augur/dispatch-protocol';
-import type { Conversation, Depth, JobRecord, JobRequest, ProseAddParams, ProseStatus, ToolTier } from '@augur/dispatch-protocol';
+import { stampFromEnv, validStamp, EXIT_CODES, MAX_SCHEMA_BYTES, TOOL_TIERS, validateRunOptions, describeCapabilities, describeFigure, exitCodeForState, isTerminal, renderReport, renderResets, seatLines } from '@augur/dispatch-protocol';
+import type { Stamp, Conversation, Depth, JobRecord, JobRequest, ProseAddParams, ProseStatus, ToolTier } from '@augur/dispatch-protocol';
 import { STATUS_TEXT, duration, isLive, servedText, statusLine } from '@augur/view-model';
 import { bridge, stdioBridge } from './bridge.js';
 import { SERVICE_VERSION, ServiceError, call, configLines, dataDir, disableLogin, enableLogin, ensureToken, loadConfig, loginState, rotateWebToken, setConfigValue, startViaLogin, webAddresses, webCertFingerprint } from '@augur/augurd';
@@ -51,6 +51,10 @@ augur run <route> --prompt-file <file|-> | --prompt <text> [options]
   --tools <t>        ${TOOL_TIERS.join(' | ')} (default read)
   --output <o>       ${OUTPUT_MODES.join(' | ')} (default text_only)
   --cwd <dir>        working directory (default: current)
+  --session <id>     session id; falls back to AUGUR_SESSION
+  --session-title <t> session title; falls back to AUGUR_SESSION_TITLE
+  --origin <kind>    origin kind; falls back to AUGUR_ORIGIN or cli
+  --summary <line>   one ASCII line, at most 120 characters; falls back to AUGUR_SUMMARY
   --effort <level>   override the route's reasoning effort for this job (1-16 chars)
   --schema <file>    JSON Schema file the answer must match (max 64 KB)
   --expect-file <f>  file the job must leave in the working directory
@@ -154,7 +158,9 @@ export async function main(argv: string[], io: Io): Promise<number> {
   const json = p.flags.has('json'), [cmd, ...rest] = p.cmd;
   const opt = (n: string) => { const v = p.flags.get(n); return typeof v === 'string' ? v : undefined; };
   const say = (human: string, data: unknown) => io.out(json ? JSON.stringify(data) + '\n' : human + '\n');
-  const opts = { dir: dataDir(io.env), ...(io.env.AUGURD_PIPE ? { pipe: io.env.AUGURD_PIPE } : {}) };
+  let stamp: Stamp;
+  try { stamp = cliStamp(io, opt); } catch (error) { io.err(`${(error as Error).message}\n`); return EXIT_CODES.usage; }
+  const opts = { stamp, dir: dataDir(io.env), ...(io.env.AUGURD_PIPE ? { pipe: io.env.AUGURD_PIPE } : {}) };
   // With no command at a terminal, `augur` opens the full-screen app; piped or scripted, it prints the help.
   if (!cmd && !p.flags.size && io.interactive) {
     const { runTui } = await import('@augur/tui');
@@ -250,7 +256,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
         }
         if (action === 'list') { const filter = opt('status'); if (filter && !['queued', 'awaiting-approval', 'running', 'drafted', 'failed'].includes(filter)) throw new ServiceError('usage', 'Unknown prose status filter.'); const r = await call('prose_list', filter ? { status: filter as ProseStatus } : undefined, opts); say((r as Array<{ id: string; status: string; repo: string; target: string }>).map(x => `${x.id}  ${x.status}  ${x.repo}  ${x.target}`).join('\n') || 'No prose items.', r); return 0; }
         if (action === 'status') { const r = await call('prose_status', undefined, opts); const x = r as { counts: Record<string, number>; oldestAgeMs: number | null; due: boolean }; say(`${Object.entries(x.counts).map(([k, v]) => `${k}: ${v}`).join(', ')}; oldest ${x.oldestAgeMs === null ? 'none' : `${Math.floor(x.oldestAgeMs / 3600000)}h`}; ${x.due ? 'run due' : 'not due'}.`, r); return 0; }
-        if (action === 'run') { const r = await call('prose_run', { dryRun: p.flags.has('dry-run'), caller: { kind: 'cli', label: 'prose-queue', ...(io.interactive ? { interactive: true } : {}) } }, opts); const x = r as { started?: boolean; batchId?: string; reason?: string }; say(x.started ? `Started prose batch ${x.batchId ?? ''}.` : x.reason ?? 'No prose batch started.', r); return 0; }
+        if (action === 'run') { const r = await call('prose_run', { dryRun: p.flags.has('dry-run'), caller: { stamp: opts.stamp, kind: 'cli', label: 'prose-queue', ...(io.interactive ? { interactive: true } : {}) } }, opts); const x = r as { started?: boolean; batchId?: string; reason?: string }; say(x.started ? `Started prose batch ${x.batchId ?? ''}.` : x.reason ?? 'No prose batch started.', r); return 0; }
         if (action === 'approve') { const r = await call('prose_approve', { id: need(rest[1], 'prose item id') }, opts); if ('error' in (r as object)) { io.err(`${(r as { error: string }).error}\n`); return EXIT_CODES.usage; } say(`Approved ${(r as { id: string }).id}.`, r); return 0; }
         throw new ServiceError('usage', 'Use augur prose add, list, status, run or approve.');
       }
@@ -551,7 +557,15 @@ async function conversationsCmd(p: Parsed, io: Io, opts: Opts, say: (h: string, 
 }
 
 const conversationLine = (c: Conversation) => `${c.name}  ${c.route}  ${c.adapter}  ${c.turns}  ${new Date(c.lastUsedAt).toISOString().slice(0, 19)}Z`;
-type Opts = { dir: string; pipe?: string };
+function cliStamp(io: Io, opt: (name: string) => string | undefined): Stamp {
+  const stamp = stampFromEnv({ AUGUR_SESSION: opt('session') ?? io.env.AUGUR_SESSION, AUGUR_SESSION_TITLE: opt('session-title') ?? io.env.AUGUR_SESSION_TITLE,
+    AUGUR_ORIGIN: opt('origin') ?? io.env.AUGUR_ORIGIN, AUGUR_SUMMARY: opt('summary') ?? io.env.AUGUR_SUMMARY }, 'cli');
+  const result = { ...stamp, originLabel: 'augur', host: hostname(), pid: process.pid, parentPid: process.ppid };
+  if (!validStamp(result)) throw new ServiceError('usage', 'The job stamp is invalid.');
+  return result;
+}
+
+type Opts = { dir: string; pipe?: string; stamp?: Stamp };
 
 /** Best effort: a job's environment carries markers the service wrote. A process that clears them still holds the owner token, which is outside this trust model. */
 function runsInsideJob(io: Io): boolean { return !!io.env.AUGUR_IN_JOB || !!io.env.AUGUR_JOB_ID || io.env.AUGUR_CALLER === 'automated'; }
@@ -652,12 +666,13 @@ async function run(rest: string[], p: Parsed, io: Io, opts: Opts, say: (h: strin
   if (caller !== 'interactive' && caller !== 'automated') { io.err('--caller is interactive or automated.\n'); return EXIT_CODES.usage; }
   if (runsInsideJob(io) && allow.includes('unpicked')) { io.err('--allow unpicked is for the owner\'s own terminal, not for a job.\n'); return EXIT_CODES.usage; }
   const req: JobRequest = {
+    stamp: opts.stamp,
     route, activity: activity as ActivityId, dataTier: dataTier as DataTier, tools: tools as ToolTier, output: output as OutputMode, cwd: resolve(io.cwd, opt('cwd') ?? '.'),
     prompt: { text: promptText as string }, ...(effort !== undefined ? { effort } : {}), ...(schema !== undefined ? { schema } : {}),
     ...(p.flags.has('keep-prompt') ? { persistPrompt: true } : {}),
     ...(opt('expect-file') ? { expectFile: opt('expect-file') as string } : {}), ...(opt('timeout') ? { timeoutS: Number(opt('timeout')) } : {}),
     ...(p.flags.has('named') ? { named: true } : {}), ...(attach.length ? { attach } : {}), ...(p.flags.has('urgent') ? { urgent: true } : {}),
-    caller: { kind: parentId ? 'job' : 'cli', intent: caller, ...(parentId ? { label: parentId } : {}), ...(io.env.CLAUDE_CODE_SESSION_ID ? { session: io.env.CLAUDE_CODE_SESSION_ID } : {}), ...(io.interactive ? { interactive: true } : {}) },
+    caller: { kind: parentId ? 'job' : 'cli', intent: caller, ...(parentId ? { label: parentId } : {}), ...((opts.stamp?.sessionId ?? io.env.CLAUDE_CODE_SESSION_ID) ? { session: opts.stamp?.sessionId ?? io.env.CLAUDE_CODE_SESSION_ID } : {}), ...(io.interactive ? { interactive: true } : {}) },
     ...(allow.length ? { allow } : {}), ...(p.flags.has('no-failover') ? { failover: false } : {}),
     ...(packs?.length ? { packs } : {}), ...(p.flags.has('no-charter') ? { noCharter: true } : {}), ...(opt('conversation') ? { conversation: opt('conversation') } : {}),
     ...(parentId ? { parent: { jobId: parentId, rootJobId: io.env.AUGUR_ROOT_JOB_ID ?? parentId, depth: 0 } } : {}),
@@ -712,7 +727,7 @@ async function pickCmd(io: Io, opts: Opts, say: (h: string, d: unknown) => void,
   if (caller !== 'interactive' && caller !== 'automated') { io.err('--caller is interactive or automated.' + String.fromCharCode(10)); return EXIT_CODES.usage; }
   const r = await call('pick', { caller, ...(activity ? { activity: activity as ActivityId } : {}), ...(dataTier ? { dataTier: dataTier as DataTier } : {}), ...(task ? { task } : {}),
     ...(opt('role') ? { role: opt('role') } : {}),
-    ...((opt('model') ?? opt('named')) ? { named: (opt('model') ?? opt('named')) as string } : {}), ...(depth ? { depth: depth as Depth } : {}), fits, ...(flag('best') ? { best: true } : {}), ...(flag('snippet') ? { snippet: true } : {}), ...(preview ? { preview: true } : {}), ...(io.env.CLAUDE_CODE_SESSION_ID ? { session: io.env.CLAUDE_CODE_SESSION_ID } : {}) }, opts);
+    ...((opt('model') ?? opt('named')) ? { named: (opt('model') ?? opt('named')) as string } : {}), ...(depth ? { depth: depth as Depth } : {}), fits, ...(flag('best') ? { best: true } : {}), ...(flag('snippet') ? { snippet: true } : {}), ...(preview ? { preview: true } : {}), ...((opts.stamp?.sessionId ?? io.env.CLAUDE_CODE_SESSION_ID) ? { session: opts.stamp?.sessionId ?? io.env.CLAUDE_CODE_SESSION_ID } : {}) }, opts);
   if ('error' in r) { io.err(r.error + String.fromCharCode(10)); return EXIT_CODES.failed; }
   const lines = r.ranking.map(x => `  ${x.model.padEnd(22)} ${x.score.toFixed(2)}   fit ${x.fit.toFixed(2)} x ${x.level} ${x.weight.toFixed(2)} x usage ${x.usage.toFixed(2)}   odds ${Math.round((x.odds ?? 0) * 100)}%   routes ${(r.routes[x.model] ?? []).join(', ') || 'none'}`);
   for (const b of r.blocked) lines.push(`  ${b.model.padEnd(22)} --     ${b.why}`);

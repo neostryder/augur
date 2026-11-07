@@ -4,6 +4,8 @@
 
 It needs the dispatch service, which runs whenever the Augur app is open; without the app, `augur service start` starts it, and `augur service enable` starts it at each login. Tools that run a job also need "Also run jobs" turned on in Augur's settings, and the service refuses jobs with `jobs_off` until it is. The server and the service run on Windows, macOS and Linux.
 
+The server stamps each run with origin `mcp` and label `augur-mcp`. `AUGUR_SESSION`, `AUGUR_SESSION_TITLE`, and `AUGUR_SUMMARY` supply host metadata, and a host session also identifies the server's picks. The [job ledger](job-ledger.md) documents the stamp and service query contract. The existing MCP job tools retain their current query interface.
+
 ## Registering it
 
 The installer puts the server in the `service` folder beside the app: `augur-mcp.cmd` on Windows, `augur-mcp` on macOS and Linux. A terminal install and the Arch packages also put `augur-mcp` on your PATH. Point the client at that file.

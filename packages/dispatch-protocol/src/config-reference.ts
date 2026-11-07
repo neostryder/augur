@@ -7,6 +7,7 @@ export interface FieldDoc { path: string; type: string; summary: string }
 
 /** One row for every setting the `balance` section of policy.json reads. `<route>` is a route label such as codex/sol or its standard name, the provider id and the model id joined by a slash (codex/gpt-6.1-sol), and a `*` in it matches any text. `<activity>` is one of the activity ids. */
 export const BALANCE_FIELDS: readonly FieldDoc[] = [
+  { path: 'ledger.retentionDays', type: 'days from 0 to 3650', summary: 'The ledger compacts finished jobs after this many days, 90 by default, and keeps a summary row for each job.' },
   { path: 'profile', type: 'classic or neutral', summary: 'The starting rules the other settings sit on. Classic is the original rule set and is what an install with no profile uses. Neutral gives a tier only to Claude\'s own models, so pace moves work between Opus and Sonnet and leaves other routes alone. Both profiles boost providers with unused allowance.' },
   { path: 'enabled', type: 'true or false', summary: 'Switches the whole balance off, pace and the boost with it. Scores then come from fit, weights and usage alone.' },
   { path: 'gate.premium', type: 'list of routes', summary: 'Routes that need owner approval for interactive picks and are unavailable to automated callers.' },

@@ -58,6 +58,10 @@ The stall time (`stallMinutes`, 10 minutes by default, minimum 1) sets how long 
 
 One request can override the setting. `--keep-prompt` on `augur run`, or `persistPrompt` true in `augur_run`, keeps that job's prompt and input files with the setting off, and `persistPrompt` false discards them with the setting on. A job needs a saved prompt before `augur replay` or `augur_replay` can run it again on another route.
 
+### Job ledger retention and nodes
+
+The ledger retains full job metadata for `balance.ledger.retentionDays` days in the policy, 90 by default, then keeps a summary row. The value is a whole number from 0 through 3650. The service checks at startup and hourly. Its `config.json` can list `ledgerNodes` entries with `node`, `url`, and an optional secret-store `keyName` reference. The registry is read at startup. [The job ledger](job-ledger.md) describes the endpoint, credentials, queries, and privacy rules.
+
 ## Cogitator catalog
 
 `augur models` and the read-only `augur_models` tool list the live Cogitator entries and roles, with the uses, strengths, and limits of each, plus the ordered chain for each role. Both report when the reading was taken and whether the provider marked it stale. The catalog in `packages/core/src/cogitator-catalog.ts` supplies descriptions for the known Gemmas, the reasoning distill, Apple on-device text, embeddings, transcription, diarization, Laya, prose rewriting, prompt guarding, and image generation. When an entry reports no parameter count, its size stays unknown. Augur never invents a chain, and it does not treat a seed as proof that an entry is installed.
@@ -716,6 +720,7 @@ Agents get add, list and status through the agent token or the MCP tools, and th
 
 | Setting | Value | What it does |
 | --- | --- | --- |
+| `ledger.retentionDays` | days from 0 to 3650 | The ledger compacts finished jobs after this many days, 90 by default, and keeps a summary row for each job. |
 | `profile` | classic or neutral | The starting rules the other settings sit on. Classic is the original rule set and is what an install with no profile uses. Neutral gives a tier only to Claude's own models, so pace moves work between Opus and Sonnet and leaves other routes alone. Both profiles boost providers with unused allowance. |
 | `enabled` | true or false | Switches the whole balance off, pace and the boost with it. Scores then come from fit, weights and usage alone. |
 | `gate.premium` | list of routes | Routes that need owner approval for interactive picks and are unavailable to automated callers. |

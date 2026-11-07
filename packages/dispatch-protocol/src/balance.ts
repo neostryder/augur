@@ -39,6 +39,7 @@ export const DEFAULT_PACE_RULES: PaceRules = {
 const CLAUDE_PACE: PaceRules = { band: 5, reserve: 90, hot: { strong: 0.8, light: 1.25 }, behind: { strong: 1.25, light: 0.85 }, boost: 1.5 };
 
 export interface BalanceRules {
+  ledger: { retentionDays: number };
   /** Which starting rules the overrides sit on. */
   profile: Profile;
   /** Switches the whole balance off. The pick then ranks on weights and usage alone. */
@@ -137,6 +138,7 @@ export interface RouteCap { perDay: number; perSession: number; parallel?: numbe
 const DEEP: ActivityId[] = ['write_code', 'reason_critique', 'reverse_engineering'];
 
 export const DEFAULT_BALANCE: BalanceRules = {
+  ledger: { retentionDays: 90 },
   profile: 'classic',
   enabled: true,
   gate: { premium: ['codex/sol', 'claude/opus', 'xai/grok', 'copilot/gpt-6.1-sol', 'copilot/claude-opus-5.5', 'copilot/grok-4.7', 'copilot/gemini-4-argon', 'copilot/sol', 'copilot/opus', 'copilot/grok', 'copilot/argon'], paceLift: ['codex/sol', 'xai/grok', 'claude/opus'], open: 20, close: 10, surplus: { hours: 12, open: 10, close: 5, margin: 5, countdown: ['claude', 'xai'] } },
@@ -290,7 +292,9 @@ export function resolveBalance(raw: unknown): BalanceRules {
   const gate = rec(s.gate), gateDefaults = d.gate;
   const requestedCountdown = strings(rec(gate.surplus).countdown) ?? [...gateDefaults.surplus.countdown];
   const countdown = [...new Set(requestedCountdown.map(id => builtinProviders.find(p => p.id.toLowerCase() === id.toLowerCase() || p.labelPrefix?.toLowerCase() === id.toLowerCase())?.labelPrefix ?? id).filter(id => !['codex', 'copilot'].includes(id.toLowerCase()) && !/^(codex|copilot)\//i.test(id)))];
+  const retention = rec(s.ledger).retentionDays;
   const resolved: BalanceRules = {
+    ledger: { retentionDays: typeof retention === 'number' && Number.isInteger(retention) && retention >= 0 && retention <= 3650 ? retention : d.ledger.retentionDays },
     profile,
     enabled: typeof s.enabled === 'boolean' ? s.enabled : d.enabled,
     gate: { premium: strings(gate.premium) ?? [...gateDefaults.premium], paceLift: (strings(gate.paceLift) ?? [...gateDefaults.paceLift]).filter(label => !label.toLowerCase().startsWith('copilot/')), open: zeroUp(gate.open, gateDefaults.open), close: zeroUp(gate.close, gateDefaults.close), surplus: { hours: zeroUp(rec(gate.surplus).hours, gateDefaults.surplus.hours), open: zeroUp(rec(gate.surplus).open, gateDefaults.surplus.open), close: zeroUp(rec(gate.surplus).close, gateDefaults.surplus.close), margin: zeroUp(rec(gate.surplus).margin, gateDefaults.surplus.margin), countdown } },

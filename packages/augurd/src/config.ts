@@ -46,6 +46,7 @@ export interface WebSettings {
 }
 
 export interface ServiceConfig {
+  ledgerNodes?: Array<{ node: string; url: string; keyName?: string }>;
   /** Days a finished job's folder (logs and results) is kept. Job records stay. */
   retentionDays: number;
   aliasRefreshHours: number;
@@ -148,6 +149,7 @@ export function loadConfig(dir: string): ServiceConfig {
   if (existsSync(path)) { try { raw = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>; } catch { raw = {}; } }
   const c = DEFAULT_CONFIG;
   return {
+    ...(Array.isArray(raw.ledgerNodes) ? { ledgerNodes: raw.ledgerNodes.filter((v): v is { node: string; url: string; keyName?: string } => typeof v?.node === 'string' && /^[A-Za-z0-9._-]{1,128}$/.test(v.node) && typeof v?.url === 'string' && gatewayAddress(v.url) && (v.keyName === undefined || (typeof v.keyName === 'string' && /^[a-z0-9_-]+\.[A-Za-z0-9_]+$/.test(v.keyName)))) } : {}),
     retentionDays: num(raw.retentionDays, c.retentionDays, 0, 3650), aliasRefreshHours: num(raw.aliasRefreshHours, c.aliasRefreshHours, 0, 8760), persistPrompts: raw.persistPrompts === true,
     maxConcurrent: num(raw.maxConcurrent, c.maxConcurrent, 1, 64), maxDepth: num(raw.maxDepth, c.maxDepth, 0, 8),
     maxDescendants: num(raw.maxDescendants, c.maxDescendants, 0, 256), proseBatchSize: num(raw.proseBatchSize, c.proseBatchSize, 1, 1000), proseBatchHours: num(raw.proseBatchHours, c.proseBatchHours, 1, 720), proseRoute: typeof raw.proseRoute === 'string' && raw.proseRoute.trim() ? raw.proseRoute.trim() : c.proseRoute, proseAutoRun: raw.proseAutoRun === true,
