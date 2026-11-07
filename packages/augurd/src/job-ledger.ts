@@ -4,6 +4,9 @@ import { JOB_STATES, LEDGER_STATES, ORIGIN_KINDS, ledgerId, ledgerTerminal, summ
 import type { JobRecord, LedgerAlert, LedgerAlertSettings, LedgerChain, LedgerChange, LedgerGap, LedgerJob, LedgerMetadata, LedgerNode, LedgerPage, LedgerQuery, LedgerState, LedgerWatchPage, NodeJobPage } from '@augur/dispatch-protocol';
 
 export interface AlertSink { emit(event: LedgerAlert): void | Promise<void> }
+/** How long after a job ends that its failure still raises an alert. */
+export const FAILURE_ALERT_WINDOW_MS = 3600000;
+
 export class NoopAlertSink implements AlertSink { emit(_event: LedgerAlert): void {} }
 export class MemoryAlertSink implements AlertSink {
   readonly events: LedgerAlert[] = [];
@@ -291,7 +294,9 @@ export class JobLedger {
       const elapsedMs = Math.max(0, (job.endedAt ?? this.now()) - (job.startedAt ?? job.createdAt));
       const durations = job.route ? histories.get(historyKey(job)) ?? [] : [];
       const usualMs = durations.length >= settings.minSamples ? durations[Math.floor(durations.length / 2)]! : null;
-      const type = settings.stalled && job.state === 'stalled' ? 'job.stalled' : settings.failed && job.state === 'failed' ? 'job.failed'
+      // A failure alerts only while it is recent. History that arrives later (a first start after an update, a node polled for the first time) is not news.
+      const fresh = job.endedAt === null || this.now() - job.endedAt <= FAILURE_ALERT_WINDOW_MS;
+      const type = settings.stalled && job.state === 'stalled' ? 'job.stalled' : settings.failed && job.state === 'failed' && fresh ? 'job.failed'
         : settings.overUsualTime && job.state === 'running' && usualMs !== null && elapsedMs > Math.max(60000, usualMs * settings.usualMultiple) ? 'job.over-usual-time' : null;
       if (!type) continue;
       const alert: LedgerAlert = { version: 1, id: `${job.id}:${type}`, type, at: this.now(), jobId: job.id, node: job.node, state: job.state, route: job.route, sessionId: job.stamp.sessionId ?? null, summary: job.summary, elapsedMs, usualMs, samples: durations.length };
