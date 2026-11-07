@@ -7,7 +7,7 @@ Each run exports training rows from the decision record, then for each pilot (au
 trains a candidate when at least --min-new training rows have appeared since that pilot was last trained and the test
 split holds at least --min-test rows. A candidate goes live only through train.py promote, which compares it with the
 live adapter on the same held-out rows, so a worse candidate is simply left unpromoted and the live one keeps serving.
-Every promotion is copied to the other machine with sync.py.
+Every promotion is copied to each sync host with sync.py.
 
 A run is skipped while this PC is busy: the GPU is over --busy-pct (default 30), or the machine runs on battery.
 Rows come only from picks that kept their task text and whose activity or tier the caller declared, or from how a job
