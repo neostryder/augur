@@ -4,7 +4,7 @@
 
 It needs the dispatch service, which runs whenever the Augur app is open; without the app, `augur service start` starts it, and `augur service enable` starts it at each login. Tools that run a job also need "Also run jobs" turned on in Augur's settings, and the service refuses jobs with `jobs_off` until it is. The server and the service run on Windows, macOS and Linux.
 
-The server stamps each run with origin `mcp` and label `augur-mcp`. `AUGUR_SESSION`, `AUGUR_SESSION_TITLE`, and `AUGUR_SUMMARY` supply host metadata, and a host session also identifies the server's picks. The [job ledger](job-ledger.md) documents the stamp and service query contract. `CLAUDE_CODE_SESSION_ID` supplies the session when `AUGUR_SESSION` is absent. Ledger queries default to that session.
+The server stamps each run with origin `mcp` and label `augur-mcp`. Host metadata comes from `AUGUR_SESSION`, `AUGUR_SESSION_TITLE`, and `AUGUR_SUMMARY`, and `CLAUDE_CODE_SESSION_ID` supplies the session when `AUGUR_SESSION` is absent. A host session also identifies the server's picks, and ledger queries default to that session. The [job ledger](job-ledger.md) documents the stamp and the service query contract.
 
 ## Registering it
 
@@ -87,11 +87,11 @@ Before sending a job, a caller can see whether a route can take it. Augur reads 
 
 ## Job ledger queries
 
-`augur_jobs` and `augur_job_counts` default to the calling session. `all: true` removes the implicit session filter, and an explicit `session` still applies. Lists default to 20 jobs, accept a limit from 1 through 1000, and return `next`. The client passes `next` as `page` with the same filters. Relative time bounds keep the first page's clock. `root` and older execution-state aliases match local execution jobs. A single execution-state name preserves the exact local filter; names shared with ledger states also match remote work, and `running` includes its stalled overlay. `running` includes queued, running, and stalled work.
+`augur_jobs` and `augur_job_counts` default to the calling session. Passing `all: true` removes that implicit session filter, though an explicit `session` still applies. Lists return 20 jobs by default, accept a limit from 1 through 1000, and include `next`; to fetch the following page, the client passes `next` as `page` with the same filters. Relative time bounds keep the clock of the first page. `root` and the older execution-state aliases match local execution jobs. A single execution-state name keeps the exact local filter, and names shared with ledger states also match remote work. `running` covers queued, running, and stalled work, with stalled as an overlay on running.
 
-A client starts change polling with `since: "0"` and reuses the returned `cursor`. A response contains `changes`, `cursor`, and `more`; it advances through unrelated jobs even when the filtered list is empty. Changes are filtered against the current matching records. The client continues while `more` is true. `since` and `page` cannot be combined. A change cursor belongs to the service, while node cursors belong to individual nodes.
+To poll for changes, a client starts with `since: "0"` and passes back the returned `cursor` on each later call. Each response has `changes`, `cursor`, and `more`, and the cursor advances past unrelated jobs even when the filtered list is empty. Changes are filtered against the records that currently match. The client keeps polling while `more` is true. `since` and `page` cannot be used together. The change cursor belongs to the service, and node cursors belong to the individual nodes.
 
-`augur_job`, `augur_jobs`, `augur_job_counts`, `augur_nodes`, and `augur_alerts` are read-only ledger tools. They return metadata without prompts, answers, or event detail. A local history entry contains only its time and kind. Remote nodes do not provide a detailed state history through this contract. `augur_cancel` and `augur_replay` accept local execution ids or qualified local ids and reject remote ids. [The job ledger](job-ledger.md#cli-commands) lists the filters and command behavior.
+`augur_job`, `augur_jobs`, `augur_job_counts`, `augur_nodes`, and `augur_alerts` are the read-only ledger tools. They return metadata without prompts, answers, or event detail, so a local history entry holds only its time and kind. Remote nodes give no detailed state history through this contract. `augur_cancel` and `augur_replay` take local execution ids or qualified local ids and reject remote ids. [The job ledger](job-ledger.md#cli-commands) lists the filters and command behavior.
 
 ## Changing the rules
 

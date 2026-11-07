@@ -1,6 +1,6 @@
 # Tokens and cost of jobs
 
-The [job ledger](job-ledger.md) joins local Augur execution records and remote node metadata. Its service calls support caller sessions, qualified job ids, history queries, and reported usage. This page describes the existing accounting call, which also calculates derived and imputed figures.
+The [job ledger](job-ledger.md) joins local Augur execution records with remote node metadata. Its service calls support caller sessions, qualified job ids, history queries, and reported usage. The existing accounting call reports usage as well and also calculates derived and imputed figures.
 
 `augur usage` and the Jobs page show what each job used and what it cost. Every figure says how it is known.
 

@@ -45,9 +45,9 @@ The settings folder is `%APPDATA%\com.neostryder.augur` on Windows, `~/Library/A
 
 ### Job alert settings
 
-Job alert settings are in the service's `config.json`, under `ledgerAlerts`, with `stallMinutes` for local inactivity. Settings shows their switches, duration thresholds, optional webhook URL, and secret-store reference under Job alerts. The Service page shows per-sink delivery failures. The [job ledger guide](job-ledger.md#job-alert-settings) lists defaults, delivery recovery, outbox rotation, and the public alert JSON contract. These settings are service behavior, so they do not add balance rules or adapter options.
+Job alert settings live under `ledgerAlerts` in the service's `config.json`, where `stallMinutes` sets the local inactivity threshold. In Settings, the Job alerts section shows the switches, duration thresholds, optional webhook URL, and secret-store reference. Per-sink delivery failures appear on the Service page. The [job ledger guide](job-ledger.md#job-alert-settings) lists the defaults, delivery recovery, outbox rotation, and the public alert JSON contract. Because these settings control service behavior, they add no balance rules or adapter options.
 
-`ledgerAlerts.webhookFormat` defaults to `augur`. Select `cresset` in Alerts to send the [Cresset event format](job-ledger.md#cresset-webhook-format) to an intake URL ending in `/v1/events`, with its per-source bearer token stored under the webhook key reference. The outbox format stays unchanged.
+`ledgerAlerts.webhookFormat` defaults to `augur`. To send the [Cresset event format](job-ledger.md#cresset-webhook-format), select `cresset` in Alerts, use an intake URL ending in `/v1/events`, and store the per-source bearer token under the webhook key reference. The outbox keeps its format in either case.
 ### Laya machines
 
 `laya.json` in `~/.augur` lists the Laya servers that scripts try in order and the machines that receive copies of the adapters trained on this PC.
@@ -90,7 +90,7 @@ One request can override the setting. `--keep-prompt` on `augur run`, or `persis
 
 ### Job ledger retention and nodes
 
-The ledger retains full job metadata for `balance.ledger.retentionDays` days in the policy, 90 by default, then keeps a summary row. The value is a whole number from 0 through 3650. The service checks at startup and hourly. Its `config.json` can list `ledgerNodes` entries with `node`, `url`, and an optional secret-store `keyName` reference. The registry is read at startup. `augur jobs`, `augur nodes`, and `augur alerts` read ledger metadata; `augur jobs --refresh` polls the registered nodes. [The job ledger](job-ledger.md) describes the endpoint, credentials, queries, and privacy rules.
+The ledger keeps full job metadata for `balance.ledger.retentionDays` days, set in the policy, and after that keeps only a summary row. The default is 90, and the value must be a whole number from 0 through 3650. The service checks retention at startup and then every hour. Remote nodes go in the service's `config.json` as `ledgerNodes` entries, each with `node`, `url`, and an optional `keyName` that refers to a secret-store entry. The service reads this registry only at startup. `augur jobs`, `augur nodes`, and `augur alerts` read ledger metadata, and `augur jobs --refresh` polls the registered nodes. [The job ledger](job-ledger.md) describes the endpoint, credentials, queries, and privacy rules.
 
 ## Cogitator catalog
 
