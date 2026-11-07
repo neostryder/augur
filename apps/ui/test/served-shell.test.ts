@@ -43,6 +43,17 @@ describe('the browser reset ledger', () => {
 });
 
 describe('the served shell', () => {
+  it('posts ledger calls with the web token and reports a failed poll', async () => {
+    page('', TOKEN);
+    const fetcher = vi.fn(async () => Response.json({ result: { changes: [], cursor: '12', more: false } }));
+    vi.stubGlobal('fetch', fetcher);
+    const shell = createServedShell();
+    expect(await shell.ledgerCall!('ledger_changes', { since: '11' })).toMatchObject({ cursor: '12' });
+    expect(fetcher.mock.calls[0]).toMatchObject(['/api/dispatch', { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}` }, body: JSON.stringify({ method: 'ledger_changes', params: { since: '11' } }) }]);
+    fetcher.mockResolvedValueOnce(Response.json({ error: 'The ledger is offline.' }, { status: 503 }));
+    await expect(shell.ledgerCall!('ledger_changes', { since: '12' })).rejects.toThrow('offline');
+    expect(shell.watchLedger).toBeUndefined();
+  });
   it('keeps the token from the link, removes it from the address, and sends it only as a header', async () => {
     const { store, replaced } = page(`#token=${TOKEN}`);
     const s = stream(), seen: Array<{ url: string; init: RequestInit }> = [];

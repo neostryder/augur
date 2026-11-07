@@ -33,6 +33,17 @@ function insert(store: Store, id = 'local') {
 }
 
 describe('the durable ledger', () => {
+  it('migrates node poll times and retains the successful time during an outage', () => {
+    const { store, ledger } = fixture();
+    ledger.ingest('eru', page([job()]));
+    const lastSeen = ledger.nodes()[0]!.lastSeenAt;
+    ledger.unreachable('eru');
+    expect(ledger.nodes()[0]!.lastPollAt).toBeGreaterThanOrEqual(lastSeen!);
+    expect(ledger.nodes()[0]!.lastSeenAt).toBe(lastSeen);
+    store.db.exec('alter table ledger_nodes drop column last_poll_at');
+    const migrated = new JobLedger(store.db, { get: id => store.get(id), all: () => store.list({ limit: 1000 }) });
+    expect(migrated.nodes()[0]!.lastPollAt).toBeNull(); migrated.close();
+  });
   it('projects existing jobs, transitions, usage, retries, and new metadata without a second local job table', () => {
     const { store, ledger } = fixture();
     insert(store); insert(store, 'next');
@@ -115,7 +126,8 @@ describe('the durable ledger', () => {
     const { dir, store, ledger } = fixture(); insert(store);
     ledger.setLocalMetadata('local', { ...meta(), prompt: 'PRIVATE_PROMPT_SENTINEL' } as LedgerMetadata);
     ledger.refreshLive([{ ...store.get('local')!, activityLine: 'PRIVATE_ANSWER_SENTINEL', lastActivityAt: 4, stalled: true }]);
-    expect(ledger.list().jobs[0]!.activityLine).toBe('PRIVATE_ANSWER_SENTINEL');
+    expect(ledger.list().jobs[0]!.activityLine).toBe('Output activity');
+    expect(JSON.stringify(ledger.list())).not.toContain('PRIVATE_ANSWER_SENTINEL');
     expect(() => ledger.ingest('eru', page([{ ...job(), prompt: 'PRIVATE_PROMPT_SENTINEL' } as LedgerJob]))).toThrow();
     const rows = JSON.stringify(store.db.prepare('select body from ledger_changes').all());
     expect(rows).not.toContain('PRIVATE_');
@@ -151,6 +163,16 @@ describe('the durable ledger', () => {
     expect(ledger.checkAlerts()).toMatchObject([{ type: 'job.over-usual-time', jobId: 'eru:slow', samples: 8, usualMs: 10 }]);
     expect(ledger.checkAlerts()).toEqual([]); expect(sink.events).toHaveLength(3);
     expect(ledger.alerts()).toEqual(sink.events);
+  });
+  it('applies alert switches, the duration multiplier, and the minimum sample count', () => {
+    const { ledger } = fixture();
+    const settings = { stalled: false, failed: false, overUsualTime: false, usualMultiple: 4, minSamples: 2 };
+    ledger.ingest('eru', page([job('sample', { state: 'done', endedAt: 30002, durationMs: 30000 }), job('slow'), job('stalled', { state: 'stalled' }), job('failed', { state: 'failed', endedAt: 12, durationMs: 10 })]));
+    expect(ledger.checkAlerts(settings)).toEqual([]);
+    expect(ledger.checkAlerts({ ...settings, overUsualTime: true })).toEqual([]);
+    ledger.ingest('eru', page([job('sample2', { state: 'done', endedAt: 30002, durationMs: 30000 })], 4));
+    expect(ledger.checkAlerts({ ...settings, overUsualTime: true })).toMatchObject([{ type: 'job.over-usual-time', usualMs: 30000, samples: 2 }]);
+    expect(ledger.checkAlerts({ ...settings, failed: true, stalled: true }).map(event => event.type).sort()).toEqual(['job.failed', 'job.stalled']);
   });
 });
 

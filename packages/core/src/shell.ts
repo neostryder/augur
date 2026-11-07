@@ -72,7 +72,10 @@ export interface Shell {
   /** Writes the snapshot where other local tools can read it. Desktop only. */
   exportSnapshot?(homeRelativePath: string, json: string): Promise<void>;
 
-  notify(title: string, body: string): Promise<void>;
+  notify(title: string, body: string, job?: { jobId: string; alertId: string }): Promise<void>;
+  ledgerCall?(method: string, params?: unknown): Promise<unknown>;
+  watchLedger?(since: string, change: (cursor: string) => void, closed: () => void): Promise<{ close(): void }>;
+  onJobNotification?(open: (jobId: string) => void): () => void;
   openUrl(url: string): Promise<void>;
 
   /** Pixel size the tray wants for its icon at the current display scale. Desktop only. */

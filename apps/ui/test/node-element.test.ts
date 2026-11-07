@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -81,4 +81,24 @@ describe('node element and app wiring in Chromium', () => {
     expect(result.exceptionDetails?.exception?.description ?? result.exceptionDetails?.text).toBeUndefined();
     expect(result.result.value).toBe(caseName);
   }, 30000);
+  it('drives ledger scopes, filters, live time, keyboard detail, and reconnect in the browser', async () => {
+    await command('Emulation.setDeviceMetricsOverride', { width: 1280, height: 1000, deviceScaleFactor: 1, mobile: false }, sessionId);
+    const result = await command('Runtime.evaluate', { expression: "import('/test/jobs.browser.ts').then(module => module.exercise())", awaitPromise: true, returnByValue: true }, sessionId);
+    expect(result.exceptionDetails?.exception?.description ?? result.exceptionDetails?.text).toBeUndefined();
+    expect(result.result.value).toBe('ledger browser flows');
+  }, 30000);
+
+  it.each([['light', 1280], ['dark', 1280], ['phone', 390]] as const)('renders the Jobs page at %s width and saves its screenshot', async (name, width) => {
+    await command('Emulation.setDeviceMetricsOverride', { width, height: 1100, deviceScaleFactor: 1, mobile: false }, sessionId);
+    const result = await command('Runtime.evaluate', { expression: `import('/test/jobs.browser.ts').then(module => module.prepare('${name === 'dark' ? 'dark' : 'light'}')).then(() => ({ width: document.documentElement.scrollWidth, viewport: innerWidth }))`, awaitPromise: true, returnByValue: true }, sessionId);
+    expect(result.exceptionDetails?.exception?.description ?? result.exceptionDetails?.text).toBeUndefined();
+    expect(result.result.value.width).toBeLessThanOrEqual(result.result.value.viewport);
+    const screenshot = await command('Page.captureScreenshot', { format: 'png' }, sessionId);
+    const folder = fileURLToPath(new URL('../../../screens-D/', import.meta.url));
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, `jobs-${name}.png`), Buffer.from(screenshot.data, 'base64'));
+    await command('Runtime.evaluate', { expression: 'window.ledgerFixture.app.leaveJobs()' }, sessionId);
+  }, 30000);
+
+
 });

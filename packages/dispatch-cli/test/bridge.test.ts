@@ -48,6 +48,22 @@ describe('augur bridge', () => {
     expect((ready.state as { firstRun: boolean }).firstRun).toBe(true);
     expect((await call('engine_state', { keys: [] }, o)).views).toEqual([{ kind: 'window', caps: ['notify', 'websession', 'signin'] }]);
 
+    svc.config.maxConcurrent = 0;
+    svc.store.insert({ id: 'ledger-test', route: 'raw', adapter: 'exec', activity: 'research', dataTier: 'public', tools: 'none', output: 'text_only', cwd: e.root,
+      createdAt: Date.now(), rootJobId: 'ledger-test', parentJobId: null, depth: 0, caller: { kind: 'cli' }, named: false, expectFile: null, timeoutS: null, harnessVersion: null, workspace: null });
+    lines.push(JSON.stringify({ t: 'ledger-call', id: 20, method: 'ledger_list', params: {} }));
+    expect(await seen(message => message.t === 'result' && message.id === 20)).toMatchObject({ result: { jobs: [{ localId: 'ledger-test', state: 'queued' }] } });
+    lines.push(JSON.stringify({ t: 'ledger-watch', since: '0' }));
+    expect(await seen(message => message.t === 'ledger-change')).toHaveProperty('cursor');
+    lines.push(JSON.stringify({ t: 'ledger-call', id: 21, method: 'cancel', params: { id: 'ledger-test' } }));
+    expect(await seen(message => message.t === 'result' && message.id === 21)).toMatchObject({ result: { ok: true } });
+    lines.push(JSON.stringify({ t: 'ledger-call', id: 22, method: 'ledger_settings_set', params: { key: 'ledgerAlerts.failed', value: 'false' } }));
+    expect(await seen(message => message.t === 'result' && message.id === 22)).toMatchObject({ result: { ok: true } });
+    expect(svc.config.ledgerAlerts.failed).toBe(false);
+    lines.push(JSON.stringify({ t: 'ledger-call', id: 23, method: 'engine_call', params: {} }));
+    expect(await seen(message => message.t === 'result' && message.id === 23)).toMatchObject({ error: 'The ledger call is invalid.' });
+    lines.push(JSON.stringify({ t: 'ledger-close' }));
+
     lines.push(JSON.stringify({ t: 'call', id: 7, method: 'setProviderKey', args: ['minimax', 'apiKey', 'sk-test'] }));
     expect(await seen(m => m.t === 'result' && m.id === 7)).toEqual({ t: 'result', id: 7, result: null });
     const change = await seen(m => m.t === 'change' && (m.keys as string[]).includes('secrets'));

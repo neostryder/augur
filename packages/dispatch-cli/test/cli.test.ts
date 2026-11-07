@@ -710,10 +710,10 @@ describe('job activity output', () => {
     const list = await run(['jobs', '--running', '--limit', '1']);
     expect(list.code).toBe(0); expect(list.out).toContain('live'); expect(list.out).not.toContain(':done');
     expect((await run(['jobs', '--state', 'running'])).out).toContain('STALLED');
-    expect(list.out).toContain('STALLED'); expect(list.out).toContain('2m'); expect(list.out).toContain('Reading files');
+    expect(list.out).toContain('STALLED'); expect(list.out).toContain('2m'); expect(list.out).toContain('Output activity'); expect(list.out).not.toContain('Reading files');
     const status = await run(['status', 'live']); expect(status.out).toContain('STALLED'); expect(status.out).toContain('Reading files');
     const json = JSON.parse((await run(['jobs', '--running', '--json'])).out);
-    expect(json.jobs).toMatchObject([{ localId: 'live', lastActivityAt: start, activityLine: 'Reading files', state: 'stalled' }]);
+    expect(json.jobs).toMatchObject([{ localId: 'live', lastActivityAt: start, activityLine: 'Output activity', state: 'stalled' }]);
     expect(JSON.parse((await run(['status', 'done', '--json'])).out)).not.toHaveProperty('stalled');
     expect(JSON.parse((await run(['jobs', '--running', '--state', 'completed', '--json'])).out).jobs).toEqual([]);
     for (const state of ['queued', 'needs_approval', 'cancel_requested'] as const) insert(state, state, start + 2);

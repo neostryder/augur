@@ -31,8 +31,8 @@ async function finished(o: { dir: string; pipe: string }, id: string) {
 }
 
 describe('the dispatch calls the web server may pass on', () => {
-  it('are agent calls that run and read jobs, and never edit routes or rules', () => {
-    for (const m of HTTP_DISPATCH_METHODS) expect(AGENT_METHODS.has(m), m).toBe(true);
+  it('keeps execution calls automated and limits owner calls to job alert settings and delivery', () => {
+    for (const m of HTTP_DISPATCH_METHODS) expect(AGENT_METHODS.has(m) || ['ledger_settings', 'ledger_settings_set', 'ledger_delivery'].includes(m), m).toBe(true);
     for (const m of ['route_add', 'balance', 'pick_answer', 'human_prompt', 'engine_call']) expect(HTTP_DISPATCH_METHODS.has(m), m).toBe(false);
   });
 
@@ -57,6 +57,19 @@ describe('the control endpoint', () => {
     const replay = await call('replay', { job: original.id, route: 'raw', caller: { kind: 'cli' } }, { ...o, stamp: { sessionId: 'replay-session', origin: 'cli', summary: 'Read notes' } }) as { id: string };
     const record = await finished(o, replay.id);
     expect(record.ledger).toMatchObject({ stamp: { sessionId: 'replay-session', origin: 'cli' }, summary: 'Read notes', summarySource: 'caller', attribution: { session: 'stamped', origin: 'stamped' } });
+  });
+  it('lets only the owner round trip live job alert settings and inspect delivery status', async () => {
+    const { o, svc } = await boot();
+    expect(await call('ledger_settings', undefined, o)).toMatchObject({ stalled: true, usualMultiple: 3, minSamples: 8, stallMinutes: 10, webhookFormat: 'augur' });
+    await call('ledger_settings_set', { key: 'ledgerAlerts.failed', value: 'false' }, o);
+    await call('ledger_settings_set', { key: 'stallMinutes', value: '5' }, o);
+    await call('ledger_settings_set', { key: 'ledgerAlerts.webhookFormat', value: 'cresset' }, o);
+    expect(svc.config.ledgerAlerts.webhookFormat).toBe('cresset');
+    expect(svc.config.ledgerAlerts.failed).toBe(false); expect(svc.config.stallMinutes).toBe(5);
+    expect(await call('ledger_settings', undefined, o)).toMatchObject({ failed: false, stallMinutes: 5, webhookFormat: 'cresset' });
+    expect(await call('ledger_delivery', undefined, o)).toEqual(expect.arrayContaining([expect.objectContaining({ sink: 'outbox' })]));
+    await expect(call('ledger_settings_set', { key: 'requirePick', value: 'false' }, o)).rejects.toThrow('invalid');
+    for (const method of ['ledger_settings', 'ledger_settings_set', 'ledger_delivery'] as const) await expect(call(method, undefined as never, { ...o, role: 'agent' })).rejects.toThrow("owner's");
   });
   it('serves session queries, counts, chains, and a replayable ledger watch to agent callers', async () => {
     const { o, svc, e } = await boot();

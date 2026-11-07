@@ -4,13 +4,14 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { ACTIVITIES, ACTIVITY_LABELS, DATA_TIER_LABELS } from '@augur/core';
-import { augurHome, configLines, dataDir, setConfigValue, type ConfigLine, type ServiceError } from '@augur/augurd';
-import { ADAPTER_INFO, adapterInfo, describeFigure, routeSecretName } from '@augur/dispatch-protocol';
-import type { Accounted, JobRecord } from '@augur/dispatch-protocol';
+import { ACTIVITIES } from '@augur/core';
+import { augurHome, configLines, dataDir, setConfigValue, type ConfigLine } from '@augur/augurd';
+import { ADAPTER_INFO, LEDGER_KINDS, LEDGER_STATES, ORIGIN_KINDS, ledgerTerminal, adapterInfo, routeSecretName } from '@augur/dispatch-protocol';
+import type { LedgerQuery, LedgerDeliveryState } from '@augur/dispatch-protocol';
 import { inset, tabs, type Key, type Rect, type Screen } from '@augur/terminal';
 import {
-  APPROVAL_LEVELS, APPROVAL_TEXT, CLASSIFIER_TEXT, DISPATCH_TEXT, JOB_OUTPUT_LABELS, MODE_TEXT, STATE_LABELS, TOOL_LABELS, ago, checkDraft, draftOf, duration, emptyDraft, isBad, isLive, servedText,
+  APPROVAL_LEVELS, APPROVAL_TEXT, CLASSIFIER_TEXT, DISPATCH_TEXT, MODE_TEXT, checkDraft, draftOf, emptyDraft,
+  LedgerModel, LEDGER_STATE_LABELS, LEDGER_TEXT, ledgerDuration, ledgerFacts, ledgerTime, type LedgerTransport,
   parseRoutesText, writeRoute, type RouteDraft, type RoutesFile,
   PROVIDER_CHOICES, PROVIDER_FORM_TEXT, applyProvider, emptyProviderForm, planOfForm, planRows, providerFields, routeEntryText, type ProviderFormState,
 } from '@augur/view-model';
@@ -102,10 +103,9 @@ export class DispatchPage implements Page {
   sub: Sub = 'jobs';
   readonly forms: Record<FormKey, Form> = { jobs: new Form(), job: new Form(), routes: new Form(), route: new Form(), provider: new Form(), service: new Form() };
 
-  jobs: {
-    runningOnly: boolean; list: JobRecord[] | null; accounted: Record<string, Accounted>; sel: string | null; error: string; off: boolean;
-    detail: { job: JobRecord; result: string; stdout: string; stderr: string } | null;
-  } = { runningOnly: false, list: null, accounted: {}, sel: null, error: '', off: false, detail: null };
+  readonly jobs: LedgerModel;
+  private moreFilters = false;
+  private jobDelivery: LedgerDeliveryState[] = [];
 
   routes: {
     file: RoutesFile | null; error: string; health: Record<string, string | null> | null; sel: string | null; draft: RouteDraft | null; formError: string; note: string;
@@ -122,6 +122,7 @@ export class DispatchPage implements Page {
 
   constructor(private readonly deps: DispatchDeps = {}) {
     this.env = deps.env ?? process.env;
+    this.jobs = new LedgerModel(this.env.AUGUR_SESSION ?? '');
     this.wait = deps.wait ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   }
 
@@ -129,7 +130,7 @@ export class DispatchPage implements Page {
   private get routesPath(): string { return this.env.AUGURD_ROUTES ?? join(augurHome(this.env), 'dispatch', 'routes.json'); }
 
   private get formKey(): FormKey {
-    if (this.sub === 'jobs') return this.jobs.sel ? 'job' : 'jobs';
+    if (this.sub === 'jobs') return this.jobs.selected ? 'job' : 'jobs';
     if (this.sub === 'routes') return this.routes.add ? 'provider' : this.routes.sel ? 'route' : 'routes';
     return 'service';
   }
@@ -137,7 +138,7 @@ export class DispatchPage implements Page {
   get form(): Form { return this.forms[this.formKey]; }
 
   badge(): string {
-    const n = (this.jobs.list ?? []).filter((j) => isLive(j.state)).length;
+    const n = this.jobs.counts.running + this.jobs.counts.queued + this.jobs.counts.stalled + this.jobs.counts['node-lost'];
     return n ? String(n) : '';
   }
 
@@ -154,7 +155,7 @@ export class DispatchPage implements Page {
     if (this.form.typing()) return this.form.key(key, this.rows(ctx));
     if (key.label === '[' || key.label === ']') { this.go(['jobs', 'routes', 'service'][(['jobs', 'routes', 'service'].indexOf(this.sub) + (key.label === ']' ? 1 : 2)) % 3] as Sub, ctx); return true; }
     if (key.label === 'escape') {
-      if (this.sub === 'jobs' && this.jobs.sel) { this.jobs.sel = null; this.jobs.detail = null; return true; }
+      if (this.sub === 'jobs' && this.jobs.selected) { this.jobs.selected = null; this.jobs.detail = null; return true; }
       if (this.sub === 'routes' && this.routes.add) { this.routes.add = null; return true; }
       if (this.sub === 'routes' && this.routes.sel) { this.closeRoute(); return true; }
     }
@@ -197,25 +198,13 @@ export class DispatchPage implements Page {
     ctx.redraw();
   }
 
-  private async loadJobs(ctx: Ctx): Promise<void> {
-    const j = this.jobs;
-    try {
-      j.list = await ctx.link.call('list', { limit: 50, running: j.runningOnly });
-      j.error = ''; j.off = false;
-      const acc = await ctx.link.call('accounting', { limit: 50 }).catch(() => null);
-      j.accounted = Object.fromEntries((acc?.jobs ?? []).map((x) => [x.id, x.accounted]));
-      if (j.sel) await this.loadDetail(ctx, j.sel);
-    } catch (e) {
-      const err = e as ServiceError;
-      if (err.code === 'jobs_off') { j.off = true; j.list = []; j.error = ''; } else { j.error = err.message || String(e); }
-    }
+  private transport(ctx: Ctx): LedgerTransport {
+    return { call: (method, params) => ctx.link.call(method, params), watch: (since, change, closed) => ctx.link.watchLedger(since, change, closed) };
   }
 
-  private async loadDetail(ctx: Ctx, id: string): Promise<void> {
-    const r = await ctx.link.call('result', { id });
-    if (!r) return;
-    const [out, err] = await Promise.all([ctx.link.call('logs', { id, stream: 'stdout' }), ctx.link.call('logs', { id, stream: 'stderr' })]);
-    if (this.jobs.sel === id) this.jobs.detail = { job: r.job, result: r.answer ?? '', stdout: out.text, stderr: err.text };
+  private async loadJobs(ctx: Ctx): Promise<void> {
+    if (this.jobs.jobs === null) await this.jobs.start(this.transport(ctx));
+    else await this.jobs.poll(this.transport(ctx));
   }
 
   private async loadRoutes(ctx: Ctx): Promise<void> {
@@ -232,6 +221,7 @@ export class DispatchPage implements Page {
 
   private async loadService(ctx: Ctx): Promise<void> {
     const s = this.service;
+    this.jobDelivery = await ctx.link.call('ledger_delivery').catch(() => []) ?? [];
     s.lines = configLines(this.configDir);
     s.pid = (await ctx.link.call('ping').catch(() => null))?.pid ?? null;
   }
@@ -239,57 +229,60 @@ export class DispatchPage implements Page {
   // ---------------------------------------------------------------- jobs
 
   private jobListRows(ctx: Ctx): Row[] {
-    const { theme } = ctx, j = this.jobs;
-    const rows: Row[] = [{ kind: 'note', text: DISPATCH_TUI_TEXT.sub }];
-    if (j.off) { rows.push({ kind: 'note', text: DISPATCH_TUI_TEXT.jobsOff, style: 'warn' }); return rows; }
-    if (j.error) rows.push({ kind: 'note', text: j.error, style: 'crit' });
-    if (j.list === null) { rows.push({ kind: 'note', text: DISPATCH_TUI_TEXT.loading }); return rows; }
-    rows.push({ kind: 'toggle', id: 'jobs-running', label: JOBS_ACTIVITY_TEXT.running, on: j.runningOnly, set: async on => { j.runningOnly = on; await this.refresh(ctx); } });
-    const list = j.runningOnly ? j.list.filter(job => isLive(job.state)) : j.list;
-    if (!list.length) rows.push({ kind: 'note', text: j.runningOnly ? JOBS_ACTIVITY_TEXT.empty : DISPATCH_TEXT.jobsEmpty });
-    for (const job of list) {
-      const style = isLive(job.state) ? theme.accent : isBad(job.state) ? theme.crit : theme.muted;
-      rows.push({
-        kind: 'item', id: `j:${job.id}`, label: job.route, sub: isLive(job.state) && job.activityLine ? job.activityLine : `${ACTIVITY_LABELS[job.activity] ?? job.activity}, ${(DATA_TIER_LABELS[job.dataTier] ?? job.dataTier).toLowerCase()} data`,
-        chips: [[STATE_LABELS[job.state], style], ...(isLive(job.state) && job.stalled ? [[JOBS_ACTIVITY_TEXT.stalled, theme.crit] as [string, typeof style]] : [])], right: isLive(job.state) && job.lastActivityAt !== undefined ? JOBS_ACTIVITY_TEXT.age(job.lastActivityAt, ctx.now) : job.startedAt ? duration(job, ctx.now) : ago(new Date(job.createdAt).toISOString(), ctx.now),
-        enter: () => this.openJob(ctx, job.id), enterLabel: DISPATCH_TUI_TEXT.open,
-      });
+    const { theme } = ctx, jobs = this.jobs, T = LEDGER_TEXT;
+    const reload = () => jobs.refresh(this.transport(ctx));
+    const rows: Row[] = [
+      { kind: 'choice', id: 'jobs-scope', label: T.scope, value: jobs.scope, options: [['session', T.session], ['all', T.all]], set: async value => { jobs.setScope(value === 'session' ? 'session' : 'all'); await reload(); } },
+      { kind: 'text', id: 'jobs-session', label: T.sessionId, value: jobs.scope === 'session' ? jobs.session : jobs.filters.session ?? '', save: async value => { if (jobs.scope === 'session') { jobs.session = value.trim(); jobs.reset(); } else jobs.setFilter('session', value.trim()); await reload(); } },
+      { kind: 'choice', id: 'jobs-state', label: T.state, value: jobs.filters.state?.[0] ?? '', options: [['', 'All'], ...LEDGER_STATES.map(state => [state, LEDGER_STATE_LABELS[state]] as const)], set: async value => { jobs.setFilter('state', value ? [value] : undefined); await reload(); } },
+      { kind: 'text', id: 'jobs-text', label: T.text, value: jobs.filters.text ?? '', save: async value => { jobs.setFilter('text', value.trim()); await reload(); } },
+      { kind: 'toggle', id: 'jobs-filters', label: 'More filters', on: this.moreFilters, set: on => { this.moreFilters = on; } },
+    ];
+    if (this.moreFilters) {
+      for (const [key, label, options] of [['kind', T.kind, LEDGER_KINDS], ['origin', T.origin, ORIGIN_KINDS]] as const) rows.push({ kind: 'choice', id: 'jobs-' + key, label, value: key === 'kind' ? jobs.filters.kind?.[0] ?? '' : jobs.filters.origin ?? '', options: [['', 'All'], ...options.map(value => [value, value] as const)], set: async value => { jobs.setFilter(key, key === 'kind' && value ? [value] : value); await reload(); } });
+      for (const [key, label] of [['node', T.node], ['route', T.route], ['from', T.from], ['to', T.to]] as const) rows.push({ kind: 'text', id: 'jobs-' + key, label, value: typeof jobs.filters[key] === 'number' ? new Date(jobs.filters[key] as number).toISOString() : String(jobs.filters[key] ?? ''), save: async value => {
+        const parsed = key === 'from' || key === 'to' ? value ? Date.parse(value) : undefined : value.trim();
+        if (typeof parsed === 'number' && !Number.isFinite(parsed)) { ctx.flash('Enter an ISO date and time.', true); return; }
+        jobs.setFilter(key as keyof LedgerQuery, parsed); await reload();
+      } });
     }
+    rows.push({ kind: 'note', text: LEDGER_STATES.map(state => LEDGER_STATE_LABELS[state] + ': ' + jobs.counts[state]).join(' / ') });
+    for (const node of jobs.nodes) rows.push({ kind: 'note', text: node.node + ': ' + (node.unreachableSince === null ? T.reachable : T.unreachable + ' since ' + ledgerTime(node.unreachableSince)) + ' / Last poll: ' + ledgerTime(node.lastPollAt ?? node.lastSeenAt), style: node.unreachableSince === null ? 'muted' : 'warn' });
+    if (jobs.error) rows.push({ kind: 'note', text: jobs.error, style: 'crit' });
+    if (jobs.jobs === null) rows.push({ kind: 'note', text: T.loading });
+    else if (!jobs.jobs.length) rows.push({ kind: 'note', text: T.empty });
+    for (const job of jobs.jobs ?? []) rows.push({
+      kind: 'item', id: 'j:' + job.id, label: job.summary || job.route || job.id,
+      sub: [job.kind, job.node, job.stamp.sessionTitle || job.stamp.sessionId || 'Unknown session', job.stamp.originLabel || job.stamp.origin || 'Unknown origin', job.attribution.origin, job.stamp.pid ? 'PID ' + job.stamp.pid : '', job.compacted ? T.compacted : '', job.activityLine ?? '', job.lastActivityAt === null ? '' : JOBS_ACTIVITY_TEXT.age(job.lastActivityAt, ctx.now)].filter(Boolean).join(' / '),
+      chips: [[LEDGER_STATE_LABELS[job.state], job.state === 'failed' || job.state === 'stalled' ? theme.crit : ledgerTerminal(job.state) ? theme.muted : theme.accent]],
+      right: ledgerDuration(job, ctx.now), enter: () => this.openJob(ctx, job.id), enterLabel: DISPATCH_TUI_TEXT.open,
+    });
+    rows.push({ kind: 'buttons', id: 'jobs-pages', label: '', buttons: [
+      { button: T.first, run: async () => { jobs.reset(); await reload(); } },
+      ...(jobs.next ? [{ button: T.next, run: async () => { jobs.nextPage(); await reload(); } }] : []),
+    ] });
     return rows;
   }
 
   private openJob(ctx: Ctx, id: string): void {
-    this.jobs.sel = id; this.jobs.detail = null;
+    this.jobs.detail = null;
     this.forms.job = new Form();
-    void this.refresh(ctx);
+    void this.jobs.open(id, this.transport(ctx)).then(() => ctx.redraw());
   }
 
   private jobRows(ctx: Ctx): Row[] {
-    const d = this.jobs.detail;
-    if (!d) return [{ kind: 'note', text: this.jobs.sel ? DISPATCH_TUI_TEXT.loading : DISPATCH_TEXT.jobsPick }];
-    const j = d.job, acc = this.jobs.accounted[j.id];
-    const usage = acc && (acc.inputTokens || acc.outputTokens) ? `${describeFigure(acc.inputTokens, 'tokens')} in, ${describeFigure(acc.outputTokens, 'tokens')} out` : '';
-    const cost = acc?.costUsd ? describeFigure(acc.costUsd, 'usd') : '';
-    const fact = (label: string, value: string): Row => ({ kind: 'note', text: `${label}: ${value}` });
-    const rows: Row[] = [{ kind: 'heading', text: `${j.route}  ${STATE_LABELS[j.state]}${isLive(j.state) && j.stalled ? `  ${JOBS_ACTIVITY_TEXT.stalled}` : ''}` }];
-    if (isLive(j.state) && j.lastActivityAt !== undefined) rows.push(fact(JOBS_ACTIVITY_TEXT.lastActivity, `${JOBS_ACTIVITY_TEXT.age(j.lastActivityAt, ctx.now)}${j.activityLine ? ` - ${j.activityLine}` : ''}`));
-    if (j.reason) rows.push({ kind: 'note', text: j.reason, style: isBad(j.state) ? 'crit' : 'muted' });
-    rows.push({ kind: 'buttons', id: 'job-actions', label: '', buttons: [
-      ...(isLive(j.state) ? [{ button: DISPATCH_TUI_TEXT.cancel, run: () => this.cancelJob(ctx, j.id) }] : []),
-      { button: DISPATCH_TUI_TEXT.back, run: () => { this.jobs.sel = null; this.jobs.detail = null; } },
-    ] });
-    rows.push(fact('Activity', ACTIVITY_LABELS[j.activity] ?? j.activity), fact('Data', DATA_TIER_LABELS[j.dataTier] ?? j.dataTier), fact('Tools', TOOL_LABELS[j.tools] ?? j.tools),
-      fact('Output', JOB_OUTPUT_LABELS[j.output] ?? j.output), fact('Adapter', j.adapter), fact('Started by', j.caller.label ?? j.caller.kind), fact('Folder', j.cwd));
-    if (servedText(j.served)) rows.push(fact('Served by', servedText(j.served)));
-    if (j.startedAt) rows.push(fact('Took', duration(j, ctx.now)));
-    if (j.exitCode !== null) rows.push(fact('Exit code', String(j.exitCode)));
-    if (usage) rows.push(fact('Tokens', usage));
-    if (cost) rows.push(fact('Cost', cost));
-    if (j.patch) rows.push(fact('Patch', `${j.patch.files} ${j.patch.files === 1 ? 'file' : 'files'}, apply with augur apply ${j.id}`));
-    for (const [title, text] of [[DISPATCH_TUI_TEXT.result, d.result], [DISPATCH_TUI_TEXT.output, d.stdout], [DISPATCH_TUI_TEXT.errors, d.stderr]] as const) {
-      if (!text.trim()) continue;
-      rows.push({ kind: 'heading', text: title });
-      for (const line of tail(text)) rows.push({ kind: 'note', text: line || ' ', indent: true });
+    const detail = this.jobs.detail;
+    const rows: Row[] = [{ kind: 'action', id: 'job-back', label: '', button: DISPATCH_TUI_TEXT.back, run: () => this.jobs.closeDetail() }];
+    if (this.jobs.detailError) rows.push({ kind: 'note', text: this.jobs.detailError, style: 'crit' });
+    if (!detail) { rows.push({ kind: 'note', text: LEDGER_TEXT.loading }); return rows; }
+    const job = detail.job;
+    rows.push({ kind: 'heading', text: job.summary || job.id });
+    if (job.kind === 'augur-job' && !ledgerTerminal(job.state)) rows.push({ kind: 'action', id: 'job-cancel', label: '', button: DISPATCH_TUI_TEXT.cancel, run: () => this.cancelJob(ctx, job.localId) });
+    for (const [label, value] of ledgerFacts(job, ctx.now)) rows.push({ kind: 'note', text: label + ': ' + value });
+    for (const [label, value] of Object.entries(job.usage ?? {})) rows.push({ kind: 'note', text: label + ': ' + value });
+    for (const [label, links] of [['Parent', detail.parent ? [detail.parent] : []], ['Children', detail.children], ['Retries', detail.retries]] as const) {
+      rows.push({ kind: 'heading', text: label });
+      for (const linked of links) rows.push({ kind: 'action', id: label + linked.id, label: linked.id, button: DISPATCH_TUI_TEXT.open, run: () => this.openJob(ctx, linked.id) });
     }
     return rows;
   }
@@ -559,6 +552,7 @@ export class DispatchPage implements Page {
         await ctx.run('saveConfig', c);
       } });
     rows.push({ kind: 'note', text: `${APPROVAL_TEXT[level]} ${APPROVAL_TEXT.where}` });
+    for (const sink of this.jobDelivery) rows.push({ kind: 'note', text: sink.sink + ': ' + sink.pending + ' pending / ' + sink.delivered + ' delivered / ' + sink.failed + ' failed' + (sink.error ? '. ' + sink.error : ''), style: sink.error ? 'warn' : 'muted' });
     if (!runJobs) return rows;
     rows.push({ kind: 'heading', text: 'Service' });
     rows.push({ kind: 'note', text: s.pid === null && s.lines === null ? DISPATCH_TUI_TEXT.checking : s.pid !== null ? DISPATCH_TEXT.serviceRunning(s.pid) : DISPATCH_TEXT.serviceStopped, style: s.pid !== null ? 'good' : 'warn' });

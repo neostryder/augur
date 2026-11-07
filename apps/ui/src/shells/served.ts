@@ -116,5 +116,12 @@ export function createServedShell(): Shell {
     };
   };
 
-  return { ...base, kind: 'desktop', served: true, host: { ...base.host, platform: 'browser' }, engineLink: open };
+  return { ...base, kind: 'desktop', served: true, host: { ...base.host, platform: 'browser' }, engineLink: open,
+    async ledgerCall(method, params) {
+      const response = await fetch('/api/dispatch', { method: 'POST', headers: headers({ 'Content-Type': 'application/json' }), body: JSON.stringify({ method, params }), cache: 'no-store', signal: AbortSignal.timeout(15000) });
+      const result = await response.json() as { result?: unknown; error?: string };
+      if (!response.ok || result.error) throw new Error(result.error || 'The ledger service is unavailable.');
+      return result.result;
+    },
+  };
 }

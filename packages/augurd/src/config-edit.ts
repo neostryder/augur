@@ -3,7 +3,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ALL_ADAPTERS } from './adapters/index.js';
-import { DEFAULT_CONFIG, loadConfig, plainHost, gatewayAddress, accessTeam } from './config.js';
+import { DEFAULT_CONFIG, loadConfig, plainHost, gatewayAddress, accessTeam, webhookAddress } from './config.js';
 import type { ServiceConfig } from './config.js';
 
 export interface ConfigKey {
@@ -61,6 +61,14 @@ export const CONFIG_KEYS: readonly ConfigKey[] = [
   { key: 'web.tlsCert', label: 'Web app certificate', help: 'Path of a PEM certificate chain. With web.tlsKey, the web app is served over HTTPS.', kind: 'text' },
   { key: 'web.tlsAuto', label: 'Web app self-signed HTTPS', help: 'Auto serves HTTPS with a certificate the service makes when the web app is open to the network, on serves it on this computer\'s own address too, and off keeps plain HTTP. Ignored when web.tlsCert and web.tlsKey are set.', kind: 'choice', choices: ['auto', 'on', 'off'] },
   { key: 'web.tlsKey', label: 'Web app key', help: 'Path of the PEM private key for web.tlsCert.', kind: 'text' },
+  { key: 'ledgerAlerts.stalled', label: 'Stalled jobs', help: 'Send an alert when a job stalls.', kind: 'bool' },
+  { key: 'ledgerAlerts.failed', label: 'Failed jobs', help: 'Send an alert when a job fails.', kind: 'bool' },
+  { key: 'ledgerAlerts.overUsualTime', label: 'Jobs over usual time', help: 'Send an alert when a running job exceeds its route duration threshold.', kind: 'bool' },
+  { key: 'ledgerAlerts.usualMultiple', label: 'Usual time multiple', help: 'The route median is multiplied by this number, with a one-minute floor.', kind: 'number', min: 1, max: 1000 },
+  { key: 'ledgerAlerts.minSamples', label: 'Duration samples', help: 'Minimum completed jobs on the same node, kind, and route before duration alerts start.', kind: 'number', min: 1, max: 10000 },
+  { key: 'ledgerAlerts.webhookUrl', label: 'Alert webhook URL', help: 'Optional HTTPS endpoint. Credentials, query strings, and fragments are refused.', kind: 'text', check: value => webhookAddress(value) ? null : 'The webhook needs an HTTPS URL without credentials, a query, or a fragment.' },
+  { key: 'ledgerAlerts.webhookFormat', label: 'Webhook payload format', help: 'augur sends the public job alert contract by default. cresset sends events to Cresset intake at /v1/events.', kind: 'choice', choices: ['augur', 'cresset'] },
+  { key: 'ledgerAlerts.webhookKeyName', label: 'Webhook key reference', help: 'Optional ledger-alerts.name secret-store reference used as a Bearer credential.', kind: 'text', check: value => !value || /^ledger-alerts\.[A-Za-z0-9_]+$/.test(value) ? null : 'The webhook key reference must have the form ledger-alerts.name.' },
 ];
 
 const path = (dir: string) => join(dir, 'config.json');
@@ -71,6 +79,7 @@ function readRaw(dir: string): Record<string, unknown> {
 }
 
 function valueOf(config: ServiceConfig, key: string): string {
+  if (key.startsWith('ledgerAlerts.')) return String(config.ledgerAlerts[key.slice(13) as keyof ServiceConfig['ledgerAlerts']]);
   switch (key) {
     case 'aliasRefreshHours': return String(config.aliasRefreshHours);
     case 'decision.backend': return config.decision.backend;

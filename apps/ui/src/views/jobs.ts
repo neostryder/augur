@@ -1,37 +1,14 @@
-import { ACTIVITY_LABELS, DATA_TIER_LABELS } from '@augur/core';
-import { describeFigure } from '@augur/dispatch-protocol';
-import type { Accounted, JobRecord, JobState } from '@augur/dispatch-protocol';
-import { JOB_OUTPUT_LABELS, STATE_LABELS, TOOL_LABELS, duration, isBad, isLive, servedText } from '@augur/view-model';
-import { ICON, ago, esc } from '../util';
-
-export const JOBS_ACTIVITY_TEXT = {
-  running: 'Running',
-  stalled: 'Stalled',
-  lastActivity: 'Last activity',
-  empty: 'No jobs are running. A job shows here while it is queued, waiting for approval, running, or being cancelled. Start one from an agent or with augur run.',
-  age: (at: number, now = Date.now()): string => {
-    const s = Math.max(0, Math.floor((now - at) / 1000));
-    return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.floor(s / 60)}m ago` : s < 86400 ? `${Math.floor(s / 3600)}h ago` : `${Math.floor(s / 86400)}d ago`;
-  },
-};
+import { LEDGER_KINDS, LEDGER_STATES, ORIGIN_KINDS, ledgerTerminal } from '@augur/dispatch-protocol';
+import type { LedgerJob } from '@augur/dispatch-protocol';
+import { LEDGER_STATE_LABELS, LEDGER_TEXT as T, ledgerDuration, ledgerFacts, ledgerTime, type LedgerModel } from '@augur/view-model';
+import { ICON, esc } from '../util';
 
 export interface JobsModel {
-  runningOnly?: boolean;
-  /** What the service answered to `service status`; null until the first answer. */
+  ledger: LedgerModel;
   service: { running: boolean; pid: number | null } | null;
-  /** The line under the service card after the last Start or Stop. */
   serviceNote: string;
-  /** Set when the app could not reach the bundled command at all. */
-  unavailable: string;
-  jobs: JobRecord[] | null;
-  /** Tokens and cost of the listed jobs, each figure labelled reported, derived or imputed. */
-  accounted: Record<string, Accounted>;
-  sel: string | null;
-  detail: { job: JobRecord; result: string; stdout: string; stderr: string } | null;
   busy: boolean;
 }
-
-export { STATE_LABELS, duration, isLive };
 
 /** Jobs and Routes are two pages of the same area, so both carry this switch. */
 const TAB_LABELS = { jobs: 'Jobs', routes: 'Routes', balance: 'Balance', service: 'Service' } as const;
@@ -40,57 +17,42 @@ export function dispatchTabs(active: keyof typeof TAB_LABELS): string {
     `<button role="tab" aria-selected="${v === active}" class="${v === active ? 'on' : ''}" data-action="dispatch-tab" data-value="${v}">${TAB_LABELS[v]}</button>`).join('')}</div>`;
 }
 
-const chip = (state: JobState) => `<span class="jchip ${isLive(state) ? 'live' : isBad(state) ? 'bad' : ''}">${esc(STATE_LABELS[state])}</span>`;
+const chip = (job: LedgerJob) => `<span class="jchip ${['failed', 'stalled', 'node-lost'].includes(job.state) ? 'bad' : ledgerTerminal(job.state) ? '' : 'live'}">${esc(LEDGER_STATE_LABELS[job.state])}</span>`;
+const link = (id: string) => `<button class="btn small ledger-link" data-job="${esc(id)}">${esc(id)}</button>`;
 
-function serviceCard(m: JobsModel): string {
-  if (m.unavailable) return `<div class="card rbanner bad"><span class="grow"><b>The dispatch service is not available.</b> ${esc(m.unavailable)}</span></div>`;
-  const s = m.service;
-  const state = s === null ? 'Checking the service.' : s.running ? `Service running${s.pid ? ` (process ${s.pid})` : ''}.` : 'Service stopped. Agents cannot start jobs until you start it.';
-  // The service holds the usage engine, so the app keeps it running and offers no way to stop it here.
-  const button = s === null || s.running ? '' : `<button class="btn small primary" data-action="service-start" ${m.busy ? 'disabled' : ''}>Start</button>`;
-  return `<div class="card rbanner ${s?.running ? 'ok' : ''}"><span class="grow">${esc(state)}${m.serviceNote ? ` <span class="rnote" role="status">${esc(m.serviceNote)}</span>` : ''}</span>${button}</div>`;
+function filters(m: LedgerModel): string {
+  const input = (key: string, label: string, value = '', type = 'text') => `<label>${label}<input id="ledger-${key}" data-ledger-filter="${key}" type="${type}" value="${esc(value)}"></label>`;
+  const select = (key: 'state' | 'kind' | 'origin', label: string, options: readonly string[]) => `<label>${label}<select id="ledger-${key}" data-ledger-filter="${key}"><option value="">All</option>${options.map(value => `<option value="${value}" ${m.filters[key]?.includes(value as never) ? 'selected' : ''}>${key === 'state' ? LEDGER_STATE_LABELS[value as keyof typeof LEDGER_STATE_LABELS] : value}</option>`).join('')}</select></label>`;
+  const date = (at: number | undefined) => at === undefined ? '' : new Date(at - new Date(at).getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  return `<div class="ledger-filters">${select('state', T.state, LEDGER_STATES)}${select('kind', T.kind, LEDGER_KINDS)}${input('node', T.node, m.filters.node)}${select('origin', T.origin, ORIGIN_KINDS)}${input('route', T.route, m.filters.route)}${input('session', T.sessionId, m.scope === 'session' ? m.session : m.filters.session)}${input('from', T.from, date(m.filters.from), 'datetime-local')}${input('to', T.to, date(m.filters.to), 'datetime-local')}${input('text', T.text, m.filters.text)}</div>`;
 }
-
-const stalledChip = (j: JobRecord) => isLive(j.state) && j.stalled ? `<span class="jchip bad">${JOBS_ACTIVITY_TEXT.stalled}</span>` : '';
-const activity = (j: JobRecord) => isLive(j.state) && j.lastActivityAt !== undefined ? `${JOBS_ACTIVITY_TEXT.age(j.lastActivityAt)}${j.activityLine ? ` - ${j.activityLine}` : ''}` : '';
-
-function row(m: JobsModel, j: JobRecord): string {
-  const when = j.startedAt ? `${duration(j)}` : ago(new Date(j.createdAt).toISOString());
-  return `<button class="jrow ${m.sel === j.id ? 'on' : ''}" data-job="${esc(j.id)}" aria-pressed="${m.sel === j.id}">
-    <span class="jmain"><b>${esc(j.route)}</b><span class="jsub">${esc(ACTIVITY_LABELS[j.activity] ?? j.activity)}, ${esc((DATA_TIER_LABELS[j.dataTier] ?? j.dataTier).toLowerCase())} data</span>${activity(j) ? `<span class="jsub" data-job-activity="${esc(j.id)}">${esc(activity(j))}</span>` : ''}</span>
-    ${stalledChip(j)}${chip(j.state)}<span class="jwhen">${esc(when)}</span></button>`;
-}
-
-const field = (label: string, value: string, wide = false, activityId?: string) => `<div class="jf${wide ? ' wide' : ''}"><span>${esc(label)}</span><b${activityId ? ` data-job-activity="${esc(activityId)}"` : ''}>${esc(value)}</b></div>`;
 
 function detail(m: JobsModel): string {
-  const d = m.detail;
-  if (!d) return `<div class="rempty big">${m.sel ? 'Loading the job.' : 'Pick a job to see its result and output.'}</div>`;
-  const j = d.job;
-  const acc = m.accounted[j.id];
-  const usage = acc && (acc.inputTokens || acc.outputTokens) ? `${describeFigure(acc.inputTokens, 'tokens')} in, ${describeFigure(acc.outputTokens, 'tokens')} out` : '';
-  const cost = acc?.costUsd ? describeFigure(acc.costUsd, 'usd') : '';
-  const block = (title: string, text: string) => text.trim() ? `<h3>${esc(title)}</h3><pre class="jlog" tabindex="0">${esc(text.length > 6000 ? '...' + text.slice(-6000) : text)}</pre>` : '';
-  return `<div class="jdetail"><div class="jhead"><h2>${esc(j.route)}</h2>${chip(j.state)}${stalledChip(j)}
-    ${isLive(j.state) ? `<button class="btn small" data-action="job-cancel" data-id="${esc(j.id)}" ${m.busy ? 'disabled' : ''}>Cancel</button>` : ''}</div>
-    ${j.reason ? `<p class="jreason">${esc(j.reason)}</p>` : ''}
-    <div class="jfields">${field('Activity', ACTIVITY_LABELS[j.activity] ?? j.activity)}${field('Data', DATA_TIER_LABELS[j.dataTier] ?? j.dataTier)}
-      ${activity(j) ? field(JOBS_ACTIVITY_TEXT.lastActivity, activity(j), true, j.id) : ''}${field('Tools', TOOL_LABELS[j.tools] ?? j.tools)}${field('Output', JOB_OUTPUT_LABELS[j.output] ?? j.output)}${field('Adapter', j.adapter)}
-      ${field('Started by', j.caller.label ?? j.caller.kind)}${field('Folder', j.cwd, true)}
-      ${j.served ? field('Served by', servedText(j.served)) : ''}${j.startedAt ? field('Took', duration(j)) : ''}${j.exitCode !== null ? field('Exit code', String(j.exitCode)) : ''}${usage ? field('Tokens', usage, true) : ''}${cost ? field('Cost', cost) : ''}
-      ${j.patch ? field('Patch', `${j.patch.files} ${j.patch.files === 1 ? 'file' : 'files'}, apply with augur apply ${j.id}`) : ''}</div>
-    ${block('Result', d.result)}${block('Output', d.stdout)}${block('Errors', d.stderr)}</div>`;
+  const ledger = m.ledger, d = ledger.detail;
+  if (ledger.detailError) return `<div class="rempty big" role="alert">${esc(ledger.detailError)}</div>`;
+  if (!d) return `<div class="rempty big">${ledger.selected ? T.loading : T.pick}</div>`;
+  const job = d.job;
+  return `<section class="jdetail" aria-label="Job details"><div class="jhead"><h2>${esc(job.summary || job.id)}</h2>${chip(job)}${job.compacted ? `<span class="jchip">${T.compacted}</span>` : ''}${job.kind === 'augur-job' && !ledgerTerminal(job.state) ? `<button class="btn small" data-action="job-cancel" data-id="${esc(job.localId)}" ${m.busy ? 'disabled' : ''}>Cancel job</button>` : ''}</div>
+    <dl class="jfields">${ledgerFacts(job).map(([label, value]) => `<div class="jf"><dt>${esc(label)}</dt><dd${label === 'Running time' ? ` data-ledger-elapsed="${esc(job.id)}"` : ''}>${esc(value)}</dd></div>`).join('')}${Object.entries(job.usage ?? {}).filter(([key]) => !['inputTokens', 'outputTokens', 'costUsd'].includes(key)).map(([key, value]) => `<div class="jf"><dt>${esc(key)}</dt><dd>${esc(String(value))}</dd></div>`).join('')}</dl>
+    <h3>Parent</h3>${job.parentId ? link(job.parentId) : '<p class="help">None</p>'}<h3>Children</h3>${d.children.length ? d.children.map(child => link(child.id)).join('') : '<p class="help">None</p>'}<h3>Retries</h3>${d.retries.length ? d.retries.map(retry => link(retry.id)).join('') : '<p class="help">None</p>'}</section>`;
+}
+
+function row(job: LedgerJob, selected: string | null): string {
+  return `<button class="ledger-row ${selected === job.id ? 'on' : ''}" data-job="${esc(job.id)}" aria-pressed="${selected === job.id}">
+    <span class="jmain"><b>${esc(job.summary || job.id)}</b><span class="jsub">${esc(job.kind)} / ${esc(job.node)}${job.compacted ? ` / ${T.compacted}` : ''}</span><span class="jsub">${esc(job.stamp.sessionTitle || 'Unknown session')} / ${esc(job.stamp.sessionId || '-')} (${esc(job.attribution.session)})</span><span class="jsub">${esc(job.stamp.originLabel || job.stamp.origin || 'Unknown origin')} (${esc(job.attribution.origin)}) / PID ${job.stamp.pid ?? '-'} (${esc(job.attribution.process)})</span><span class="jsub">Summary source: ${esc(job.summarySource)}</span>${!ledgerTerminal(job.state) && job.activityLine ? `<span class="jsub">${esc(job.activityLine)}</span>` : ''}${job.parentId || job.retryOf || job.retriedAs ? `<span class="jsub">${esc([job.parentId ? `Parent: ${job.parentId}` : '', job.retryOf ? `Retry of: ${job.retryOf}` : '', job.retriedAs ? `Retried as: ${job.retriedAs}` : ''].filter(Boolean).join(' / '))}</span>` : ''}</span>
+    <span class="ledger-state">${chip(job)}<span class="jsub">${esc(job.route || job.model || '-')}</span><span class="jsub">${esc(job.activity)}</span>${job.usage ? `<span class="jsub">${job.usage.inputTokens} in / ${job.usage.outputTokens} out${job.usage.costUsd === undefined ? '' : ` / $${job.usage.costUsd}`}</span>` : ''}${job.exitReason ? `<span class="jsub">${esc(job.exitReason)}</span>` : ''}</span>
+    <span class="ledger-times"><span data-ledger-elapsed="${esc(job.id)}">${ledgerDuration(job)}</span><span class="jsub">Started: ${ledgerTime(job.startedAt)}</span><span class="jsub">Ended: ${ledgerTime(job.endedAt)}</span></span></button>`;
 }
 
 export function renderJobs(m: JobsModel): string {
-  const jobs = m.runningOnly ? m.jobs?.filter(j => isLive(j.state)) ?? null : m.jobs;
-  const list = jobs === null ? '<div class="rempty big">Loading jobs.</div>'
-    : jobs.length ? jobs.map((j) => row(m, j)).join('') : m.runningOnly ? `<div class="rempty big">${JOBS_ACTIVITY_TEXT.empty}</div>` : '<div class="rempty big">No jobs yet. Agents start them with the augur command.</div>';
-  return `<div class="rules-page jobs-page ${m.sel ? 'has-sel' : ''}"><header class="top">
-    <button class="icon" data-action="${m.sel ? 'job-close' : 'back'}" title="${m.sel ? 'Back to the jobs' : 'Back to usage'}" aria-label="${m.sel ? 'Back to the jobs' : 'Back to usage'}">${ICON.back}</button>
-    <div><h1>Jobs</h1><div class="sub">Work agents started through Augur</div></div><span class="grow"></span>
-    <button class="icon" data-action="jobs-refresh" title="Refresh" aria-label="Refresh the jobs">${ICON.refresh}</button></header>
-    ${m.sel ? '' : dispatchTabs('jobs')}${serviceCard(m)}
-    <button class="btn small" data-action="jobs-running" aria-pressed="${!!m.runningOnly}">${JOBS_ACTIVITY_TEXT.running}</button>
-    <div class="rules ${m.sel ? 'has-sel' : ''}"><div class="rlist jlist">${list}</div><div class="rdetail">${detail(m)}</div></div></div>`;
+  const ledger = m.ledger;
+  const list = ledger.jobs === null ? `<div class="rempty big" role="status">${T.loading}</div>` : ledger.jobs.length ? ledger.jobs.map(job => row(job, ledger.selected)).join('') : `<div class="rempty big">${T.empty}</div>`;
+  const status = m.service?.running ? `Service running${m.service.pid ? ` (process ${m.service.pid})` : ''}.` : m.service === null ? 'Checking the service.' : 'Service stopped.';
+  return `<div class="rules-page jobs-page ledger-page ${ledger.selected ? 'has-sel' : ''}"><header class="top"><button class="icon" data-action="${ledger.selected ? 'job-close' : 'back'}" aria-label="${ledger.selected ? 'Back to jobs' : 'Back to usage'}">${ICON.back}</button><div><h1>Jobs</h1><div class="sub">Session and node job metadata</div></div><span class="grow"></span><button class="icon" data-action="jobs-refresh" aria-label="Refresh jobs">${ICON.refresh}</button></header>
+    ${ledger.selected ? '' : dispatchTabs('jobs')}<div class="card rbanner ${m.service?.running ? 'ok' : ''}"><span class="grow">${esc(status)} ${esc(m.serviceNote)}</span>${m.service?.running === false ? '<button class="btn small" data-action="service-start">Start</button>' : ''}</div>
+    <div class="seg" role="group" aria-label="${T.scope}">${(['session', 'all'] as const).map(scope => `<button class="${ledger.scope === scope ? 'on' : ''}" aria-pressed="${ledger.scope === scope}" data-action="jobs-scope" data-value="${scope}">${scope === 'session' ? T.session : T.all}</button>`).join('')}</div>${filters(ledger)}
+    <div class="ledger-counts" aria-label="Counts by state">${LEDGER_STATES.map(state => `<span>${LEDGER_STATE_LABELS[state]} <b>${ledger.counts[state]}</b></span>`).join('')}</div>
+    <div class="ledger-nodes" aria-label="Node health">${ledger.nodes.map(node => `<span class="lchip ${node.unreachableSince === null ? '' : 'down'}"><i></i>${esc(node.node)}: ${node.unreachableSince === null ? T.reachable : T.unreachable}<span class="jsub">Last poll: ${(node.lastPollAt ?? node.lastSeenAt) === null ? T.never : ledgerTime(node.lastPollAt ?? node.lastSeenAt)}${node.unreachableSince === null ? '' : ` / Unreachable since: ${ledgerTime(node.unreachableSince)}`}</span></span>`).join('')}</div>
+    ${ledger.error ? `<div class="card rbanner bad" role="alert">${esc(ledger.error)}</div>` : ''}${ledger.loading && ledger.jobs !== null ? '<p class="help" role="status">Refreshing jobs.</p>' : ''}
+    <div class="rules ${ledger.selected ? 'has-sel' : ''}"><section class="rlist jlist" aria-label="Job list"><div class="ledger-columns"><span>Summary / kind / node / session / origin / process</span><span>State / route / activity</span><span>Elapsed / started / ended</span></div>${list}<div class="actions"><button class="btn small" data-action="jobs-first" ${ledger.page ? '' : 'disabled'}>${T.first}</button><button class="btn small" data-action="jobs-next" ${ledger.next ? '' : 'disabled'}>${T.next}</button></div></section><div class="rdetail">${detail(m)}</div></div></div>`;
 }

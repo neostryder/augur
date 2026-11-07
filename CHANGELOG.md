@@ -11,6 +11,9 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 - [Visible] [Alerts] `augur nodes` reports node polling and reachability, and `augur alerts` lists persisted job alert events with time filters; usage-alert dismissal remains available.
 - [Visible] [Platform] MCP ledger queries support session scope, filters, paging, and change cursors, with read-only counts, node, and alert tools and metadata-only job details.
 - [Visible] [Platform] Replays and backlog releases carry job stamps, and CLI and MCP session stamps fall back to the host session id.
+- [Visible] [Alerts] Job webhooks can send the Cresset event format through the Webhook payload format setting in the app and terminal.
+- [Visible] [UI] The desktop, service-served PWA, and terminal Jobs pages show ledger metadata, session scopes, filters, paging, and node health.
+- [Visible] [Alerts] Job alerts have editable rules, desktop job links, a rotating JSONL outbox, optional HTTPS webhooks, and durable delivery receipts.
 
 [Visible] [Providers] **Retry on failure now also retries a job when the provider says its free allowance is used up, and a read-only job whose reply never arrived in time or whose browser connection was lost.** A used-up allowance counts as a provider limit, like a rate limit or quota message. A job with tools `write` or `full` is not retried after a missed reply or a lost browser, because it may already have changed files.
 - [Visible] [Platform] The service records job attribution and summaries, receives per-node job events, and serves ledger queries and replayable watches. CLI runs accept session, title, origin, and summary flags. The ledger keeps full metadata for 90 days by default, then compacts finished jobs to summary rows.
