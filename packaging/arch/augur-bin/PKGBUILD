@@ -15,8 +15,6 @@ options=('!strip' '!debug')
 noextract=("Augur_${pkgver}_amd64.deb" "LICENSE-${pkgver}")
 source=("Augur_${pkgver}_amd64.deb::${url}/releases/download/v${pkgver}/Augur_${pkgver}_amd64.deb"
         "LICENSE-${pkgver}::https://raw.githubusercontent.com/neostryder/augur/v${pkgver}/LICENSE")
-sha256sums=('e61b61587fbcb0b552d46fc663f1abb6271d51b623e1dbd97bbc94df2f275898'
-            'ce1dd14135d1822bf50c38f91709f5ca866dc6ce5510eaa954b617a29de8718c')
 
 package() {
   bsdtar -xf "${srcdir}/Augur_${pkgver}_amd64.deb" -C "${srcdir}" data.tar.gz
@@ -28,3 +26,5 @@ package() {
   echo pacman > "${pkgdir}/usr/lib/Augur/package-manager"
   install -Dm644 "${srcdir}/LICENSE-${pkgver}" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
 }
+sha256sums=('0bba7d290c26b164f8a823e65ec876b80b1aed77af902c4ec75c5b4ac8ac4ccc'
+            'ce1dd14135d1822bf50c38f91709f5ca866dc6ce5510eaa954b617a29de8718c')
