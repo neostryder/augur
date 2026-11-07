@@ -1,5 +1,5 @@
 // Stands in for a harness in tests. Reads directives from standard input, one per line:
-//   SLEEP n | WRITE file | EXIT n | GRANDCHILD marker | ESCAPE marker | HANG | ENV NAME | FLOOD mb | SUBMIT-CHILD
+//   SLEEP n | WRITE file | EXIT n | GRANDCHILD marker | ESCAPE marker | HANG | BUSY n | ENV NAME | FLOOD mb | SUBMIT-CHILD
 // Understands the arguments `codex exec` gets: `-o <file>` receives the final message, and `--json` makes it print a turn.completed event.
 import { spawn } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
@@ -23,6 +23,7 @@ function run() {
     else if (cmd === 'WRITE') writeFileSync(arg, 'artifact\n');
     else if (cmd === 'EXIT') code = Number(arg);
     else if (cmd === 'HANG') hang = true;
+    else if (cmd === 'BUSY') { const until = Date.now() + Number(arg) * 1000; while (Date.now() < until) { /* burns processor time and prints nothing */ } }
     else if (cmd === 'ENV') echo.push(`ENV ${arg}=${process.env[arg] ?? '<unset>'}`);
     else if (cmd === 'GRANDCHILD') spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)', arg], { stdio: 'ignore', windowsHide: true });
     else if (cmd === 'ESCAPE') spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)', arg], { detached: true, stdio: 'ignore', windowsHide: true }).unref();

@@ -27,7 +27,7 @@ const runSchema = z.object({
   cwd: z.string().optional().describe('The folder the job works in. Defaults to the server\'s folder.'),
   effort: z.string().regex(/^[A-Za-z0-9-]{1,16}$/).optional().describe('Reasoning effort for this job only. Overrides the route\'s own effort setting.'),
   schema: z.record(z.string(), z.unknown()).optional().describe('JSON Schema object the answer must match. At most 64 KB.'),
-  timeout_s: z.number().int().positive().optional().describe('Seconds the job may run before it is stopped.'),
+  timeout_s: z.number().int().positive().optional().describe('Seconds the job may stay inactive before it is stopped, from 1 to 86400. A job that is still working is never stopped.'),
   wait_s: z.number().int().min(0).max(900).optional().describe('Seconds to wait for the answer. 300 by default.'),
   packs: z.array(z.string()).optional().describe('Charter packs to include, by name.'),
   no_charter: z.boolean().optional().describe('Send the prompt with no charter.'),

@@ -102,10 +102,16 @@ describe('a job that finishes', () => {
     expect(await terminal(e.sup, e.store, b)).toMatchObject({ state: 'failed', exitCode: 3, reason: 'exit 3' });
   });
 
+  it('leaves a silent job alone while it works, and stops it once it goes inactive', async () => {
+    const e = setup();
+    const busy = submitOk(e.sup, request({ text: 'BUSY 6', timeoutS: 2, cwd: e.root }));
+    expect(await terminal(e.sup, e.store, busy)).toMatchObject({ state: 'completed' });
+  }, 30000);
+
   it('kills a hung job at its timeout', async () => {
     const e = setup();
     const id = submitOk(e.sup, request({ text: 'HANG', timeoutS: 3, cwd: e.root }));
-    expect(await terminal(e.sup, e.store, id)).toMatchObject({ state: 'killed', reason: 'timed out after 3s' });
+    expect(await terminal(e.sup, e.store, id)).toMatchObject({ state: 'killed', reason: 'stopped after 3s of inactivity' });
   });
 
   it('reports the harness output through logs, page by page, without splitting a character', async () => {
@@ -697,7 +703,7 @@ describe('runtime failover', () => {
     routes.fake = { ...routes.fake, fallback: ['raw'] };
     e.writeRoutes(routes);
     const id = submitOk(e.sup, request({ text: 'HANG', timeoutS: 3, tools: 'write', cwd: e.root }));
-    expect(await terminal(e.sup, e.store, id)).toMatchObject({ state: 'killed', reason: 'timed out after 3s' });
+    expect(await terminal(e.sup, e.store, id)).toMatchObject({ state: 'killed', reason: 'stopped after 3s of inactivity' });
     expect(e.store.get(id)!.retriedAs).toBeUndefined();
     expect(e.store.list({ limit: 10 })).toHaveLength(1);
   });

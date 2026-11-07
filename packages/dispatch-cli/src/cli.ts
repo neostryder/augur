@@ -60,7 +60,7 @@ augur run <route> --prompt-file <file|-> | --prompt <text> [options]
   --effort <level>   override the route's reasoning effort for this job (1-16 chars)
   --schema <file>    JSON Schema file the answer must match (max 64 KB)
   --expect-file <f>  file the job must leave in the working directory
-  --timeout <s>      wall time limit in seconds
+  --timeout <s>      stop the job after <s> seconds of inactivity (1-86400)
   --named            the route was named for this task by the person
   --caller <kind>    interactive or automated (default: AUGUR_CALLER or interactive; inside a job always automated)
   --allow <checks>   skip checks, comma separated: unpicked, exhausted (each use is recorded with the job)
@@ -713,7 +713,7 @@ async function run(rest: string[], p: Parsed, io: Io, opts: Opts, say: (h: strin
   if ('rejected' in res) { io.err(`Rejected (${res.rejected.code}): ${res.rejected.reason}\n`); if (json) io.out(JSON.stringify(res) + '\n'); return EXIT_CODES.rejected; }
   for (const w of res.warnings) io.err(`Warning: ${w}\n`);
   if (!p.flags.has('wait')) { say(res.id, res); return EXIT_CODES.completed; }
-  const w = await waitFor(res.id, req.timeoutS ? req.timeoutS + 60 : null, io, opts, json, true);
+  const w = await waitFor(res.id, null, io, opts, json, true);
   if (w.code === EXIT_CODES.wait_timeout || w.code === EXIT_CODES.usage) return w.code;
   const r = await call('result', { id: w.id }, opts);
   if (r) io.out(json ? JSON.stringify(w.chain.length > 1 ? { ...r, chain: w.chain, retriedAs: w.id } : r) + '\n' : (r.answer ?? '') + (r.answer?.endsWith('\n') ? '' : '\n'));
