@@ -2,7 +2,7 @@
 // the runner also looks at the CPU time and I/O of the job's process tree, and at new processes starting in it. Erasable TypeScript only.
 
 /** One look at a job's process tree. */
-export interface TreeSample { cpuMs: number; io: number; pids: ReadonlySet<number> }
+export interface TreeSample { cpuMs: number; io: number; pids: ReadonlySet<number>; started: number }
 
 export interface ProcessRow { pid: number; ppid: number; cpuMs: number; io: number }
 
@@ -18,12 +18,12 @@ export function sampleTree(rows: ProcessRow[], root: number): TreeSample {
   let cpuMs = 0, io = 0;
   const pids = new Set<number>();
   for (const r of rows) if (known.has(r.pid)) { cpuMs += r.cpuMs; io += r.io; pids.add(r.pid); }
-  return { cpuMs, io, pids };
+  return { cpuMs, io, pids, started: 0 };
 }
 
 /** Whether the tree did work between two looks `elapsedMs` apart. A new process in the tree counts as work, since a shell loop of short commands never raises the sum. */
 export function wasActive(before: TreeSample, after: TreeSample, elapsedMs: number): boolean {
-  if ([...after.pids].some(p => !before.pids.has(p))) return true;
+  if (after.started > before.started || [...after.pids].some(p => !before.pids.has(p))) return true;
   return after.cpuMs - before.cpuMs >= ACTIVE_CPU_SHARE * elapsedMs || after.io - before.io >= ACTIVE_IO_BYTES;
 }
 
@@ -43,14 +43,10 @@ export function parsePsRows(text: string): ProcessRow[] {
   });
 }
 
-/** The Windows script prints `pid ppid cpu-100ns io-bytes` for each process. */
-export const WINDOWS_PROCESS_SCRIPT = "Get-CimInstance Win32_Process | ForEach-Object { '{0} {1} {2} {3}' -f $_.ProcessId, $_.ParentProcessId, ([uint64]$_.KernelModeTime + [uint64]$_.UserModeTime), ([uint64]$_.ReadTransferCount + [uint64]$_.WriteTransferCount) }";
-
-export function parseWindowsRows(text: string): ProcessRow[] {
-  return text.split('\n').flatMap(line => {
-    const m = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*$/.exec(line);
-    return m ? [{ pid: Number(m[1]), ppid: Number(m[2]), cpuMs: Math.round(Number(m[3]) / 10000), io: Number(m[4]) }] : [];
-  });
+/** The job host writes `cpu-100ns io-bytes processes-started`: the totals for every process that has run in the job. */
+export function parseJobAccounting(text: string): TreeSample | null {
+  const m = /^\s*(\d+) (\d+) (\d+)\s*$/.exec(text);
+  return m ? { cpuMs: Math.round(Number(m[1]) / 10000), io: Number(m[2]), pids: new Set<number>(), started: Number(m[3]) } : null;
 }
 
 /** How often the runner looks: a quarter of the limit, at most every 15 seconds and at least twice a second. */

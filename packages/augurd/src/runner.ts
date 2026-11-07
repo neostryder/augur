@@ -3,7 +3,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { closeSync, existsSync, openSync, readFileSync, renameSync, statSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { lookEveryMs, parsePsRows, parseWindowsRows, sampleTree, wasActive, WINDOWS_PROCESS_SCRIPT, type ProcessRow, type TreeSample } from './job-activity.ts';
+import { lookEveryMs, parseJobAccounting, parsePsRows, sampleTree, wasActive, type TreeSample } from './job-activity.ts';
 
 interface JobFile { command: string; args: string[]; cwd: string; stdin: 'prompt' | 'none'; timeoutS: number | null; jobhost: string | null; files?: unknown[]; promptArgs?: number[]; redact?: boolean;
   scope?: string | null; scopeEnv?: Record<string, string> }
@@ -66,8 +66,10 @@ function endFollowed(): void {
   for (const [pid, started] of followed) if (rows.some(r => r.pid === pid && r.started === started)) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } }
 }
 
+const accountingFile = join(dir, 'activity.txt');
+const childEnv = viaHost && job.timeoutS ? { ...process.env, AUGUR_ACTIVITY_FILE: accountingFile } : process.env;
 const child = spawn(argv[0] as string, argv.slice(1), {
-  cwd: job.cwd, env: scope ? scopeEnv : process.env, windowsHide: true, detached: !win,
+  cwd: job.cwd, env: scope ? scopeEnv : childEnv, windowsHide: true, detached: !win,
   stdio: [job.stdin === 'prompt' ? 'pipe' : 'ignore', out, err],
   shell: win && !viaHost && /\.(cmd|bat)$/i.test(job.command),
 });
@@ -94,14 +96,18 @@ function killTree(why: 'cancel' | 'timeout'): void {
 const cancelPoll = setInterval(() => { if (existsSync(join(dir, 'cancel.request'))) killTree('cancel'); }, 300);
 // The timeout is an inactivity limit, never a wall-clock one: a job that is working is left alone however long it takes. A job is working while it writes
 // output, uses CPU or I/O in its process tree, or starts new processes. When the process table cannot be read, the job counts as working.
-const readRows = (): Promise<ProcessRow[] | null> => new Promise(resolve => {
-  const p = win ? spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_PROCESS_SCRIPT], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] })
-    : spawn('ps', ['-A', '-o', 'pid=,ppid=,time='], { stdio: ['ignore', 'pipe', 'ignore'] });
+// On Windows the job host reports the Job Object's totals to a file once a second; elsewhere the runner reads the process table.
+const readTree = (): Promise<TreeSample | null> => new Promise(resolve => {
+  if (win) {
+    try { resolve(Date.now() - statSync(accountingFile).mtimeMs < 10000 ? parseJobAccounting(readFileSync(accountingFile, 'utf8')) : null); } catch { resolve(null); }
+    return;
+  }
+  const p = spawn('ps', ['-A', '-o', 'pid=,ppid=,time='], { stdio: ['ignore', 'pipe', 'ignore'] });
   let text = '';
   const giveUp = setTimeout(() => { try { p.kill(); } catch { /* gone */ } resolve(null); }, 20000);
   p.stdout.on('data', d => { text += String(d); });
   p.on('error', () => { clearTimeout(giveUp); resolve(null); });
-  p.on('close', () => { clearTimeout(giveUp); const rows = win ? parseWindowsRows(text) : parsePsRows(text); resolve(rows.length ? rows : null); });
+  p.on('close', () => { clearTimeout(giveUp); const rows = parsePsRows(text); resolve(rows.length && child.pid !== undefined ? sampleTree(rows, child.pid) : null); });
 });
 const logTime = () => ['stdout.log', 'stderr.log'].reduce((t, f) => { try { return Math.max(t, statSync(join(dir, f)).mtimeMs); } catch { return t; } }, 0);
 let lastActive = Date.now(), before: TreeSample | null = null, beforeAt = 0, looking = false;
@@ -109,9 +115,8 @@ const lookForWork = async () => {
   if (looking || killedBy || child.pid === undefined) return;
   looking = true;
   try {
-    const rows = await readRows(), now = Date.now();
+    const after = await readTree(), now = Date.now();
     lastActive = Math.max(lastActive, logTime());
-    const after = rows ? sampleTree(rows, child.pid) : null;
     if (!after || !before || wasActive(before, after, now - beforeAt)) lastActive = now;
     if (after) { before = after; beforeAt = now; }
     if (job.timeoutS && now - lastActive > job.timeoutS * 1000) killTree('timeout');
