@@ -100,7 +100,7 @@ export class Link {
 
   async watchLedger(since: string, change: (cursor: string) => void, closed: () => void): Promise<LedgerWatch> {
     const watch = this.deps.ledgerWatch ?? (this.deps.call ? null : watchLedger);
-    if (!watch) throw new Error('The ledger watch is unavailable.');
+    if (!watch) throw new Error('Ledger watching is unavailable.');
     const watcher = await watch(since, { change: event => change(event.cursor), closed: () => { this.ledgerWatchers.delete(watcher); closed(); } }, this.deps.opts);
     this.ledgerWatchers.add(watcher);
     return { close: () => { this.ledgerWatchers.delete(watcher); watcher.close(); } };

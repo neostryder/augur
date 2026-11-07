@@ -3,8 +3,8 @@ import type { LedgerChain, LedgerJob, LedgerNode, LedgerQuery, LedgerState, Meth
 
 export const LEDGER_TEXT = {
   session: 'This session', all: 'All jobs', scope: 'Job scope', sessionId: 'Session id',
-  loading: 'Loading jobs.', empty: 'No jobs match these filters.', missing: 'The job is no longer available.',
-  pick: 'Select a job for its metadata.', sessionNeeded: 'Enter a session id to view this session.',
+  loading: 'Loading jobs.', empty: 'No jobs match these filters.', missing: 'This job is no longer available.',
+  pick: 'Select a job to see its metadata.', sessionNeeded: 'Enter a session id to view that session.',
   compacted: 'Compacted', reachable: 'Reachable', unreachable: 'Unreachable', never: 'No successful poll',
   next: 'Next page', first: 'First page', refresh: 'Refresh', running: 'Running',
   state: 'State', kind: 'Kind', node: 'Node', origin: 'Origin', route: 'Route', text: 'Search', from: 'Created from', to: 'Created through',

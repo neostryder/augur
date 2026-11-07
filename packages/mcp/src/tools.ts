@@ -228,7 +228,7 @@ export function createTools(d: McpDeps) {
       const now = Date.now();
       const q = ledgerQuery({ ...a, limit: a.limit ?? 20 }, d.stamp?.sessionId ?? d.session, now);
       if (a.since === undefined) return ledgerPage(await d.call('ledger_list', q, d.opts), a, now);
-      if (a.page !== undefined) throw new Error('Use either a change cursor or a page cursor.');
+      if (a.page !== undefined) throw new Error('Pass a change cursor or a page cursor, not both.');
       const page = await d.call('ledger_changes', { since: a.since, limit: q.limit }, d.opts);
       const ids = new Set<string>();
       let next: string | null | undefined;

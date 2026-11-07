@@ -63,7 +63,7 @@ export const CONFIG_KEYS: readonly ConfigKey[] = [
   { key: 'web.tlsKey', label: 'Web app key', help: 'Path of the PEM private key for web.tlsCert.', kind: 'text' },
   { key: 'ledgerAlerts.stalled', label: 'Stalled jobs', help: 'Send an alert when a job stalls.', kind: 'bool' },
   { key: 'ledgerAlerts.failed', label: 'Failed jobs', help: 'Send an alert when a job fails.', kind: 'bool' },
-  { key: 'ledgerAlerts.overUsualTime', label: 'Jobs over usual time', help: 'Send an alert when a running job exceeds its route duration threshold.', kind: 'bool' },
+  { key: 'ledgerAlerts.overUsualTime', label: 'Jobs running longer than usual', help: 'Send an alert when a running job exceeds its route duration threshold.', kind: 'bool' },
   { key: 'ledgerAlerts.usualMultiple', label: 'Usual time multiple', help: 'The route median is multiplied by this number, with a one-minute floor.', kind: 'number', min: 1, max: 1000 },
   { key: 'ledgerAlerts.minSamples', label: 'Duration samples', help: 'Minimum completed jobs on the same node, kind, and route before duration alerts start.', kind: 'number', min: 1, max: 10000 },
   { key: 'ledgerAlerts.webhookUrl', label: 'Alert webhook URL', help: 'Optional HTTPS endpoint. Credentials, query strings, and fragments are refused.', kind: 'text', check: value => webhookAddress(value) ? null : 'The webhook needs an HTTPS URL without credentials, a query, or a fragment.' },

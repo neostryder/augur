@@ -94,7 +94,7 @@ describe('node element and app wiring in Chromium', () => {
     expect(result.exceptionDetails?.exception?.description ?? result.exceptionDetails?.text).toBeUndefined();
     expect(result.result.value.width).toBeLessThanOrEqual(result.result.value.viewport);
     const screenshot = await command('Page.captureScreenshot', { format: 'png' }, sessionId);
-    const folder = fileURLToPath(new URL('../../../screens-D/', import.meta.url));
+    const folder = join(tmpdir(), 'augur-jobs-screens');
     mkdirSync(folder, { recursive: true });
     writeFileSync(join(folder, `jobs-${name}.png`), Buffer.from(screenshot.data, 'base64'));
     await command('Runtime.evaluate', { expression: 'window.ledgerFixture.app.leaveJobs()' }, sessionId);
