@@ -316,14 +316,14 @@ Pauses, ask-first, data tiers and your weights apply first. The `balance` sectio
 $root = "$env:LOCALAPPDATA\Augur\laya"
 New-Item -ItemType Directory -Force "$root\logs" | Out-Null
 python -m venv "$root\venv"
-& "$root\venv\Scripts\pip" install laya
+& "$root\venv\Scripts\pip" install laya nvidia-ml-py
 $env:HF_HOME = "$root\hf"
 & "$root\venv\Scripts\python" -c "from huggingface_hub import snapshot_download; snapshot_download('convaiinnovations/laya', revision='55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851')"
 python packages\laya\deploy.py
 pwsh -NoProfile -File packages\laya\windows\install-task.ps1
 ```
 
-The last line registers a logon task named Augur Laya that serves the model at `http://127.0.0.1:8010`. Then choose Laya on the Service page. The server takes the model out of video memory while a game runs, while other programs keep the card busy, and after 10 minutes with no request. It loads the model again when the next request arrives, or by itself once a busy card is free. A Laya that another tool starts from the same `serve_lora.py` on port 8010 behaves the same way, and Augur uses it with no extra setting. To use several machines, list each one, this computer included, as `{"name": "...", "url": "http://...:8010"}` under `decision.servers` in the service's `config.json`, which is in `%LOCALAPPDATA%\Augur\dispatch` on Windows. Augur tries them in order and skips one that is busy or down. Another tool, such as Cogitator, can also serve Laya at `http://127.0.0.1:8010`, and Augur uses it there with no change to the Laya setting.
+The last line registers a logon task named Augur Laya that serves the model at `http://127.0.0.1:8010`. Then choose Laya on the Service page. The server takes the model out of video memory while a game runs, while other programs keep the card busy, and after 10 minutes with no request. It loads the model again when the next request arrives, or by itself once a busy card is free. A Laya that another tool starts from the same `serve_lora.py` on port 8010 behaves the same way, and Augur uses it with no extra setting. To use several machines, list each one, this computer included, as `{"name": "...", "url": "http://...:8010"}` under `decision.servers` in the service's `config.json`, which is in `%LOCALAPPDATA%\Augur\dispatch` on Windows. Augur tries them in order and skips one that is busy or down. Another tool, such as Cogitator, can also serve Laya at `http://127.0.0.1:8010`, and Augur uses it there with no change to the Laya setting. To let other Laya servers take requests while this one is busy, set LAYA_FAILOVER_URLS in server.env beside run-laya.ps1 to a comma-separated list of their base URLs, such as `http://192.168.2.154:8010,http://192.168.2.60:8010`. A /v1/systemone request that arrives while a game runs or other programs use the card then goes to the first listed server whose /load reports ready and not busy, and if none can answer, the caller gets the usual 503 with Retry-After. LAYA_FAILOVER_PROBE_S (default 2) sets the timeout in seconds for that /load check, and LAYA_FAILOVER_TIMEOUT_S (default 120) sets the timeout for the forwarded request. Without nvidia-ml-py, Laya cannot read the card: the game check and idle unload still work, the GPU-use and video-memory readings are missing, and GET /load shows the error in `sample_error`.
 
 ### Grading and the Jev gateway
 
