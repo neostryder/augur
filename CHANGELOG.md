@@ -8,6 +8,10 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 - [Visible] [Platform] `--timeout` and `timeout_s` now stop a job only after it has been inactive for that many seconds, never while it is still working, instead of after that much wall time.
 
+### Fixed
+
+- [Visible] [Alerts] Failure alerts now fire only for jobs that ended within the last hour, so the first start after an update no longer raises an alert for every old failed job read into the ledger.
+
 ## [1.19.0] - 2026-11-07
 
 ### Added

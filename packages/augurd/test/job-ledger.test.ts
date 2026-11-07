@@ -23,6 +23,11 @@ function fixture() {
   cleanup.push(() => { try { store.close(); } catch {} rmSync(dir, { recursive: true, force: true }); });
   return { dir, store, ledger: store.ledger };
 }
+/** A job that failed `ago` milliseconds before now. */
+function failedAgo(localId: string, ago: number): LedgerJob {
+  const end = Date.now() - ago;
+  return job(localId, { state: 'failed', createdAt: end - 11, startedAt: end - 10, endedAt: end, durationMs: 10, updatedAt: end, lastActivityAt: end });
+}
 function job(localId = '1', over: Partial<LedgerJob> = {}): LedgerJob {
   return { id: `eru:${localId}`, node: 'eru', localId, kind: 'llm-request', state: 'running', stamp: { sessionId: 'session-1', sessionTitle: 'Review', origin: 'cli' }, attribution: { session: 'stamped', origin: 'stamped', process: 'unknown', host: 'unknown' }, summary: 'Review notes', summarySource: 'caller', route: 'local', model: 'summarize', activity: 'summarize', createdAt: 1, startedAt: 2, endedAt: null, durationMs: null, updatedAt: 2, lastActivityAt: 2, parentId: null, retryOf: null, retriedAs: null, usage: null, exitReason: null, compacted: false, ...over };
 }
@@ -171,17 +176,22 @@ describe('the durable ledger', () => {
   it('emits deduplicated failure, stall, and route-specific duration alerts after eight completed samples', () => {
     const { ledger } = fixture(), sink = new MemoryAlertSink(); ledger.setSink(sink);
     const samples = Array.from({ length: 8 }, (_, i) => job(String(i), { state: 'done', endedAt: 12, durationMs: 10 }));
-    ledger.ingest('eru', page([...samples.slice(0, 7), job('slow'), job('stalled', { state: 'stalled' }), job('failed', { state: 'failed', endedAt: 12, durationMs: 10 })]));
+    ledger.ingest('eru', page([...samples.slice(0, 7), job('slow'), job('stalled', { state: 'stalled' }), failedAgo('failed', 1000)]));
     expect(ledger.checkAlerts().map(a => a.type).sort()).toEqual(['job.failed', 'job.stalled']);
     ledger.ingest('eru', page([samples[7]!], 10));
     expect(ledger.checkAlerts()).toMatchObject([{ type: 'job.over-usual-time', jobId: 'eru:slow', samples: 8, usualMs: 10 }]);
     expect(ledger.checkAlerts()).toEqual([]); expect(sink.events).toHaveLength(3);
     expect(ledger.alerts()).toEqual(sink.events);
   });
+  it('does not alert on failures that ended long ago, such as history read on a first start', () => {
+    const { ledger } = fixture();
+    ledger.ingest('eru', page([failedAgo('old', 2 * 3600000), failedAgo('recent', 60000)]));
+    expect(ledger.checkAlerts().map(a => a.jobId)).toEqual(['eru:recent']);
+  });
   it('applies alert switches, the duration multiplier, and the minimum sample count', () => {
     const { ledger } = fixture();
     const settings = { stalled: false, failed: false, overUsualTime: false, usualMultiple: 4, minSamples: 2 };
-    ledger.ingest('eru', page([job('sample', { state: 'done', endedAt: 30002, durationMs: 30000 }), job('slow'), job('stalled', { state: 'stalled' }), job('failed', { state: 'failed', endedAt: 12, durationMs: 10 })]));
+    ledger.ingest('eru', page([job('sample', { state: 'done', endedAt: 30002, durationMs: 30000 }), job('slow'), job('stalled', { state: 'stalled' }), failedAgo('failed', 1000)]));
     expect(ledger.checkAlerts(settings)).toEqual([]);
     expect(ledger.checkAlerts({ ...settings, overUsualTime: true })).toEqual([]);
     ledger.ingest('eru', page([job('sample2', { state: 'done', endedAt: 30002, durationMs: 30000 })], 4));
