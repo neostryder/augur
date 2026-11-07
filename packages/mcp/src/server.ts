@@ -38,19 +38,19 @@ const runSchema = z.object({
 
 const ledgerFilters = {
   all: z.boolean().optional().describe('List all sessions.'),
-  session: z.string().optional().describe('Session id. Defaults to the calling session.'),
+  session: z.string().optional().describe('Session id, defaulting to the calling session.'),
   origin: z.enum(ORIGIN_KINDS).optional(),
   node: z.string().optional(),
   kind: z.array(z.enum(LEDGER_KINDS)).optional(),
   state: z.array(z.enum([...LEDGER_STATES, ...JOB_STATES])).optional(),
-  running: z.boolean().optional().describe('Include only active work.'),
-  root: z.string().optional().describe('Local execution root id.'),
+  running: z.boolean().optional().describe('Only active work.'),
+  root: z.string().optional().describe('Id of the local execution root.'),
   route: z.string().optional(),
-  from: z.string().optional().describe('Creation start: ISO date or elapsed time, such as 90m.'),
-  until: z.string().optional().describe('Creation end: ISO date or elapsed time.'),
+  from: z.string().optional().describe('Earliest creation time, as an ISO date or elapsed time such as 90m.'),
+  until: z.string().optional().describe('Latest creation time, as an ISO date or elapsed time.'),
   text: z.string().optional(),
   limit: z.number().int().min(1).max(1000).optional(),
-  page: z.string().optional().describe('The next page cursor with the same filters.'),
+  page: z.string().optional().describe('Cursor for the next page, using the same filters.'),
 };
 
 export function buildServer(tools: Tools, version: string): McpServer {
@@ -98,14 +98,14 @@ export function buildServer(tools: Tools, version: string): McpServer {
 
   server.registerTool('augur_job', {
     title: 'Read a job', annotations: readOnly,
-    description: 'Returns job metadata, attribution, history, and its parent, children, and retries. It contains no prompt or answer text.',
+    description: 'Returns the metadata, attribution, history, parent, children, and retries of a job, without prompt or answer text.',
     inputSchema: { id: z.string().describe('The job id.') },
   }, async (a) => out(await tools.job(a)));
 
   server.registerTool('augur_jobs', {
     title: 'List jobs', annotations: readOnly,
-    description: 'Lists job metadata for the calling session, or all sessions with all. A since cursor returns changes.',
-    inputSchema: { ...ledgerFilters, since: z.string().regex(/^(0|[1-9][0-9]{0,19})$/).optional().describe('Service change cursor. Start with 0 and reuse the returned cursor.') },
+    description: 'Lists job metadata for the calling session, or every session with all. With a since cursor, returns changes.',
+    inputSchema: { ...ledgerFilters, since: z.string().regex(/^(0|[1-9][0-9]{0,19})$/).optional().describe('Service change cursor. Pass 0 first, then the cursor from the last response.') },
   }, async (a) => out(await tools.jobs(a)));
 
   server.registerTool('augur_job_counts', {
@@ -115,8 +115,8 @@ export function buildServer(tools: Tools, version: string): McpServer {
     title: 'List nodes', annotations: readOnly, description: 'Lists registered nodes, polling cursors, and reachability.',
   }, async () => out(await tools.nodes()));
   server.registerTool('augur_alerts', {
-    title: 'List job alert events', annotations: readOnly, description: 'Lists persisted job alert events.',
-    inputSchema: { since: z.string().optional().describe('ISO date or elapsed time, such as 6h.') },
+    title: 'List job alert events', annotations: readOnly, description: 'Lists saved job alert events.',
+    inputSchema: { since: z.string().optional().describe('An ISO date or elapsed time, such as 6h.') },
   }, async a => out(await tools.alerts(a)));
 
   server.registerTool('augur_cancel', {

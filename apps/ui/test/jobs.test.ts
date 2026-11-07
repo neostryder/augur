@@ -27,8 +27,8 @@ describe('the ledger Jobs page', () => {
 
   it('renders loading, empty, missing detail, and paging states', () => {
     expect(renderJobs(model(null))).toContain('Loading jobs.'); expect(renderJobs(model())).toContain('No jobs match');
-    const m = model([job()]); m.ledger.next = 'next'; m.ledger.page = 'page'; m.ledger.detailError = 'The job is no longer available.';
-    const html = renderJobs(m); expect(html).toContain('data-action="jobs-next" >'); expect(html).toContain('data-action="jobs-first" >'); expect(html).toContain('The job is no longer available.');
+    const m = model([job()]); m.ledger.next = 'next'; m.ledger.page = 'page'; m.ledger.detailError = 'This job is no longer available.';
+    const html = renderJobs(m); expect(html).toContain('data-action="jobs-next" >'); expect(html).toContain('data-action="jobs-first" >'); expect(html).toContain('This job is no longer available.');
   });
 
   it('shows metadata, live activity, attribution, usage, and chain links without reading result or log fields', () => {

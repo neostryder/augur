@@ -457,13 +457,13 @@ async fn job_notification(
         || title.len() > 120
         || body.len() > 300
     {
-        return Err("The job notification is invalid.".into());
+        return Err("Job notification is invalid.".into());
     }
     // A retained banner can keep its callback alive, so callbacks have a fixed ceiling.
     static LISTENERS: AtomicU64 = AtomicU64::new(0);
     if LISTENERS.fetch_add(1, Ordering::AcqRel) >= 64 {
         LISTENERS.fetch_sub(1, Ordering::AcqRel);
-        return Err("Job notifications are waiting for earlier banners to close.".into());
+        return Err("Job notifications will appear after earlier banners close.".into());
     }
     let (sent, received) = tokio::sync::oneshot::channel();
     tauri::async_runtime::spawn_blocking(move || {
@@ -487,7 +487,7 @@ async fn job_notification(
             }
             Err(_) => {
                 let _ = sent.send(Err(
-                    "The job notification could not be delivered.".to_string()
+                    "Could not deliver the job notification.".to_string()
                 ));
             }
         }
@@ -495,7 +495,7 @@ async fn job_notification(
     });
     received
         .await
-        .map_err(|_| "The job notification stopped.".to_string())?
+        .map_err(|_| "Job notification stopped.".to_string())?
 }
 
 pub fn run() {
