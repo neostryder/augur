@@ -1,6 +1,6 @@
 # Job ledger
 
-The service keeps a metadata ledger in its existing `state.db`. Augur jobs use the existing `jobs` rows, with a `ledger` metadata column. Remote work uses `ledger_remote`. The service combines both when it answers a ledger query. The CLI and MCP server stamp submissions. The existing Jobs views still use their existing job calls.
+The service keeps a metadata ledger in its existing `state.db`. Augur jobs use the existing `jobs` rows, with a `ledger` metadata column. Remote work uses `ledger_remote`. The service combines both when it answers a ledger query. The CLI and MCP server stamp submissions. The desktop app, service-served PWA, and terminal Jobs page read this ledger.
 
 ```mermaid
 flowchart LR
@@ -122,12 +122,89 @@ The existing database uses WAL mode and full synchronous commits. Triggers put l
 
 Each old finished job becomes a summary row that keeps its id, node, origin, session id and title, route, model, activity, summary, creation, start, end, duration, state, reported usage, and exit reason. Session ids and chain links remain for historical queries. Process details, host attribution, activity timestamps, and detailed change history are removed. Local execution metadata and events are cleared in the same transaction. Active jobs remain detailed. A transaction replaces each job's detail with its summary, and interruption rolls back that job without deleting its row. Rerunning skips completed compactions. SQLite can retain freed pages and WAL history until it reuses or checkpoints them; compaction is logical retention, not secure erasure.
 
-The ledger accepts a fixed metadata schema and rejects request, prompt, answer, key, and unknown fields. It never copies environment values apart from the four stamp names. The existing execution subsystem can keep results and opted-in prompts in job folders under its existing settings. That subsystem is separate from ledger persistence. Caller-supplied summaries and titles are metadata supplied by the caller; the ledger does not inspect their meaning. Live activity can derive from execution output, so the ledger strips that line before writing SQLite events or remote projections.
+The ledger accepts a fixed metadata schema and rejects request, prompt, answer, key, and unknown fields. It never copies environment values apart from the four stamp names. The existing execution subsystem can keep results and opted-in prompts in job folders under its existing settings. That subsystem is separate from ledger persistence. Caller-supplied summaries and titles are metadata supplied by the caller; the ledger does not inspect their meaning. Local execution output becomes the fixed live label "Output activity" in the ledger. Remote nodes supply metadata-only progress lines. The ledger strips live lines before writing SQLite events or remote projections.
 
 ## Alert events
 
 `LedgerAlert` is a versioned JSON object with `version`, stable `id`, `type`, `at`, `jobId`, `node`, `state`, `route`, nullable `sessionId`, `summary`, `elapsedMs`, nullable `usualMs`, and `samples`. Types are `job.stalled`, `job.failed`, and `job.over-usual-time`. An id combines the qualified job id and the alert type. The service persists each type at most once per job, including across restarts.
 
-The duration rule uses completed jobs from the same node, kind, and route. It waits for at least eight samples, takes their median duration, and flags a running job when its elapsed time exceeds both three times that median and one minute. Stalled and failed jobs have their own rules. A node outage alone does not produce a failure alert.
+By default, the duration rule uses completed jobs from the same node, kind, and route. It waits for at least eight samples, takes their median duration, and flags a running job when its elapsed time exceeds both three times that median and one minute. Stalled and failed jobs have their own rules. A node outage alone does not produce a failure alert.
 
-`AlertSink.emit(LedgerAlert)` is the delivery interface. The shipped sink does nothing; `MemoryAlertSink` records events for tests. A sink exception does not stop jobs. `ledger_alerts` supplies the persisted events to a later delivery process. Desktop and global alert delivery are separate consumers of this contract.
+`AlertSink.emit(LedgerAlert)` is the delivery interface. The standalone ledger defaults to a no-op sink; the running service attaches durable delivery, and `MemoryAlertSink` records events for tests. A sink exception does not stop jobs. `ledger_alerts` supplies the persisted events to a later delivery process. The service delivers events through desktop, outbox, and optional webhook sinks.
+
+## Jobs page
+
+The Jobs page opens from the usage panel or the terminal Dispatch screen. The desktop and service-served browser share the same page. A link with `?session=<session-id>` opens this session by default, and `?job=<qualified-id>` opens a job. Without a known session, the page starts with all jobs. The terminal uses `AUGUR_SESSION` when it is set. The session switch requires a session id, and an empty session never falls back to all jobs. A standalone relay PWA has no ledger service connection; open the PWA served by `augur web` for ledger access.
+
+Filters cover state, kind, node, origin, exact route, session id, creation-time range, and text. Counts use the current filters across the whole result, with 50 rows per page. First page resets paging. The terminal keeps the less common filters behind More filters and accepts ISO date strings for time filters. A compacted row remains searchable and is marked Compacted. Its removed metadata appears as unknown or empty.
+
+A selected row opens its metadata details. The details include attribution sources, summary source, process ids, timestamps, live activity, elapsed time, usage, cost, exit reason, and links to parents, children, and retries. The page does not request results or logs. Local active jobs retain their Cancel job action, using the local execution id. Remote work has no execution control on this page.
+
+The desktop bridge and terminal use `watchLedger` and reconnect from their last cursor. A service-served browser polls `ledger_changes` through `POST /api/dispatch` every three seconds. The terminal refreshes with its existing page polling loop. Lists and details also refresh to read transient activity. The desktop and browser update elapsed time once per second; the terminal calculates it when drawing. Finished jobs use their recorded duration. The node strip shows reachability, the last poll attempt, and when an outage began. `LedgerNode.lastPollAt` is optional for older services, and clients fall back to `lastSeenAt`, the last successful poll.
+
+## Job alert settings
+
+Settings includes Job alerts in the existing Alerts area. The terminal Settings screen has the same switches and thresholds. These controls write the service's `config.json` and take effect immediately. They are separate from provider usage alert outlets. The Service page reports pending, delivered, and failed deliveries per sink. The Service settings editor also exposes the saved settings, with its existing restart workflow.
+
+| Service setting | Default | Accepted values |
+| --- | --- | --- |
+| `ledgerAlerts.stalled` | `true` | Boolean |
+| `ledgerAlerts.failed` | `true` | Boolean |
+| `ledgerAlerts.overUsualTime` | `true` | Boolean |
+| `stallMinutes` | `10` | Whole minutes, at least 1; applies to local execution inactivity |
+| `ledgerAlerts.usualMultiple` | `3` | Whole multiplier from 1 through 1000 |
+| `ledgerAlerts.minSamples` | `8` | Whole sample count from 1 through 10000 |
+| `ledgerAlerts.webhookUrl` | Empty | Optional HTTPS URL without credentials, query, or fragment |
+| `ledgerAlerts.webhookKeyName` | Empty | Optional `ledger-alerts.name` secret-store reference |
+
+The switches control creation of new events. They do not discard an already pending event. A node reports its own remote stall state. A missing or unreachable node does not become a failed-job alert. Duration alerts compare the same node, kind, and route and require elapsed time above both the configured multiple of the median and one minute.
+
+The owner-only calls `ledger_settings`, `ledger_settings_set` with `{ "key": "ledgerAlerts.failed", "value": "false" }`, and `ledger_delivery` read settings, save one setting, and report sink health. The authenticated web app can use these through `/api/dispatch`. An agent token cannot call them. No other service setting can be changed through these calls, and execution calls on the HTTP endpoint retain their automated-caller restrictions.
+
+## Public alert JSON contract, version 1
+
+Each outbox line and webhook body is exactly one `LedgerAlert` object. Consumers use `version` to select the schema and `id` to deduplicate. The stable id is the qualified job id followed by `:` and the event type. A job can produce one event of each type. Delivery retries reuse the same object and id.
+
+| Field | JSON type and meaning |
+| --- | --- |
+| `version` | Number, always `1` |
+| `id` | String, stable event identity |
+| `type` | `job.stalled`, `job.failed`, or `job.over-usual-time` |
+| `at` | Number, event creation time in Unix milliseconds |
+| `jobId`, `node` | Strings, qualified job id and node id |
+| `state` | Ledger state when the event was created |
+| `route`, `sessionId` | String or null |
+| `summary` | One-line metadata summary, at most 120 ASCII characters |
+| `elapsedMs` | Number, nonnegative elapsed milliseconds at event creation |
+| `usualMs` | Number or null, route median milliseconds when enough samples exist |
+| `samples` | Number, count of completed duration samples for the node, kind, and route |
+
+A stalled job:
+
+```json
+{"version":1,"id":"eru:24:job.stalled","type":"job.stalled","at":1794049200000,"jobId":"eru:24","node":"eru","state":"stalled","route":"local","sessionId":"review-42","summary":"Review release metadata","elapsedMs":720000,"usualMs":null,"samples":2}
+```
+
+A failed job:
+
+```json
+{"version":1,"id":"eru:25:job.failed","type":"job.failed","at":1794049200000,"jobId":"eru:25","node":"eru","state":"failed","route":"local","sessionId":null,"summary":"Download reference data","elapsedMs":5000,"usualMs":null,"samples":0}
+```
+
+A job over its usual time:
+
+```json
+{"version":1,"id":"eru:26:job.over-usual-time","type":"job.over-usual-time","at":1794049200000,"jobId":"eru:26","node":"eru","state":"running","route":"local","sessionId":"review-42","summary":"Index archive metadata","elapsedMs":190000,"usualMs":60000,"samples":12}
+```
+
+## Delivery and recovery
+
+The service records one SQLite delivery receipt per alert id and sink. It recovers missing queue entries from the durable alert log after restart, keeps at most 1000 pending entries per sink, and leaves excess events in that log until queue space opens. Each pass attempts up to 20 events per enabled sink. Sinks run independently, and jobs do not wait for delivery. A failed attempt retries after 1, 2, 4, and then successively doubled seconds, capped at five minutes. Only fixed failure messages reach delivery state; transport response text and credentials do not.
+
+The desktop sink waits for a connected desktop app. It reuses the notification request path and passes the qualified job id. The app's native job notification callback opens that job in Jobs when clicked. The service marks acceptance by the native notification API as delivered; it cannot confirm that the operating system displayed a banner or that a person read it. A disconnected app leaves delivery pending. The native app keeps at most 64 active banner callbacks; additional notifications wait for a callback slot. Existing provider usage notifications keep their existing path.
+
+The outbox is `~/.augur/alerts-outbox.jsonl`, under `AUGUR_HOME` when overridden. Each append is flushed before its receipt is recorded. Before an append would exceed 5 MiB, the service rotates the current file to `.1`, then older files to `.2` and `.3`, removing the previous `.3`. The active file and three archives bound retained outbox data to 20 MiB. Readers should follow rotation and retain consumed ids. Startup scans the retained files for ids, so a crash after append and before the SQLite receipt does not repeat that line. A torn final line is preserved in a rotated file, and the next valid object starts a fresh file.
+
+The optional webhook sends `POST` with `Content-Type: application/json` and `Idempotency-Key: <alert id>`. A configured key reference supplies `Authorization: Bearer <secret>` from the existing secret store. The dedicated `ledger-alerts` namespace prevents reuse of a provider credential. Config stores only the reference. The request refuses redirects and times out after ten seconds. Any non-2xx response or transport error leaves delivery pending. No response body enters the ledger or service log.
+
+A crash after a remote receiver or operating system accepts delivery but before SQLite records the receipt can repeat an attempt. Webhook receivers must honor the idempotency key or deduplicate the JSON id. Desktop operating systems do not offer a transaction shared with the service database. A recorded delivery is not repeated after restart. Delivery receipts and alert events remain in SQLite independently of outbox rotation.

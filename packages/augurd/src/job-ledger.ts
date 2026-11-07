@@ -1,7 +1,7 @@
 import { randomUUID, createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
-import { LEDGER_STATES, ORIGIN_KINDS, ledgerId, ledgerTerminal, summaryLine, validCursor, validLedgerJob, validNodeJobPage } from '@augur/dispatch-protocol';
-import type { JobRecord, LedgerAlert, LedgerChain, LedgerChange, LedgerJob, LedgerMetadata, LedgerNode, LedgerPage, LedgerQuery, LedgerState, LedgerWatchPage, NodeJobPage } from '@augur/dispatch-protocol';
+import { LEDGER_STATES, ORIGIN_KINDS, ledgerId, ledgerTerminal, validCursor, validLedgerJob, validNodeJobPage } from '@augur/dispatch-protocol';
+import type { JobRecord, LedgerAlert, LedgerAlertSettings, LedgerChain, LedgerChange, LedgerJob, LedgerMetadata, LedgerNode, LedgerPage, LedgerQuery, LedgerState, LedgerWatchPage, NodeJobPage } from '@augur/dispatch-protocol';
 
 export interface AlertSink { emit(event: LedgerAlert): void | Promise<void> }
 export class NoopAlertSink implements AlertSink { emit(_event: LedgerAlert): void {} }
@@ -36,6 +36,7 @@ export class JobLedger {
       create table if not exists ledger_alerts(id text primary key, body text not null);
       create trigger if not exists ledger_job_insert after insert on jobs begin insert or ignore into ledger_dirty(id) values(new.id); end;
       create trigger if not exists ledger_job_update after update on jobs begin insert or ignore into ledger_dirty(id) values(new.id); end;`);
+    if (!(db.prepare('pragma table_info(ledger_nodes)').all() as Array<{ name: string }>).some(column => column.name === 'last_poll_at')) db.exec('alter table ledger_nodes add column last_poll_at integer');
     db.prepare('insert or ignore into ledger_identity(id,node) values(1,?)').run(`augur-${randomUUID()}`);
     this.node = (db.prepare('select node from ledger_identity where id=1').get() as { node: string }).node;
     db.exec('insert or ignore into ledger_dirty(id) select id from jobs');
@@ -64,7 +65,7 @@ export class JobLedger {
       durationMs: job.endedAt === null ? null : Math.max(0, job.endedAt - (job.startedAt ?? job.createdAt)),
       updatedAt: job.endedAt ?? job.startedAt ?? job.createdAt,
       lastActivityAt: meta.compacted ? null : live?.lastActivityAt ?? job.lastActivityAt ?? job.startedAt,
-      ...(!meta.compacted && live?.activityLine ? { activityLine: summaryLine(live.activityLine) } : {}),
+      ...(!meta.compacted && live?.activityLine ? { activityLine: 'Output activity' } : {}),
       parentId: job.parentJobId ? ledgerId(this.node, job.parentJobId) : null,
       retryOf: job.retryOf ? ledgerId(this.node, job.retryOf) : null, retriedAs: job.retriedAs ? ledgerId(this.node, job.retriedAs) : null,
       usage: job.usage, exitReason: ledgerTerminal(state) ? job.state : null, compacted: meta.compacted,
@@ -188,13 +189,13 @@ export class JobLedger {
   }
 
   nodes(): LedgerNode[] {
-    return (this.db.prepare('select * from ledger_nodes order by node').all() as Array<{ node: string; cursor: string; unreachable_since: number | null; last_seen_at: number | null }>).map(n => ({ node: n.node, cursor: n.cursor, unreachableSince: n.unreachable_since, lastSeenAt: n.last_seen_at }));
+    return (this.db.prepare('select * from ledger_nodes order by node').all() as Array<{ node: string; cursor: string; unreachable_since: number | null; last_seen_at: number | null; last_poll_at: number | null }>).map(n => ({ node: n.node, cursor: n.cursor, unreachableSince: n.unreachable_since, lastSeenAt: n.last_seen_at, lastPollAt: n.last_poll_at }));
   }
   cursor(node: string): string { return this.nodes().find(n => n.node === node)?.cursor ?? '0'; }
 
   unreachable(node: string): void {
     this.transaction(() => {
-      this.db.prepare('insert into ledger_nodes(node,unreachable_since) values(?,?) on conflict(node) do update set unreachable_since=coalesce(unreachable_since,excluded.unreachable_since)').run(node, this.now());
+      this.db.prepare('insert into ledger_nodes(node,unreachable_since,last_poll_at) values(?,?,?) on conflict(node) do update set unreachable_since=coalesce(unreachable_since,excluded.unreachable_since),last_poll_at=excluded.last_poll_at').run(node, this.now(), this.now());
       for (const { body } of this.db.prepare('select body from ledger_remote where node=?').all(node) as Array<{ body: string }>) this.append(this.remoteJob(JSON.parse(body) as LedgerJob));
     });
   }
@@ -205,7 +206,7 @@ export class JobLedger {
     if (BigInt(page.next) < BigInt(cursor)) return;
     if ((!page.events.length && page.next !== cursor) || (page.events.length && BigInt(page.events[0]!.seq) > BigInt(cursor) + 1n)) throw new Error('Node job cursor has a gap.');
     this.transaction(() => {
-      this.db.prepare('insert into ledger_nodes(node,cursor,last_seen_at) values(?,?,?) on conflict(node) do update set cursor=excluded.cursor,unreachable_since=null,last_seen_at=excluded.last_seen_at').run(node, page.next, this.now());
+      this.db.prepare('insert into ledger_nodes(node,cursor,last_seen_at,last_poll_at) values(?,?,?,?) on conflict(node) do update set cursor=excluded.cursor,unreachable_since=null,last_seen_at=excluded.last_seen_at,last_poll_at=excluded.last_poll_at').run(node, page.next, this.now(), this.now());
       for (const event of page.events) {
         if (BigInt(event.seq) <= BigInt(cursor)) continue;
         const previous = this.db.prepare('select version,body from ledger_remote where id=?').get(event.job.id) as { version: string; body: string } | undefined;
@@ -256,7 +257,7 @@ export class JobLedger {
     return count;
   }
 
-  checkAlerts(): LedgerAlert[] {
+  checkAlerts(settings: Pick<LedgerAlertSettings, 'stalled' | 'failed' | 'overUsualTime' | 'usualMultiple' | 'minSamples'> = { stalled: true, failed: true, overUsualTime: true, usualMultiple: 3, minSamples: 8 }): LedgerAlert[] {
     const jobs = this.all(), emitted: LedgerAlert[] = [];
     const histories = new Map<string, number[]>();
     const historyKey = (job: LedgerJob) => JSON.stringify([job.node, job.kind, job.route]);
@@ -268,9 +269,9 @@ export class JobLedger {
     for (const job of jobs) {
       const elapsedMs = Math.max(0, (job.endedAt ?? this.now()) - (job.startedAt ?? job.createdAt));
       const durations = job.route ? histories.get(historyKey(job)) ?? [] : [];
-      const usualMs = durations.length >= 8 ? durations[Math.floor(durations.length / 2)]! : null;
-      const type = job.state === 'stalled' ? 'job.stalled' : job.state === 'failed' ? 'job.failed'
-        : job.state === 'running' && usualMs !== null && elapsedMs > Math.max(60000, usualMs * 3) ? 'job.over-usual-time' : null;
+      const usualMs = durations.length >= settings.minSamples ? durations[Math.floor(durations.length / 2)]! : null;
+      const type = settings.stalled && job.state === 'stalled' ? 'job.stalled' : settings.failed && job.state === 'failed' ? 'job.failed'
+        : settings.overUsualTime && job.state === 'running' && usualMs !== null && elapsedMs > Math.max(60000, usualMs * settings.usualMultiple) ? 'job.over-usual-time' : null;
       if (!type) continue;
       const alert: LedgerAlert = { version: 1, id: `${job.id}:${type}`, type, at: this.now(), jobId: job.id, node: job.node, state: job.state, route: job.route, sessionId: job.stamp.sessionId ?? null, summary: job.summary, elapsedMs, usualMs, samples: durations.length };
       const result = this.db.prepare('insert or ignore into ledger_alerts(id,body) values(?,?)').run(alert.id, JSON.stringify(alert));

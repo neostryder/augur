@@ -83,7 +83,7 @@ export interface LedgerQuery {
 }
 export interface LedgerPage { jobs: LedgerJob[]; next: string | null }
 export interface LedgerChain { job: LedgerJob; parent: LedgerJob | null; children: LedgerJob[]; retries: LedgerJob[] }
-export interface LedgerNode { node: string; cursor: string; unreachableSince: number | null; lastSeenAt: number | null }
+export interface LedgerNode { node: string; cursor: string; unreachableSince: number | null; lastSeenAt: number | null; lastPollAt?: number | null }
 export interface LedgerChange { cursor: string; at: number; job: LedgerJob }
 export interface LedgerWatchPage { changes: LedgerChange[]; cursor: string; more: boolean }
 export interface LedgerWatchEvent { event: 'ledger_change'; change: LedgerChange }
@@ -112,6 +112,23 @@ export interface LedgerAlert {
   elapsedMs: number;
   usualMs: number | null;
   samples: number;
+}
+
+export interface LedgerAlertSettings {
+  stalled: boolean;
+  failed: boolean;
+  overUsualTime: boolean;
+  usualMultiple: number;
+  minSamples: number;
+  webhookUrl: string;
+  webhookKeyName: string;
+}
+export interface LedgerDeliveryState {
+  sink: string;
+  pending: number;
+  delivered: number;
+  failed: number;
+  error: string | null;
 }
 
 export const STAMP_HEADERS: Readonly<Record<keyof Stamp, string>> = {

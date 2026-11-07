@@ -10,6 +10,7 @@ import {
 import { editText, editorCommand, type EditorDeps } from '../editor.js';
 import { Form, type Row } from '../form.js';
 import type { Ctx, Hint, Overlay, Page } from '../page.js';
+import type { LedgerAlertSettings } from '@augur/dispatch-protocol';
 
 /** Sets the service to start at login or stops it, the same way `augur service enable` and `disable` do. */
 export interface LoginControl {
@@ -66,6 +67,11 @@ export class SettingsPage implements Page {
   private customError = '';
 
   constructor(private readonly deps: SettingsDeps) {}
+
+  private jobAlerts: (LedgerAlertSettings & { stallMinutes: number }) | null = null;
+  async refresh(ctx: Ctx): Promise<void> {
+    this.jobAlerts = await ctx.link.call('ledger_settings').catch(() => null);
+  }
 
   typing(): boolean { return this.form.typing(); }
 
@@ -186,6 +192,16 @@ export class SettingsPage implements Page {
   private alerts(ctx: Ctx): Row[] {
     const config = ctx.state.config, a = config.alerts;
     const out: Row[] = [{ kind: 'heading', text: ALERT_TEXT.label }];
+    if (this.jobAlerts) {
+      const settings = this.jobAlerts;
+      const save = async (key: string, value: string) => {
+        try { await ctx.link.call('ledger_settings_set', { key, value }); await this.refresh(ctx); }
+        catch (error) { ctx.flash((error as Error).message, true); }
+      };
+      out.push({ kind: 'heading', text: 'Job alerts' });
+      for (const [key, label] of [['stalled', 'Stalled jobs'], ['failed', 'Failed jobs'], ['overUsualTime', 'Jobs over usual time']] as const) out.push({ kind: 'toggle', id: 'job-alert-' + key, label, on: settings[key], set: on => save('ledgerAlerts.' + key, String(on)) });
+      for (const [key, label] of [['stallMinutes', 'Stall threshold (minutes)'], ['usualMultiple', 'Usual time multiple'], ['minSamples', 'Minimum duration samples'], ['webhookUrl', 'Webhook HTTPS URL'], ['webhookKeyName', 'Webhook key reference']] as const) out.push({ kind: 'text', id: 'job-alert-' + key, label, value: String(settings[key]), save: value => save(key === 'stallMinutes' ? key : 'ledgerAlerts.' + key, value) });
+    }
     out.push({ kind: 'toggle', id: 'alerts', label: ALERT_TEXT.label, desc: ALERT_TEXT.master, on: a.enabled, set: (on) => this.save(ctx, (c) => { c.alerts.enabled = on; }) });
     const cols: Array<[Outlet, string]> = [['system', SYSTEM_NAMES[this.deps.platform] ?? 'System'], ['augur', ALERT_TEXT.keep], ['claude', ALERT_TEXT.claude]];
     if (config.sync?.channel) cols.push(['phone', ALERT_TEXT.phone]);

@@ -70,8 +70,8 @@ export function attestAgentRequest(req: JobRequest): JobRequest {
   return { ...rest, caller: { ...caller, intent: 'automated' } };
 }
 
-/** The calls the web server's dispatch endpoint passes on. They are the agent methods that run and read jobs, and nothing that edits routes or rules. */
-export const HTTP_DISPATCH_METHODS: ReadonlySet<string> = new Set(['ledger_list', 'ledger_get', 'ledger_counts', 'ledger_changes', 'ledger_nodes', 'ledger_refresh', 'ledger_alerts', 'submit', 'replay', 'status', 'list', 'events', 'logs', 'result', 'cancel', 'pick', 'routes']);
+/** The web token can read and run jobs, change job alert settings, and read delivery health. Execution calls keep the agent restrictions. */
+export const HTTP_DISPATCH_METHODS: ReadonlySet<string> = new Set(['ledger_list', 'ledger_get', 'ledger_counts', 'ledger_changes', 'ledger_nodes', 'ledger_refresh', 'ledger_alerts', 'ledger_settings', 'ledger_settings_set', 'ledger_delivery', 'submit', 'replay', 'status', 'list', 'events', 'logs', 'result', 'cancel', 'pick', 'routes']);
 
 export class IpcServer {
   private server: net.Server | null = null;
@@ -79,12 +79,15 @@ export class IpcServer {
   private readonly startedAt = Date.now();
   private engine: EngineLink | null = null;
   refreshLedger: () => Promise<void> = async () => {};
+  ledgerSettings: () => import('@augur/dispatch-protocol').Methods['ledger_settings']['result'] = () => { throw new Error('Job alert settings are unavailable.'); };
+  setLedgerSetting: (key: string, value: string) => void = () => { throw new Error('Job alert settings are unavailable.'); };
+  ledgerDelivery: () => import('@augur/dispatch-protocol').LedgerDeliveryState[] = () => [];
   constructor(private sup: Supervisor, private store: Store, private token: string, private routes: () => Record<string, RouteConfig> | null, private rates: () => RateCard = () => ({}), private routeFile: { read(): string | null; write(text: string): void } | null = null, private agentToken: string | null = null, private aliasRefresh?: (label?: string) => Promise<unknown>) {}
 
-  /** A dispatch call from the web server. It runs as an agent, so the request cannot name a model or waive the pick, and only the methods in HTTP_DISPATCH_METHODS are served. */
+  /** The web token grants job alert settings; execution calls cannot waive the pick or claim an interactive caller. */
   async dispatch(method: string, params: unknown, peer: PeerInfo = {}): Promise<unknown> {
     if (!HTTP_DISPATCH_METHODS.has(method)) throw new Error(`No dispatch call named ${method}.`);
-    return this.handle(method as MethodName, params, 'agent', peer);
+    return this.handle(method as MethodName, params, ['ledger_settings', 'ledger_settings_set', 'ledger_delivery'].includes(method) ? 'owner' : 'agent', peer);
   }
 
   /** Serves the usage engine's methods from now on. Before this they are refused. */
@@ -126,6 +129,9 @@ export class IpcServer {
       case 'ledger_changes': return this.store.ledger.changes(p.since as string | undefined, p.limit as number | undefined);
       case 'ledger_nodes': return this.store.ledger.nodes();
       case 'ledger_alerts': return this.store.ledger.alerts();
+      case 'ledger_settings': return this.ledgerSettings();
+      case 'ledger_settings_set': this.setLedgerSetting(String(p.key ?? ''), String(p.value ?? '')); return { ok: true };
+      case 'ledger_delivery': return this.ledgerDelivery();
       case 'ledger_refresh': return this.refreshLedger().then(() => this.store.ledger.nodes());
       case 'ping': return { pid: process.pid, version: PROTOCOL_VERSION, startedAt: this.startedAt };
       case 'submit': {

@@ -10,7 +10,7 @@ import type { PickRequest, PickResult } from './pick.js';
 import type { Proposal } from './pick-training.js';
 import type { Conversation, JobEvent, JobRecord, JobRequest, Rejection } from './spec.js';
 import type { JobState } from './states.js';
-import type { LedgerAlert, LedgerChain, LedgerNode, LedgerPage, LedgerQuery, LedgerState, LedgerWatchPage, Stamp } from './job-ledger.js';
+import type { LedgerAlert, LedgerAlertSettings, LedgerDeliveryState, LedgerChain, LedgerNode, LedgerPage, LedgerQuery, LedgerState, LedgerWatchPage, Stamp } from './job-ledger.js';
 
 export const PROTOCOL_VERSION = 1;
 
@@ -51,6 +51,9 @@ export interface Methods {
   ledger_nodes: { params: undefined; result: LedgerNode[] };
   ledger_refresh: { params: undefined; result: LedgerNode[] };
   ledger_alerts: { params: undefined; result: LedgerAlert[] };
+  ledger_settings: { params: undefined; result: LedgerAlertSettings & { stallMinutes: number } };
+  ledger_settings_set: { params: { key: string; value: string }; result: { ok: true } };
+  ledger_delivery: { params: undefined; result: LedgerDeliveryState[] };
   alias_refresh: { params: { label?: string } | undefined; result: unknown };
   backlog_add: { params: { item: unknown }; result: unknown };
   backlog_approve: { params: { id: string }; result: unknown };

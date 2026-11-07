@@ -8,6 +8,8 @@ import { createKeyStore } from './keystore.js';
 import { appDirs } from './paths.js';
 import { LocalJobSummarizer } from './job-summary.js';
 import { JobPoller } from './job-poller.js';
+import { DesktopAlertSink, LedgerDelivery, OutboxAlertSink, WebhookAlertSink } from './ledger-delivery.js';
+import { setConfigValue } from './config-edit.js';
 import { upgradeBalance, resolveBalance } from '@augur/dispatch-protocol';
 import { parseRates } from './accounting.js';
 import { enabledAdapters, loadLocalAdapters } from './adapters/index.js';
@@ -165,6 +167,21 @@ export async function startService(opts: ServiceOptions = {}) {
       if (at.fingerprint) log(`The chat certificate fingerprint (SHA-256) is ${at.fingerprint}.`);
     } catch (e) { log(`Chat did not start: ${(e as Error).message}`); chatWeb = null; }
   }
+  server.ledgerSettings = () => ({ ...config.ledgerAlerts, stallMinutes: config.stallMinutes });
+  server.setLedgerSetting = (key, value) => {
+    if (key !== 'stallMinutes' && (!key.startsWith('ledgerAlerts.') || !Object.hasOwn(config.ledgerAlerts, key.slice(13)))) throw new Error('The job alert setting is invalid.');
+    const result = setConfigValue(dir, key, value);
+    if (!result.ok) throw new Error(result.error);
+    const next = loadConfig(dir);
+    config.ledgerAlerts = next.ledgerAlerts; config.stallMinutes = next.stallMinutes;
+  };
+  const delivery = new LedgerDelivery(store.db, [
+    { name: 'desktop', sink: new DesktopAlertSink(() => server.engineLink()?.views ?? null) },
+    { name: 'outbox', sink: new OutboxAlertSink(home) },
+    { name: 'webhook', enabled: () => !!config.ledgerAlerts.webhookUrl, sink: new WebhookAlertSink(() => config.ledgerAlerts.webhookUrl, () => config.ledgerAlerts.webhookKeyName, name => ledgerKeys.get(name)) },
+  ]);
+  store.ledger.setSink(delivery);
+  server.ledgerDelivery = () => delivery.status();
   supervisor.reconcile();
   const jobPoller = new JobPoller(store.ledger, () => config.ledgerNodes ?? [], fetch, endpoint => endpoint.keyName ? ledgerKeys.get(endpoint.keyName) : cogitatorKey());
   server.refreshLedger = () => jobPoller.poll();
@@ -172,7 +189,8 @@ export async function startService(opts: ServiceOptions = {}) {
   const ledgerPoll = setInterval(() => { void jobPoller.poll(); }, 5000);
   const maintainLedger = () => {
     store.ledger.refreshLive(supervisor.list({ running: true, limit: 2147483647 }));
-    store.ledger.checkAlerts();
+    store.ledger.checkAlerts(config.ledgerAlerts);
+    void delivery.tick().catch(() => log('Job alert delivery could not refresh.'));
   };
   maintainLedger();
   store.ledger.compact(resolveBalance(policy.read()?.balance).ledger.retentionDays);
@@ -209,7 +227,7 @@ export async function startService(opts: ServiceOptions = {}) {
   return {
     supervisor, store, config,
     engine, web,
-    async stop() { jobPoller.close(); clearInterval(ledgerPoll); clearInterval(ledgerMaintenance); clearInterval(ledgerRetention); await web?.close(); await chatWeb?.close(); chat?.close(); users?.close(); engine?.stop(); clearInterval(timer); clearInterval(daily); clearInterval(hourly); clearInterval(notices); await server.close(); await engine?.flush(); store.close(); log('stopped'); },
+    async stop() { await delivery.close(); jobPoller.close(); clearInterval(ledgerPoll); clearInterval(ledgerMaintenance); clearInterval(ledgerRetention); await web?.close(); await chatWeb?.close(); chat?.close(); users?.close(); engine?.stop(); clearInterval(timer); clearInterval(daily); clearInterval(hourly); clearInterval(notices); await server.close(); await engine?.flush(); store.close(); log('stopped'); },
   };
 }
 

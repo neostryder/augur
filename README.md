@@ -15,7 +15,7 @@ Augur shows how much of your AI plans and credits you have used, in one place: a
   </tr>
 </table>
 
-The service also keeps a [job ledger](docs/job-ledger.md) with caller sessions, job summaries, remote node events, history queries, and alert events. CLI and MCP submissions carry stamps; ledger queries are available through the service API.
+The service also keeps a [job ledger](docs/job-ledger.md) with caller sessions, job summaries, remote node events, history queries, and alert events. The Jobs page in the desktop app, service-served PWA, and terminal supports session and global views, filters, metadata details, and node health. Job alerts reach the desktop, a JSONL outbox, and an optional webhook.
 
 ## What it tracks
 

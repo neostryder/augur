@@ -440,6 +440,64 @@ fn set_hotkey(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn job_notification(
+    webview: tauri::Webview,
+    app: tauri::AppHandle,
+    job_id: String,
+    title: String,
+    body: String,
+) -> Result<(), String> {
+    commands::require_popup(&webview)?;
+    if job_id.len() > 257
+        || !job_id.contains(':')
+        || !job_id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._-:".contains(&b))
+        || title.len() > 120
+        || body.len() > 300
+    {
+        return Err("The job notification is invalid.".into());
+    }
+    // A retained banner can keep its callback alive, so callbacks have a fixed ceiling.
+    static LISTENERS: AtomicU64 = AtomicU64::new(0);
+    if LISTENERS.fetch_add(1, Ordering::AcqRel) >= 64 {
+        LISTENERS.fetch_sub(1, Ordering::AcqRel);
+        return Err("Job notifications are waiting for earlier banners to close.".into());
+    }
+    let (sent, received) = tokio::sync::oneshot::channel();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut notification = notify_rust::Notification::new();
+        notification.summary(&title).body(&body);
+        #[cfg(windows)]
+        notification.app_id(&app.config().identifier);
+        #[cfg(target_os = "linux")]
+        notification.appname("Augur").action("default", "Open job");
+        match notification.show() {
+            Ok(handle) => {
+                let _ = sent.send(Ok(()));
+                let _ = handle.wait_for_response(|response: &notify_rust::NotificationResponse| {
+                    if matches!(response, notify_rust::NotificationResponse::Default)
+                        || matches!(response, notify_rust::NotificationResponse::Action(action) if action == "default")
+                    {
+                        let _ = app.emit("job-notification-open", &job_id);
+                        let _ = show_popup(&app);
+                    }
+                });
+            }
+            Err(_) => {
+                let _ = sent.send(Err(
+                    "The job notification could not be delivered.".to_string()
+                ));
+            }
+        }
+        LISTENERS.fetch_sub(1, Ordering::AcqRel);
+    });
+    received
+        .await
+        .map_err(|_| "The job notification stopped.".to_string())?
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(AppState::default())
@@ -458,6 +516,7 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             set_hotkey,
+            job_notification,
             commands::read_home_file,
             commands::write_home_file_atomic,
             commands::dispatch_cli,
