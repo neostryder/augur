@@ -1,8 +1,9 @@
 // One supervisor unit per job, started detached by the service and run with plain node. It owns the child's process tree,
 // sends output to files (so a dead parent cannot break it) and leaves result.json when the child ends. Erasable TypeScript only.
 import { spawn, spawnSync } from 'node:child_process';
-import { closeSync, existsSync, openSync, readFileSync, renameSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readFileSync, renameSync, statSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { lookEveryMs, parsePsRows, parseWindowsRows, sampleTree, wasActive, WINDOWS_PROCESS_SCRIPT, type ProcessRow, type TreeSample } from './job-activity.ts';
 
 interface JobFile { command: string; args: string[]; cwd: string; stdin: 'prompt' | 'none'; timeoutS: number | null; jobhost: string | null; files?: unknown[]; promptArgs?: number[]; redact?: boolean;
   scope?: string | null; scopeEnv?: Record<string, string> }
@@ -91,10 +92,35 @@ function killTree(why: 'cancel' | 'timeout'): void {
   endFollowed();
 }
 const cancelPoll = setInterval(() => { if (existsSync(join(dir, 'cancel.request'))) killTree('cancel'); }, 300);
-const timer = job.timeoutS ? setTimeout(() => killTree('timeout'), job.timeoutS * 1000) : null;
+// The timeout is an inactivity limit, never a wall-clock one: a job that is working is left alone however long it takes. A job is working while it writes
+// output, uses CPU or I/O in its process tree, or starts new processes. When the process table cannot be read, the job counts as working.
+const readRows = (): Promise<ProcessRow[] | null> => new Promise(resolve => {
+  const p = win ? spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_PROCESS_SCRIPT], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] })
+    : spawn('ps', ['-A', '-o', 'pid=,ppid=,time='], { stdio: ['ignore', 'pipe', 'ignore'] });
+  let text = '';
+  const giveUp = setTimeout(() => { try { p.kill(); } catch { /* gone */ } resolve(null); }, 20000);
+  p.stdout.on('data', d => { text += String(d); });
+  p.on('error', () => { clearTimeout(giveUp); resolve(null); });
+  p.on('close', () => { clearTimeout(giveUp); const rows = win ? parseWindowsRows(text) : parsePsRows(text); resolve(rows.length ? rows : null); });
+});
+const logTime = () => ['stdout.log', 'stderr.log'].reduce((t, f) => { try { return Math.max(t, statSync(join(dir, f)).mtimeMs); } catch { return t; } }, 0);
+let lastActive = Date.now(), before: TreeSample | null = null, beforeAt = 0, looking = false;
+const lookForWork = async () => {
+  if (looking || killedBy || child.pid === undefined) return;
+  looking = true;
+  try {
+    const rows = await readRows(), now = Date.now();
+    lastActive = Math.max(lastActive, logTime());
+    const after = rows ? sampleTree(rows, child.pid) : null;
+    if (!after || !before || wasActive(before, after, now - beforeAt)) lastActive = now;
+    if (after) { before = after; beforeAt = now; }
+    if (job.timeoutS && now - lastActive > job.timeoutS * 1000) killTree('timeout');
+  } finally { looking = false; }
+};
+const timer = job.timeoutS ? setInterval(() => { void lookForWork(); }, lookEveryMs(job.timeoutS)) : null;
 
 child.on('exit', (code, signal) => {
-  clearInterval(heartbeat); clearInterval(cancelPoll); if (watcher) clearInterval(watcher); if (timer) clearTimeout(timer);
+  clearInterval(heartbeat); clearInterval(cancelPoll); if (watcher) clearInterval(watcher); if (timer) clearInterval(timer);
   // Whatever the job left running ends with it, as the job host's Job Object does on Windows: the rest of its process group, and its scope.
   if (!win && child.pid !== undefined) {
     try { process.kill(-child.pid, 'SIGKILL'); } catch { /* the group is already empty */ }

@@ -1147,7 +1147,7 @@ export class Supervisor {
       else if (statSync(expected).size === 0) expectProblem = `expected file ${inner!.expectFile} is empty`;
     }
     if (res.killedBy === 'cancel') store.transition(rec.id, 'cancelled', { ...patch, reason: 'cancelled' }, at);
-    else if (res.killedBy === 'timeout') store.transition(rec.id, 'killed', { ...patch, reason: `timed out after ${inner?.timeoutS}s` }, at);
+    else if (res.killedBy === 'timeout') store.transition(rec.id, 'killed', { ...patch, reason: `stopped after ${inner?.timeoutS}s of inactivity` }, at);
     else if (res.spawnError) store.transition(rec.id, 'failed', { ...patch, reason: res.spawnError }, at);
     else if (res.exitCode !== 0) store.transition(rec.id, 'failed', { ...patch, reason: `exit ${res.exitCode}` }, at);
     else if (!answer) store.transition(rec.id, 'failed', { ...patch, reason: failure ?? 'exited cleanly but produced no answer' }, at);
