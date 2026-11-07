@@ -713,7 +713,7 @@ async function run(rest: string[], p: Parsed, io: Io, opts: Opts, say: (h: strin
   if ('rejected' in res) { io.err(`Rejected (${res.rejected.code}): ${res.rejected.reason}\n`); if (json) io.out(JSON.stringify(res) + '\n'); return EXIT_CODES.rejected; }
   for (const w of res.warnings) io.err(`Warning: ${w}\n`);
   if (!p.flags.has('wait')) { say(res.id, res); return EXIT_CODES.completed; }
-  const w = await waitFor(res.id, null, io, opts, json, true);
+  const w = await waitFor(res.id, null, io, opts, json, true, req.timeoutS ? req.timeoutS + 60 : null);
   if (w.code === EXIT_CODES.wait_timeout || w.code === EXIT_CODES.usage) return w.code;
   const r = await call('result', { id: w.id }, opts);
   if (r) io.out(json ? JSON.stringify(w.chain.length > 1 ? { ...r, chain: w.chain, retriedAs: w.id } : r) + '\n' : (r.answer ?? '') + (r.answer?.endsWith('\n') ? '' : '\n'));
@@ -791,13 +791,14 @@ async function readWithRetry<T>(read: (opts: Opts) => Promise<T>, io: Io, opts: 
   }
 }
 
-async function waitFor(id: string, timeoutS: number | null, io: Io, opts: Opts, json: boolean, quiet = false): Promise<{ code: number; id: string; chain: string[] }> {
+/** `downS` limits how long one outage of the service is waited out, for a wait that has no deadline of its own. */
+async function waitFor(id: string, timeoutS: number | null, io: Io, opts: Opts, json: boolean, quiet = false, downS: number | null = null): Promise<{ code: number; id: string; chain: string[] }> {
   const deadline = timeoutS === null ? Infinity : Date.now() + timeoutS * 1000;
   const chain = [id];
   let current = id;
-  const status = (id: string) => readWithRetry(o => call('status', { id }, o), io, opts, deadline);
+  const status = (id: string) => readWithRetry(o => call('status', { id }, o), io, opts, downS === null ? deadline : Date.now() + downS * 1000);
   const serviceTimeout = () => {
-    io.err(`The service stayed down until the wait timed out after ${timeoutS}s.\n`);
+    io.err(`The service stayed down until the wait timed out after ${downS ?? timeoutS}s.\n`);
     return { code: EXIT_CODES.wait_timeout, id: current, chain };
   };
   for (;;) {
