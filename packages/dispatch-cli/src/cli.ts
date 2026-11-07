@@ -551,7 +551,7 @@ async function conversationsCmd(p: Parsed, io: Io, opts: Opts, say: (h: string, 
 }
 
 const conversationLine = (c: Conversation) => `${c.name}  ${c.route}  ${c.adapter}  ${c.turns}  ${new Date(c.lastUsedAt).toISOString().slice(0, 19)}Z`;
-type Opts = { dir: string; pipe?: string };
+type Opts = { dir: string; pipe?: string; timeoutMs?: number };
 
 /** Best effort: a job's environment carries markers the service wrote. A process that clears them still holds the owner token, which is outside this trust model. */
 function runsInsideJob(io: Io): boolean { return !!io.env.AUGUR_IN_JOB || !!io.env.AUGUR_JOB_ID || io.env.AUGUR_CALLER === 'automated'; }
@@ -667,6 +667,7 @@ async function run(rest: string[], p: Parsed, io: Io, opts: Opts, say: (h: strin
   for (const w of res.warnings) io.err(`Warning: ${w}\n`);
   if (!p.flags.has('wait')) { say(res.id, res); return EXIT_CODES.completed; }
   const w = await waitFor(res.id, req.timeoutS ? req.timeoutS + 60 : null, io, opts, json, true);
+  if (w.code === EXIT_CODES.wait_timeout || w.code === EXIT_CODES.usage) return w.code;
   const r = await call('result', { id: w.id }, opts);
   if (r) io.out(json ? JSON.stringify(w.chain.length > 1 ? { ...r, chain: w.chain, retriedAs: w.id } : r) + '\n' : (r.answer ?? '') + (r.answer?.endsWith('\n') ? '' : '\n'));
   return w.code;
@@ -691,6 +692,7 @@ async function testCmd(route: string, p: Parsed, io: Io, opts: Opts, say: (h: st
   if ('rejected' in res) { io.err(`Rejected (${res.rejected.code}): ${res.rejected.reason}\n`); if (json) io.out(JSON.stringify(res) + '\n'); return EXIT_CODES.rejected; }
   if (!p.flags.has('wait')) { say(res.id, res); return EXIT_CODES.completed; }
   const w = await waitFor(res.id, 180, io, opts, json, true);
+  if (w.code === EXIT_CODES.wait_timeout || w.code === EXIT_CODES.usage) return w.code;
   const r = await call('result', { id: w.id }, opts);
   if (r) io.out(json ? JSON.stringify(w.chain.length > 1 ? { ...r, chain: w.chain, retriedAs: w.id } : r) + '\n' : (r.answer ?? '') + '\n');
   return w.code;
@@ -724,15 +726,40 @@ async function pickCmd(io: Io, opts: Opts, say: (h: string, d: unknown) => void,
   return r.pick ? 0 : EXIT_CODES.rejected;
 }
 
+async function readWithRetry<T>(read: (opts: Opts) => Promise<T>, io: Io, opts: Opts, deadline = Infinity): Promise<T | undefined> {
+  let backoff = 1000, retrying = false;
+  for (;;) {
+    try {
+      const result = await read({ ...opts, timeoutMs: Math.max(1, Math.min(opts.timeoutMs ?? 10000, deadline - Date.now())) });
+      if (retrying) io.err('The service is back.\n');
+      return result;
+    } catch (e) {
+      if (!(e instanceof Error) || !['unreachable', 'closed', 'timeout', 'ENOENT', 'ECONNREFUSED', 'ECONNRESET', 'EPIPE', 'ERR_STREAM_PREMATURE_CLOSE', 'ERR_SOCKET_CLOSED'].includes((e as NodeJS.ErrnoException).code ?? '')) throw e;
+      if (!retrying) { io.err('The service is unavailable. This command will retry.\n'); retrying = true; }
+      if (Date.now() >= deadline) return undefined;
+      await sleep(Math.min(backoff, deadline - Date.now()));
+      if (Date.now() >= deadline) return undefined;
+      backoff = Math.min(backoff * 2, 5000);
+    }
+  }
+}
+
 async function waitFor(id: string, timeoutS: number | null, io: Io, opts: Opts, json: boolean, quiet = false): Promise<{ code: number; id: string; chain: string[] }> {
-  const t0 = Date.now();
+  const deadline = timeoutS === null ? Infinity : Date.now() + timeoutS * 1000;
   const chain = [id];
   let current = id;
+  const status = (id: string) => readWithRetry(o => call('status', { id }, o), io, opts, deadline);
+  const serviceTimeout = () => {
+    io.err(`The service stayed down until the wait timed out after ${timeoutS}s.\n`);
+    return { code: EXIT_CODES.wait_timeout, id: current, chain };
+  };
   for (;;) {
-    const j = await call('status', { id: current }, opts);
+    const j = await status(current);
+    if (j === undefined) return serviceTimeout();
     if (!j) { io.err('No such job.\n'); return { code: EXIT_CODES.usage, id: current, chain }; }
     if (isTerminal(j.state) && j.retriedAs && !chain.includes(j.retriedAs) && chain.length < 8) {
-      const next = await call('status', { id: j.retriedAs }, opts);
+      const next = await status(j.retriedAs);
+      if (next === undefined) return serviceTimeout();
       if (next) {
         if (!json) io.out(`retried on ${next.route} as ${next.id}\n`);
         chain.push(next.id);
@@ -744,8 +771,8 @@ async function waitFor(id: string, timeoutS: number | null, io: Io, opts: Opts, 
       if (!quiet) io.out(json ? JSON.stringify(chain.length > 1 ? { ...j, chain } : j) + '\n' : describe(j) + '\n');
       return { code: exitCodeForState(j.state), id: current, chain };
     }
-    if (timeoutS !== null && Date.now() - t0 > timeoutS * 1000) { if (!quiet) io.err(`Still ${j.state} after ${timeoutS}s.\n`); return { code: EXIT_CODES.wait_timeout, id: current, chain }; }
-    await sleep(500);
+    if (Date.now() >= deadline) { if (!quiet) io.err(`Still ${j.state} after ${timeoutS}s.\n`); return { code: EXIT_CODES.wait_timeout, id: current, chain }; }
+    await sleep(Math.min(500, deadline - Date.now()));
   }
 }
 
@@ -772,7 +799,8 @@ async function resultChain(id: string, opts: Opts): Promise<{ job: JobRecord; an
 async function logs(id: string, stream: 'stdout' | 'stderr', follow: boolean, io: Io, opts: Opts): Promise<number> {
   let offset = 0;
   for (;;) {
-    const page = await call('logs', { id, stream, offset, limit: 262144 }, opts);
+    const read = (o: Opts) => call('logs', { id, stream, offset, limit: 262144 }, o);
+    const page = await (follow ? readWithRetry(read, io, opts) : read(opts));
     if (!page) { io.err('No such job.\n'); return EXIT_CODES.usage; }
     if (page.text) io.out(page.text);
     offset = page.next;
