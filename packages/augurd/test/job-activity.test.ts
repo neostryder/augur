@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { lookEveryMs, parsePsRows, parsePsTime, parseWindowsRows, sampleTree, wasActive } from '../src/job-activity.js';
+import { lookEveryMs, parsePsRows, parsePsTime, parseJobAccounting, sampleTree, wasActive } from '../src/job-activity.js';
 
 describe('job activity', () => {
   it('reads ps times with days, hours, and fractions', () => {
@@ -17,19 +17,19 @@ describe('job activity', () => {
     expect(tree.cpuMs).toBe(6000);
   });
 
-  it('reads the Windows rows', () => {
-    expect(parseWindowsRows('4 0 20000000 1024\n8 4 10000 0\n')).toEqual([
-      { pid: 4, ppid: 0, cpuMs: 2000, io: 1024 }, { pid: 8, ppid: 4, cpuMs: 1, io: 0 },
-    ]);
+  it('reads the job host totals', () => {
+    expect(parseJobAccounting('20000000 1024 3')).toMatchObject({ cpuMs: 2000, io: 1024, started: 3 });
+    expect(parseJobAccounting('garbage')).toBeNull();
   });
 
   it('calls a tree active for CPU, I/O, or a new process, and idle otherwise', () => {
-    const base = { cpuMs: 1000, io: 100, pids: new Set([1, 2]) };
+    const base = { cpuMs: 1000, io: 100, pids: new Set([1, 2]), started: 2 };
     expect(wasActive(base, { ...base }, 15000)).toBe(false);
     expect(wasActive(base, { ...base, cpuMs: 1100 }, 15000)).toBe(false);
     expect(wasActive(base, { ...base, cpuMs: 1500 }, 15000)).toBe(true);
     expect(wasActive(base, { ...base, io: 100 + 70000 }, 15000)).toBe(true);
     expect(wasActive(base, { ...base, pids: new Set([1, 2, 3]) }, 15000)).toBe(true);
+    expect(wasActive(base, { ...base, started: 3 }, 15000)).toBe(true);
   });
 
   it('looks four times per limit, between half a second and fifteen seconds', () => {

@@ -9,10 +9,34 @@ import (
 	"os/exec"
 	"strconv"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
+
+// jobAccounting is JOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION: what every process that has run in the job has used so far.
+type jobAccounting struct {
+	TotalUserTime, TotalKernelTime, ThisPeriodUserTime, ThisPeriodKernelTime int64
+	TotalPageFaultCount, TotalProcesses, ActiveProcesses, TotalTerminatedProcesses uint32
+	ReadOps, WriteOps, OtherOps, ReadBytes, WriteBytes, OtherBytes uint64
+}
+
+// reportActivity writes the job's CPU time (100 ns units), bytes moved and processes started to path once a second, so the runner can tell a working
+// job from an idle one without listing processes.
+func reportActivity(job windows.Handle, path string) {
+	for {
+		var a jobAccounting
+		if err := windows.QueryInformationJobObject(job, 8, uintptr(unsafe.Pointer(&a)), uint32(unsafe.Sizeof(a)), nil); err == nil {
+			line := fmt.Sprintf("%d %d %d", a.TotalUserTime+a.TotalKernelTime, a.ReadBytes+a.WriteBytes+a.OtherBytes, a.TotalProcesses)
+			tmp := path + ".tmp"
+			if os.WriteFile(tmp, []byte(line), 0o600) == nil {
+				os.Rename(tmp, path)
+			}
+		}
+		time.Sleep(time.Second)
+	}
+}
 
 func main() {
 	if len(os.Args) == 3 && os.Args[1] == "--process-info" {
@@ -57,6 +81,10 @@ func main() {
 	}
 	if err := windows.AssignProcessToJobObject(job, windows.CurrentProcess()); err != nil {
 		os.Exit(72)
+	}
+	if path := os.Getenv("AUGUR_ACTIVITY_FILE"); path != "" {
+		os.Unsetenv("AUGUR_ACTIVITY_FILE")
+		go reportActivity(job, path)
 	}
 	cmd := exec.Command(os.Args[1], os.Args[2:]...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
