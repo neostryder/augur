@@ -18,6 +18,8 @@ started holds none either: the first request loads them.
 
 GET /load reports the same state for a client that wants to choose a server before it asks.
 
+When LAYA_FAILOVER_URLS lists other Laya servers as comma-separated base URLs, a POST to /v1/systemone that arrives while this server is busy goes to the first server whose /load reports ready and not busy, and its response returns to the caller with an `x-laya-served-by` header naming that server. If the setting is unset or empty, or no listed server can answer, the caller gets the same 503 with Retry-After as before. LAYA_FAILOVER_PROBE_S (default 2) is the timeout in seconds for the /load probe, and LAYA_FAILOVER_TIMEOUT_S (default 120) is the timeout for the forwarded request, which does not count as served here and so does not reset the idle timer. Only the content type and `x-laya-forwarded: 1` are sent on, and a server that receives that header never forwards the request again, so two busy servers cannot pass a request back and forth. GET /load includes `sample_error`, holding the pynvml error text when the card cannot be read and null when it can, and the game check and idle unload keep running without those readings.
+
 POST /yield unloads the checkpoints and adapters immediately, empties the CUDA cache, and answers 200 with JSON: `yielded` says whether anything was loaded, and `checkpoints_in_memory` is false. It counts as an idle unload, so GET /load still reports ready and the next /v1/systemone request reloads them first. The unload waits for a running request without blocking the event loop. Only loopback requests are served, and a request with an Origin header gets 403, since a web page could send it without a preflight when the server binds to all interfaces.
 """
 
@@ -27,6 +29,9 @@ import os
 import statistics
 import threading
 import time
+from http.client import HTTPException
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 CONTEXT_BYTES = 400 * 1024 * 1024   # what a CUDA context holds besides our tensors
 DEFAULT_GAMES = "ArkAscended.exe,ArkAscendedServer.exe"
@@ -94,6 +99,7 @@ class LoadWatch:
         self.util = []
         self.gpu_util = None
         self.vram_other_pct = None
+        self.sample_error = None
         self.busy = False
         self.reasons = []
         self.unloaded = False
@@ -129,10 +135,22 @@ class LoadWatch:
     def _loop(self):
         while True:
             try:
-                self.step(*self.sample(), time.time(), running_games(self.game_names))
-            except Exception:  # NVML missing or the driver reset: treat as not busy rather than refusing work
-                self.busy, self.reasons = False, []
+                self.tick()
+            except Exception:
+                pass
             time.sleep(1.0)
+
+    def tick(self, now=None):
+        games = running_games(self.game_names)
+        try:
+            util, other_pct = self.sample()
+            error = None
+        except Exception as exc:
+            util, other_pct = 0.0, 0.0
+            error = str(exc)
+        with self.lock:
+            self.sample_error = error
+        self.step(util, other_pct, time.time() if now is None else now, games)
 
     def touch(self, now=None):
         """A request started or finished."""
@@ -213,14 +231,19 @@ class LoadWatch:
             ready = not self.unloaded or self.unload_reason in ("idle", "game")
             return {"ready": ready, "busy": self.busy, "reasons": list(self.reasons), "device": self.device,
                     "gpu_util_pct": self.gpu_util, "vram_other_pct": self.vram_other_pct, "limit_pct": self.limit,
+                    "sample_error": self.sample_error,
                     "checkpoints_in_memory": not self.unloaded, "unload_reason": self.unload_reason, "idle_s": self.idle_seconds(), "requests": self.requests, "watching": self.enabled}
 
 
 class LoadGate:
-    """ASGI middleware: 503 for /v1/systemone while busy, the state for GET /load, and a count of requests in flight."""
+    """ASGI middleware: forward or answer 503 while busy, report GET /load, and count requests in flight."""
 
     def __init__(self, app, watch):
         self.app, self.watch = app, watch
+        self.failover_urls = [url.strip().rstrip("/") for url in os.environ.get("LAYA_FAILOVER_URLS", "").split(",")
+                              if url.strip()]
+        self.failover_probe_s = float(os.environ.get("LAYA_FAILOVER_PROBE_S", "2"))
+        self.failover_timeout_s = float(os.environ.get("LAYA_FAILOVER_TIMEOUT_S", "120"))
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -237,6 +260,22 @@ class LoadGate:
             return await self._json(send, 200, {"yielded": was_loaded, "checkpoints_in_memory": False})
         if path == "/v1/systemone" and method == "POST":
             if self.watch.busy:
+                headers = dict(scope.get("headers") or [])
+                if self.failover_urls and b"x-laya-forwarded" not in headers:
+                    chunks = []
+                    while True:
+                        message = await receive()
+                        if message["type"] == "http.disconnect":
+                            return
+                        chunks.append(message.get("body", b""))
+                        if not message.get("more_body", False):
+                            break
+                    content_type = headers.get(b"content-type", b"application/json").decode("latin-1")
+                    response = await asyncio.get_running_loop().run_in_executor(
+                        None, self._forward, b"".join(chunks), content_type)
+                    if response is not None:
+                        status, data, url = response
+                        return await self._body(send, status, data, [(b"x-laya-served-by", url.encode("latin-1"))])
                 body = {"error": "busy", "reasons": self.watch.reasons, "retry_after_s": 5}
                 return await self._json(send, 503, body, [(b"retry-after", b"5")])
             self.watch.inflight += 1
@@ -249,9 +288,35 @@ class LoadGate:
                 self.watch.touch()
         return await self.app(scope, receive, send)
 
+    def _forward(self, body, content_type):
+        for url in self.failover_urls:
+            try:
+                with urlopen(url + "/load", timeout=self.failover_probe_s) as response:
+                    state = json.load(response)
+                if not isinstance(state, dict) or state.get("ready") is not True or state.get("busy") is not False:
+                    continue
+                request = Request(url + "/v1/systemone", data=body,
+                                  headers={"content-type": content_type, "x-laya-forwarded": "1"}, method="POST")
+                try:
+                    response = urlopen(request, timeout=self.failover_timeout_s)
+                except HTTPError as exc:
+                    response = exc
+                with response:
+                    if response.status >= 500:
+                        continue
+                    return response.status, response.read(), url
+            except HTTPError as exc:
+                exc.close()
+            except (OSError, ValueError, HTTPException):
+                continue
+        return None
+
     @staticmethod
     async def _json(send, status, body, extra=()):
-        data = json.dumps(body).encode()
+        return await LoadGate._body(send, status, json.dumps(body).encode(), extra)
+
+    @staticmethod
+    async def _body(send, status, data, extra=()):
         headers = [(b"content-type", b"application/json"), (b"content-length", str(len(data)).encode()), *extra]
         await send({"type": "http.response.start", "status": status, "headers": headers})
         await send({"type": "http.response.body", "body": data})
