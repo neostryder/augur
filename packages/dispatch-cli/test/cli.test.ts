@@ -791,6 +791,11 @@ describe('ledger commands', () => {
 
   it('lists node health, refreshes the ledger, and filters persisted alert events', async () => {
     const { run, e } = await ledgerBoot();
+    const at = Date.now() - 300000;
+    e.store.insert({ id: 'three', route: 'raw', adapter: 'exec', activity: 'research', dataTier: 'public', tools: 'read', output: 'text_only', cwd: e.root, createdAt: at, rootJobId: 'three', parentJobId: null, depth: 0, caller: { kind: 'cli' }, named: false, expectFile: null, timeoutS: null, harnessVersion: null, workspace: null });
+    e.store.transition('three', 'running', { startedAt: at + 1 }, at + 1);
+    e.store.transition('three', 'failed', { endedAt: at + 1000 }, at + 1000);
+    e.store.ledger.setLocalMetadata('three', { stamp: { sessionId: 's2', sessionTitle: 'Review', origin: 'cli' }, attribution: { session: 'stamped', origin: 'stamped', process: 'unknown', host: 'unknown' }, summary: 'Read notes three', summarySource: 'caller', model: 'test/raw', compacted: false });
     e.store.ledger.unreachable('eru'); e.store.ledger.checkAlerts();
     expect((await run(['nodes'])).out).toContain('unreachable since');
     expect(JSON.parse((await run(['nodes', '--json'])).out)[0]).toMatchObject({ node: 'eru', cursor: '1' });
@@ -800,7 +805,7 @@ describe('ledger commands', () => {
     expect(JSON.parse((await run(['nodes', '--json'])).out)[0]).toMatchObject({ node: 'eru', cursor: '10', gap, unreachableSince: null });
     expect((await run(['jobs', '--refresh'])).code).toBe(0);
     const alerts = JSON.parse((await run(['alerts', '--since', '6h', '--json'])).out);
-    expect(alerts).toEqual([expect.objectContaining({ type: 'job.failed', summary: 'Read notes two' })]);
+    expect(alerts).toEqual([expect.objectContaining({ type: 'job.failed', summary: 'Read notes three' })]);
     expect(JSON.parse((await run(['alerts', '--since', '2999-01-01', '--json'])).out)).toEqual([]);
   });
 
