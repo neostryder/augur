@@ -486,9 +486,7 @@ async fn job_notification(
                 });
             }
             Err(_) => {
-                let _ = sent.send(Err(
-                    "Could not deliver the job notification.".to_string()
-                ));
+                let _ = sent.send(Err("Could not deliver the job notification.".to_string()));
             }
         }
         LISTENERS.fetch_sub(1, Ordering::AcqRel);
