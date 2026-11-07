@@ -9,7 +9,9 @@ type Out =
   | { t: 'result'; id: number; result?: unknown; error?: string }
   | { t: 'down'; message: string }
   | { t: 'exit' }
-  | { t: 'views' };
+  | { t: 'views' }
+  | { t: 'ledger-change'; cursor: string }
+  | { t: 'ledger-closed' };
 
 export const LINK_TEXT = {
   restarting: 'The link to the Augur service stopped. Starting it again.',
@@ -29,8 +31,10 @@ export async function connectEngine(shell: Shell, onDown: (message: string | nul
   let ready: () => void;
   const first = new Promise<void>((res) => { ready = res; });
 
+  let ledgerChange: ((cursor: string) => void) | null = null, ledgerClosed: (() => void) | null = null;
+
   const answer = async (method: string, params: Record<string, unknown>): Promise<unknown> => {
-    if (method === 'notify') { await shell.notify(String(params.title ?? ''), String(params.body ?? '')); return null; }
+    if (method === 'notify') { await shell.notify(String(params.title ?? ''), String(params.body ?? ''), typeof params.jobId === 'string' && typeof params.alertId === 'string' ? { jobId: params.jobId, alertId: params.alertId } : undefined); return null; }
     if (method === 'webSession') return (await shell.host.webSession?.(String(params.site ?? ''), { fresh: params.fresh === true })) ?? null;
     throw new Error(`This window does not answer ${method}`);
   };
@@ -39,6 +43,8 @@ export async function connectEngine(shell: Shell, onDown: (message: string | nul
     let msg: Out;
     try { msg = JSON.parse(line) as Out; } catch { return; }
     switch (msg.t) {
+      case 'ledger-change': ledgerChange?.(msg.cursor); break;
+      case 'ledger-closed': ledgerClosed?.(); break;
       case 'ready': {
         const again = Object.keys(state).length > 0;
         state = msg.state; restarts = 0; onDown(null);
@@ -63,7 +69,7 @@ export async function connectEngine(shell: Shell, onDown: (message: string | nul
       case 'down': onDown(msg.message); break;
       case 'exit': {
         // The bridge process ended on its own. Start another, waiting longer each time it keeps ending.
-        send = null;
+        send = null; ledgerClosed?.();
         for (const c of calls.values()) c.reject(new Error(LINK_TEXT.restarting));
         calls.clear();
         onDown(LINK_TEXT.restarting);
@@ -86,6 +92,19 @@ export async function connectEngine(shell: Shell, onDown: (message: string | nul
     calls.set(id, { resolve, reject });
     send(JSON.stringify({ t: 'call', id, method, args })).catch((e: unknown) => { calls.delete(id); reject(e instanceof Error ? e : new Error(String(e))); });
   });
+  if (!shell.served) {
+    shell.ledgerCall = (method, params) => new Promise((resolve, reject) => {
+      if (!send) { reject(new Error(LINK_TEXT.restarting)); return; }
+      const id = ++ids; calls.set(id, { resolve, reject });
+      send(JSON.stringify({ t: 'ledger-call', id, method, params })).catch(e => { calls.delete(id); reject(e); });
+    });
+    shell.watchLedger = async (since, change, closed) => {
+      if (!send) throw new Error(LINK_TEXT.restarting);
+      ledgerChange = change; ledgerClosed = closed;
+      await send(JSON.stringify({ t: 'ledger-watch', since }));
+      return { close: () => { ledgerChange = null; ledgerClosed = null; void send?.(JSON.stringify({ t: 'ledger-close' })); } };
+    };
+  }
   const api = {
     get state() { return state; },
     onChange(listener: (keys: EngineKey[]) => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },

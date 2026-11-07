@@ -1,4 +1,5 @@
 import { dispatchTabs } from './jobs';
+import type { LedgerDeliveryState } from '@augur/dispatch-protocol';
 import { ICON, esc } from '../util';
 import { APPROVAL_LEVELS, APPROVAL_TEXT, CLASSIFIER_TEXT, MODE_TEXT } from '@augur/view-model';
 
@@ -11,6 +12,7 @@ export interface ConfigLine {
 }
 
 export interface ServiceModel {
+  delivery?: LedgerDeliveryState[];
   /** Null until the settings have been read. */
   lines: ConfigLine[] | null;
   service: { running: boolean; pid: number | null } | null;
@@ -76,6 +78,7 @@ export function renderService(m: ServiceModel): string {
   return `<div class="rules-page jobs-page"><header class="top"><button class="icon" data-action="back" title="Back to usage" aria-label="Back to usage">${ICON.back}</button>
     <div><h1>Service</h1><div class="sub">The dispatch service on this computer</div></div><span class="grow"></span></header>
     ${dispatchTabs('service')}
+    ${(m.delivery ?? []).length ? `<div class="card"><h2>Job alert delivery</h2>${m.delivery!.map(sink => `<p class="help" ${sink.error ? 'role="status"' : ''}>${esc(sink.sink)}: ${sink.pending} pending, ${sink.delivered} delivered, ${sink.failed} failed.${sink.error ? ` ${esc(sink.error)}` : ''}</p>`).join('')}</div>` : ''}
     <div class="card"><div class="rsec" style="margin-top:0">What Augur does for agents</div>${modeChooser(m.runJobs)}</div>
     <div class="card"><div class="rsec" style="margin-top:0">${esc(APPROVAL_TEXT.heading)}</div>${approvalChooser(m.agentApproval)}</div>
     ${m.runJobs ? `${status}${m.error ? `<div class="rnote bad" role="alert">${esc(m.error)}</div>` : ''}

@@ -21,6 +21,8 @@ let notificationPermission: Promise<boolean> | undefined;
 const serviceOnly = (): Promise<never> => Promise.reject(new Error('The Augur service handles this, not the window app.'));
 
 export function createTauriShell(): Shell {
+  const jobListeners = new Set<(id: string) => void>();
+  void listen<string>('job-notification-open', event => jobListeners.forEach(open => open(event.payload)));
   const host: Host = {
     platform: platform(),
     webSession: (site: string, options?: { fresh?: boolean }) => invoke<Record<string, unknown> | null>('web_session_read', { site, fresh: options?.fresh === true }),
@@ -47,10 +49,13 @@ export function createTauriShell(): Shell {
     appendResets: serviceOnly,
     loadAlertState: serviceOnly,
     saveAlertState: serviceOnly,
-    notify: async (title: string, body: string) => {
+    notify: async (title: string, body: string, job) => {
       notificationPermission ??= (async () => (await isPermissionGranted()) || (await requestPermission()) === 'granted')();
-      if (await notificationPermission) sendNotification({ title, body });
+      if (!(await notificationPermission)) { if (job) throw new Error('Desktop notifications are blocked.'); return; }
+      if (job) await invoke<void>('job_notification', { jobId: job.jobId, title, body });
+      else sendNotification({ title, body });
     },
+    onJobNotification: open => { jobListeners.add(open); return () => jobListeners.delete(open); },
     openUrl: (url: string) => openUrl(url),
     trayIconSize: () => invoke<number>('tray_icon_size'),
     setTray: (update: TrayUpdate) => invoke<void>('set_tray', {

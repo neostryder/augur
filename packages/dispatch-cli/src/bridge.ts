@@ -5,11 +5,11 @@
 import { spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { isTerminal } from '@augur/dispatch-protocol';
-import { ServiceError, call, watchEngine, type EngineWatch } from '@augur/augurd';
+import { ServiceError, call, watchEngine, watchLedger, type LedgerWatch, type EngineWatch } from '@augur/augurd';
 import { launchService } from './cli.js';
 
 type Opts = { dir: string; pipe?: string };
-type In = { t: 'call'; id: number; method: string; args?: unknown[] } | { t: 'reply'; rid: string; result?: unknown; error?: string };
+type In = { t: 'ledger-call'; id: number; method: string; params?: unknown } | { t: 'ledger-watch'; since: string } | { t: 'ledger-close' } | { t: 'call'; id: number; method: string; args?: unknown[] } | { t: 'reply'; rid: string; result?: unknown; error?: string };
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
@@ -27,12 +27,27 @@ export async function bridge(io: BridgeIo, opts: Opts, appExe: string | undefine
   // Held in an object, as the input loop and the connection loop both change them.
   const link: { watch: EngineWatch | null; closed: (() => void) | null } = { watch: null, closed: null };
   let done = false, rids = 0;
+  const ledgerLink: { watch: LedgerWatch | null } = { watch: null };
+  let ledgerEpoch = 0;
+  const ledgerMethods = new Set(['ledger_list', 'ledger_get', 'ledger_counts', 'ledger_changes', 'ledger_nodes', 'ledger_refresh', 'ledger_settings', 'ledger_settings_set', 'ledger_delivery', 'cancel']);
 
   void (async () => {
     for await (const line of io.lines) {
       let msg: In;
       try { msg = JSON.parse(line) as In; } catch { continue; }
-      if (msg.t === 'call') {
+      if (msg.t === 'ledger-call') {
+        if (!ledgerMethods.has(msg.method)) { send({ t: 'result', id: msg.id, error: 'The ledger call is invalid.' }); continue; }
+        call(msg.method as import('@augur/dispatch-protocol').MethodName, msg.params as never, opts).then(
+          result => send({ t: 'result', id: msg.id, result }), (e: Error) => send({ t: 'result', id: msg.id, error: e.message }));
+      } else if (msg.t === 'ledger-watch') {
+        const epoch = ++ledgerEpoch;
+        ledgerLink.watch?.close(); ledgerLink.watch = null;
+        void watchLedger(msg.since, {
+          change: change => { if (epoch === ledgerEpoch) send({ t: 'ledger-change', cursor: change.cursor }); },
+          closed: () => { if (epoch === ledgerEpoch) send({ t: 'ledger-closed' }); },
+        }, opts).then(watch => { if (epoch === ledgerEpoch && !done) ledgerLink.watch = watch; else watch.close(); }, () => { if (epoch === ledgerEpoch) send({ t: 'ledger-closed' }); });
+      } else if (msg.t === 'ledger-close') { ledgerEpoch++; ledgerLink.watch?.close(); ledgerLink.watch = null;
+      } else if (msg.t === 'call') {
         call('engine_call', { method: msg.method, args: msg.args ?? [] }, { ...opts, timeoutMs: 10 * 60 * 1000 })
           .then(result => send({ t: 'result', id: msg.id, result: result ?? null }), (e: Error) => send({ t: 'result', id: msg.id, error: e.message }));
       } else if (msg.t === 'reply') {
@@ -42,7 +57,7 @@ export async function bridge(io: BridgeIo, opts: Opts, appExe: string | undefine
       }
     }
     // The app closed its end, so it has quit.
-    done = true; link.watch?.close(); link.closed?.();
+    done = true; ledgerEpoch++; ledgerLink.watch?.close(); link.watch?.close(); link.closed?.();
   })();
 
   const hello = { kind: 'window' as const, caps: ['notify' as const, 'websession' as const, 'signin' as const], ...(appExe ? { appExe } : {}) };

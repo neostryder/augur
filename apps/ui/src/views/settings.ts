@@ -1,6 +1,7 @@
 import { ALERT_KINDS } from '@augur/core';
 import type { AlertKind, AppConfig, ClaudeStatus, Outlet, Platform, ProviderPlugin, PushStatus, Snapshot } from '@augur/core';
 import type { UpdateState } from '../app';
+import type { LedgerAlertSettings } from '@augur/dispatch-protocol';
 import { ICON, esc } from '../util';
 import { ALERT_TEXT, CLAUDE_TEXT, COMPUTER_TEXT, CUSTOM_TEXT, KIND_LABELS, LOGIN_TEXT, PHONE_TEXT, PROVIDER_TEXT, REFRESH_CHOICES, STARTER_RULES_TEXT, refreshDefault } from '@augur/view-model';
 import { NODE_TEXT } from '@augur/view-model';
@@ -17,6 +18,8 @@ export const WEB_SESSION_TEXT = {
 };
 
 export interface SettingsModel {
+  jobAlerts?: (LedgerAlertSettings & { stallMinutes: number }) | null;
+  jobAlertError?: string;
   config: AppConfig;
   plugins: Map<string, ProviderPlugin>;
   snapshot: Snapshot | null;
@@ -123,6 +126,12 @@ const seg = (name: string, value: string, options: Array<[string, string]>) =>
 
 const toggle = (key: string, on: boolean, label: string) =>
   `<label class="switch"><input type="checkbox" data-toggle="${esc(key)}" ${on ? 'checked' : ''} aria-label="${esc(label)}"><span></span></label>`;
+
+export function jobAlertControls(settings: LedgerAlertSettings & { stallMinutes: number }, error = ''): string {
+  const toggle = (key: 'stalled' | 'failed' | 'overUsualTime', label: string) => `<div class="row"><label for="job-alert-${key}">${label}</label><input id="job-alert-${key}" type="checkbox" data-job-alert="ledgerAlerts.${key}" ${settings[key] ? 'checked' : ''}></div>`;
+  const input = (key: keyof LedgerAlertSettings | 'stallMinutes', label: string, type: string, min?: number) => `<div class="field"><label for="job-alert-${key}">${label}</label><input id="job-alert-${key}" type="${type}" ${min === undefined ? '' : `min="${min}"`} data-job-alert="${key === 'stallMinutes' ? key : `ledgerAlerts.${key}`}" value="${esc(String(settings[key]))}"></div>`;
+  return `<h2 class="sec">Job alerts</h2><div class="card"><p class="help">Job alerts use desktop notifications, a local outbox, and an optional webhook. These settings apply immediately.</p>${toggle('stalled', 'Stalled jobs')}${toggle('failed', 'Failed jobs')}${toggle('overUsualTime', 'Jobs over usual time')}${input('stallMinutes', 'Stall threshold (minutes)', 'number', 1)}${input('usualMultiple', 'Usual time multiple', 'number', 1)}${input('minSamples', 'Minimum duration samples', 'number', 1)}${input('webhookUrl', 'Webhook HTTPS URL', 'url')}<div class="field"><label for="job-alert-webhookFormat">Webhook payload format</label><select id="job-alert-webhookFormat" data-job-alert="ledgerAlerts.webhookFormat">${['augur', 'cresset'].map(format => `<option value="${format}" ${(settings.webhookFormat ?? 'augur') === format ? 'selected' : ''}>${format}</option>`).join('')}</select></div>${input('webhookKeyName', 'Webhook key reference', 'text')}${error ? `<p class="bad-json" role="alert">${esc(error)}</p>` : ''}</div>`;
+}
 
 function loginBlock(m: SettingsModel, pid: string, name: string): string {
   const status = m.signIn!.status[pid] ?? null, login = m.signIn!.login?.provider === pid ? m.signIn!.login : null;
@@ -259,6 +268,7 @@ export function renderSettings(m: SettingsModel): string {
       `<div class="row" style="border:0;padding:2px 0"><label class="name">${esc(b.label)}</label>$ <input type="number" step="1" min="0" data-alert="bal:${esc(b.key)}" value="${a.balanceBelow[b.key] ?? ''}"></div>`).join('')}</div>` : ''}
   </div>`;
 
+  if (m.jobAlerts) html += jobAlertControls(m.jobAlerts, m.jobAlertError);
   if (m.shellKind === 'desktop') html += claudeSection(m);
 
   html += `<h2 class="sec">${CUSTOM_TEXT.heading}</h2><div class="card">

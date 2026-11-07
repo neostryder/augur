@@ -10,7 +10,7 @@ import { renderPair } from './views/pair';
 import { CUSTOM_EXAMPLE, PUSH_TEXT, WEB_SESSION_TEXT, renderSettings, type LoginUi, type SettingsModel } from './views/settings';
 import { addUnfound, applyDetection, fillRank, goStep, initialView, loadProfile, moveRank, noteAdded, openSetup, providerHasWindow, refreshPlan, renderSetup, runApply, selectStack, setConfirmed, setHold, setListAnswer, setPayAmount, setPayNone, setStrength, shiftStep, toggleListModel, togglePayProvider, useStrongFor, modelsOf, type SetupModel, type SetupTrack } from './views/setup';
 import { renderRules, type RulesFilter, type RulesModel } from './views/rules';
-import { JOBS_ACTIVITY_TEXT, renderJobs, type JobsModel } from './views/jobs';
+import { renderJobs, type JobsModel } from './views/jobs';
 import { renderRoutes, type RoutesModel } from './views/routes';
 import { planHtml } from './views/add-provider';
 import { renderBalance, type BalanceModel } from './views/balance';
@@ -18,8 +18,9 @@ import { renderLocal } from './views/local';
 import { renderService, type ConfigLine, type ServiceModel } from './views/service';
 import { renderStrip } from './views/strip';
 import { PROVIDER_FORM_TEXT, ROUTES_PATH, applyProvider, checkDraft, draftOf, emptyDraft, emptyProviderForm, parseRoutesText, planOfForm, writeRoute, type ProviderFormState, type SetupCurrent } from '@augur/view-model';
+import { LedgerModel, ledgerDuration, type LedgerTransport } from '@augur/view-model';
 import { routeSecretName } from '@augur/dispatch-protocol';
-import type { Accounted, JobRecord, UsageSnapshot } from '@augur/dispatch-protocol';
+import type { JobRecord, LedgerAlertSettings, LedgerDeliveryState, UsageSnapshot } from '@augur/dispatch-protocol';
 import { renderTrayIcon } from './trayicon';
 import qrcode from 'qrcode-generator';
 import { HOSTED } from './hosted';
@@ -83,8 +84,13 @@ export class App {
   private webSessionNotice: string | null = null;
   /** Set while the last policy.json write failed. Agents keep enforcing the older file until a write succeeds. */
   private policyError: string | null = null;
-  private jobs: JobsModel = { service: null, serviceNote: '', unavailable: '', jobs: null, accounted: {}, sel: null, detail: null, busy: false };
+  private jobs: JobsModel = { ledger: new LedgerModel('', () => this.drawJobs()), service: null, serviceNote: '', busy: false };
+  private jobAlertSettings: (LedgerAlertSettings & { stallMinutes: number }) | null = null;
+  private jobAlertError = '';
+  private pendingJobNotification = false;
+  private jobDelivery: LedgerDeliveryState[] = [];
   private jobsTimer: ReturnType<typeof setInterval> | undefined;
+  private jobsPollTimer: ReturnType<typeof setInterval> | undefined;
   private stances: Record<string, string> = {};
   private gates: Array<{ provider: string; state: 'open' | 'closed'; gap: number | null; close: number; labels: string[] }> = [];
   private awaiting: AwaitingItem[] = [];
@@ -227,12 +233,14 @@ export class App {
     });
     this.shell.on('settings-requested', () => { if (this.firstRun) { if (this.view !== 'setup') void this.openInterview(true); else void this.render(); return; } this.view = 'settings'; void this.render(); });
     if (this.shell.kind === 'desktop') this.resizeWatch.observe(this.root);
-    this.shell.on('popup-shown', () => {
-      if (this.shell.kind === 'desktop' && !this.shell.served && !this.firstRun) this.goHome();
-      void this.render();
-      void this.engine?.viewShown();
-    });
+    this.shell.on('popup-shown', () => this.onPopupShown());
     setInterval(() => { if (this.view === 'dashboard' && document.visibilityState === 'visible') void this.render(); }, 30000);
+    const sessionLink = new URLSearchParams(location.search);
+    const sessionId = sessionLink.get('session') ?? '';
+    if (sessionId) { this.jobs.ledger.session = sessionId; this.jobs.ledger.setScope('session'); }
+    this.shell.onJobNotification?.(id => { void this.openJobNotification(id); });
+    if (sessionId || sessionLink.has('job')) await this.enterJobs(sessionLink.get('job') ?? undefined);
+    await this.loadJobAlertSettings();
     await this.loadGateStatus();
     await this.render();
     await this.updateTray();
@@ -492,16 +500,17 @@ export class App {
     return {
       config: this.config, snapshot: this.snapshot, history: this.history, plugins: this.pluginMap(), busy: this.busy,
       twoColumns: this.twoColumns, expanded: this.expanded, dark: this.isDark(), shellKind: this.shell.kind, desktopWait: this.desktopWait, update: this.update,
-      canDispatch: this.shell.dispatch !== undefined,
+      canDispatch: !!(this.shell.dispatch || this.shell.ledgerCall),
       gates: this.gates, awaiting: this.awaiting, awaitingNote: this.awaitingNote,
     };
   }
 
   private settingsModel(): SettingsModel {
     return {
+      jobAlerts: this.jobAlertSettings, jobAlertError: this.jobAlertError,
       config: this.config, plugins: this.pluginMap(), snapshot: this.snapshot, keyTests: this.keyTests, secrets: this.secrets, shellKind: this.shell.kind,
       autostart: this.autostart, update: this.update, openProvider: this.openProvider, customDraft: this.customDraft, customError: this.customError,
-      firstRun: this.firstRun, savedFlash: this.savedFlash, webSessionNotice: this.webSessionNotice, canDispatch: this.shell.dispatch !== undefined, runJobs: this.config.dispatch?.runJobs === true,
+      firstRun: this.firstRun, savedFlash: this.savedFlash, webSessionNotice: this.webSessionNotice, canDispatch: !!(this.shell.dispatch || this.shell.ledgerCall), runJobs: this.config.dispatch?.runJobs === true,
       classifier: this.servicePage.lines?.find((l) => l.key === 'decision.backend')?.value ?? null,
       sync: this.sync, relay: this.relay(), pwaUrl: this.pwaUrl(), pairQr: this.pairQr, pairUrl: this.pairUrl,
       scanError: this.scanError, iosInstallHint: iosInstallHint(), hotkeyError: this.hotkeyError, canHotkey: !!this.shell.setHotkey,
@@ -537,7 +546,7 @@ export class App {
     } else if (this.view === 'service') {
       this.twoColumns = false;
       this.servicePage.runJobs = this.config.dispatch?.runJobs === true;
-      this.root.innerHTML = renderService(this.servicePage);
+      this.root.innerHTML = renderService({ ...this.servicePage, delivery: this.jobDelivery });
     } else if (this.view === 'rules') {
       // The desktop popup opens at its two-column width so the list and the open model's rules sit side by side.
       this.twoColumns = this.shell.kind === 'desktop';
@@ -988,7 +997,7 @@ export class App {
       if (e.key === 'Escape') {
         if (this.view === 'service' || this.view === 'balance' || this.view === 'local') { this.view = 'dashboard'; void this.render(); }
         else if (this.view === 'routes') { if (this.routesPage.add) this.closeAddProvider(); else if (this.routesPage.sel) this.closeRoute(); else this.view = 'dashboard'; void this.render(); }
-        else if (this.view === 'jobs') { if (this.jobs.sel) this.closeJob(); else { this.leaveJobs(); this.view = 'dashboard'; } void this.render(); }
+        else if (this.view === 'jobs') { if (this.jobs.ledger.selected) this.closeJob(); else { this.leaveJobs(); this.view = 'dashboard'; } void this.render(); }
         else if (this.view === 'rules') { if (this.rules.showHistory) this.rules.showHistory = false; else if (this.rules.sel) this.rules.sel = null; else this.view = 'dashboard'; void this.render(); }
         else if (this.view === 'setup' && !this.firstRun) { this.view = 'settings'; void this.render(); }
         else if (this.view === 'settings' && !this.firstRun) { this.view = 'dashboard'; void this.render(); } else void this.shell.hidePopup?.();
@@ -1080,37 +1089,71 @@ export class App {
     return { code: r.code, data, text: r.stdout, err: r.stderr.trim() };
   }
 
+  private ledgerTransport(): LedgerTransport {
+    return {
+      call: (method, params) => {
+        if (!this.shell.ledgerCall) return Promise.reject(new Error('The ledger service is unavailable.'));
+        return this.shell.ledgerCall(method, params) as never;
+      },
+      ...(this.shell.watchLedger ? { watch: this.shell.watchLedger.bind(this.shell) } : {}),
+    };
+  }
+
   private jobsSig = '';
+  private drawJobs(): void {
+    if (this.view !== 'jobs') return;
+    const sig = JSON.stringify([this.jobs.ledger.jobs, this.jobs.ledger.nodes, this.jobs.ledger.counts, this.jobs.ledger.scope, this.jobs.ledger.filters, this.jobs.ledger.error, this.jobs.ledger.detail, this.jobs.ledger.detailError, this.jobs.ledger.selected, this.jobs.ledger.page, this.jobs.ledger.next, this.jobs.service, this.jobs.serviceNote, this.jobs.busy]);
+    if (sig !== this.jobsSig) { this.jobsSig = sig; void this.render(); }
+  }
 
   private leaveJobs(): void {
     if (this.jobsTimer) { clearInterval(this.jobsTimer); this.jobsTimer = undefined; }
-    this.jobs.sel = null; this.jobs.detail = null; this.jobsSig = '';
+    if (this.jobsPollTimer) { clearInterval(this.jobsPollTimer); this.jobsPollTimer = undefined; }
+    this.jobs.ledger.stop(); this.jobs.ledger.closeDetail(); this.jobsSig = '';
   }
 
-  private closeJob(): void { this.jobs.sel = null; this.jobs.detail = null; }
+  private closeJob(): void { this.jobs.ledger.closeDetail(); }
+
+  private onPopupShown(): void {
+    if (!this.pendingJobNotification && this.shell.kind === 'desktop' && !this.shell.served && !this.firstRun) this.goHome();
+    this.pendingJobNotification = false;
+    void this.render();
+    void this.engine?.viewShown();
+  }
+
+  private async openJobNotification(id: string): Promise<void> {
+    this.pendingJobNotification = true;
+    await this.enterJobs(id);
+  }
+
+  private async enterJobs(id?: string): Promise<void> {
+    this.view = 'jobs';
+    if (!id) this.closeJob();
+    await this.render();
+    if (!this.jobsTimer) {
+      this.jobsTimer = setInterval(() => {
+        for (const element of this.root.querySelectorAll<HTMLElement>('[data-ledger-elapsed]')) {
+          const job = this.jobs.ledger.jobs?.find(job => job.id === element.dataset.ledgerElapsed) ?? this.jobs.ledger.detail?.job;
+          if (job) element.textContent = ledgerDuration(job);
+        }
+      }, 1000);
+      this.jobsPollTimer = setInterval(() => { void this.loadJobs(); }, 3000);
+      void this.jobs.ledger.start(this.ledgerTransport());
+    }
+    if (id) await this.openJob(id);
+    await this.loadJobs();
+  }
 
   private async loadJobs(): Promise<void> {
-    if (this.view !== 'jobs') { this.leaveJobs(); return; }
-    if (!this.shell.dispatch) return;
-    try {
-      const st = await this.augur<{ running?: boolean; pid?: number }>(['service', 'status', '--json']);
-      this.jobs.unavailable = '';
-      this.jobs.service = { running: st.data?.running === true, pid: st.data?.pid ?? null };
-      if (this.jobs.service.running) {
-        const list = await this.augur<JobRecord[]>(['jobs', '--json', '--limit', '50', ...(this.jobs.runningOnly ? ['--running'] : [])]);
-        this.jobs.jobs = Array.isArray(list.data) ? list.data : [];
-        const acc = await this.augur<{ jobs: Array<{ id: string; accounted: Accounted }> }>(['usage', '--json', '--limit', '50']).catch(() => null);
-        this.jobs.accounted = Object.fromEntries((acc?.data?.jobs ?? []).map((j) => [j.id, j.accounted]));
-        if (this.jobs.sel) await this.loadDetail(this.jobs.sel);
-      } else this.jobs.jobs = [];
-    } catch (e) { this.jobs.unavailable = e instanceof Error ? e.message : String(e); }
-    // The page is drawn again only when something on it changed, so a scrolled log is not sent back to the top every few seconds.
-    const sig = JSON.stringify([this.jobs.service, this.jobs.unavailable, this.jobs.serviceNote, this.jobs.jobs, this.jobs.accounted, this.jobs.detail, this.jobs.busy]);
-    for (const el of this.root.querySelectorAll<HTMLElement>('[data-job-activity]')) {
-      const j = this.jobs.jobs?.find(j => j.id === el.dataset.jobActivity) ?? (this.jobs.detail && this.jobs.detail.job.id === el.dataset.jobActivity ? this.jobs.detail.job : undefined);
-      if (j?.lastActivityAt !== undefined) el.textContent = `${JOBS_ACTIVITY_TEXT.age(j.lastActivityAt)}${j.activityLine ? ` - ${j.activityLine}` : ''}`;
-    }
-    if (this.view === 'jobs' && sig !== this.jobsSig) { this.jobsSig = sig; await this.render(); }
+    if (this.view !== 'jobs') return;
+    if (this.shell.dispatch) {
+      try {
+        const status = await this.augur<{ running?: boolean; pid?: number }>(['service', 'status', '--json']);
+        this.jobs.service = { running: status.data?.running === true, pid: status.data?.pid ?? null };
+      } catch { this.jobs.service = null; }
+    } else this.jobs.service = { running: !!this.shell.ledgerCall, pid: null };
+    await this.jobs.ledger.poll(this.ledgerTransport());
+    this.drawJobs();
   }
 
   /** The jobs a gateway served, for the strip at the foot of the Local page. The page reads without them. */
@@ -1123,17 +1166,10 @@ export class App {
     if (this.view === 'local') await this.render();
   }
 
-  private async loadDetail(id: string): Promise<void> {
-    const r = await this.augur<{ job: JobRecord; answer: string | null }>(['result', id, '--json']);
-    if (!r.data?.job) return;
-    const [out, err] = await Promise.all([this.shell.dispatch!(['logs', id]), this.shell.dispatch!(['logs', id, '--stderr'])]);
-    if (this.jobs.sel === id) this.jobs.detail = { job: r.data.job, result: r.data.answer ?? '', stdout: out.stdout, stderr: err.stdout };
-  }
-
   private async openJob(id: string): Promise<void> {
-    this.jobs.sel = id; this.jobs.detail = null;
+    this.jobs.ledger.detail = null;
+    await this.jobs.ledger.open(id, this.ledgerTransport());
     await this.render();
-    await this.loadJobs();
   }
 
   private async controlService(action: 'start'): Promise<void> {
@@ -1150,18 +1186,25 @@ export class App {
   private async cancelJob(id: string): Promise<void> {
     this.jobs.busy = true;
     await this.render();
-    try { await this.augur(['cancel', id, '--json']); } catch (e) { this.jobs.serviceNote = e instanceof Error ? e.message : String(e); }
+    try { if (this.shell.ledgerCall) await this.shell.ledgerCall('cancel', { id }); else await this.augur(['cancel', id, '--json']); } catch (e) { this.jobs.serviceNote = e instanceof Error ? e.message : String(e); }
     this.jobs.busy = false;
     await this.loadJobs();
   }
 
   // ------------------------------------------------------------------ service
 
+  private async loadJobAlertSettings(): Promise<void> {
+    if (!this.shell.ledgerCall) return;
+    try { this.jobAlertSettings = await this.shell.ledgerCall('ledger_settings') as typeof this.jobAlertSettings; }
+    catch { this.jobAlertSettings = null; }
+  }
+
   private async loadService(): Promise<void> {
+    if (this.shell.ledgerCall) this.jobDelivery = await this.shell.ledgerCall('ledger_delivery').then(result => result as LedgerDeliveryState[], () => []);
     const page = this.servicePage;
     page.runJobs = this.config.dispatch?.runJobs === true;
     page.agentApproval = this.config.agentApproval ?? 'risky';
-    if (!this.shell.dispatch) return;
+    if (!this.shell.dispatch) { if (this.view === 'service') await this.render(); return; }
     try {
       const cfg = await this.augur<ConfigLine[]>(['config', '--json']);
       page.lines = Array.isArray(cfg.data) ? cfg.data : null;
@@ -1548,7 +1591,7 @@ export class App {
       case 'login-out': await this.signOutOf(t.dataset.value ?? ''); break;
       case 'update-check': await this.engine?.checkUpdate(); break;
       case 'update-install': await this.installUpdate(); break;
-      case 'settings': if (this.firstRun) { if (this.view !== 'setup') await this.openInterview(true); break; } this.view = 'settings'; await this.render(); break;
+      case 'settings': if (this.firstRun) { if (this.view !== 'setup') await this.openInterview(true); break; } this.leaveJobs(); this.view = 'settings'; await this.loadJobAlertSettings(); await this.render(); break;
       case 'setup-again': await this.openInterview(false); break;
       case 'pair-alone': await this.openInterview(true); break;
       case 'retry-policy': await this.engine?.retryPolicy(); break;
@@ -1576,12 +1619,12 @@ export class App {
       case 'back': this.leaveJobs(); this.view = 'dashboard'; await this.render(); break;
       case 'local': this.view = 'local'; await this.render(); void this.loadLocalJobs(); break;
       case 'local-machine': this.localSel = t.dataset.value ?? null; await this.render(); break;
-      case 'jobs': this.view = 'jobs'; this.jobs.sel = null; this.jobs.detail = null; this.jobsTimer ??= setInterval(() => { void this.loadJobs(); }, 3000); await this.render(); void this.loadJobs(); break;
+      case 'jobs': await this.enterJobs(); break;
       case 'dispatch-tab':
         if (t.dataset.value === 'balance') { this.leaveJobs(); this.view = 'balance'; await this.render(); await this.loadBalance(); }
         else if (t.dataset.value === 'service') { this.leaveJobs(); this.view = 'service'; await this.render(); await this.loadService(); }
         else if (t.dataset.value === 'routes') { this.leaveJobs(); this.view = 'routes'; this.closeRoute(); await this.render(); await this.loadRoutes(); }
-        else { this.view = 'jobs'; this.jobs.sel = null; this.jobs.detail = null; this.jobsTimer ??= setInterval(() => { void this.loadJobs(); }, 3000); await this.render(); void this.loadJobs(); }
+        else await this.enterJobs();
         break;
       case 'agent-approval': if (isApprovalLevel(t.dataset.value)) await this.setAgentApproval(t.dataset.value); break;
       case 'dispatch-mode': await this.setDispatchMode(t.dataset.value === 'jobs'); break;
@@ -1613,8 +1656,10 @@ export class App {
       case 'route-ask-delete': this.routesPage.confirmDelete = true; await this.render(); break;
       case 'route-delete': await this.deleteRoute(); break;
       case 'job-close': this.closeJob(); await this.render(); break;
-      case 'jobs-running': this.jobs.runningOnly = !this.jobs.runningOnly; await this.loadJobs(); await this.render(); break;
-      case 'jobs-refresh': await this.loadJobs(); break;
+      case 'jobs-scope': this.jobs.ledger.setScope(t.dataset.value === 'session' ? 'session' : 'all'); await this.jobs.ledger.refresh(this.ledgerTransport()); break;
+      case 'jobs-first': this.jobs.ledger.reset(); await this.jobs.ledger.refresh(this.ledgerTransport()); break;
+      case 'jobs-next': this.jobs.ledger.nextPage(); await this.jobs.ledger.refresh(this.ledgerTransport()); break;
+      case 'jobs-refresh': await this.shell.ledgerCall?.('ledger_refresh'); await this.loadJobs(); break;
       case 'service-start': await this.controlService('start'); break;
       case 'job-cancel': await this.cancelJob(t.dataset.id!); break;
       case 'theme': {
@@ -1900,7 +1945,7 @@ export class App {
 
   /** Back to the main usage view, closing whatever page or detail was open. Every way of opening the panel starts here. */
   private goHome(): void {
-    if (this.view === 'jobs') { if (this.jobs.sel) this.closeJob(); this.leaveJobs(); }
+    if (this.view === 'jobs') { if (this.jobs.ledger.selected) this.closeJob(); this.leaveJobs(); }
     if (this.view === 'routes') { this.closeAddProvider(); if (this.routesPage.sel) this.closeRoute(); }
     this.rules.showHistory = false; this.rules.sel = null;
     this.view = 'dashboard';
@@ -1997,6 +2042,17 @@ export class App {
   private async onChange(e: Event): Promise<void> {
     const t = e.target as HTMLInputElement;
     const d = t.dataset;
+    if (d.ledgerFilter) {
+      const key = d.ledgerFilter as keyof import('@augur/dispatch-protocol').LedgerQuery;
+      if (key === 'session' && this.jobs.ledger.scope === 'session') { this.jobs.ledger.session = t.value.trim(); this.jobs.ledger.reset(); }
+      else this.jobs.ledger.setFilter(key, key === 'state' || key === 'kind' ? t.value ? [t.value] : undefined : key === 'from' || key === 'to' ? t.value ? new Date(t.value).getTime() : undefined : t.value.trim());
+      await this.jobs.ledger.refresh(this.ledgerTransport()); return;
+    }
+    if (d.jobAlert) {
+      try { await this.shell.ledgerCall?.('ledger_settings_set', { key: d.jobAlert, value: t.type === 'checkbox' ? String(t.checked) : t.value }); this.jobAlertError = ''; }
+      catch (error) { this.jobAlertError = (error as Error).message; }
+      await this.loadJobAlertSettings(); await this.render(); return;
+    }
     if (d.updateChannel !== undefined) {
       this.config.updateChannel = t.value === 'early' ? 'early' : 'stable';
       await this.saveConfig();

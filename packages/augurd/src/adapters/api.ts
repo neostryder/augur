@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import type { Adapter, AdapterCapabilities, AttachmentKind, ExtractInput, Extraction, JobRequest, LaunchPlan, PlanContext, RouteConfig, Served, UsageReport } from '@augur/dispatch-protocol';
-import { routeSecretName } from '@augur/dispatch-protocol';
+import { stampHeaders, routeSecretName } from '@augur/dispatch-protocol';
 import { keyMayGoTo } from '@augur/core';
 import { scriptPath } from '../paths.js';
 import { keyFileOnly, keyFilePath } from '../secrets.js';
@@ -37,7 +37,7 @@ export function requestClass(request: JobRequest): 'low' | 'normal' {
 
 /** What a Cogitator route sends so the gateway can tell Augur's calls from anyone else's: the source, the route, the activity and the priority class. */
 export function cogitatorHeaders(request: JobRequest): Record<string, string> {
-  return { 'x-cogitator-source': 'augur', 'x-augur-route': request.route, 'x-cogitator-activity': request.activity, 'x-cogitator-class': requestClass(request) };
+  return { ...stampHeaders(request.stamp ?? request.caller.stamp ?? {}), 'x-cogitator-source': 'augur', 'x-augur-route': request.route, 'x-cogitator-activity': request.activity, 'x-cogitator-class': requestClass(request) };
 }
 
 const MODES = ['chat', 'embeddings', 'transcribe', 'moderation'];

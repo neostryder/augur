@@ -15,6 +15,7 @@ function valueProblem(type: string, value: unknown): string | null {
   const choices = CHOICES[type];
   if (choices) return choices.includes(String(value)) && (type !== 'true or false' || typeof value === 'boolean') ? null : `The value is one of: ${choices.join(', ')}.`;
   switch (type) {
+    case 'days from 0 to 3650': return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 3650 ? null : 'The value is a whole number from 0 to 3650.';
     case 'count': return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? null : 'The value is a whole number of 0 or more.';
     case 'number above 0': return typeof value === 'number' && Number.isFinite(value) && value > 0 ? null : 'The value is a number above 0.';
     case 'number of 1 or more': return typeof value === 'number' && Number.isFinite(value) && value >= 1 ? null : 'The value is a number of 1 or more.';

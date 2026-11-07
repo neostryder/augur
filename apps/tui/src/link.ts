@@ -1,7 +1,7 @@
 // The terminal app's connection to the service. It joins as a terminal view, keeps a copy of the engine's state that every change
 // updates, and sends commands back. When the service is not running it starts it once; when the connection drops it tries again
 // every few seconds until it is back.
-import { ServiceError, call as rpc, watchEngine, type ClientOptions, type EngineWatch } from '@augur/augurd';
+import { ServiceError, call as rpc, watchEngine, watchLedger, type LedgerWatch, type ClientOptions, type EngineWatch } from '@augur/augurd';
 import type { EngineKey, EngineState } from '@augur/core';
 import type { MethodName, Methods, ViewInfo } from '@augur/dispatch-protocol';
 
@@ -9,6 +9,7 @@ export type LinkStatus = 'connecting' | 'starting' | 'up' | 'down';
 
 export interface LinkDeps {
   watch?: typeof watchEngine;
+  ledgerWatch?: typeof watchLedger;
   call?: typeof rpc;
   /** Starts the service. Resolves once it answers, or to null when it did not come up. */
   launch?: () => Promise<unknown>;
@@ -23,6 +24,7 @@ export class Link {
   /** Why the service cannot be reached, while the status is down. */
   error = '';
   private watcher: EngineWatch | null = null;
+  private ledgerWatchers = new Set<LedgerWatch>();
   private retry: ReturnType<typeof setTimeout> | null = null;
   private launched = false;
   private closed = false;
@@ -96,7 +98,17 @@ export class Link {
     return this.rpc(method, params, this.deps.opts);
   }
 
+  async watchLedger(since: string, change: (cursor: string) => void, closed: () => void): Promise<LedgerWatch> {
+    const watch = this.deps.ledgerWatch ?? (this.deps.call ? null : watchLedger);
+    if (!watch) throw new Error('The ledger watch is unavailable.');
+    const watcher = await watch(since, { change: event => change(event.cursor), closed: () => { this.ledgerWatchers.delete(watcher); closed(); } }, this.deps.opts);
+    this.ledgerWatchers.add(watcher);
+    return { close: () => { this.ledgerWatchers.delete(watcher); watcher.close(); } };
+  }
+
   close(): void {
+    for (const watcher of this.ledgerWatchers) watcher.close();
+    this.ledgerWatchers.clear();
     this.closed = true;
     if (this.retry) { clearTimeout(this.retry); this.retry = null; }
     this.watcher?.close();

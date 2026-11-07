@@ -1,5 +1,6 @@
 // Accepts jobs, applies the rules, launches one runner per job and keeps the store true to what the runners leave on disk.
 import { spawn, spawnSync } from 'node:child_process';
+import { hostname } from 'node:os';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { appendFileSync, closeSync, cpSync, existsSync, mkdtempSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -25,6 +26,9 @@ export const REJECTION_CATEGORIES = {
   permanent: ['activity_not_permitted', 'data_tier_too_high', 'bad_request', 'prompt_too_large', 'attachment_rejected', 'depth_exceeded', 'descendants_exceeded', 'delegation_not_granted', 'unknown_job', 'no_saved_prompt', 'job_not_finished', 'inputs_not_replayable'],
 } as const;
 import { loadToolkits } from './toolkits.js';
+import { fillJobSummary, type JobSummarizer } from './job-summary.js';
+import { inferStamp, type PeerInfo } from './job-stamp.js';
+import { validStamp } from '@augur/dispatch-protocol';
 import { MAX_HOPS, classifyFailure } from './failover.js';
 import { augurHome, scriptPath } from './paths.js';
 import { hasStoredKey } from './secrets.js';
@@ -48,6 +52,7 @@ export const REPLAY_TEXT = {
 };
 
 export interface SupervisorDeps {
+  summarizer?: JobSummarizer;
   store: Store; config: ServiceConfig; dir: string; adapters: Map<string, Adapter>;
   /** Augur home. The charter folder is `<home>/charter` unless `runner.charterDir` is set. */
   home?: string;
@@ -190,6 +195,15 @@ export class Supervisor {
 
   private proseScratch(): string { const p = join(this.d.dir, 'prose-scratch'); mkdirSync(p, { recursive: true }); return mkdtempSync(join(p, 'group-')); }
 
+  attributeJob(id: string, peer: PeerInfo): void {
+    const job = this.d.store.get(id);
+    if (!job?.ledger) return;
+    void inferStamp(job.ledger.stamp, peer).then(result => {
+      const current = this.d.store.get(id)?.ledger;
+      if (current && !current.compacted) this.d.store.ledger.setLocalMetadata(id, { ...current, ...result });
+    }).catch(() => {});
+  }
+
   jobDir(id: string): string { return join(this.d.dir, 'jobs', id); }
 
   /** Adapter ids this service can run. */
@@ -240,6 +254,8 @@ export class Supervisor {
    * checked against every rule as if it had been asked for, so a fallback never gets around a data tier, a pick or a pause. `failover: false` keeps the job put.
    */
   submit(input: JobRequest, routeOverride?: RouteConfig, replayOf: string | null = null): SubmitResult {
+    const stamp = input?.stamp ?? input?.caller?.stamp ?? {};
+    if (!validStamp(stamp)) return reject('bad_request', 'The job stamp is invalid.');
     const off = this.d.jobsOff?.() ?? null;
     if (off) return reject('jobs_off', off);
     const first = this.submitTo(input, undefined, routeOverride, replayOf);
@@ -409,6 +425,12 @@ export class Supervisor {
       if (ranked.blocked.some(b => resolveBalance(policy.balance).gate.premium.includes(b.model) && /ask[- ]first/.test(b.why))) this.gateFallbackJobs.add(id);
     }
     this.submitted.set(id, chain ?? { req, hops: [req.route] });
+    const stamp = req.stamp ?? req.caller.stamp ?? {};
+    const { summary = '', ...fields } = stamp;
+    this.d.store.ledger.setLocalMetadata(id, { stamp: fields,
+      attribution: { session: fields.sessionId || fields.sessionTitle ? 'stamped' : 'unknown', origin: fields.origin || fields.originLabel ? 'stamped' : 'unknown', process: fields.pid || fields.parentPid ? 'stamped' : 'unknown', host: fields.host ? 'stamped' : 'unknown' },
+      summary, summarySource: summary ? 'caller' : 'none', model: route.model, compacted: false });
+    if (this.d.summarizer && !summary) void fillJobSummary(prompt, this.d.summarizer, () => this.d.store.get(id)?.ledger, meta => this.d.store.ledger.setLocalMetadata(id, meta));
     this.tick();
     return { id, warnings };
   }
@@ -684,6 +706,7 @@ export class Supervisor {
       if (dryRun) continue;
       const route = routes[item.route] as RouteConfig;
       const req: JobRequest = { route: item.route, activity: item.activity as JobRequest['activity'], dataTier: item.data, tools: item.tools, output: item.output,
+        stamp: { origin: 'service', originLabel: `backlog:${item.id}`, host: hostname(), pid: process.pid, parentPid: process.ppid },
         cwd: item.cwd, prompt: item.prompt, caller: { kind: 'job', label: `backlog:${item.id}`, intent: 'automated' }, released: true,
         // The owner-approved backlog release has no interactive pick; all other rule checks still apply.
         allow: ['unpicked'], failover: false };
@@ -992,7 +1015,7 @@ export class Supervisor {
       try { mkdirSync(dirname(target), { recursive: true }); writeFileSync(target, f.content); } catch (e) { if (this.d.store.transition(id, 'failed', { reason: `could not write ${f.name}: ${(e as Error).message}` }, this.now())) this.settleConversation(rec, false, null); return; }
     }
     const route = this.d.routes()?.[rec.route];
-    const extra: Record<string, string> = { ...file.env, AUGUR_JOB_ID: id, AUGUR_ROOT_JOB_ID: rec.rootJobId, AUGUR_CALLER: rec.caller.intent ?? 'interactive', AUGUR_IN_JOB: '1' };
+    const extra: Record<string, string> = { ...file.env, ...(rec.ledger?.stamp.sessionId ? { AUGUR_SESSION: rec.ledger.stamp.sessionId } : {}), ...(rec.ledger?.stamp.sessionTitle ? { AUGUR_SESSION_TITLE: rec.ledger.stamp.sessionTitle } : {}), AUGUR_JOB_ID: id, AUGUR_ROOT_JOB_ID: rec.rootJobId, AUGUR_CALLER: rec.caller.intent ?? 'interactive', AUGUR_IN_JOB: '1' };
     if (!route?.delegation) { delete extra.AUGUR_JOB_ID; delete extra.AUGUR_ROOT_JOB_ID; }
     const more = typeof route?.options?.envAllow === 'string' ? route.options.envAllow.split(',').map(n => n.trim()).filter(Boolean) : [];
     if (typeof route?.options?.apiKeyEnv === 'string') more.push(route.options.apiKeyEnv);

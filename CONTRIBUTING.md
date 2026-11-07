@@ -29,6 +29,10 @@ The premium gate and the surplus window are worked out in `packages/dispatch-pro
 
 A provider with a JSON usage endpoint usually needs no code. Add it as a custom provider, as the README describes. A provider that has to refresh a sign-in or read a command-line login goes in `packages/core/src/providers`, with a fixture and a test in `packages/core/test`. Fixtures use made-up numbers.
 
+The job ledger contract lives in `packages/dispatch-protocol/src/job-ledger.ts`, and its protocol tests are in `packages/dispatch-protocol/test/job-ledger.test.ts`. [docs/job-ledger.md](docs/job-ledger.md) describes the node endpoint and the service calls, and it also holds the command reference.
+
+The service tests for the ledger store, polling, attribution, and summaries are in `packages/augurd/test/job-ledger.test.ts`. On Windows, peer attribution uses the existing native job host, so build it with `pnpm --filter @augur/augurd build:jobhost` before running the service tests. Ledger fixtures use temporary databases and fake node responses. For the CLI, `packages/dispatch-cli/test/cli.test.ts` and `test/ledger.test.ts` cover filters, session scope, paging, terminal widths, and watch reconnects. MCP schema and metadata tests live in `packages/mcp/test/mcp.test.ts`. Shared presentation and reconnect logic is tested in `packages/view-model/test/ledger.test.ts`, while alert delivery and settings are tested in `packages/augurd/test/ledger-delivery.test.ts`. The terminal ledger tests and the Chromium Jobs page interactions run in the existing element test harness. Desktop job notification clicks go through notify-rust because the existing Tauri plugin has no desktop actions.
+
 ## Before opening a pull request
 
 Run these from the repository root:

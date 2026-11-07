@@ -4,6 +4,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { buildServer } from '../src/server.js';
 import { REPLAY_TEXT, createTools } from '../src/tools.js';
 import type { McpDeps } from '../src/tools.js';
+import type { LedgerJob } from '@augur/dispatch-protocol';
 import { readFleet } from '@augur/core';
 
 const POLICY = JSON.stringify({ providers: { codex: { models: {
@@ -26,7 +27,17 @@ function deps(answers: Record<string, unknown | (() => unknown)>, calls: Calls[]
   };
 }
 const TEXT_ONLY = { attachments: [], vision: false, embed: false, transcribe: false };
+const ledgerJob = (over: Partial<LedgerJob> = {}): LedgerJob => ({ id: 'node:abc', node: 'node', localId: 'abc', kind: 'llm-request', state: 'done', stamp: { sessionId: 'mcp-test' }, attribution: { session: 'stamped', origin: 'unknown', process: 'unknown', host: 'unknown' }, summary: 'Read notes', summarySource: 'caller', route: 'luna', model: null, activity: 'research', createdAt: 0, startedAt: 0, endedAt: 1000, durationMs: 1000, updatedAt: 1000, lastActivityAt: 0, parentId: null, retryOf: null, retriedAs: null, usage: null, exitReason: null, compacted: false, ...over });
 const ROUTES = [{ name: 'luna', model: 'codex/luna', adapter: 'codex-exec', problem: null, capabilities: TEXT_ONLY }, { name: 'grok', model: 'xai/grok', adapter: 'exec', problem: 'no program', capabilities: TEXT_ONLY }];
+
+describe('run attribution', () => {
+  it('stamps the tool origin and passes through the host session and caller summary', async () => {
+    const calls: Calls[] = [], d = deps({ submit: { id: 'job', warnings: [] } }, calls);
+    d.stamp = { sessionId: 'host-session', sessionTitle: 'Review', summary: 'Read notes', origin: 'other' };
+    await createTools(d).run({ route: 'luna', prompt: 'private', activity: 'research', data_tier: 'public', wait_s: 0 });
+    expect(calls.find(c => c.method === 'submit')?.params).toMatchObject({ stamp: { sessionId: 'host-session', sessionTitle: 'Review', summary: 'Read notes', origin: 'mcp', originLabel: 'augur-mcp' } });
+  });
+});
 
 describe('models', () => {
   it('lists every model with its routes, and counts the ones that can take jobs', async () => {
@@ -232,20 +243,20 @@ describe('job, jobs, cancel, pressure, routes', () => {
     expect((await t.job({ id: 'nope' })).text).toBe('No such job.');
     expect((await t.cancel({ id: 'nope' })).isError).toBe(true);
   });
-  it('follows a retried job to the one that replaced it', async () => {
-    const result = (p: unknown) => {
-      const id = (p as { id?: string }).id;
-      if (id === 'next') return { job: { id: 'next', state: 'completed', route: 'raw', retryOf: 'abc' }, answer: 'done' };
-      return { job: { id: 'abc', state: 'failed', route: 'luna', reason: 'exit 1', retriedAs: 'next' }, answer: null };
-    };
-    const r = await createTools(deps({ result })).job({ id: 'abc' });
+  it('returns the selected record with its retry chain and no answer', async () => {
+    const job = ledgerJob({ state: 'failed', retriedAs: 'node:next' });
+    const retries = [ledgerJob({ id: 'node:next', localId: 'next', retryOf: job.id })];
+    const calls: Calls[] = [];
+    const r = await createTools(deps({ ledger_get: { job, parent: null, children: [], retries } }, calls)).job({ id: 'abc' });
     expect(r.isError).toBeUndefined();
-    expect(r.text).toBe('retried on raw as next\ndone');
-    expect(r.data).toMatchObject({ id: 'next', chain: ['abc', 'next'], retriedAs: 'next', answer: 'done' });
+    expect(r.text).toContain('Retried as: node:next');
+    expect(r.data).toMatchObject({ job, retries, history: [] });
+    expect(r.data).not.toHaveProperty('answer');
+    expect(calls.map(c => c.method)).toEqual(['ledger_get']);
   });
   it('lists jobs and routes and turns a service error into an error result', async () => {
-    const t = createTools(deps({ list: [{ id: 'abc', state: 'completed', route: 'luna', activity: 'write_code', createdAt: 0 }], routes: ROUTES, pressure: new Error('service is not running') }));
-    expect((await t.jobs({})).text).toContain('abc  completed  luna');
+    const t = createTools(deps({ ledger_list: { jobs: [ledgerJob()], next: null }, routes: ROUTES, pressure: new Error('service is not running') }));
+    expect((await t.jobs({})).text).toContain('node:abc  done  llm-request  luna');
     expect((await t.routes()).text).toContain('cannot run: no program');
     expect(await t.pressure()).toMatchObject({ isError: true, text: 'service is not running' });
   });
@@ -263,6 +274,66 @@ describe('premium backlog tools', () => {
   });
 });
 
+describe('ledger tools', () => {
+  it('uses the host session by default, permits all sessions, and passes every query filter', async () => {
+    const calls: Calls[] = [], d = deps({ ledger_list: { jobs: [], next: 'page-2' }, ledger_counts: { running: 2 } }, calls);
+    d.stamp = { sessionId: 'host' };
+    const tools = createTools(d);
+    expect((await tools.jobs({})).data).toEqual({ jobs: [], next: 'page-2' });
+    expect(calls.at(-1)).toEqual({ method: 'ledger_list', params: { session: 'host', limit: 20 } });
+    await tools.jobs({ all: true }); expect(calls.at(-1)?.params).toEqual({ limit: 20 });
+    await tools.jobs({ session: 's', origin: 'cli', node: 'eru', kind: ['download'], state: ['running'], running: true, root: 'root', route: 'r', from: '2026-01-01', until: '2026-02-01', text: 'notes', page: 'next', limit: 3 });
+    expect(calls.at(-1)?.params).toEqual({ session: 's', origin: 'cli', node: 'eru', kind: ['download'], state: ['running', 'stalled'], localState: 'running', root: 'root', route: 'r', from: Date.parse('2026-01-01'), to: Date.parse('2026-02-01'), text: 'notes', page: 'next', limit: 3 });
+    expect((await tools.jobCounts({ all: true, node: 'eru' })).data).toEqual({ counts: { running: 2 } });
+    expect(calls.at(-1)).toEqual({ method: 'ledger_counts', params: { node: 'eru' } });
+  });
+  it('filters replayed changes and advances the global cursor through unrelated changes', async () => {
+    const calls: Calls[] = [], job = ledgerJob();
+    const tools = createTools(deps({ ledger_changes: { changes: [{ cursor: '7', at: 10, job }, { cursor: '8', at: 11, job: ledgerJob({ id: 'other:job' }) }], cursor: '8', more: true }, ledger_list: { jobs: [job], next: null } }, calls));
+    const r = await tools.jobs({ since: '6', limit: 2 });
+    expect(r.data).toMatchObject({ changes: [{ cursor: '7' }], cursor: '8', more: true });
+    expect(calls[0]).toEqual({ method: 'ledger_changes', params: { since: '6', limit: 2 } });
+    expect((await tools.jobs({ since: '6', page: 'x' })).isError).toBe(true);
+  });
+  it('reads nodes, alert times, and local history without exposing event detail', async () => {
+    const node = { node: 'eru', cursor: '8', lastSeenAt: 1000, unreachableSince: 2000, gap: { at: 3000, from: '1', to: '8', retentionDays: 7 } };
+    const recent = { at: Date.parse('2026-11-07'), type: 'job.failed', jobId: 'node:abc', summary: 'Read notes' };
+    const tools = createTools(deps({ ledger_nodes: [node], ledger_alerts: [{ ...recent, at: 0 }, recent], ledger_get: { job: ledgerJob({ kind: 'augur-job' }), parent: null, children: [], retries: [] }, events: [{ at: 0, kind: 'queued', detail: 'private-sentinel' }] }));
+    expect((await tools.nodes()).data).toEqual({ nodes: [node] });
+    expect((await tools.nodes()).text).toContain('unreachable since 1970');
+    expect((await tools.nodes()).text).toContain('History gap since 1970');
+    expect((await createTools(deps({ ledger_nodes: [{ ...node, gap: null }] })).nodes()).text).not.toContain('History gap since');
+    expect((await tools.alerts({ since: '2026-11-01' })).data).toEqual({ alerts: [recent] });
+    const r = await tools.job({ id: 'abc' });
+    expect(r.data?.history).toEqual([{ at: 0, kind: 'queued' }]); expect(JSON.stringify(r)).not.toContain('private-sentinel');
+  });
+  it('refuses remote execution ids and converts local qualified ids', async () => {
+    const calls: Calls[] = [], d = deps({ ledger_get: { job: ledgerJob(), parent: null, children: [], retries: [] } }, calls);
+    expect((await createTools(d).cancel({ id: 'node:abc' })).text).toContain('not a local execution job');
+    expect(calls.map(c => c.method)).toEqual(['ledger_get']);
+    d.call = deps({ ledger_get: { job: ledgerJob({ kind: 'augur-job' }) }, cancel: { ok: true, state: 'cancel_requested' } }, calls).call;
+    expect((await createTools(d).cancel({ id: 'node:abc' })).isError).toBeUndefined();
+    expect(calls.at(-1)).toEqual({ method: 'cancel', params: { id: 'abc' } });
+  });
+  it('publishes read-only schemas and validates filters through the protocol', async () => {
+    const [a, b] = InMemoryTransport.createLinkedPair(), calls: Calls[] = [];
+    const server = buildServer(createTools(deps({ ledger_list: { jobs: [ledgerJob()], next: null }, ledger_counts: { done: 1 }, ledger_nodes: [], ledger_alerts: [] }, calls)), 'test');
+    const client = new Client({ name: 'test', version: '1' });
+    await Promise.all([server.connect(a), client.connect(b)]);
+    try {
+      const { tools } = await client.listTools();
+      for (const name of ['augur_jobs', 'augur_job', 'augur_job_counts', 'augur_nodes', 'augur_alerts']) expect(tools.find(t => t.name === name)?.annotations).toMatchObject({ readOnlyHint: true, openWorldHint: false });
+      const schema = tools.find(t => t.name === 'augur_jobs')!.inputSchema;
+      for (const name of ['all', 'session', 'origin', 'node', 'kind', 'state', 'running', 'root', 'route', 'from', 'until', 'text', 'limit', 'page', 'since']) expect(schema.properties).toHaveProperty(name);
+      expect((await client.callTool({ name: 'augur_jobs', arguments: { kind: ['invalid'] } })).isError).toBe(true);
+      const r = await client.callTool({ name: 'augur_jobs', arguments: { all: true, limit: 2 } });
+      expect(r.structuredContent).toEqual({ jobs: [ledgerJob()], next: null });
+      expect(calls.at(-1)?.params).toEqual({ limit: 2 });
+      for (const name of ['augur_job_counts', 'augur_nodes', 'augur_alerts']) expect((await client.callTool({ name, arguments: {} })).isError).toBeUndefined();
+    } finally { await client.close(); await server.close(); }
+  });
+});
+
 describe('the server', () => {
   it('offers the MCP tools with the rules in its instructions, and runs one through a client', async () => {
     const [a, b] = InMemoryTransport.createLinkedPair();
@@ -270,7 +341,7 @@ describe('the server', () => {
     const client = new Client({ name: 'test', version: '1' });
     await Promise.all([server.connect(a), client.connect(b)]);
     const { tools } = await client.listTools();
-    expect(tools.map(t => t.name).sort()).toEqual(['alias_list', 'augur_backlog_add', 'augur_backlog_list', 'augur_backlog_status', 'augur_balance', 'augur_cancel', 'augur_job', 'augur_jobs', 'augur_models', 'augur_pick', 'augur_pick_preview', 'augur_policy', 'augur_policy_edit', 'augur_pressure', 'augur_prose_add', 'augur_prose_list', 'augur_prose_status', 'augur_replay', 'augur_resets', 'augur_route_add', 'augur_routes', 'augur_run', 'gate_report', 'gate_status']);
+    expect(tools.map(t => t.name).sort()).toEqual(['alias_list', 'augur_alerts', 'augur_backlog_add', 'augur_backlog_list', 'augur_backlog_status', 'augur_balance', 'augur_cancel', 'augur_job', 'augur_job_counts', 'augur_jobs', 'augur_models', 'augur_nodes', 'augur_pick', 'augur_pick_preview', 'augur_policy', 'augur_policy_edit', 'augur_pressure', 'augur_prose_add', 'augur_prose_list', 'augur_prose_status', 'augur_replay', 'augur_resets', 'augur_route_add', 'augur_routes', 'augur_run', 'gate_report', 'gate_status']);
     expect(tools.map(t => t.name)).not.toContain('prose_approve');
     expect(tools.some(t => /alias_(accept|reject)/.test(t.name))).toBe(false);
     expect(tools.some(t => /backlog_(run|drop|release)/.test(t.name))).toBe(false);
@@ -348,18 +419,18 @@ describe('replay and prompt storage', () => {
     const calls: Calls[] = [];
     const tools = createTools(deps({ replay: { id: 'new', warnings: [] } }, calls));
     expect(await tools.replay({ job: 'original', route: 'raw' })).toMatchObject({ text: REPLAY_TEXT.started('new'), data: { id: 'new' } });
-    expect(calls).toEqual([{ method: 'replay', params: { job: 'original', route: 'raw', caller: { kind: 'mcp', label: 'augur-mcp', session: 'mcp-test', intent: 'interactive' } } }]);
+    expect(calls).toEqual([{ method: 'replay', params: { job: 'original', route: 'raw', caller: { stamp: { origin: 'mcp', originLabel: 'augur-mcp', sessionId: 'mcp-test' }, kind: 'mcp', label: 'augur-mcp', session: 'mcp-test', intent: 'interactive' } } }]);
     const refusal = { code: 'inputs_not_replayable', reason: 'input file source.txt' };
     expect(await createTools(deps({ replay: { rejected: refusal } })).replay({ job: 'original', route: 'raw' })).toMatchObject({ isError: true, data: { rejected: refusal } });
   });
 
-  it('shows the replay link in job results and lists', async () => {
-    const job = { id: 'new', state: 'completed', route: 'raw', activity: 'write_code', createdAt: 1000, replayOf: 'original' };
-    const tools = createTools(deps({ result: { job, answer: 'done' }, list: [job] }));
+  it('shows the replay link in job metadata and lists', async () => {
+    const job = ledgerJob({ replayOf: 'node:original' });
+    const tools = createTools(deps({ ledger_get: { job, parent: null, children: [], retries: [] }, ledger_list: { jobs: [job], next: null } }));
     const result = await tools.job({ id: 'new' });
-    expect(result.text).toContain(REPLAY_TEXT.link('original'));
-    expect(result.data?.replayOf).toBe('original');
-    expect((await tools.jobs({})).text).toContain(REPLAY_TEXT.link('original'));
+    expect(result.text).toContain('replay of node:original');
+    expect(result.data?.job).toMatchObject({ replayOf: 'node:original' });
+    expect((await tools.jobs({})).text).toContain('replay of node:original');
   });
 
   it('calls replay and validates prompt storage through an MCP client', async () => {

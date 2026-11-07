@@ -464,7 +464,7 @@ describe('premium backlog release selection', () => {
     expect('error' in added).toBe(false);
     const result = sup.releaseDue(Date.now());
     expect(result.released).toHaveLength(1);
-    expect(releasedRequest).toMatchObject({ released: true, caller: { intent: 'automated' } });
+    expect(releasedRequest).toMatchObject({ released: true, caller: { intent: 'automated' }, stamp: { origin: 'service', originLabel: expect.stringMatching(/^backlog:/), pid: process.pid } });
     expect(releasedRequest?.named).toBeUndefined(); expect(releasedRequest?.premiumGateLift).toBeUndefined();
     const run = sup.backlogList('running')[0];
     expect(run?.result?.jobId).toBeTruthy();

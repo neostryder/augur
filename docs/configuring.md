@@ -43,6 +43,11 @@ Use Test key to check the Claude API key. Usage refresh does not test it. A Test
 
 The settings folder is `%APPDATA%\com.neostryder.augur` on Windows, `~/Library/Application Support/com.neostryder.augur` on macOS and `~/.config/com.neostryder.augur` on Linux. `AUGUR_APP_DIR` moves it and `AUGUR_HOME` moves `~/.augur`. Both the app and the service write `config.json`, so close the app and run `augur service stop` before you edit it. A hand edit to `policy.json` is overwritten the next time a rule is saved.
 
+### Job alert settings
+
+Job alert settings live under `ledgerAlerts` in the service's `config.json`, where `stallMinutes` sets the local inactivity threshold. In Settings, the Job alerts section shows the switches, duration thresholds, optional webhook URL, and secret-store reference. Per-sink delivery failures appear on the Service page. The [job ledger guide](job-ledger.md#job-alert-settings) lists the defaults, delivery recovery, outbox rotation, and the public alert JSON contract. Because these settings control service behavior, they add no balance rules or adapter options.
+
+`ledgerAlerts.webhookFormat` defaults to `augur`. To send the [Cresset event format](job-ledger.md#cresset-webhook-format), select `cresset` in Alerts, use an intake URL ending in `/v1/events`, and store the per-source bearer token under the webhook key reference. The outbox keeps its format in either case.
 ### Laya machines
 
 `laya.json` in `~/.augur` lists the Laya servers that scripts try in order and the machines that receive copies of the adapters trained on this PC.
@@ -82,6 +87,10 @@ The stall time (`stallMinutes`, 10 minutes by default, minimum 1) sets how long 
 **Keep prompts** (`persistPrompts`) is off by default, so the service deletes a job's prompt and input files as soon as the job has started. When it is on, the service keeps the prompt as `prompt.txt` in the job folder next to the input files. A kept prompt is deleted with its job when retention runs (`retentionDays`, 30 by default).
 
 One request can override the setting. `--keep-prompt` on `augur run`, or `persistPrompt` true in `augur_run`, keeps that job's prompt and input files with the setting off, and `persistPrompt` false discards them with the setting on. A job needs a saved prompt before `augur replay` or `augur_replay` can run it again on another route.
+
+### Job ledger retention and nodes
+
+The ledger keeps full job metadata for `balance.ledger.retentionDays` days, set in the policy, and after that keeps only a summary row. The default is 90, and the value must be a whole number from 0 through 3650. The service checks retention at startup and then every hour. Remote nodes go in the service's `config.json` as `ledgerNodes` entries, each with `node`, `url`, and an optional `keyName` that refers to a secret-store entry. The service reads this registry only at startup. `augur jobs`, `augur nodes`, and `augur alerts` read ledger metadata, and `augur jobs --refresh` polls the registered nodes. [The job ledger](job-ledger.md) describes the endpoint, credentials, queries, and privacy rules.
 
 ## Cogitator catalog
 
@@ -741,6 +750,7 @@ Agents get add, list and status through the agent token or the MCP tools, and th
 
 | Setting | Value | What it does |
 | --- | --- | --- |
+| `ledger.retentionDays` | days from 0 to 3650 | The ledger compacts finished jobs after this many days, 90 by default, and keeps a summary row for each job. |
 | `profile` | classic or neutral | The starting rules the other settings sit on. Classic is the original rule set and is what an install with no profile uses. Neutral gives a tier only to Claude's own models, so pace moves work between Opus and Sonnet and leaves other routes alone. Both profiles boost providers with unused allowance. |
 | `enabled` | true or false | Switches the whole balance off, pace and the boost with it. Scores then come from fit, weights and usage alone. |
 | `gate.premium` | list of routes | Routes that need owner approval for interactive picks and are unavailable to automated callers. |

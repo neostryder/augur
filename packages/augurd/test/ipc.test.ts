@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { call, readToken, ServiceError } from '../src/client.js';
+import { watchLedger, call, readToken, ServiceError } from '../src/client.js';
 import { startService } from '../src/main.js';
 import { AGENT_METHODS, HTTP_DISPATCH_METHODS, IpcServer, attestAgentRequest } from '../src/ipc.js';
 import { JOBHOST, makeEnv, request, sleep } from './harness.js';
@@ -31,8 +31,8 @@ async function finished(o: { dir: string; pipe: string }, id: string) {
 }
 
 describe('the dispatch calls the web server may pass on', () => {
-  it('are agent calls that run and read jobs, and never edit routes or rules', () => {
-    for (const m of HTTP_DISPATCH_METHODS) expect(AGENT_METHODS.has(m), m).toBe(true);
+  it('keeps execution calls automated and limits owner calls to job alert settings and delivery', () => {
+    for (const m of HTTP_DISPATCH_METHODS) expect(AGENT_METHODS.has(m) || ['ledger_settings', 'ledger_settings_set', 'ledger_delivery'].includes(m), m).toBe(true);
     for (const m of ['route_add', 'balance', 'pick_answer', 'human_prompt', 'engine_call']) expect(HTTP_DISPATCH_METHODS.has(m), m).toBe(false);
   });
 
@@ -50,6 +50,49 @@ describe('the dispatch calls the web server may pass on', () => {
 });
 
 describe('the control endpoint', () => {
+  it('stamps a replay from the connection without copying the original attribution', async () => {
+    const { o, e } = await boot();
+    const original = await call('submit', request({ text: 'SLEEP 0', cwd: e.root, persistPrompt: true, stamp: { sessionId: 'original' } }), o) as { id: string };
+    await finished(o, original.id);
+    const replay = await call('replay', { job: original.id, route: 'raw', caller: { kind: 'cli' } }, { ...o, stamp: { sessionId: 'replay-session', origin: 'cli', summary: 'Read notes' } }) as { id: string };
+    const record = await finished(o, replay.id);
+    expect(record.ledger).toMatchObject({ stamp: { sessionId: 'replay-session', origin: 'cli' }, summary: 'Read notes', summarySource: 'caller', attribution: { session: 'stamped', origin: 'stamped' } });
+  });
+  it('lets only the owner round trip live job alert settings and inspect delivery status', async () => {
+    const { o, svc } = await boot();
+    expect(await call('ledger_settings', undefined, o)).toMatchObject({ stalled: true, usualMultiple: 3, minSamples: 8, stallMinutes: 10, webhookFormat: 'augur' });
+    await call('ledger_settings_set', { key: 'ledgerAlerts.failed', value: 'false' }, o);
+    await call('ledger_settings_set', { key: 'stallMinutes', value: '5' }, o);
+    await call('ledger_settings_set', { key: 'ledgerAlerts.webhookFormat', value: 'cresset' }, o);
+    expect(svc.config.ledgerAlerts.webhookFormat).toBe('cresset');
+    expect(svc.config.ledgerAlerts.failed).toBe(false); expect(svc.config.stallMinutes).toBe(5);
+    expect(await call('ledger_settings', undefined, o)).toMatchObject({ failed: false, stallMinutes: 5, webhookFormat: 'cresset' });
+    expect(await call('ledger_delivery', undefined, o)).toEqual(expect.arrayContaining([expect.objectContaining({ sink: 'outbox' })]));
+    await expect(call('ledger_settings_set', { key: 'requirePick', value: 'false' }, o)).rejects.toThrow('invalid');
+    for (const method of ['ledger_settings', 'ledger_settings_set', 'ledger_delivery'] as const) await expect(call(method, undefined as never, { ...o, role: 'agent' })).rejects.toThrow("owner's");
+  });
+  it('serves session queries, counts, chains, and a replayable ledger watch to agent callers', async () => {
+    const { o, svc, e } = await boot();
+    svc.config.maxConcurrent = 0;
+    const stamp = { sessionId: 'host-session', sessionTitle: 'Review', origin: 'mcp' as const, summary: 'Read notes' };
+    const agent = { ...o, role: 'agent' as const, stamp };
+    const first = await call('submit', request({ text: 'PRIVATE_PROMPT', cwd: e.root }), agent) as { id: string };
+    const found = await call('ledger_list', { session: stamp.sessionId }, agent);
+    expect(found.jobs).toMatchObject([{ localId: first.id, summary: 'Read notes', summarySource: 'caller', stamp: { sessionId: stamp.sessionId } }]);
+    expect(await call('ledger_counts', { session: stamp.sessionId }, agent)).toMatchObject({ queued: 1 });
+    expect(await call('ledger_get', { id: found.jobs[0]!.id }, agent)).toMatchObject({ job: { localId: first.id }, children: [], retries: [] });
+    const before = await call('ledger_changes', {}, agent), seen: Array<{ cursor: string; job: { localId: string } }> = [];
+    const watch = await watchLedger(before.cursor, { change: change => seen.push(change) }, agent);
+    cleanup.push(() => watch.close());
+    const second = await call('submit', request({ text: 'PRIVATE_PROMPT_2', cwd: e.root }), agent) as { id: string };
+    for (let i = 0; i < 30 && !seen.some(change => change.job.localId === second.id); i++) await sleep(50);
+    expect(seen.some(change => change.job.localId === second.id)).toBe(true);
+    expect(JSON.stringify(await call('ledger_changes', {}, agent))).not.toContain('PRIVATE_PROMPT');
+    expect(await call('ledger_nodes', undefined, agent)).toEqual([]);
+    expect(await call('ledger_refresh', undefined, agent)).toEqual([]);
+    await expect(call('ledger_list', { limit: 0 }, agent)).rejects.toBeInstanceOf(ServiceError);
+    await expect(watchLedger('0', { change: () => {} }, { ...o, token: 'wrong' })).rejects.toBeInstanceOf(ServiceError);
+  });
   it('turns away JSON that is not an object without stopping the service', async () => {
     const { o, pipe } = await boot();
     const net = await import('node:net');

@@ -1,10 +1,12 @@
 import type { ActivityId, DataTier, OutputMode } from '@augur/core';
 import type { JobState } from './states.js';
+import type { LedgerMetadata, Stamp } from './job-ledger.js';
 
 export type ToolTier = 'none' | 'read' | 'write' | 'full';
 export const TOOL_TIERS: readonly ToolTier[] = ['none', 'read', 'write', 'full'];
 
 export interface Caller {
+  stamp?: Stamp;
   kind: 'cli' | 'mcp' | 'job' | 'other' | 'service';
   label?: string;
   /** The caller's own session, matched against recent picks when picks are required. */
@@ -18,6 +20,7 @@ export interface Lineage { jobId: string; rootJobId: string; depth: number }
 
 /** The caller can override the service's prompt storage setting for one job. */
 export interface JobRequest {
+  stamp?: Stamp;
   route: string;
   activity: ActivityId;
   /** The most sensitive class of data the prompt or its files carry. Checked against the route's rule. */
@@ -76,6 +79,7 @@ export interface UsageReport {
 export interface Served { host?: string; model?: string; chainPosition?: number; degraded?: boolean }
 
 export interface JobRecord {
+  ledger?: LedgerMetadata;
   id: string;
   state: JobState;
   route: string;

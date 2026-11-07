@@ -1,11 +1,13 @@
 // The service's own state: jobs and their events, in SQLite. Transitions are single conditional updates, so two writers cannot both win.
 import { DatabaseSync } from 'node:sqlite';
+import { JobLedger } from './job-ledger.js';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { canTransition, isTerminal, statesBefore } from '@augur/dispatch-protocol';
 import type { Conversation, JobEvent, JobRecord, JobState, PickRecord, PromptRecord, Served, UsageReport } from '@augur/dispatch-protocol';
 
 interface Row {
+  ledger: string | null;
   id: string; state: string; route: string; adapter: string; activity: string; data_tier: string; tools: string; output: string; cwd: string;
   created_at: number; started_at: number | null; ended_at: number | null; exit_code: number | null; reason: string | null;
   root_job_id: string; parent_job_id: string | null; replay_of: string | null; depth: number; caller: string; named: number; harness_version: string | null;
@@ -28,6 +30,7 @@ const servedOf = (text: string | null): Served | undefined => {
 const toRecord = (r: Row): JobRecord => {
   const charter = stringList(r.charter), charterNotes = stringList(r.charter_notes);
   return {
+    ...(r.ledger ? { ledger: JSON.parse(r.ledger) as NonNullable<JobRecord['ledger']> } : {}),
     id: r.id, state: r.state as JobState, route: r.route, adapter: r.adapter, activity: r.activity as JobRecord['activity'], dataTier: r.data_tier as JobRecord['dataTier'],
     tools: r.tools as JobRecord['tools'], output: r.output as JobRecord['output'], cwd: r.cwd, createdAt: r.created_at, startedAt: r.started_at, endedAt: r.ended_at,
     exitCode: r.exit_code, reason: r.reason, rootJobId: r.root_job_id, parentJobId: r.parent_job_id, replayOf: r.replay_of, depth: r.depth, caller: JSON.parse(r.caller) as JobRecord['caller'],
@@ -62,6 +65,7 @@ export interface Patch { startedAt?: number; endedAt?: number; exitCode?: number
 
 export class Store {
   readonly db: DatabaseSync;
+  readonly ledger: JobLedger;
   constructor(dir: string) {
     mkdirSync(dir, { recursive: true });
     this.db = new DatabaseSync(join(dir, 'state.db'));
@@ -82,7 +86,7 @@ export class Store {
         name text not null, route text not null, adapter text not null, native_id text, cwd text not null, tools text not null,
         turns integer not null, created_at integer not null, last_used_at integer not null, primary key (name, route));`);
     const have = new Set((this.db.prepare('pragma table_info(jobs)').all() as Array<{ name: string }>).map(c => c.name));
-    for (const [name, type] of [['warnings', 'text'], ['workspace', 'text'], ['patch_path', 'text'], ['changed_files', 'integer'], ['prompt_chars', 'integer'], ['answer_chars', 'integer'], ['charter', 'text'], ['charter_chars', 'integer'], ['charter_notes', 'text'], ['ambient', 'text'], ['retry_of', 'text'], ['retried_as', 'text'], ['conversation', 'text'], ['conversation_turn', 'integer'], ['served', 'text'], ['released', 'integer not null default 0']] as const) {
+    for (const [name, type] of [['ledger', 'text'], ['warnings', 'text'], ['workspace', 'text'], ['patch_path', 'text'], ['changed_files', 'integer'], ['prompt_chars', 'integer'], ['answer_chars', 'integer'], ['charter', 'text'], ['charter_chars', 'integer'], ['charter_notes', 'text'], ['ambient', 'text'], ['retry_of', 'text'], ['retried_as', 'text'], ['conversation', 'text'], ['conversation_turn', 'integer'], ['served', 'text'], ['released', 'integer not null default 0']] as const) {
       if (!have.has(name)) this.db.exec(`alter table jobs add column ${name} ${type}`);
     }
     if (!have.has('replay_of')) this.db.exec('alter table jobs add column replay_of text');
@@ -90,14 +94,15 @@ export class Store {
     for (const [name, type] of [['odds', 'real'], ['drawn', 'integer'], ['seed', 'text']] as const) {
       if (!pickCols.has(name)) this.db.exec(`alter table picks add column ${name} ${type}`);
     }
+    this.ledger = new JobLedger(this.db, { get: id => this.get(id), all: () => this.list({ limit: 2147483647 }) });
   }
 
-  close(): void { this.db.close(); }
+  close(): void { this.ledger.close(); this.db.close(); }
 
   insert(j: NewJob): void {
     this.db.prepare(`insert into jobs(id,state,route,adapter,activity,data_tier,tools,output,cwd,created_at,root_job_id,parent_job_id,depth,caller,named,harness_version,expect_file,timeout_s,workspace,conversation,conversation_turn,released,replay_of)
       values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(j.id, 'queued', j.route, j.adapter, j.activity, j.dataTier, j.tools, j.output, j.cwd, j.createdAt, j.rootJobId,
-      j.parentJobId, j.depth, JSON.stringify(j.caller), j.named ? 1 : 0, j.harnessVersion, j.expectFile, j.timeoutS, j.workspace, j.conversation ?? null, j.turn ?? null, j.released ? 1 : 0, j.replayOf ?? null);
+      j.parentJobId, j.depth, JSON.stringify({ kind: j.caller.kind, ...(j.caller.label !== undefined ? { label: j.caller.label } : {}), ...(j.caller.session !== undefined ? { session: j.caller.session } : {}), ...(j.caller.interactive !== undefined ? { interactive: j.caller.interactive } : {}), ...(j.caller.intent !== undefined ? { intent: j.caller.intent } : {}) }), j.named ? 1 : 0, j.harnessVersion, j.expectFile, j.timeoutS, j.workspace, j.conversation ?? null, j.turn ?? null, j.released ? 1 : 0, j.replayOf ?? null);
   }
 
   private row(id: string): Row | undefined { return this.db.prepare('select * from jobs where id=?').get(id) as Row | undefined; }
@@ -188,6 +193,7 @@ export class Store {
 
   event(jobId: string | null, kind: string, detail = '', at = Date.now()): void {
     this.db.prepare('insert into events(job_id,at,kind,detail) values(?,?,?,?)').run(jobId, at, kind, detail);
+    this.ledger.flush();
   }
   lastEventAt(jobId: string): number | null {
     return (this.db.prepare('select at from events where job_id=? order by at desc limit 1').get(jobId) as { at: number } | undefined)?.at ?? null;

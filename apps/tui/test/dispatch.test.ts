@@ -2,16 +2,16 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ServiceError } from '@augur/augurd';
-import type { JobRecord } from '@augur/dispatch-protocol';
-import { JOBS_ACTIVITY_TEXT, DispatchPage, tail } from '../src/screens/dispatch.js';
+import type { LedgerJob } from '@augur/dispatch-protocol';
+import { DispatchPage, tail } from '../src/screens/dispatch.js';
 import { pages } from '../src/index.js';
 import { NOW, ch, k, setup, state } from './fixtures.js';
 
-const job = (over: Partial<JobRecord> = {}): JobRecord => ({
-  id: '0d26110efa99', state: 'running', route: 'luna', adapter: 'codex-exec', activity: 'write_code', dataTier: 'internal', tools: 'read', output: 'text_only',
-  cwd: 'C:/work', createdAt: NOW - 60_000, startedAt: NOW - 30_000, endedAt: null, exitCode: null, reason: null, rootJobId: '0d26110efa99', parentJobId: null, replayOf: null, depth: 0,
-  caller: { kind: 'cli', label: 'claude' }, named: false, harnessVersion: null, usage: null, workspace: null, patch: null, ...over,
+const job = (over: Partial<LedgerJob> = {}): LedgerJob => ({
+  id: 'node:0d26110efa99', node: 'node', localId: '0d26110efa99', kind: 'augur-job', state: 'running', route: 'luna', model: null, activity: 'write_code',
+  stamp: { sessionId: 's', sessionTitle: 'Review', origin: 'cli', pid: 42 }, attribution: { session: 'stamped', origin: 'stamped', process: 'stamped', host: 'unknown' },
+  summary: 'Read notes', summarySource: 'caller', createdAt: NOW - 60000, startedAt: NOW - 30000, endedAt: null, durationMs: null, updatedAt: NOW, lastActivityAt: NOW - 12000,
+  parentId: null, retryOf: null, retriedAs: null, usage: null, exitReason: null, compacted: false, ...over,
 });
 
 function dispatch(answers: Record<string, unknown> = {}, runJobs = true, results: Record<string, unknown> = {}) {
@@ -22,7 +22,7 @@ function dispatch(answers: Record<string, unknown> = {}, runJobs = true, results
   list[3] = page;
   const s = state();
   s.config.dispatch = { runJobs };
-  const t = setup(s, { pages: list, answers, results });
+  const t = setup(s, { pages: list, answers: { ledger_list: { jobs: [], next: null }, ledger_counts: { queued: 0, running: 1, stalled: 0, done: 0, failed: 0, canceled: 0, 'node-lost': 0 }, ledger_nodes: [], ledger_changes: { changes: [], cursor: '0', more: false }, ...answers }, results });
   t.app.active = 3;
   const ctx = () => t.app.ctx()!;
   const load = async () => { await page.refresh(ctx()); };
@@ -32,43 +32,42 @@ function dispatch(answers: Record<string, unknown> = {}, runJobs = true, results
 }
 
 describe('dispatch page: jobs', () => {
-  it('lists the jobs agents started, with their state', async () => {
-    const t = dispatch({ list: [job(), job({ id: 'aaaaaaaaaaaa', state: 'failed', route: 'sol' })] });
+  it('keeps a reachable node history gap visible on the Jobs page', async () => {
+    const t = dispatch({ ledger_nodes: [{ node: 'eru', cursor: '10', lastSeenAt: NOW, unreachableSince: null, gap: { at: NOW, from: '1', to: '10', retentionDays: 7 } }] });
     await t.load();
-    const text = t.draw(100, 30);
-    expect(text).toMatch(/Jobs\s+Routes\s+Service/);
-    expect(text).toMatch(/luna.*Running/);
-    expect(text).toMatch(/sol.*Failed/);
-    expect(t.page.badge()).toBe('1');
+    const text = t.draw(120, 50);
+    expect(text).toContain('eru: History gap since '); expect(text).toContain('eru: Reachable');
+    t.page.jobs.nodes[0]!.gap = null;
+    expect(t.draw(120, 50)).not.toContain('History gap since');
+  });
+  it('lists ledger jobs and their state while local execution is disabled', async () => {
+    const t = dispatch({ ledger_list: { jobs: [job({ summary: 'luna task' }), job({ id: 'node:failed', state: 'failed', summary: 'sol task' })], next: null } }, false);
+    await t.load(); const text = t.draw(120, 50);
+    expect(text).toMatch(/Jobs\s+Routes\s+Service/); expect(text).toContain('luna task'); expect(text).toContain('Failed'); expect(t.page.badge()).toBe('1');
+    expect(t.calls.some(([method]) => method === 'list' || method === 'result' || method === 'logs')).toBe(false);
   });
 
-  it('says so when the service is set to usage only', async () => {
-    const t = dispatch({ list: () => { throw new ServiceError('jobs_off', 'Augur is set to usage only.'); } });
-    await t.load();
-    expect(t.draw(100, 30)).toContain('usage only');
+  it('switches session scope and forwards terminal filters', async () => {
+    const t = dispatch(); await t.load();
+    t.page.jobs.session = 's'; t.page.form.focus = 'jobs-scope'; await t.app.key(k('enter'));
+    expect(t.page.jobs.scope).toBe('session');
+    expect(t.calls).toContainEqual(['ledger_list', [{ session: 's', limit: 50 }]]);
+    t.page.jobs.setFilter('state', ['stalled']); await t.page.jobs.refresh({ call: (method, params) => t.link.call(method, params) });
+    expect(t.calls).toContainEqual(['ledger_list', [{ state: ['stalled'], session: 's', limit: 50 }]]);
   });
 
-  it('opens a job to show its result and output, and cancels a running one', async () => {
-    const t = dispatch({ list: [job()], result: { job: job(), answer: 'all good' }, logs: { text: 'line one\nline two', next: 0, done: false }, cancel: { ok: true, state: 'cancel_requested' } });
-    await t.load();
-    t.page.form.focus = 'j:0d26110efa99';
-    await t.app.key(k('enter'));
-    await t.load();
-    const text = t.draw(100, 50);
-    expect(text).toContain('all good');
-    expect(text).toContain('line two');
-    expect(text).toContain('Cancel job');
-    t.page.forms.job.focus = 'job-actions';
-    await t.app.key(k('enter'));
-    expect(t.calls).toContainEqual(['cancel', [{ id: '0d26110efa99' }]]);
-    await t.app.key(k('escape'));
-    expect(t.page.jobs.sel).toBeNull();
+  it('opens metadata, keeps text output out of the detail, and cancels by local id', async () => {
+    const j = Object.assign(job(), { answer: 'PRIVATE_ANSWER', prompt: 'PRIVATE_PROMPT' });
+    const t = dispatch({ ledger_list: { jobs: [j], next: null }, ledger_get: { job: j, parent: null, children: [], retries: [] }, cancel: { ok: true } });
+    await t.load(); t.page.form.focus = 'j:' + j.id; await t.app.key(k('enter')); await t.load();
+    const text = t.draw(120, 80); expect(text).toContain('Session attribution: stamped'); expect(text).toContain('Process: 42'); expect(text).not.toContain('PRIVATE_');
+    t.page.forms.job.focus = 'job-cancel'; await t.app.key(k('enter')); expect(t.calls).toContainEqual(['cancel', [{ id: j.localId }]]);
+    await t.app.key(k('escape')); expect(t.page.jobs.selected).toBeNull();
   });
 
-  it('keeps the last lines of a long log', () => {
-    const lines = Array.from({ length: 100 }, (_, i) => `l${i}`).join('\n');
-    expect(tail(lines, 3)).toEqual(['...', 'l97', 'l98', 'l99']);
-    expect(tail('a\nb', 3)).toEqual(['a', 'b']);
+  it('keeps the last lines of a long log for callers outside the ledger page', () => {
+    const lines = Array.from({ length: 100 }, (_, i) => 'l' + i).join('\n');
+    expect(tail(lines, 3)).toEqual(['...', 'l97', 'l98', 'l99']); expect(tail('a\nb', 3)).toEqual(['a', 'b']);
   });
 });
 
@@ -137,7 +136,7 @@ describe('dispatch page: routes', () => {
   });
 
   it('tests a saved route and reports the model answering', async () => {
-    const t = dispatch({ submit: { id: 'job1', warnings: [] }, result: { job: job({ state: 'completed' }), answer: 'ok' } });
+    const t = dispatch({ submit: { id: 'job1', warnings: [] }, result: { job: { state: 'completed' }, answer: 'ok' } });
     await (t.page as unknown as { testRoute(c: unknown, n: string): Promise<void> }).testRoute(t.ctx(), 'luna');
     expect(t.page.routes.testNote).toBe('luna works. The model answered: ok');
     expect(t.page.routes.testing).toBe(false);
@@ -250,19 +249,9 @@ describe('dispatch page: service', () => {
 });
 
 
-it('toggles the Running filter and shows activity ages and a stalled chip', async () => {
-  const j = job({ lastActivityAt: NOW - 12000, activityLine: 'Reading files', stalled: true });
-  const t = dispatch({ list: [j, job({ id: 'done', state: 'completed', route: 'finished' })], result: { job: j, answer: '' }, logs: { text: '', next: 0, done: false } });
-  await t.load();
-  expect(t.page.jobs.runningOnly).toBe(false);
-  expect(t.draw(120, 40)).toContain('finished');
-  t.page.form.focus = 'jobs-running';
-  await t.app.key(k('enter'));
-  expect(t.page.jobs.runningOnly).toBe(true);
-  expect(t.calls).toContainEqual(['list', [{ limit: 50, running: true }]]);
-  const text = t.draw(120, 40);
-  expect(text).not.toContain('finished'); expect(text).toContain('Reading files'); expect(text).toContain('12s ago'); expect(text).toContain('STALLED');
-  t.page.form.focus = `j:${j.id}`; await t.app.key(k('enter')); await t.load();
-  expect(t.draw(120, 40)).toContain('Last activity: 12s ago - Reading files');
-  expect(JOBS_ACTIVITY_TEXT.age(1000, 241000)).toBe('4m ago');
+it('shows live activity, elapsed time, stalls, and compacted records', async () => {
+  const j = job({ state: 'stalled', activityLine: 'Reading files', compacted: true });
+  const t = dispatch({ ledger_list: { jobs: [j], next: null } });
+  await t.load(); const text = t.draw(120, 55);
+  expect(text).toContain('Stalled'); expect(text).toContain('Reading files'); expect(text).toContain('12s ago'); expect(text).toContain('Compacted'); expect(text).toContain('30s');
 });

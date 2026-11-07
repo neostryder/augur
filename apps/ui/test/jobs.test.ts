@@ -1,71 +1,55 @@
-import type { JobRecord } from '@augur/dispatch-protocol';
+import type { LedgerJob } from '@augur/dispatch-protocol';
+import { LedgerModel } from '@augur/view-model';
 import { describe, expect, it } from 'vitest';
-import { JOBS_ACTIVITY_TEXT, duration, renderJobs, type JobsModel } from '../src/views/jobs';
+import { renderJobs, type JobsModel } from '../src/views/jobs';
+import { jobAlertControls } from '../src/views/settings';
 
-const job = (over: Partial<JobRecord> = {}): JobRecord => ({
-  id: '0d26110efa99', state: 'running', route: 'luna', adapter: 'codex-exec', activity: 'write_code', dataTier: 'internal', tools: 'read', output: 'text_only',
-  cwd: 'C:/work', createdAt: 1_000, startedAt: 2_000, endedAt: null, exitCode: null, reason: null, rootJobId: '0d26110efa99', parentJobId: null, replayOf: null, depth: 0,
-  caller: { kind: 'cli', label: 'claude' }, named: false, harnessVersion: null, usage: null, workspace: null, patch: null, ...over,
-});
-const model = (over: Partial<JobsModel> = {}): JobsModel => ({ service: { running: true, pid: 4242 }, serviceNote: '', unavailable: '', jobs: [], accounted: {}, sel: null, detail: null, busy: false, ...over });
+const job = (over: Partial<LedgerJob> = {}): LedgerJob => ({ id: 'node:1', node: 'node', localId: '1', kind: 'llm-request', state: 'running', stamp: { sessionId: 's', sessionTitle: 'Notes', origin: 'cli', pid: 12 }, attribution: { session: 'stamped', origin: 'inferred', process: 'stamped', host: 'unknown' }, summary: 'Read notes', summarySource: 'caller', route: 'local', model: null, activity: 'research', createdAt: 1000, startedAt: 2000, endedAt: null, durationMs: null, updatedAt: 2000, lastActivityAt: 2000, parentId: null, retryOf: null, retriedAs: null, usage: null, exitReason: null, compacted: false, ...over });
+const model = (jobs: LedgerJob[] | null = []): JobsModel => { const ledger = new LedgerModel('s'); ledger.jobs = jobs; return { ledger, service: { running: true, pid: 4242 }, serviceNote: '', busy: false }; };
 
-describe('the jobs page', () => {
-  it('offers Start when the service is stopped and no way to stop it while it runs', () => {
-    expect(renderJobs(model({ service: { running: false, pid: null } }))).toContain('data-action="service-start"');
-    const running = renderJobs(model());
-    expect(running).not.toContain('data-action="service-');
-    expect(running).toContain('process 4242');
+describe('the ledger Jobs page', () => {
+  it('offers service start when stopped and displays errors independently of the cached list', () => {
+    const m = model([job()]); m.service = { running: false, pid: null }; m.ledger.error = 'The node is offline.';
+    const html = renderJobs(m); expect(html).toContain('data-action="service-start"'); expect(html).toContain('The node is offline.'); expect(html).toContain('Read notes');
   });
 
-  it('says the service is unavailable instead of drawing an empty list when the command cannot run', () => {
-    const html = renderJobs(model({ unavailable: 'The dispatch service is not installed with this build', service: null }));
-    expect(html).toContain('not available');
-    expect(html).not.toContain('data-action="service-start"');
+  it('renders the default session scope, filters, zero counts, and node health', () => {
+    const m = model([job({ state: 'stalled' })]); m.ledger.counts.stalled = 1;
+    m.ledger.nodes = [{ node: 'eru', cursor: '1', lastSeenAt: 1000, unreachableSince: 2000, gap: { at: 3000, from: '0', to: '1', retentionDays: 7 } }];
+    const html = renderJobs(m);
+    expect(html).toContain('aria-pressed="true" data-action="jobs-scope" data-value="session"');
+    for (const filter of ['state', 'kind', 'node', 'origin', 'route', 'session', 'from', 'to', 'text']) expect(html).toContain('data-ledger-filter="' + filter + '"');
+    expect(html).toContain('Stalled <b>1</b>'); expect(html).toContain('Failed <b>0</b>'); expect(html).toContain('Unreachable since:'); expect(html).toContain('Last poll:');
+    expect(html).toContain('History gap since ' + new Date(3000).toLocaleString());
+    m.ledger.nodes[0]!.gap = null;
+    expect(renderJobs(m)).not.toContain('History gap since');
   });
 
-  it('lists jobs with their state and opens one by its id', () => {
-    const html = renderJobs(model({ jobs: [job(), job({ id: 'aaaaaaaaaaaa', state: 'failed', route: 'sol' })] }));
-    expect(html).toContain('data-job="0d26110efa99"');
-    expect(html).toContain('Running');
-    expect(html).toContain('Failed');
+  it('renders loading, empty, missing detail, and paging states', () => {
+    expect(renderJobs(model(null))).toContain('Loading jobs.'); expect(renderJobs(model())).toContain('No jobs match');
+    const m = model([job()]); m.ledger.next = 'next'; m.ledger.page = 'page'; m.ledger.detailError = 'The job is no longer available.';
+    const html = renderJobs(m); expect(html).toContain('data-action="jobs-next" >'); expect(html).toContain('data-action="jobs-first" >'); expect(html).toContain('The job is no longer available.');
   });
 
-  it('shows Cancel only for a job that is still going, and escapes what a job printed', () => {
-    const live = renderJobs(model({ jobs: [job()], sel: job().id, detail: { job: job(), result: '', stdout: '<script>alert(1)</script>', stderr: '' } }));
-    expect(live).toContain('data-action="job-cancel"');
-    expect(live).not.toContain('<script>alert(1)</script>');
-    const done = renderJobs(model({ jobs: [job({ state: 'completed' })], sel: job().id, detail: { job: job({ state: 'completed', exitCode: 0 }), result: 'all good', stdout: '', stderr: '' } }));
-    expect(done).not.toContain('data-action="job-cancel"');
-    expect(done).toContain('all good');
+  it('shows metadata, live activity, attribution, usage, and chain links without reading result or log fields', () => {
+    const j = Object.assign(job({ activityLine: 'Reading <files>', state: 'stalled', compacted: true, parentId: 'node:parent', usage: { inputTokens: 2, outputTokens: 3, costUsd: 0.1, source: 'reported', cachedReadTokens: 1 } }), { prompt: 'PRIVATE_PROMPT', answer: 'PRIVATE_ANSWER', stdout: 'PRIVATE_LOG' });
+    const m = model([j]); m.ledger.selected = j.id; m.ledger.detail = { job: j, parent: job({ id: 'node:parent' }), children: [job({ id: 'node:child' })], retries: [job({ id: 'node:retry' })] };
+    const html = renderJobs(m);
+    for (const text of ['Reading &lt;files&gt;', 'Stalled', 'Compacted', 'Session attribution', 'Process attribution', 'Summary source', 'Input tokens', 'Cost (USD)', 'cachedReadTokens', 'data-job="node:child"', 'data-job="node:retry"', 'data-ledger-elapsed="node:1"']) expect(html).toContain(text);
+    expect(html).not.toContain('PRIVATE_'); expect(html).not.toContain('job-cancel');
   });
 
-  it('says how each token and cost figure is known, and shows an estimate with its error', () => {
-    const j = job({ state: 'completed' });
-    const html = renderJobs(model({ jobs: [j], sel: j.id, detail: { job: j, result: '', stdout: '', stderr: '' }, accounted: { [j.id]: {
-      inputTokens: { value: 1200, provenance: 'reported' }, outputTokens: { value: 300, provenance: 'imputed', error: 0.25 }, costUsd: { value: 0.0031, provenance: 'imputed', error: 0.25 } } } }));
-    expect(html).toContain('1,200 (reported) in, 300 (imputed, about 25% off) out');
-    expect(html).toContain('$0.00310 (imputed, about 25% off)');
-    expect(renderJobs(model({ jobs: [j], sel: j.id, detail: { job: j, result: '', stdout: '', stderr: '' } }))).not.toContain('Tokens');
+  it('uses local execution ids for cancellation and removes it for terminal or remote work', () => {
+    const m = model(), local = job({ id: 'augur:abc', localId: 'abc', kind: 'augur-job' });
+    m.ledger.detail = { job: local, parent: null, children: [], retries: [] };
+    expect(renderJobs(m)).toContain('data-action="job-cancel" data-id="abc"');
+    m.ledger.detail.job = { ...local, state: 'done', endedAt: 4000, durationMs: 2000 };
+    expect(renderJobs(m)).not.toContain('job-cancel');
   });
 
-  it('measures a running job against now and a finished one against its end', () => {
-    expect(duration(job({ startedAt: 1_000, endedAt: null }), 66_000)).toBe('1m 5s');
-    expect(duration(job({ startedAt: 1_000, endedAt: 4_000 }), 999_999)).toBe('3s');
-    expect(duration(job({ startedAt: null }))).toBe('');
+  it('renders alert switches, thresholds, and a key reference field', () => {
+    const html = jobAlertControls({ stalled: true, failed: false, overUsualTime: true, usualMultiple: 3, minSamples: 8, stallMinutes: 10, webhookUrl: '', webhookFormat: 'cresset', webhookKeyName: 'ledger-alerts.token' });
+    for (const key of ['stalled', 'failed', 'overUsualTime', 'usualMultiple', 'minSamples', 'webhookUrl', 'webhookFormat', 'webhookKeyName']) expect(html).toContain('data-job-alert="ledgerAlerts.' + key + '"');
+    expect(html).toContain('data-job-alert="stallMinutes"'); expect(html).toContain('ledger-alerts.token'); expect(html).toContain('<option value="cresset" selected>cresset</option>');
   });
-});
-
-
-it('filters live jobs, escapes activity, and marks stalls in the list and detail', () => {
-  const j = job({ lastActivityAt: Date.now() - 12000, activityLine: 'Reading <files>', stalled: true });
-  const m = model({ jobs: [j, job({ id: 'done', state: 'completed' })], detail: { job: j, result: '', stdout: '', stderr: '' } });
-  expect(renderJobs(m)).toContain('aria-pressed="false">Running');
-  const html = renderJobs({ ...m, runningOnly: true });
-  expect(html).toContain('data-job="0d26110efa99"'); expect(html).not.toContain('data-job="done"');
-  expect(html).toContain('Stalled'); expect(html).toContain('12s ago'); expect(html).toContain('Reading &lt;files&gt;');
-  expect(html).toContain('Last activity');
-  expect(JOBS_ACTIVITY_TEXT.age(1000, 241000)).toBe('4m ago');
-  expect(JOBS_ACTIVITY_TEXT.age(1000, 0)).toBe('0s ago');
-  expect(renderJobs(model({ jobs: [job({ state: 'completed', stalled: true, lastActivityAt: 1, activityLine: 'hidden' })] }))).not.toContain('hidden');
-  expect(renderJobs(model({ jobs: [], runningOnly: true }))).toContain('No jobs are running.');
 });

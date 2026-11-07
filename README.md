@@ -15,6 +15,8 @@ Augur shows how much of your AI plans and credits you have used, in one place: a
   </tr>
 </table>
 
+The service also keeps a [job ledger](docs/job-ledger.md) of caller sessions, job summaries, remote node events, and alert events, and it answers history queries over those records. The desktop app, the service-served PWA, and the terminal each have a Jobs page that switches between session and global views, filters jobs, shows metadata details, and reports node health. Job alerts go to the desktop, a JSONL outbox, and an optional webhook.
+
 ## What it tracks
 
 | Provider | What you see | What it needs |
@@ -221,7 +223,13 @@ The same command answers short questions that suit a status bar or a script:
 augur status               # Claude's session and week, anything running hot, and the alert count
 augur status --waybar      # the same as the JSON a Waybar custom module reads
 augur refresh              # read every provider now
-augur alerts               # list the alerts; add dismiss <id>, or --all, to clear them
+augur jobs                 # list this session, or all jobs outside a session; --all includes every session
+augur jobs counts          # count matching jobs by state
+augur jobs --watch         # watch ledger changes and reconnect after a service restart
+augur job <id>             # read job metadata and chain links
+augur nodes                # read node polling and reachability
+augur alerts --since 6h    # read persisted job alert events
+augur alerts dismiss --all # dismiss usage alerts
 augur resets               # recorded limit resets and their pattern; add --provider <id> or --json
 augur claude install code  # or desktop; status and remove work too
 ```
@@ -270,9 +278,9 @@ To send jobs to the gateway, choose Add provider on the Routes page, pick the Op
 
 A route is local when its model is listed under the cogitator provider in the rules, and a pick weighs it against the latest reading. A local route is blocked when its machine is down or no machine can serve its role, and every local route is blocked while the gateway cannot be reached. A model that is installed but not loaded scores 0.7 times as much, a route on a machine short of memory scores 0.8 times as much, and a route with both gets both. Hosted routes are unchanged, an old reading is ignored, and the pick's reason line says which of these applied.
 
-`augur run --attach <file>` sends a file with the prompt on an API route, and the option can be repeated. A text file is added to the prompt and counts toward `maxInput`, an image goes to a model that reads images, and one audio file goes to the transcription endpoint on a `transcribe` job. A route in `embeddings` mode takes only `embed` jobs and saves the vectors to `vectors.json` in the job folder. `--urgent` marks a job as wanted now, so the gateway gives it normal priority. Each job a gateway serves records the machine, the model, the chain link and whether that link was a fallback, and the Jobs page, the terminal app's job view, and `augur jobs` show it as, for example, "Served by: bilbo, link 2, a fallback".
+`augur run --attach <file>` sends a file with the prompt on an API route, and the option can be repeated. A text file is added to the prompt and counts toward `maxInput`, an image goes to a model that reads images, and one audio file goes to the transcription endpoint on a `transcribe` job. A route in `embeddings` mode takes only `embed` jobs and saves the vectors to `vectors.json` in the job folder. `--urgent` marks a job as wanted now, so the gateway gives it normal priority. Each job a gateway serves records the machine, the model, the chain link and whether that link was a fallback, and the Jobs page and the terminal app's job view show it as, for example, "Served by: bilbo, link 2, a fallback". `augur jobs` lists ledger metadata across nodes; [the command reference](docs/job-ledger.md#cli-commands) covers its filters, paging, and watch.
 
-A job's prompt and input files are deleted as soon as the job starts unless the "Keep prompts" setting (`persistPrompts`) is on. To keep them for a single job, pass `--keep-prompt` to `augur run` or set `persistPrompt` to true in the `augur_run` tool. Setting `persistPrompt` to false discards them even when the setting is on. A kept prompt is deleted with its job when retention runs (`retentionDays`, 30 by default). A finished job with a saved prompt can run again on another route with `augur replay 3f1c9a27d0e4 deepseek`, or with the `augur_replay` tool and its `job` and `route` arguments. The replay is a new job with the same activity, data tier, tools, output mode, working folder, timeout, and expected file. It goes through the same pick, rules, data tier, and route limits as any request, so a route never sees data its rules do not allow, and a blocked replay returns the usual refusal. `augur job <id>` and `augur jobs` show the new job as "replay of <id>", and the original job stays unchanged. A job cannot be replayed if it does not exist (`unknown_job`), has not finished (`job_not_finished`), has no saved prompt (`no_saved_prompt`), or used input files or a response schema (`inputs_not_replayable`), because replay does not reproduce those yet.
+A job's prompt and input files are deleted as soon as the job starts unless the "Keep prompts" setting (`persistPrompts`) is on. To keep them for a single job, pass `--keep-prompt` to `augur run` or set `persistPrompt` to true in the `augur_run` tool. Setting `persistPrompt` to false discards them even when the setting is on. A kept prompt is deleted with its job when retention runs (`retentionDays`, 30 by default). A finished job with a saved prompt can run again on another route with `augur replay 3f1c9a27d0e4 deepseek`, or with the `augur_replay` tool and its `job` and `route` arguments. The replay is a new job with the same activity, data tier, tools, output mode, working folder, timeout, and expected file. It goes through the same pick, rules, data tier, and route limits as any request, so a route never sees data its rules do not allow, and a blocked replay returns the usual refusal. `augur job <id>` and `augur jobs` show the new job with a qualified "replay of <node:id>" link, and the original job stays unchanged. A job cannot be replayed if it does not exist (`unknown_job`), has not finished (`job_not_finished`), has no saved prompt (`no_saved_prompt`), or used input files or a response schema (`inputs_not_replayable`), because replay does not reproduce those yet.
 
 Model rules has List and Visual views. Visual previews one activity as a donut with four rings, one per data level from Regulated inside to Public outside, and each model appears only in the rings it is cleared for. Its Weight, Data, and Behavior tabs edit the same rules as the list. Drag a model from the full list onto the dial to add it. To remove one, drag its slice, its model card on the dial, or its chip in the mix back to the list. The buttons and keyboard use the same checks. Rule changes records each edit and lets you undo it.
 

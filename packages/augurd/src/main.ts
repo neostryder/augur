@@ -4,7 +4,13 @@ import { dirname, join } from 'node:path';
 import { LayaBackend, ServerPool, ShadowBackend, createBackend, DEFAULT_SERVERS } from '@augur/decision';
 import type { DecisionBackend } from '@augur/decision';
 import { ACTIVITIES, HOSTED, UsageEngine, registerBalanceSave } from '@augur/core';
-import { upgradeBalance } from '@augur/dispatch-protocol';
+import { createKeyStore } from './keystore.js';
+import { appDirs } from './paths.js';
+import { LocalJobSummarizer } from './job-summary.js';
+import { JobPoller } from './job-poller.js';
+import { DesktopAlertSink, LedgerDelivery, OutboxAlertSink, WebhookAlertSink } from './ledger-delivery.js';
+import { setConfigValue } from './config-edit.js';
+import { upgradeBalance, resolveBalance } from '@augur/dispatch-protocol';
 import { parseRates } from './accounting.js';
 import { enabledAdapters, loadLocalAdapters } from './adapters/index.js';
 import { loadConfig } from './config.js';
@@ -119,7 +125,9 @@ export async function startService(opts: ServiceOptions = {}) {
   // With the engine here, the app's mode switch decides whether jobs run; without it, a running service runs them.
   let engine: UsageEngine | null = null;
   const jobsOff = () => engine && engine.state.config.dispatch?.runJobs !== true ? 'Augur is set to usage only, so it does not run jobs. Choose Also run jobs in its settings to turn them on.' : null;
-  const supervisor = new Supervisor({ rates, store, config, dir, home, adapters: enabledAdapters(config.adapters, local.adapters), ...(decision ? { decision } : {}), decisions,
+  const ledgerKeys = createKeyStore({ dir: appDirs().config });
+  const cogitatorKey = () => engine ? ledgerKeys.get('cogitator.manageKey') : Promise.resolve(null);
+  const supervisor = new Supervisor({ summarizer: new LocalJobSummarizer('http://127.0.0.1:8470', fetch, cogitatorKey), rates, store, config, dir, home, adapters: enabledAdapters(config.adapters, local.adapters), ...(decision ? { decision } : {}), decisions,
     routes: routesNow, policy: () => policy.read(), usage: () => usage.read(), jobsOff });
   const smokeAlias = createAliasSmoke({ home, routes: routesNow, policy: () => policy.read(), submit: (request, route) => supervisor.submit(request, route), getJob: id => store.get(id) });
   const runAliasRefresh = singleFlight(async (label?: string) => refreshAliasFiles(home, providerListings, label, new Date(), smokeAlias, (provider, modelId) => provider === 'openrouter' ? openRouterEndpoints(modelId) : Promise.resolve(null)));
@@ -142,7 +150,7 @@ export async function startService(opts: ServiceOptions = {}) {
   const chatSettings = { ...config.web, host: config.web.chatHost, port: config.web.chatPort };
   const certNames = [...new Set([...webCertNames(config.web), ...(config.web.chatPort > 0 ? webCertNames(chatSettings) : [])])];
   if (config.web.enabled) {
-    web = new WebServer({ certNames, settings: config.web, chat: chat!, users: users!, engine: () => server.engineLink(), token: () => webToken(dir), staticDir: webDir(), log, dir, dispatch: (method, params) => server.dispatch(method, params) });
+    web = new WebServer({ certNames, settings: config.web, chat: chat!, users: users!, engine: () => server.engineLink(), token: () => webToken(dir), staticDir: webDir(), log, dir, dispatch: (method, params, peer) => server.dispatch(method, params, peer) });
     try {
       const at = await web.start();
       log(`web app listening on ${at.tls ? 'https' : 'http'}://${at.host}:${at.port}`);
@@ -159,7 +167,35 @@ export async function startService(opts: ServiceOptions = {}) {
       if (at.fingerprint) log(`The chat certificate fingerprint (SHA-256) is ${at.fingerprint}.`);
     } catch (e) { log(`Chat did not start: ${(e as Error).message}`); chatWeb = null; }
   }
+  server.ledgerSettings = () => ({ ...config.ledgerAlerts, stallMinutes: config.stallMinutes });
+  server.setLedgerSetting = (key, value) => {
+    if (key !== 'stallMinutes' && (!key.startsWith('ledgerAlerts.') || !Object.hasOwn(config.ledgerAlerts, key.slice(13)))) throw new Error('The job alert setting is invalid.');
+    const result = setConfigValue(dir, key, value);
+    if (!result.ok) throw new Error(result.error);
+    const next = loadConfig(dir);
+    config.ledgerAlerts = next.ledgerAlerts; config.stallMinutes = next.stallMinutes;
+  };
+  const delivery = new LedgerDelivery(store.db, [
+    { name: 'desktop', sink: new DesktopAlertSink(() => server.engineLink()?.views ?? null) },
+    { name: 'outbox', sink: new OutboxAlertSink(home) },
+    { name: 'webhook', enabled: () => !!config.ledgerAlerts.webhookUrl, sink: new WebhookAlertSink(() => config.ledgerAlerts.webhookUrl, () => config.ledgerAlerts.webhookKeyName, name => ledgerKeys.get(name), () => config.ledgerAlerts.webhookFormat) },
+  ]);
+  store.ledger.setSink(delivery);
+  server.ledgerDelivery = () => delivery.status();
   supervisor.reconcile();
+  const jobPoller = new JobPoller(store.ledger, () => config.ledgerNodes ?? [], fetch, endpoint => endpoint.keyName ? ledgerKeys.get(endpoint.keyName) : cogitatorKey());
+  server.refreshLedger = () => jobPoller.poll();
+  void jobPoller.poll();
+  const ledgerPoll = setInterval(() => { void jobPoller.poll(); }, 5000);
+  const maintainLedger = () => {
+    store.ledger.refreshLive(supervisor.list({ running: true, limit: 2147483647 }));
+    store.ledger.checkAlerts(config.ledgerAlerts);
+    void delivery.tick().catch(() => log('Job alert delivery could not refresh.'));
+  };
+  maintainLedger();
+  store.ledger.compact(resolveBalance(policy.read()?.balance).ledger.retentionDays);
+  const ledgerMaintenance = setInterval(() => { try { maintainLedger(); } catch { log('The job ledger could not refresh.'); } }, 5000);
+  const ledgerRetention = setInterval(() => { try { store.ledger.compact(resolveBalance(policy.read()?.balance).ledger.retentionDays); } catch { log('The job ledger could not compact.'); } }, 3600000);
   const jobsLive = new JobsLiveWriter(home, supervisor, () => config.stallMinutes, log);
   jobsLive.tick();
   const timer = setInterval(() => { try { supervisor.tick(); } catch (e) { log(`tick failed: ${(e as Error).message}`); } jobsLive.tick(); }, 500);
@@ -191,7 +227,7 @@ export async function startService(opts: ServiceOptions = {}) {
   return {
     supervisor, store, config,
     engine, web,
-    async stop() { await web?.close(); await chatWeb?.close(); chat?.close(); users?.close(); engine?.stop(); clearInterval(timer); clearInterval(daily); clearInterval(hourly); clearInterval(notices); await server.close(); await engine?.flush(); store.close(); log('stopped'); },
+    async stop() { await delivery.close(); jobPoller.close(); clearInterval(ledgerPoll); clearInterval(ledgerMaintenance); clearInterval(ledgerRetention); await web?.close(); await chatWeb?.close(); chat?.close(); users?.close(); engine?.stop(); clearInterval(timer); clearInterval(daily); clearInterval(hourly); clearInterval(notices); await server.close(); await engine?.flush(); store.close(); log('stopped'); },
   };
 }
 

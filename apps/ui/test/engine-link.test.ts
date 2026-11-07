@@ -25,6 +25,22 @@ function fakeShell() {
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
 describe('the engine link', () => {
+  it('carries desktop ledger calls, watch cursors, and notification job ids', async () => {
+    const f = fakeShell(), connecting = connectEngine(f.shell, () => {});
+    await tick(); f.emit({ t: 'ready', state: { busy: false } }); await connecting;
+    const result = f.shell.ledgerCall!('ledger_list', { session: 's' }); await tick();
+    expect(f.sent.at(-1)).toMatchObject({ t: 'ledger-call', id: 1, method: 'ledger_list', params: { session: 's' } });
+    f.emit({ t: 'result', id: 1, result: { jobs: [], next: null } }); await expect(result).resolves.toEqual({ jobs: [], next: null });
+    const cursors: string[] = []; let closed = 0;
+    const watch = await f.shell.watchLedger!('7', cursor => cursors.push(cursor), () => { closed++; });
+    expect(f.sent.at(-1)).toEqual({ t: 'ledger-watch', since: '7' });
+    f.emit({ t: 'ledger-change', cursor: '8' }); f.emit({ t: 'ledger-closed' });
+    expect(cursors).toEqual(['8']); expect(closed).toBe(1);
+    const notify = vi.fn(async () => {}); f.shell.notify = notify;
+    f.emit({ t: 'request', rid: 'job-alert', method: 'notify', params: { title: 'job.failed', body: 'Read notes', jobId: 'node:1', alertId: 'node:1:job.failed' } });
+    await tick(); expect(notify).toHaveBeenCalledWith('job.failed', 'Read notes', { jobId: 'node:1', alertId: 'node:1:job.failed' });
+    watch.close(); expect(f.sent.at(-1)).toEqual({ t: 'ledger-close' });
+  });
   it('waits for the whole state, then carries commands, changes and requests', async () => {
     const f = fakeShell(), downs: Array<string | null> = [];
     const connecting = connectEngine(f.shell, (m) => downs.push(m));
