@@ -39,6 +39,7 @@ Use Test key to check the Claude API key. Usage refresh does not test it. A Test
 | Usage resets Augur has seen, early or on schedule, and changes in reset credits | `resets.jsonl` in the app's settings folder, beside `history.jsonl`. It only grows. | Not meant to be edited. Read it with `augur resets` |
 | Premium backlog items | `premium-backlog.jsonl` in `~/.augur` | `augur backlog`, or the `augur_backlog_add` tool for an agent. [The premium backlog](#the-premium-backlog) lists the fields |
 | Premium gate events | `gate-ledger.jsonl` in `~/.augur`. It only grows. | Not meant to be edited. Read it with `augur gate report` |
+| Laya servers and adapter copies | `laya.json` in `~/.augur` | By hand. [Laya machines](#laya-machines) lists the fields |
 
 The settings folder is `%APPDATA%\com.neostryder.augur` on Windows, `~/Library/Application Support/com.neostryder.augur` on macOS and `~/.config/com.neostryder.augur` on Linux. `AUGUR_APP_DIR` moves it and `AUGUR_HOME` moves `~/.augur`. Both the app and the service write `config.json`, so close the app and run `augur service stop` before you edit it. A hand edit to `policy.json` is overwritten the next time a rule is saved.
 
@@ -47,6 +48,29 @@ The settings folder is `%APPDATA%\com.neostryder.augur` on Windows, `~/Library/A
 Job alert settings are in the service's `config.json`, under `ledgerAlerts`, with `stallMinutes` for local inactivity. Settings shows their switches, duration thresholds, optional webhook URL, and secret-store reference under Job alerts. The Service page shows per-sink delivery failures. The [job ledger guide](job-ledger.md#job-alert-settings) lists defaults, delivery recovery, outbox rotation, and the public alert JSON contract. These settings are service behavior, so they do not add balance rules or adapter options.
 
 `ledgerAlerts.webhookFormat` defaults to `augur`. Select `cresset` in Alerts to send the [Cresset event format](job-ledger.md#cresset-webhook-format) to an intake URL ending in `/v1/events`, with its per-source bearer token stored under the webhook key reference. The outbox format stays unchanged.
+### Laya machines
+
+`laya.json` in `~/.augur` lists the Laya servers that scripts try in order and the machines that receive copies of the adapters trained on this PC.
+
+- `servers`: the pool, a list of `{"name": "<host>", "url": "http://<host>:8010"}`. Laya scripts try these servers in order as a failover list.
+- `syncHost`: one `user@host` that receives the adapters, the registry, and the training row files.
+- `syncHosts`: a list of more machines. A string entry is a `user@host` that receives rows. An object `{"host": "user@host", "rows": false}` receives the adapters and the registry only, never row files.
+- `rows`: in a `syncHosts` object, whether the host receives row files. Defaults to true.
+- `server`: in a `syncHosts` object, optional. It names an existing `servers` entry for this host.
+
+When both `syncHost` and `syncHosts` are set, `syncHost` is included once, with rows. A host string that appears more than once is kept once. The `LAYA_BILBO` environment variable replaces the whole list with that single host, with rows.
+
+Each sync host joins the pool as the `servers` entry it matches. Laya tries these matches in order:
+
+1. The object's `server` key.
+2. A server whose `name` equals the hostname, the part after `@`.
+3. A server whose `url` host equals the hostname, ignoring case, scheme, port, and path.
+
+The matched server keeps its own url, so a copy target given as an IP address does not add a duplicate server. A sync host with no match is appended to the pool at `http://<name>:8010`, where `<name>` is the hostname. A server that stores no rows is still a valid failover target once it answers.
+
+`python packages/laya/src/sync.py push` copies to each host in order and prints one JSON object, `{"hosts": [...]}`, with a separate report for each host, even when there is only one. Adapters are copied first and checked by SHA-256. The registry is renamed into place last, only after the adapter checksums match. A host that does not answer never holds a half-written registry, and the copy to the other hosts continues. `status` prints the same per-host report and changes nothing. `pull` reads training rows from the first host that receives rows. `--host` limits any of the three commands to one host, given by `user@host` or by its name. `push` and `pull` try every host, then exit 1 if any host failed.
+
+`Pool.health` reports each server by name, with `None` when the server can take a request and the reason when it cannot.
 
 ### Idle alert settings
 

@@ -53,4 +53,5 @@ The element and wiring test suite runs headless Chrome or Chromium through the b
 
 If you changed Laya, also run `python -m unittest discover -s packages/laya/tests`.
 
+`packages/laya/src/pool.py` reads the Laya config from `~/.augur/laya.json`, including the two copy-target keys, `syncHost` and `syncHosts`. The tests for that parsing and for `sync.py` stub `subprocess` and open no network connection.
 Add a line under `[Unreleased]` in `CHANGELOG.md`. Start it with `[Visible]` when a user would notice the change and `[Internal]` when not, then the kind: Providers, UI, Alerts, Sync, Platform, Security or Docs.

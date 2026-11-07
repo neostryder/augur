@@ -10,6 +10,9 @@ import { readFleet } from '@augur/core';
 
 vi.setConfig({ testTimeout: 90000 });
 const cleanup: Array<() => Promise<void> | void> = [];
+const AMBIENT = ['AUGUR_SESSION', 'AUGUR_SESSION_TITLE', 'AUGUR_ORIGIN', 'AUGUR_SUMMARY', 'CLAUDE_CODE_SESSION_ID', 'AUGUR_IN_JOB', 'AUGUR_CALLER', 'AUGUR_JOB_ID', 'AUGUR_ROOT_JOB_ID'];
+/** The process environment without the markers a calling session sets, so a test never inherits the stamp or job identity of whoever runs it. */
+const quietEnv = (): NodeJS.ProcessEnv => Object.fromEntries(Object.entries(process.env).filter(([key]) => !AMBIENT.includes(key)));
 afterEach(async () => { while (cleanup.length) await cleanup.pop()!(); });
 
 describe('augur alias init', () => {
@@ -73,7 +76,7 @@ async function boot(extra: Record<string, unknown> = {}) {
   };
   const run = async (args: string[], stdin = '', env: NodeJS.ProcessEnv = {}) => {
     let out = '', err = '';
-    const code = await main(withUsual(args), { out: t => { out += t; }, err: t => { err += t; }, stdin: () => stdin, env: { ...process.env, AUGURD_DATA: e.dir, AUGURD_PIPE: pipe, ...env }, cwd: e.root });
+    const code = await main(withUsual(args), { out: t => { out += t; }, err: t => { err += t; }, stdin: () => stdin, env: { ...quietEnv(), AUGURD_DATA: e.dir, AUGURD_PIPE: pipe, ...env }, cwd: e.root });
     return { code, out, err };
   };
   return { e, run, pipe };
