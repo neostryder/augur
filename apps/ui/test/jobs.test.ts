@@ -15,11 +15,14 @@ describe('the ledger Jobs page', () => {
 
   it('renders the default session scope, filters, zero counts, and node health', () => {
     const m = model([job({ state: 'stalled' })]); m.ledger.counts.stalled = 1;
-    m.ledger.nodes = [{ node: 'eru', cursor: '1', lastSeenAt: 1000, unreachableSince: 2000 }];
+    m.ledger.nodes = [{ node: 'eru', cursor: '1', lastSeenAt: 1000, unreachableSince: 2000, gap: { at: 3000, from: '0', to: '1', retentionDays: 7 } }];
     const html = renderJobs(m);
     expect(html).toContain('aria-pressed="true" data-action="jobs-scope" data-value="session"');
     for (const filter of ['state', 'kind', 'node', 'origin', 'route', 'session', 'from', 'to', 'text']) expect(html).toContain('data-ledger-filter="' + filter + '"');
     expect(html).toContain('Stalled <b>1</b>'); expect(html).toContain('Failed <b>0</b>'); expect(html).toContain('Unreachable since:'); expect(html).toContain('Last poll:');
+    expect(html).toContain('History gap since ' + new Date(3000).toLocaleString());
+    m.ledger.nodes[0]!.gap = null;
+    expect(renderJobs(m)).not.toContain('History gap since');
   });
 
   it('renders loading, empty, missing detail, and paging states', () => {

@@ -1,7 +1,7 @@
 import { randomUUID, createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
-import { JOB_STATES, LEDGER_STATES, ORIGIN_KINDS, ledgerId, ledgerTerminal, summaryLine, validCursor, validLedgerJob, validNodeJobPage } from '@augur/dispatch-protocol';
-import type { JobRecord, LedgerAlert, LedgerAlertSettings, LedgerChain, LedgerChange, LedgerJob, LedgerMetadata, LedgerNode, LedgerPage, LedgerQuery, LedgerState, LedgerWatchPage, NodeJobPage } from '@augur/dispatch-protocol';
+import { JOB_STATES, LEDGER_STATES, ORIGIN_KINDS, ledgerId, ledgerTerminal, summaryLine, validCursor, validLedgerGap, validLedgerJob, validNodeJobPage } from '@augur/dispatch-protocol';
+import type { JobRecord, LedgerAlert, LedgerAlertSettings, LedgerChain, LedgerChange, LedgerGap, LedgerJob, LedgerMetadata, LedgerNode, LedgerPage, LedgerQuery, LedgerState, LedgerWatchPage, NodeJobPage } from '@augur/dispatch-protocol';
 
 export interface AlertSink { emit(event: LedgerAlert): void | Promise<void> }
 export class NoopAlertSink implements AlertSink { emit(_event: LedgerAlert): void {} }
@@ -37,6 +37,7 @@ export class JobLedger {
       create trigger if not exists ledger_job_insert after insert on jobs begin insert or ignore into ledger_dirty(id) values(new.id); end;
       create trigger if not exists ledger_job_update after update on jobs begin insert or ignore into ledger_dirty(id) values(new.id); end;`);
     if (!(db.prepare('pragma table_info(ledger_nodes)').all() as Array<{ name: string }>).some(column => column.name === 'last_poll_at')) db.exec('alter table ledger_nodes add column last_poll_at integer');
+    if (!(db.prepare('pragma table_info(ledger_nodes)').all() as Array<{ name: string }>).some(column => column.name === 'gap')) db.exec('alter table ledger_nodes add column gap text');
     db.prepare('insert or ignore into ledger_identity(id,node) values(1,?)').run(`augur-${randomUUID()}`);
     this.node = (db.prepare('select node from ledger_identity where id=1').get() as { node: string }).node;
     db.exec('insert or ignore into ledger_dirty(id) select id from jobs');
@@ -113,7 +114,9 @@ export class JobLedger {
   private remoteJob(job: LedgerJob): LedgerJob {
     const node = this.nodes().find(n => n.node === job.node);
     const line = this.remoteLines.get(job.id), row = line ? { ...job, activityLine: line } : job;
-    return node?.unreachableSince !== null && node?.unreachableSince !== undefined && !ledgerTerminal(job.state) ? { ...row, state: 'node-lost' } : row;
+    const version = node?.gap ? (this.db.prepare('select version from ledger_remote where id=?').get(job.id) as { version: string }).version : null;
+    const stale = node?.gap && version !== null && BigInt(version) <= BigInt(node.gap.to);
+    return ((node?.unreachableSince !== null && node?.unreachableSince !== undefined) || stale) && !ledgerTerminal(job.state) ? { ...row, state: 'node-lost' } : row;
   }
 
   private all(): LedgerJob[] {
@@ -195,9 +198,21 @@ export class JobLedger {
   }
 
   nodes(): LedgerNode[] {
-    return (this.db.prepare('select * from ledger_nodes order by node').all() as Array<{ node: string; cursor: string; unreachable_since: number | null; last_seen_at: number | null; last_poll_at: number | null }>).map(n => ({ node: n.node, cursor: n.cursor, unreachableSince: n.unreachable_since, lastSeenAt: n.last_seen_at, lastPollAt: n.last_poll_at }));
+    return (this.db.prepare('select * from ledger_nodes order by node').all() as Array<{ node: string; cursor: string; unreachable_since: number | null; last_seen_at: number | null; last_poll_at: number | null; gap: string | null }>).map(n => ({ node: n.node, cursor: n.cursor, unreachableSince: n.unreachable_since, lastSeenAt: n.last_seen_at, lastPollAt: n.last_poll_at, gap: n.gap === null ? null : JSON.parse(n.gap) as LedgerGap }));
   }
   cursor(node: string): string { return this.nodes().find(n => n.node === node)?.cursor ?? '0'; }
+
+  recoverGap(node: string, gap: LedgerGap): void {
+    if (!validLedgerGap(gap) || gap.from !== this.cursor(node) || node === this.node) throw new Error('The ledger gap is invalid.');
+    this.transaction(() => {
+      this.db.prepare('insert into ledger_nodes(node,cursor,last_seen_at,last_poll_at,gap) values(?,?,?,?,?) on conflict(node) do update set cursor=excluded.cursor,unreachable_since=null,last_seen_at=excluded.last_seen_at,last_poll_at=excluded.last_poll_at,gap=excluded.gap').run(node, gap.to, gap.at, gap.at, JSON.stringify(gap));
+      for (const { body } of this.db.prepare('select body from ledger_remote where node=?').all(node) as Array<{ body: string }>) {
+        const job = JSON.parse(body) as LedgerJob;
+        this.remoteLines.delete(job.id);
+        this.append(this.remoteJob(job));
+      }
+    });
+  }
 
   unreachable(node: string): void {
     this.transaction(() => {
@@ -224,7 +239,7 @@ export class JobLedger {
         this.db.prepare('insert into ledger_remote(id,node,version,body) values(?,?,?,?) on conflict(id) do update set version=excluded.version,body=excluded.body').run(event.job.id, node, event.seq, payload(event.job));
         this.append(event.job);
       }
-      for (const { body } of this.db.prepare('select body from ledger_remote where node=?').all(node) as Array<{ body: string }>) this.append(JSON.parse(body) as LedgerJob);
+      for (const { body } of this.db.prepare('select body from ledger_remote where node=?').all(node) as Array<{ body: string }>) this.append(this.remoteJob(JSON.parse(body) as LedgerJob));
     });
     for (const event of page.events) if (BigInt(event.seq) > BigInt(cursor)) {
       if (event.job.activityLine && !ledgerTerminal(event.job.state)) this.remoteLines.set(event.job.id, event.job.activityLine);

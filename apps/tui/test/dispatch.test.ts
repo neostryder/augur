@@ -32,6 +32,14 @@ function dispatch(answers: Record<string, unknown> = {}, runJobs = true, results
 }
 
 describe('dispatch page: jobs', () => {
+  it('keeps a reachable node history gap visible on the Jobs page', async () => {
+    const t = dispatch({ ledger_nodes: [{ node: 'eru', cursor: '10', lastSeenAt: NOW, unreachableSince: null, gap: { at: NOW, from: '1', to: '10', retentionDays: 7 } }] });
+    await t.load();
+    const text = t.draw(120, 50);
+    expect(text).toContain('eru: History gap since '); expect(text).toContain('eru: Reachable');
+    t.page.jobs.nodes[0]!.gap = null;
+    expect(t.draw(120, 50)).not.toContain('History gap since');
+  });
   it('lists ledger jobs and their state while local execution is disabled', async () => {
     const t = dispatch({ ledger_list: { jobs: [job({ summary: 'luna task' }), job({ id: 'node:failed', state: 'failed', summary: 'sol task' })], next: null } }, false);
     await t.load(); const text = t.draw(120, 50);

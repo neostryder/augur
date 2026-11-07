@@ -71,7 +71,7 @@ The default implementation calls the `summarize` role at `http://127.0.0.1:8470/
 
 ## Node events
 
-The service pulls `GET /api/v1/jobs?since=<cursor>` independently from each configured node every five seconds, at service startup, and through `ledger_refresh`. Pulling keeps a sleeping node independent of the service's uptime and does not make a central gateway a dependency for other nodes. Each request has a three-second timeout and refuses redirects. A refresh consumes up to ten pages per node; later refreshes continue from the committed cursor. Concurrent refreshes share the same in-flight poll.
+The service pulls `GET /api/v1/jobs?since=<cursor>` independently from each configured node every five seconds, at service startup, and through `ledger_refresh`. Pulling keeps a sleeping node independent of the service's uptime and does not make a central gateway a dependency for other nodes. Each request has a three-second timeout and refuses redirects. A refresh consumes up to ten pages and ten expired-cursor responses per node; later refreshes continue from the committed cursor. Concurrent refreshes share the same in-flight poll.
 
 The service's `config.json` accepts a `ledgerNodes` array. Each entry has a durable `node` id, a `url`, and an optional `keyName` reference to an existing secret-store entry. Without `keyName`, a running usage engine supplies `cogitator.manageKey`. URLs follow the existing key transport rule: HTTPS, or HTTP on the home network or loopback. Entries contain no key values. Each node must be registered directly so its collection does not depend on another node being up. The service reads this registry at startup.
 
@@ -87,11 +87,17 @@ The service's `config.json` accepts a `ledgerNodes` array. Each entry has a dura
 
 Each event is `{ "seq": "1", "at": 1790000000000, "job": <LedgerJob> }`. `seq` and `next` are unsigned 64-bit decimal strings, with no leading zeros except `0`. A node persists its identity and sequence counter across restarts. Each new local id is unique for that node's lifetime. A reinstall that loses this state uses a new node id. The endpoint returns only its own work, including calls from other programs, and never re-exports another node's events. Remote pages cannot introduce `augur-job` records.
 
-Events after `since` are contiguous and strictly increasing. An event carries the whole current metadata record, including its original creation time and unchanged kind. `next` is the last sequence returned, or exactly `since` for an empty page. `more` is true only when another page is ready. A node retains unconsumed events; this contract has no truncation or cursor-reset response. Clock time does not order events. Authentication uses a manage-scoped credential on Cogitator's receiving endpoint.
+Events after `since` are contiguous and strictly increasing. An event carries the whole current metadata record, including its original creation time and unchanged kind. `next` is the last sequence returned, or exactly `since` for an empty page. `more` is true only when another page is ready. Cogitator retains seven days of events. Clock time does not order events. Authentication uses a manage-scoped credential on Cogitator's receiving endpoint.
+
+An expired cursor returns HTTP 410 with `{"error":{"code":"cursor_expired","message":"The job cursor is older than the retained log.","oldest":"<cursor>","retentionDays":7}}`. Augur accepts `oldest` only as a canonical unsigned 64-bit decimal greater than the requested cursor. It records a history gap, advances the cursor atomically, and immediately resumes polling from `oldest`. This response records the node as reachable. Invalid expiry responses and HTTP 400 `future_cursor` or `invalid_cursor` responses keep the cursor and mark the node unreachable. Augur stores `retentionDays` only when it is a nonnegative safe integer.
+
+The feed replays retained events without checkpoint snapshots. After a gap, Augur overlays `node-lost` on previously unfinished jobs until each receives an event newer than the gap's `to` cursor. Empty successful pages leave those jobs under the overlay. Finished jobs keep their states, and a gap does not fire a job alert.
 
 The receiver validates every record and the entire envelope before writing. It commits the remote projections, change-log rows, and node cursor in one SQLite transaction. Replayed events do not add duplicate rows. An invalid transition rolls back the whole page. A terminal state cannot change into another state, and running work cannot return to queued. Retries use new ids and chain links.
 
-The service persists `unreachableSince`, `lastSeenAt`, and the last cursor for every polled node. It overlays `node-lost` on that node's active jobs after a failed poll and leaves finished jobs unchanged. A successful page clears the overlay, including an empty page with no new events. Collection resumes at the persisted cursor after a restart or outage.
+The service persists `unreachableSince`, `lastSeenAt`, `lastPollAt`, and the last cursor for every polled node. It overlays `node-lost` on that node's active jobs after a failed poll and leaves finished jobs unchanged. A successful page clears the outage overlay, including an empty page with no new events. Collection resumes at the persisted cursor after a restart or outage.
+
+`LedgerNode.gap` is optional and nullable. A gap contains `at` (detection time in milliseconds since the Unix epoch), `from` (the previous cursor), `to` (the retained floor), and optional `retentionDays`. A successful poll does not clear it; the next gap replaces it. The CLI, MCP nodes tool, and window and terminal Jobs pages show `History gap since <time>` so the owner can see incomplete history after recovery.
 
 ## Query API
 

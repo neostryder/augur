@@ -1,4 +1,4 @@
-import { validNode, validNodeJobPage } from '@augur/dispatch-protocol';
+import { validCursor, validNode, validNodeJobPage } from '@augur/dispatch-protocol';
 import { keyMayGoTo } from '@augur/core';
 import type { JobLedger } from './job-ledger.js';
 
@@ -30,17 +30,28 @@ export class JobPoller {
       if (!keyMayGoTo(endpoint.url) || base.username || base.password) throw new Error();
       const key = await this.authorization(endpoint);
       // Bounded batches let a large backlog catch up without monopolizing the service.
-      for (let batch = 0; batch < 10 && !this.closed; batch++) {
+      for (let batch = 0, gaps = 0; batch < 10 && gaps < 10 && !this.closed;) {
         const since = this.ledger.cursor(endpoint.node), url = new URL('/api/v1/jobs', base);
         url.searchParams.set('since', since);
         const response = await this.request(url, { redirect: 'error', signal: controller.signal, headers: { Accept: 'application/json', ...(key ? { Authorization: `Bearer ${key}` } : {}) } });
-        if (!response.ok) throw new Error();
+        if (!response.ok && response.status !== 410) throw new Error();
         const text = await response.text();
         if (text.length > 4 * 1024 * 1024) throw new Error();
         const page: unknown = JSON.parse(text);
         if (this.closed) return;
+        if (response.status === 410) {
+          const error = page && typeof page === 'object' && 'error' in page ? page.error : null;
+          if (!error || typeof error !== 'object' || !('code' in error) || error.code !== 'cursor_expired'
+            || !('oldest' in error) || !validCursor(error.oldest) || BigInt(error.oldest) <= BigInt(since)) throw new Error();
+          const retentionDays = 'retentionDays' in error ? error.retentionDays : undefined;
+          this.ledger.recoverGap(endpoint.node, { at: Date.now(), from: since, to: error.oldest,
+            ...(Number.isSafeInteger(retentionDays) && Number(retentionDays) >= 0 ? { retentionDays: Number(retentionDays) } : {}) });
+          gaps++;
+          continue;
+        }
         if (!validNodeJobPage(page) || (page.more && page.next === since)) throw new Error();
         this.ledger.ingest(endpoint.node, page);
+        batch++;
         if (!page.more) return;
       }
     } catch { if (!this.closed) this.ledger.unreachable(endpoint.node); }

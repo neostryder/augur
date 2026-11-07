@@ -21,7 +21,7 @@ export async function prepare(theme = 'light'): Promise<void> {
     if (offline) throw new Error('The ledger connection is offline.');
     if (method === 'ledger_list') { queries.push(params); return { jobs: jobs.filter(job => matches(job, params)), next: null }; }
     if (method === 'ledger_counts') return Object.fromEntries(LEDGER_STATES.map(state => [state, jobs.filter(job => job.state === state && matches(job, params)).length]));
-    if (method === 'ledger_nodes') return [{ node: 'eru', cursor: '2', lastSeenAt: now, unreachableSince: null }, { node: 'bilbo', cursor: '3', lastSeenAt: now - 30000, unreachableSince: now - 10000 }];
+    if (method === 'ledger_nodes') return [{ node: 'eru', cursor: '2', lastSeenAt: now, unreachableSince: null, gap: { at: now, from: '0', to: '1', retentionDays: 7 } }, { node: 'bilbo', cursor: '3', lastSeenAt: now - 30000, unreachableSince: now - 10000 }];
     if (method === 'ledger_changes') return { changes: [], cursor: '3', more: false };
     if (method === 'ledger_get') return { job: jobs.find(job => job.id === params.id), parent: null, children: [], retries: [] };
     return null;
@@ -38,6 +38,7 @@ export async function exercise(): Promise<string> {
   await prepare();
   const { app, root, queries, offline } = (window as any).ledgerFixture;
   const q = (selector: string): HTMLElement => { const element = root.querySelector(selector); if (!element) throw new Error('Missing ' + selector); return element; };
+  check(q('.ledger-nodes').textContent!.includes('History gap since '), 'The node history gap was missing.');
   check(root.querySelectorAll('.ledger-row').length === 2, 'The session list included another session.');
   q('[data-action="jobs-scope"][data-value="all"]').click(); await settle();
   check(root.querySelectorAll('.ledger-row').length === 3, 'All jobs did not include the archive.');

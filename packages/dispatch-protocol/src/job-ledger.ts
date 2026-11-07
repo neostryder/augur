@@ -87,7 +87,8 @@ export interface LedgerQuery {
 }
 export interface LedgerPage { jobs: LedgerJob[]; next: string | null }
 export interface LedgerChain { job: LedgerJob; parent: LedgerJob | null; children: LedgerJob[]; retries: LedgerJob[] }
-export interface LedgerNode { node: string; cursor: string; unreachableSince: number | null; lastSeenAt: number | null; lastPollAt?: number | null }
+export interface LedgerGap { at: number; from: string; to: string; retentionDays?: number }
+export interface LedgerNode { node: string; cursor: string; unreachableSince: number | null; lastSeenAt: number | null; lastPollAt?: number | null; gap?: LedgerGap | null }
 export interface LedgerChange { cursor: string; at: number; job: LedgerJob }
 export interface LedgerWatchPage { changes: LedgerChange[]; cursor: string; more: boolean }
 export interface LedgerWatchEvent { event: 'ledger_change'; change: LedgerChange }
@@ -151,6 +152,12 @@ const nullableLine = (v: unknown): boolean => v === null || line(v);
 const time = (v: unknown): boolean => v === null || finite(v);
 export const validCursor = (v: unknown): v is string => typeof v === 'string' && /^(0|[1-9][0-9]{0,19})$/.test(v) && BigInt(v) <= 18446744073709551615n;
 export const validNode = (v: unknown): v is string => typeof v === 'string' && /^[A-Za-z0-9._-]{1,128}$/.test(v);
+
+export function validLedgerGap(v: unknown): v is LedgerGap {
+  return object(v) && keys(v, ['at', 'from', 'to', 'retentionDays']) && finite(v.at)
+    && validCursor(v.from) && validCursor(v.to) && BigInt(v.to) > BigInt(v.from)
+    && (v.retentionDays === undefined || (Number.isSafeInteger(v.retentionDays) && Number(v.retentionDays) >= 0));
+}
 
 export function ledgerId(node: string, localId: string): string {
   if (!validNode(node) || !/^[A-Za-z0-9._-]{1,128}$/.test(localId)) throw new Error('The ledger identifier is invalid.');

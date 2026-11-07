@@ -247,7 +247,10 @@ export class DispatchPage implements Page {
       } });
     }
     rows.push({ kind: 'note', text: LEDGER_STATES.map(state => LEDGER_STATE_LABELS[state] + ': ' + jobs.counts[state]).join(' / ') });
-    for (const node of jobs.nodes) rows.push({ kind: 'note', text: node.node + ': ' + (node.unreachableSince === null ? T.reachable : T.unreachable + ' since ' + ledgerTime(node.unreachableSince)) + ' / Last poll: ' + ledgerTime(node.lastPollAt ?? node.lastSeenAt), style: node.unreachableSince === null ? 'muted' : 'warn' });
+    for (const node of jobs.nodes) {
+      if (node.gap) rows.push({ kind: 'note', text: node.node + ': History gap since ' + ledgerTime(node.gap.at), style: 'warn' });
+      rows.push({ kind: 'note', text: node.node + ': ' + (node.unreachableSince === null ? T.reachable : T.unreachable + ' since ' + ledgerTime(node.unreachableSince)) + ' / Last poll: ' + ledgerTime(node.lastPollAt ?? node.lastSeenAt), style: node.unreachableSince === null ? 'muted' : 'warn' });
+    }
     if (jobs.error) rows.push({ kind: 'note', text: jobs.error, style: 'crit' });
     if (jobs.jobs === null) rows.push({ kind: 'note', text: T.loading });
     else if (!jobs.jobs.length) rows.push({ kind: 'note', text: T.empty });

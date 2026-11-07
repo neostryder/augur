@@ -296,11 +296,13 @@ describe('ledger tools', () => {
     expect((await tools.jobs({ since: '6', page: 'x' })).isError).toBe(true);
   });
   it('reads nodes, alert times, and local history without exposing event detail', async () => {
-    const node = { node: 'eru', cursor: '8', lastSeenAt: 1000, unreachableSince: 2000 };
+    const node = { node: 'eru', cursor: '8', lastSeenAt: 1000, unreachableSince: 2000, gap: { at: 3000, from: '1', to: '8', retentionDays: 7 } };
     const recent = { at: Date.parse('2026-11-07'), type: 'job.failed', jobId: 'node:abc', summary: 'Read notes' };
     const tools = createTools(deps({ ledger_nodes: [node], ledger_alerts: [{ ...recent, at: 0 }, recent], ledger_get: { job: ledgerJob({ kind: 'augur-job' }), parent: null, children: [], retries: [] }, events: [{ at: 0, kind: 'queued', detail: 'private-sentinel' }] }));
     expect((await tools.nodes()).data).toEqual({ nodes: [node] });
     expect((await tools.nodes()).text).toContain('unreachable since 1970');
+    expect((await tools.nodes()).text).toContain('History gap since 1970');
+    expect((await createTools(deps({ ledger_nodes: [{ ...node, gap: null }] })).nodes()).text).not.toContain('History gap since');
     expect((await tools.alerts({ since: '2026-11-01' })).data).toEqual({ alerts: [recent] });
     const r = await tools.job({ id: 'abc' });
     expect(r.data?.history).toEqual([{ at: 0, kind: 'queued' }]); expect(JSON.stringify(r)).not.toContain('private-sentinel');

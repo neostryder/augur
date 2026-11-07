@@ -791,6 +791,10 @@ describe('ledger commands', () => {
     e.store.ledger.unreachable('eru'); e.store.ledger.checkAlerts();
     expect((await run(['nodes'])).out).toContain('unreachable since');
     expect(JSON.parse((await run(['nodes', '--json'])).out)[0]).toMatchObject({ node: 'eru', cursor: '1' });
+    const gap = { at: Date.now(), from: '1', to: '10', retentionDays: 7 };
+    e.store.ledger.recoverGap('eru', gap);
+    expect((await run(['nodes'])).out).toContain('History gap since ');
+    expect(JSON.parse((await run(['nodes', '--json'])).out)[0]).toMatchObject({ node: 'eru', cursor: '10', gap, unreachableSince: null });
     expect((await run(['jobs', '--refresh'])).code).toBe(0);
     const alerts = JSON.parse((await run(['alerts', '--since', '6h', '--json'])).out);
     expect(alerts).toEqual([expect.objectContaining({ type: 'job.failed', summary: 'Read notes two' })]);

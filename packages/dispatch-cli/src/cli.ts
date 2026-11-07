@@ -209,7 +209,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
       }
       case 'nodes': {
         const nodes = await call('ledger_nodes', undefined, opts);
-        say(nodes.map(n => `${n.node}  last poll ${ledgerDate(n.lastSeenAt)}  cursor ${n.cursor}  ${n.unreachableSince !== null ? 'unreachable' : n.lastSeenAt === null ? 'unknown' : 'reachable'}  unreachable since ${ledgerDate(n.unreachableSince)}`).join('\n') || 'No registered nodes.', nodes); return 0;
+        say(nodes.map(n => `${n.node}  last poll ${ledgerDate(n.lastSeenAt)}  cursor ${n.cursor}  ${n.unreachableSince !== null ? 'unreachable' : n.lastSeenAt === null ? 'unknown' : 'reachable'}  unreachable since ${ledgerDate(n.unreachableSince)}${n.gap ? `\n  History gap since ${ledgerDate(n.gap.at)}` : ''}`).join('\n') || 'No registered nodes.', nodes); return 0;
       }
       case 'conversations': return await conversationsCmd(p, io, opts, say, opt, json);
       case 'job': {

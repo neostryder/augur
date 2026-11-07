@@ -1,11 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { ledgerPage, ledgerQuery, ledgerTime } from '../src/ledger-query.js';
-import { checkBalanceSetting, ledgerId, resolveBalance, stampFromEnv, stampFromHeaders, stampHeaders, summaryLine, validCursor, validLedgerJob, validNodeJobPage, validStamp } from '../src/index.js';
+import { checkBalanceSetting, ledgerId, resolveBalance, stampFromEnv, stampFromHeaders, stampHeaders, summaryLine, validCursor, validLedgerGap, validLedgerJob, validNodeJobPage, validStamp } from '../src/index.js';
 import type { LedgerJob } from '../src/index.js';
 
 const job = (): LedgerJob => ({ id: 'eru:1', node: 'eru', localId: '1', kind: 'llm-request', state: 'running', stamp: {}, attribution: { session: 'unknown', origin: 'unknown', process: 'unknown', host: 'unknown' }, summary: '', summarySource: 'none', route: null, model: 'summarize', activity: 'summarize', createdAt: 1, startedAt: 2, endedAt: null, durationMs: null, updatedAt: 2, lastActivityAt: 2, parentId: null, retryOf: null, retriedAs: null, usage: null, exitReason: null, compacted: false });
 
 describe('the job ledger contract', () => {
+  it('accepts only advancing metadata gaps with valid times and optional retention days', () => {
+    const gap = { at: 1000, from: '1', to: '10' };
+    expect(validLedgerGap(gap)).toBe(true); expect(validLedgerGap({ ...gap, retentionDays: 7 })).toBe(true);
+    for (const fields of [{ at: -1 }, { at: NaN }, { from: '01' }, { to: '1' }, { to: '0' }, { to: '18446744073709551616' }, { retentionDays: -1 }, { retentionDays: 1.5 }, { retentionDays: '7' }, { prompt: 'private' }, { answer: 'private' }]) expect(validLedgerGap({ ...gap, ...fields })).toBe(false);
+    for (const value of [null, [], {}]) expect(validLedgerGap(value)).toBe(false);
+  });
   it('qualifies identifiers with a durable node id', () => {
     expect(ledgerId('eru', '1')).not.toBe(ledgerId('bilbo', '1'));
     for (const node of ['', 'a:b', '../a']) expect(() => ledgerId(node, '1')).toThrow();

@@ -247,7 +247,7 @@ export function createTools(d: McpDeps) {
   }
 
   async function nodes(): Promise<ToolResult> {
-    return guarded(() => d.call('ledger_nodes', undefined, d.opts), nodes => ({ text: nodes.map(n => `${n.node}  last poll ${ledgerDate(n.lastSeenAt)}  cursor ${n.cursor}  ${n.unreachableSince !== null ? 'unreachable' : n.lastSeenAt === null ? 'unknown' : 'reachable'}  unreachable since ${ledgerDate(n.unreachableSince)}`).join('\n') || 'No registered nodes.', data: { nodes } }));
+    return guarded(() => d.call('ledger_nodes', undefined, d.opts), nodes => ({ text: nodes.map(n => `${n.node}  last poll ${ledgerDate(n.lastSeenAt)}  cursor ${n.cursor}  ${n.unreachableSince !== null ? 'unreachable' : n.lastSeenAt === null ? 'unknown' : 'reachable'}  unreachable since ${ledgerDate(n.unreachableSince)}${n.gap ? `\n  History gap since ${ledgerDate(n.gap.at)}` : ''}`).join('\n') || 'No registered nodes.', data: { nodes } }));
   }
 
   async function alerts(a: { since?: string }): Promise<ToolResult> {

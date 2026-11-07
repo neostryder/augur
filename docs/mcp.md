@@ -49,7 +49,7 @@ The data tier is required on every run and is never assumed. An agent has to say
 | `augur_job` | `id`, qualified or bare local id | The selected ledger record, attribution, summary source, times, reported usage, exit reason, parent, children, retries, and retained local event history. The result contains no prompt or answer text. |
 | `augur_jobs` | optional `all`, `session`, `origin`, `node`, `kind`, `state`, `running`, `root`, `route`, `from`, `until`, `text`, `limit`, `page`, `since` | Session job metadata, newest first, with `next` for paging. `kind` and `state` are arrays. `from` and `until` accept ISO dates or elapsed times such as `6h`. `since` is a service change cursor and returns `changes`, `cursor`, and `more` instead of a list page. |
 | `augur_job_counts` | The `augur_jobs` filters except `since` | Counts by state across matching jobs, with the same session default. |
-| `augur_nodes` | none | Registered nodes, last successful polls, cursors, reachability, and unreachable-since times. |
+| `augur_nodes` | none | Registered nodes, last successful polls, cursors, reachability, unreachable-since times, and persistent history gaps. |
 | `augur_alerts` | optional `since`, an ISO date or elapsed time | Persisted job alert events since that time. |
 | `augur_replay` | `job` (id of the finished job) and `route` (route to run the new job on) | The new job's id, or a refusal with its code and reason. The new job shows "replay of <id>" in `augur_job` and `augur_jobs`. |
 | `augur_cancel` | `id` | Asks a running job to stop. |

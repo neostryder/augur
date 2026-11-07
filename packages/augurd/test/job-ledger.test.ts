@@ -33,6 +33,20 @@ function insert(store: Store, id = 'local') {
 }
 
 describe('the durable ledger', () => {
+  it('migrates and persists node gaps and stale job overlays across a restart', () => {
+    const { dir, store, ledger } = fixture();
+    ledger.ingest('eru', page([job()]));
+    store.db.exec('alter table ledger_nodes drop column gap');
+    const migrated = new JobLedger(store.db, { get: id => store.get(id), all: () => store.list({ limit: 1000 }) });
+    expect(migrated.nodes()[0]!.gap).toBeNull();
+    const gap = { at: 1000, from: '1', to: '10', retentionDays: 7 };
+    migrated.recoverGap('eru', gap); migrated.close(); store.close();
+    const reopened = new Store(dir); cleanup.push(() => reopened.close());
+    expect(reopened.ledger.nodes()[0]).toMatchObject({ cursor: '10', gap, unreachableSince: null });
+    reopened.ledger.ingest('eru', page([], 10));
+    expect(reopened.ledger.get('eru:1')?.job.state).toBe('node-lost');
+    expect(reopened.ledger.nodes()[0]!.gap).toEqual(gap);
+  });
   it('migrates node poll times and retains the successful time during an outage', () => {
     const { store, ledger } = fixture();
     ledger.ingest('eru', page([job()]));
@@ -177,6 +191,91 @@ describe('the durable ledger', () => {
 });
 
 describe('node polling', () => {
+  it('retries an expired cursor at the page budget boundary in the same poll', async () => {
+    const { ledger } = fixture();
+    let expired = false;
+    const request = vi.fn(async (url: string | URL | Request) => {
+      const since = Number(new URL(String(url)).searchParams.get('since'));
+      if (since === 9) { expired = true; return new Response(JSON.stringify({ error: { code: 'cursor_expired', oldest: '20' } }), { status: 410 }); }
+      return new Response(JSON.stringify(page([job(String(since + 1))], since, true)));
+    });
+    const poller = new JobPoller(ledger, () => [{ node: 'eru', url: 'http://localhost' }], request as typeof fetch);
+    await poller.poll(); poller.close();
+    expect(expired).toBe(true); expect(request).toHaveBeenCalledTimes(11);
+    expect(ledger.nodes()[0]).toMatchObject({ cursor: '21', unreachableSince: null, gap: { from: '9', to: '20' } });
+    expect(ledger.get('eru:21')?.job.state).toBe('running');
+  });
+  it('bounds repeated advancing expiry responses without marking the node unreachable', async () => {
+    const { ledger } = fixture();
+    const request = vi.fn(async (url: string | URL | Request) => new Response(JSON.stringify({ error: { code: 'cursor_expired', oldest: String(Number(new URL(String(url)).searchParams.get('since')) + 1) } }), { status: 410 }));
+    const poller = new JobPoller(ledger, () => [{ node: 'eru', url: 'http://localhost' }], request as typeof fetch);
+    await poller.poll(); poller.close();
+    expect(request).toHaveBeenCalledTimes(10);
+    expect(ledger.nodes()[0]).toMatchObject({ cursor: '10', unreachableSince: null, gap: { from: '9', to: '10' } });
+  });
+  it('recovers expired history immediately, keeps the gap, and settles only jobs with newer events', async () => {
+    const { store, ledger } = fixture();
+    ledger.ingest('eru', page([job('1', { state: 'stalled' }), job('2'), job('3', { state: 'done', endedAt: 12, durationMs: 10 })]));
+    ledger.unreachable('eru');
+    const request = vi.fn(async (url: string | URL | Request) => {
+      const since = new URL(String(url)).searchParams.get('since');
+      if (since === '3') return new Response(JSON.stringify({ error: { code: 'cursor_expired', oldest: '10', retentionDays: 7, prompt: 'PRIVATE_GAP_PROMPT', answer: 'PRIVATE_GAP_ANSWER' } }), { status: 410 });
+      expect(ledger.nodes()[0]).toMatchObject({ cursor: '10', unreachableSince: null });
+      return new Response(JSON.stringify(page([job('2', { state: 'done', endedAt: 12, durationMs: 10 }), job('4')], 10)));
+    });
+    const poller = new JobPoller(ledger, () => [{ node: 'eru', url: 'http://localhost' }], request as typeof fetch);
+    const before = Date.now(); await poller.poll(); poller.close();
+    expect(request).toHaveBeenCalledTimes(2);
+    const node = ledger.nodes()[0]!;
+    expect(node).toMatchObject({ cursor: '12', unreachableSince: null, gap: { from: '3', to: '10', retentionDays: 7 } });
+    expect(node.gap!.at).toBeGreaterThanOrEqual(before); expect(node.gap!.at).toBeLessThanOrEqual(Date.now());
+    expect(ledger.get('eru:1')?.job.state).toBe('node-lost');
+    expect(ledger.get('eru:2')?.job.state).toBe('done'); expect(ledger.get('eru:3')?.job.state).toBe('done');
+    expect(ledger.get('eru:4')?.job.state).toBe('running');
+    ledger.ingest('eru', page([], 12));
+    expect(ledger.nodes()[0]!.gap).toEqual(node.gap);
+    expect(ledger.changes().changes.filter(c => c.job.id === 'eru:1').at(-1)?.job.state).toBe('node-lost');
+    expect(ledger.checkAlerts()).toEqual([]);
+    expect(JSON.stringify(store.db.prepare('select gap from ledger_nodes').all())).not.toContain('PRIVATE_GAP_');
+    expect(JSON.stringify(ledger.changes())).not.toContain('PRIVATE_GAP_');
+    ledger.ingest('eru', page([job('1')], 12));
+    expect(ledger.get('eru:1')?.job.state).toBe('running');
+  });
+  it('replaces consecutive gaps and compares full unsigned 64-bit cursors', async () => {
+    const { ledger } = fixture();
+    ledger.recoverGap('eru', { at: 1, from: '0', to: '9007199254740992' });
+    const replies = [
+      new Response(JSON.stringify({ error: { code: 'cursor_expired', oldest: '9007199254740993', retentionDays: 7 } }), { status: 410 }),
+      new Response(JSON.stringify({ error: { code: 'cursor_expired', oldest: '18446744073709551615', retentionDays: 'invalid' } }), { status: 410 }),
+      new Response(JSON.stringify({ ...page([]), next: '18446744073709551615' })),
+    ];
+    const request = vi.fn(async () => replies.shift()!);
+    const poller = new JobPoller(ledger, () => [{ node: 'eru', url: 'http://localhost' }], request as typeof fetch);
+    await poller.poll(); poller.close();
+    expect(request).toHaveBeenCalledTimes(3);
+    expect(ledger.nodes()[0]).toMatchObject({ cursor: '18446744073709551615', unreachableSince: null, gap: { from: '9007199254740993', to: '18446744073709551615' } });
+    expect(ledger.nodes()[0]!.gap!.retentionDays).toBeUndefined();
+  });
+  it.each([
+    { error: { code: 'cursor_expired' } },
+    ...['bad', '01', '-1', '18446744073709551616', '2', '1', 3, null].map(oldest => ({ error: { code: 'cursor_expired', oldest } })),
+    { error: { code: 'future_cursor', oldest: '3' } }, {}, null, 'non-JSON',
+  ])('keeps the cursor and marks the node unreachable for an invalid expiry: %j', async body => {
+    const { ledger } = fixture(); ledger.ingest('eru', page([job(), job('2')]));
+    const request = vi.fn(async () => new Response(typeof body === 'string' ? body : JSON.stringify(body), { status: 410 }));
+    const poller = new JobPoller(ledger, () => [{ node: 'eru', url: 'http://localhost' }], request as typeof fetch);
+    await poller.poll(); poller.close();
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(ledger.nodes()[0]).toMatchObject({ cursor: '2', gap: null });
+    expect(ledger.nodes()[0]!.unreachableSince).not.toBeNull();
+  });
+  it.each(['future_cursor', 'invalid_cursor'])('keeps HTTP 400 handling for %s', async code => {
+    const { ledger } = fixture();
+    const poller = new JobPoller(ledger, () => [{ node: 'eru', url: 'http://localhost' }], (async () => new Response(JSON.stringify({ error: { code, oldest: '10' } }), { status: 400 })) as typeof fetch);
+    await poller.poll(); poller.close();
+    expect(ledger.nodes()[0]).toMatchObject({ cursor: '0', gap: null });
+    expect(ledger.nodes()[0]!.unreachableSince).not.toBeNull();
+  });
   it('times out and aborts a node request without advancing its cursor', async () => {
     vi.useFakeTimers();
     const { ledger } = fixture();
