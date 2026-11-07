@@ -1,6 +1,6 @@
 # Job ledger
 
-The service keeps a metadata ledger in its existing `state.db`. Augur jobs use the existing `jobs` rows, with a `ledger` metadata column. Remote work uses `ledger_remote`. The service combines both when it answers a ledger query. The CLI and MCP server stamp submissions. The existing Jobs views still use their existing job calls.
+The service keeps a metadata ledger in its existing `state.db`. Augur jobs use the existing `jobs` rows, with a `ledger` metadata column. Remote work uses `ledger_remote`. The service combines both when it answers a ledger query. The CLI and MCP server stamp submissions and query this ledger. The existing Jobs views still use their existing job calls.
 
 ```mermaid
 flowchart LR
@@ -33,7 +33,7 @@ flowchart LR
 | `createdAt`, `startedAt`, `endedAt`, `updatedAt`, `lastActivityAt` | Milliseconds since the Unix epoch. Start, end, and last activity can be null. The local `updatedAt` records the latest execution-state timestamp. |
 | `durationMs` | The end minus the start, or creation when the job never started. It is null while the job is active. Clients calculate elapsed time from their current time and `startedAt ?? createdAt`. |
 | `activityLine` | A transient live progress line, at most 120 ASCII characters. The ledger does not persist it. |
-| `parentId`, `retryOf`, `retriedAs` | Qualified ledger ids, or null. |
+| `parentId`, `retryOf`, `retriedAs` | Qualified ledger ids, or null. Local records also provide the optional `replayOf` link. |
 | `usage` | Provider-reported token counts and cost, or null. The existing accounting call supplies Augur's derived and imputed figures separately. |
 | `exitReason` | A metadata exit reason, or null. Local jobs use their execution state here rather than harness error text. |
 | `compacted` | Whether the detail retention window has expired. |
@@ -59,7 +59,7 @@ Header values use UTF-8 percent encoding through `encodeURIComponent`; receivers
 
 `origin` is `claude-code`, `cli`, `mcp`, `hermes`, `scheduled-task`, `service`, or `other`. The `session`, `origin`, `process`, and `host` attribution groups each record `stamped`, `inferred`, or `unknown`. A partial claim stamps its group; inference fills only groups with no claim. A session title is caller metadata and is never guessed from task text.
 
-`augur run` accepts `--session`, `--session-title`, `--origin`, and `--summary`. Flags override `AUGUR_SESSION`, `AUGUR_SESSION_TITLE`, `AUGUR_ORIGIN`, and `AUGUR_SUMMARY`. The same connection stamp accompanies related CLI calls. The CLI adds its process ids and host name. MCP uses origin `mcp` and label `augur-mcp`, passes the four environment fields, and uses the host session for pick matching. A nested Augur job receives its parent's session id and title through those environment names. It does not inherit the parent's summary.
+`augur run` accepts `--session`, `--session-title`, `--origin`, and `--summary`. Flags override `AUGUR_SESSION`, `AUGUR_SESSION_TITLE`, `AUGUR_ORIGIN`, and `AUGUR_SUMMARY`. When `AUGUR_SESSION` is absent, the CLI and MCP server use `CLAUDE_CODE_SESSION_ID`. Route tests and replays carry the calling stamp, and backlog releases carry a service origin with the backlog item id. The same connection stamp accompanies related CLI calls. The CLI adds its process ids and host name. MCP uses origin `mcp` and label `augur-mcp`, passes the four environment fields, and uses the host session for pick matching. A nested Augur job receives its parent's session id and title through those environment names. It does not inherit the parent's summary.
 
 For an unstamped Windows pipe caller, `jobhost.exe --peer-pid` reads the peer process id from the inherited server pipe handle. `--process-info` reads its executable name and parent id from the process snapshot. A process-tree walk recognizes supported origin names, stops after six processes, and detects loops. Linux reads process names and parent ids from `/proc/<pid>/stat`; macOS uses `ps` with `ppid` and `comm`. A transport that supplies Unix peer credentials can use the same walk. When the runtime supplies no Unix peer pid, or a process cannot be read, the missing groups remain `unknown`. HTTP dispatch uses the socket peer address and user agent as inferred metadata. It does not trust forwarding headers for attribution.
 
@@ -113,6 +113,45 @@ The shared `Methods` interface in `packages/dispatch-protocol/src/ipc.ts` types 
 Sorting uses `createdAt`, `startedAt`, `endedAt`, or `durationMs`, with `order` set to `asc` or `desc`. The default is creation time descending. Null values sort as -1. The qualified id breaks ties. `limit` defaults to 100 and accepts 1 through 1000. A client passes `next` as `page` to continue with the same filters and ordering. The opaque keyset cursor binds to that query. Concurrent state changes can move records when sorting by mutable fields, so a client uses the watch for current state.
 
 Changes use a service-local durable sequence, independent of node cursors. A watch replays after `since`, then sends changes as they arrive. The exported `watchLedger` client handles this connection. A slow reader exceeding the socket buffer limit is disconnected and can reconnect with its last processed cursor. Activity text stays transient and is available from list and get; durable change events carry state and activity timestamps.
+
+## CLI commands
+
+`augur jobs` lists jobs from the calling session. The session comes from `--session`, `AUGUR_SESSION`, or `CLAUDE_CODE_SESSION_ID`, in that order. Without a session, the list includes all sessions and nodes. `--all` removes the implicit session filter; an explicit `--session` still applies. The list uses creation time descending, with 25 jobs per page by default.
+
+```text
+augur jobs [counts] [--all] [--session <id>] [--origin <kind>] [--node <id>] [--kind <kind>] [--state <state>] [--running] [--root <id>] [--route <name>] [--since <time>] [--until <time>] [--text <text>] [--limit <n>] [--page <cursor>] [--json]
+augur jobs --watch
+augur jobs --refresh
+augur job <node:local-id|local-id> [--json]
+augur nodes [--json]
+augur alerts [--since <time>] [--json]
+```
+
+| Option | Meaning |
+| --- | --- |
+| `--session`, `--origin`, `--node`, `--route` | Exact metadata filters. |
+| `--kind`, `--state` | A comma-separated list of ledger kinds or states. A single execution-state name preserves the exact local execution filter; `running` also includes its stalled overlay. Names shared with ledger states also match remote records. Older names such as `completed`, `needs_approval`, or `cancel_requested` match only local executions. |
+| `--running` | Queued, running, and stalled work; it intersects the state filter. |
+| `--root` | A local execution root id, bare or qualified. Remote records do not match. |
+| `--since`, `--until` | Inclusive creation-time bounds. Each accepts an ISO date or elapsed time such as `90m`, `6h`, or `2d`. Both use the same current time. |
+| `--text` | A case-insensitive substring across the metadata search fields. |
+| `--limit` | Jobs per page, from 1 through 1000. |
+| `--page` | The returned next-page cursor with the same filters. Relative time bounds keep the first page's clock. |
+| `--watch` | A live list that redraws as changes arrive, updates elapsed times, reconnects after a service restart, and stops on Ctrl+C. |
+| `--refresh` | A node poll before the query. |
+| `--json` | A JSON object with `jobs`, `next`, and `counts`. Watch snapshots also include a change `cursor`. |
+
+The table shows state, kind, node, session title or origin, summary, start, elapsed time or duration, end, route or model, and live activity. Narrow terminals use stacked rows. Each record includes its qualified id, and the footer gives counts and the next-page hint. `augur jobs counts` uses the same filters and returns counts by state across every matching page.
+
+`augur job` returns the selected record, its parent, direct children, retry chain, and local event history when retained. It displays each attribution group's method, the stamp, summary source, timestamps, reported tokens and cost, and exit reason. Its JSON result has `job`, `parent`, `children`, `retries`, and `history`. History contains event times and kinds, without event detail. A bare id always refers to the local service's execution job. `augur status <id>` keeps the existing execution status interface.
+
+`wait`, `result`, `cancel`, `logs`, `apply`, and `replay` operate on local execution ids. They also accept qualified local ids and reject remote ids with a local-execution error. `augur result` remains the command for reading a local answer. `augur nodes` reports registered node cursors, last successful polls, reachability, and the time each unreachable period began. `augur alerts` reads persisted ledger events and filters their event times with `--since`. The existing `augur alerts dismiss <id>` and `augur alerts dismiss --all` commands still dismiss usage alerts.
+
+## MCP queries
+
+`augur_jobs` and `augur_job_counts` use the calling session by default, or all sessions with `all: true`. An explicit `session` overrides that default. The filters match the CLI, except `from` is the creation-time start and `since` is a service change cursor. `kind` and `state` are arrays. Lists default to 20 records and return `jobs` and `next`. A client passes `next` as `page` with the same filters, including relative time strings.
+
+With `since`, `augur_jobs` calls `ledger_changes` and returns `changes`, `cursor`, and `more`. It filters changes against the current matching job ids, advances the global cursor through unrelated changes, and can return an empty change list with `more: true`. The client continues with the returned cursor. A change cursor and a page cursor cannot be combined. `augur_job` returns the full metadata record and chain, without answer text. `augur_nodes` and `augur_alerts` read node health and persisted events. These ledger tools are read-only and expose no owner approval or execution controls.
 
 ## Retention and privacy
 

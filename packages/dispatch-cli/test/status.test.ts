@@ -33,7 +33,7 @@ async function serve(withEngine = true) {
     async dismiss(ids: string[]) { calls.push(['dismiss', ids]); },
     async setClaude(...a: unknown[]) { calls.push(['setClaude', ...a]); },
   } as unknown as EngineApi;
-  const server = new IpcServer({} as never, {} as never, token, () => null);
+  const server = new IpcServer({} as never, { ledger: { alerts: () => [] } } as never, token, () => null);
   if (withEngine) server.attachEngine({ api, views: new ViewHub() });
   await server.start(pipe);
   cleanup.push(async () => { await server.close(); rmSync(dir, { recursive: true, force: true }); });
@@ -83,7 +83,7 @@ describe('augur refresh, alerts and claude', () => {
   it('lists alerts, dismisses one by id or all of them, and refuses an id that matches none', async () => {
     const { run, calls } = await serve();
     const list = await run(['alerts']);
-    expect(list.out).toContain('Claude at 75%');
+    expect(list.out.trim()).toBe('No job alert events.');
     expect((await run(['alerts', 'dismiss', 'a2'])).out.trim()).toBe('Dismissed 1 alert.');
     expect((await run(['alerts', 'dismiss', '--all'])).out.trim()).toBe('Dismissed 2 alerts.');
     expect(calls).toEqual([['dismiss', ['a2']], ['dismiss', ['a1', 'a2']]]);

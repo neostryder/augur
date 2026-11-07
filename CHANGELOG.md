@@ -6,6 +6,12 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Added
 
+- [Visible] [Platform] `augur jobs` lists ledger metadata with session defaults, filters, counts, paging, refresh, and a reconnecting watch; legacy execution filters remain available.
+- [Visible] [Platform] `augur job` shows ledger attribution, summary source, times, usage, history, and chain links; local execution commands accept qualified local ids and reject remote ids.
+- [Visible] [Alerts] `augur nodes` reports node polling and reachability, and `augur alerts` lists persisted job alert events with time filters; usage-alert dismissal remains available.
+- [Visible] [Platform] MCP ledger queries support session scope, filters, paging, and change cursors, with read-only counts, node, and alert tools and metadata-only job details.
+- [Visible] [Platform] Replays and backlog releases carry job stamps, and CLI and MCP session stamps fall back to the host session id.
+
 [Visible] [Providers] **Retry on failure now also retries a job when the provider says its free allowance is used up, and a read-only job whose reply never arrived in time or whose browser connection was lost.** A used-up allowance counts as a provider limit, like a rate limit or quota message. A job with tools `write` or `full` is not retried after a missed reply or a lost browser, because it may already have changed files.
 - [Visible] [Platform] The service records job attribution and summaries, receives per-node job events, and serves ledger queries and replayable watches. CLI runs accept session, title, origin, and summary flags. The ledger keeps full metadata for 90 days by default, then compacts finished jobs to summary rows.
 - [Internal] [Alerts] The ledger persists stalled, failed, and duration alert events behind a sink interface. The duration rule waits for eight completed jobs on the same route, node, and work kind.

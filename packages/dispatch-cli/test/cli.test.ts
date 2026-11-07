@@ -159,9 +159,9 @@ describe('replay and prompt storage', () => {
     expect(id).not.toBe(original);
     expect((await run(['wait', id])).code).toBe(0);
     const job = await run(['job', id, '--json']);
-    expect(JSON.parse(job.out)).toMatchObject({ replayOf: original, route: 'raw' });
-    expect((await run(['job', id])).out).toContain(REPLAY_TEXT.link(original));
-    expect((await run(['jobs'])).out).toContain(REPLAY_TEXT.link(original));
+    expect(JSON.parse(job.out)).toMatchObject({ job: { replayOf: `${e.store.ledger.node}:${original}`, route: 'raw' } });
+    expect((await run(['job', id])).out).toContain(REPLAY_TEXT.link(`${e.store.ledger.node}:${original}`));
+    expect((await run(['jobs'])).out).toContain(REPLAY_TEXT.link(`${e.store.ledger.node}:${original}`));
     const human = await run(['replay', original, 'raw']);
     expect(human.code).toBe(0);
     expect(human.out.trim()).toMatch(/^[a-f0-9]{12}$/);
@@ -292,7 +292,7 @@ describe('augur run', () => {
     expect(child.code).toBe(0);
     const childId = (JSON.parse(child.out) as { id: string }).id;
     const jobs = await run(['jobs', '--root', bossId, '--json']);
-    expect((JSON.parse(jobs.out) as Array<{ id: string; parentJobId: string | null }>).find(j => j.id === childId)?.parentJobId).toBe(bossId);
+    expect(JSON.parse(jobs.out).jobs.find((j: { localId: string }) => j.localId === childId)?.parentId).toBe(`${e.store.ledger.node}:${bossId}`);
     const plainParent = (JSON.parse((await run(['run', 'fake', '--prompt', 'HANG', '--json'])).out) as { id: string }).id;
     const denied = await run(['run', 'fake', '--prompt', 'x', '--json'], '', { AUGUR_JOB_ID: plainParent });
     expect(denied.code).toBe(2);
@@ -708,15 +708,104 @@ describe('job activity output', () => {
     const fs = await import('node:fs'); fs.utimesSync(join(dir, 'stdout.log'), start / 1000, start / 1000);
     insert('done', 'completed', start + 1);
     const list = await run(['jobs', '--running', '--limit', '1']);
-    expect(list.code).toBe(0); expect(list.out).toContain('live'); expect(list.out).not.toContain('done');
-    expect(list.out).toContain('STALLED'); expect(list.out).toContain('2m ago'); expect(list.out).toContain('Reading files');
+    expect(list.code).toBe(0); expect(list.out).toContain('live'); expect(list.out).not.toContain(':done');
+    expect((await run(['jobs', '--state', 'running'])).out).toContain('STALLED');
+    expect(list.out).toContain('STALLED'); expect(list.out).toContain('2m'); expect(list.out).toContain('Reading files');
     const status = await run(['status', 'live']); expect(status.out).toContain('STALLED'); expect(status.out).toContain('Reading files');
     const json = JSON.parse((await run(['jobs', '--running', '--json'])).out);
-    expect(json).toMatchObject([{ id: 'live', lastActivityAt: start, activityLine: 'Reading files', stalled: true }]);
+    expect(json.jobs).toMatchObject([{ localId: 'live', lastActivityAt: start, activityLine: 'Reading files', state: 'stalled' }]);
     expect(JSON.parse((await run(['status', 'done', '--json'])).out)).not.toHaveProperty('stalled');
-    expect(JSON.parse((await run(['jobs', '--running', '--state', 'completed', '--json'])).out)).toEqual([]);
+    expect(JSON.parse((await run(['jobs', '--running', '--state', 'completed', '--json'])).out).jobs).toEqual([]);
     for (const state of ['queued', 'needs_approval', 'cancel_requested'] as const) insert(state, state, start + 2);
     const live = JSON.parse((await run(['jobs', '--running', '--json'])).out);
-    expect(live.map((j: { id: string }) => j.id).sort()).toEqual(['cancel_requested', 'live', 'needs_approval', 'queued']);
+    expect(live.jobs.map((j: { localId: string }) => j.localId).sort()).toEqual(['cancel_requested', 'live', 'needs_approval', 'queued']);
+  });
+});
+
+
+describe('ledger commands', () => {
+  async function ledgerBoot() {
+    const { e, run } = await boot();
+    const now = Date.now(), node = e.store.ledger.node;
+    for (const [id, session, at] of [['one', 's1', now - 10800000], ['two', 's2', now - 7200000]] as const) {
+      e.store.insert({ id, route: 'raw', adapter: 'exec', activity: 'research', dataTier: 'public', tools: 'read', output: 'text_only', cwd: e.root, createdAt: at, rootJobId: 'one', parentJobId: id === 'two' ? 'one' : null, depth: id === 'two' ? 1 : 0, caller: { kind: 'cli' }, named: false, expectFile: null, timeoutS: null, harnessVersion: null, workspace: null });
+      e.store.transition(id, 'running', { startedAt: at + 1 }, at + 1);
+      e.store.transition(id, id === 'one' ? 'completed' : 'failed', { endedAt: at + 1000 }, at + 1000);
+      e.store.ledger.setLocalMetadata(id, { stamp: { sessionId: session, sessionTitle: 'Review', origin: 'cli' }, attribution: { session: 'stamped', origin: 'stamped', process: 'unknown', host: 'unknown' }, summary: `Read notes ${id}`, summarySource: 'caller', model: 'test/raw', compacted: false });
+    }
+    const remote = { id: 'eru:remote', node: 'eru', localId: 'remote', kind: 'download', state: 'running', stamp: { sessionId: 's1', origin: 'service' }, attribution: { session: 'stamped', origin: 'stamped', process: 'unknown', host: 'unknown' }, summary: 'Download files', summarySource: 'caller', route: null, model: 'asset', activity: 'download', createdAt: now - 3600000, startedAt: now - 3600000, endedAt: null, durationMs: null, updatedAt: now - 3600000, lastActivityAt: now - 3600000, parentId: null, retryOf: null, retriedAs: null, usage: null, exitReason: null, compacted: false };
+    e.store.ledger.ingest('eru', { version: 1, node: 'eru', events: [{ seq: '1', at: now, job: remote }], next: '1', more: false });
+    return { e, run, node };
+  }
+
+  it('applies session defaults, all sessions, explicit sessions, and every list filter', async () => {
+    const { run, node } = await ledgerBoot();
+    const ids = async (flags: string[] = [], env: NodeJS.ProcessEnv = {}) => {
+      const r = await run(['jobs', ...flags, '--json'], '', env);
+      expect(r.code).toBe(0); return JSON.parse(r.out).jobs.map((j: { localId: string }) => j.localId).sort();
+    };
+    expect(await ids()).toEqual(['one', 'remote', 'two']);
+    expect(await ids([], { CLAUDE_CODE_SESSION_ID: 's1' })).toEqual(['one', 'remote']);
+    expect(await ids([], { AUGUR_SESSION: 's2', CLAUDE_CODE_SESSION_ID: 's1' })).toEqual(['two']);
+    expect(await ids(['--session', 's2'], { AUGUR_SESSION: 's1' })).toEqual(['two']);
+    expect(await ids(['--all'], { AUGUR_SESSION: 's1' })).toEqual(['one', 'remote', 'two']);
+    for (const [flags, expected] of [
+      [['--origin', 'service'], ['remote']], [['--node', node], ['one', 'two']], [['--kind', 'download'], ['remote']],
+      [['--state', 'done'], ['one']], [['--running'], ['remote']], [['--route', 'raw'], ['one', 'two']],
+      [['--since', '90m'], ['remote']], [['--until', '90m'], ['one', 'two']], [['--text', 'notes two'], ['two']],
+      [['--root', 'one'], ['one', 'two']], [['--state', 'completed'], ['one']], [['--state', 'failed'], ['two']],
+    ] as Array<[string[], string[]]>) expect(await ids(flags)).toEqual(expected);
+    for (const flags of [['--limit', '0'], ['--since', 'yesterday'], ['--kind', 'wrong'], ['--state', 'wrong'], ['--origin', 'wrong']]) expect((await run(['jobs', ...flags])).code).toBe(1);
+  });
+
+  it('pages relative time queries without duplicates and prints matching counts', async () => {
+    const { run } = await ledgerBoot();
+    const first = JSON.parse((await run(['jobs', '--since', '6h', '--limit', '1', '--json'])).out);
+    expect(first.jobs).toHaveLength(1); expect(first.counts).toMatchObject({ done: 1, failed: 1, running: 1 });
+    const second = JSON.parse((await run(['jobs', '--since', '6h', '--limit', '1', '--page', first.next, '--json'])).out);
+    expect(second.jobs[0].id).not.toBe(first.jobs[0].id);
+    expect((await run(['jobs', '--session', 'different', '--page', second.next])).code).not.toBe(0);
+    expect(JSON.parse((await run(['jobs', 'counts', '--session', 's1', '--json'])).out)).toMatchObject({ done: 1, running: 1, failed: 0 });
+    expect((await run(['jobs', '--limit', '1'])).out).toContain('Next page:');
+  });
+
+  it('reads full records and chains by either id without result text', async () => {
+    const { run, node, e } = await ledgerBoot();
+    e.store.linkRetry('one', 'two');
+    const bare = JSON.parse((await run(['job', 'one', '--json'])).out);
+    const qualified = JSON.parse((await run(['job', `${node}:one`, '--json'])).out);
+    expect(qualified).toEqual(bare);
+    expect(bare).toMatchObject({ job: { id: `${node}:one`, summary: 'Read notes one', summarySource: 'caller', attribution: { session: 'stamped' } }, parent: null, children: [{ localId: 'two' }], retries: [{ localId: 'two' }] });
+    expect(bare).not.toHaveProperty('answer'); expect(bare.history.length).toBeGreaterThan(0);
+    expect(bare.history.every((h: object) => !('detail' in h))).toBe(true);
+    expect((await run(['job', 'missing'])).code).toBe(1);
+    for (const command of ['wait', 'result', 'cancel', 'logs']) {
+      const r = await run([command, 'eru:remote']);
+      expect(r.code).toBe(1); expect(r.err).toContain('not a local execution job');
+    }
+    expect((await run(['result', `${node}:one`])).code).toBe(4);
+  });
+
+  it('lists node health, refreshes the ledger, and filters persisted alert events', async () => {
+    const { run, e } = await ledgerBoot();
+    e.store.ledger.unreachable('eru'); e.store.ledger.checkAlerts();
+    expect((await run(['nodes'])).out).toContain('unreachable since');
+    expect(JSON.parse((await run(['nodes', '--json'])).out)[0]).toMatchObject({ node: 'eru', cursor: '1' });
+    expect((await run(['jobs', '--refresh'])).code).toBe(0);
+    const alerts = JSON.parse((await run(['alerts', '--since', '6h', '--json'])).out);
+    expect(alerts).toEqual([expect.objectContaining({ type: 'job.failed', summary: 'Read notes two' })]);
+    expect(JSON.parse((await run(['alerts', '--since', '2999-01-01', '--json'])).out)).toEqual([]);
+  });
+
+  it('stamps route tests and replays with the calling session', async () => {
+    const { run, e } = await boot({ persistPrompts: true });
+    const test = await run(['test', 'fake', '--session', 'test-session', '--json']);
+    expect(test.code).toBe(0);
+    expect(e.store.get(JSON.parse(test.out).id)?.ledger?.stamp).toMatchObject({ sessionId: 'test-session', origin: 'cli' });
+    await run(['wait', JSON.parse(test.out).id]);
+    const replay = await run(['replay', JSON.parse(test.out).id, 'raw', '--session', 'replay-session', '--json']);
+    expect(replay.code).toBe(0);
+    expect(e.store.get(JSON.parse(replay.out).id)?.ledger?.stamp).toMatchObject({ sessionId: 'replay-session', origin: 'cli' });
+    await run(['wait', JSON.parse(replay.out).id]);
   });
 });

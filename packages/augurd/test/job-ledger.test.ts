@@ -41,6 +41,12 @@ describe('the durable ledger', () => {
     store.transition('local', 'running', { startedAt: 2 }, 2);
     store.setUsage('local', { source: 'reported', inputTokens: 2, outputTokens: 3 });
     store.transition('local', 'failed', { endedAt: 12 }, 12); store.linkRetry('local', 'next');
+    expect(ledger.get('local')).toEqual(ledger.get(`${ledger.node}:local`));
+    expect(ledger.list({ root: 'local', localState: 'failed' }).jobs.map(j => j.localId)).toEqual(['local']);
+    expect(ledger.list({ root: `${ledger.node}:local` }).jobs.map(j => j.localId)).toEqual(['local']);
+    expect(ledger.counts({ root: 'local', localState: 'failed' }).failed).toBe(1);
+    expect(() => ledger.list({ localState: 'invalid' as never })).toThrow();
+    expect(() => ledger.list({ root: 1 as never })).toThrow();
     expect(ledger.get(`${ledger.node}:local`)).toMatchObject({ job: { state: 'failed', durationMs: 10, usage: { outputTokens: 3 } }, retries: [{ localId: 'next' }] });
   });
   it('replays a node batch idempotently, rejects gaps and terminal regression, and rolls a failed batch back', () => {

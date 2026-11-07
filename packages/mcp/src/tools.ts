@@ -6,6 +6,8 @@ import type { ClientOptions } from '@augur/augurd/client';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES, balanceField, balanceSegments, checkEdit, cogitatorEntry, editKind, fleetCatalog, fleetOf, fleetOffers, isBalanceField, parseEditState, parseInbox, previewEdits } from '@augur/core';
 import type { ActivityId, DataTier, OutputMode, PolicyEdit, PolicyFile, Snapshot } from '@augur/core';
 import { TOOL_TIERS, checkBalanceSetting, describeCapabilities, isTerminal, rank, renderReport, renderResets, routeAddShapeProblems, seatLines, validateRunOptions } from '@augur/dispatch-protocol';
+import { ledgerDate, ledgerDetail, ledgerPage, ledgerQuery, ledgerTime } from '@augur/dispatch-protocol';
+import type { LedgerFilters, LedgerJob, LedgerQuery } from '@augur/dispatch-protocol';
 import type { JobRecord, JobRequest, ProseAddParams, ProseQueueStatus, ProseStatus, ToolTier, UsageSnapshot } from '@augur/dispatch-protocol';
 
 export interface ToolResult { text: string; isError?: boolean; data?: Record<string, unknown> }
@@ -80,7 +82,7 @@ async function guarded<T>(work: () => Promise<T>, then: (v: T) => ToolResult): P
 export function createTools(d: McpDeps) {
   const sleep = d.sleep ?? ((ms: number) => new Promise<void>(r => setTimeout(r, ms)));
 
-  const jobLine = (j: JobRecord) => `${j.id}  ${j.state}  ${j.route}  ${j.activity}  ${new Date(j.createdAt).toISOString().slice(0, 19)}Z${j.replayOf ? `  ${REPLAY_TEXT.link(j.replayOf)}` : ''}${j.reason ? `  ${j.reason}` : ''}`;
+  const jobLine = (j: LedgerJob) => `${j.id}  ${j.state}  ${j.kind}  ${j.route ?? j.model ?? '-'}  ${j.summary}${j.replayOf ? `  replay of ${j.replayOf}` : ''}`;
 
   async function models(): Promise<ToolResult> {
     const text = d.policyText();
@@ -168,7 +170,7 @@ export function createTools(d: McpDeps) {
   }
 
   async function replay(a: { job: string; route: string }): Promise<ToolResult> {
-    return guarded(() => d.call('replay', { job: a.job, route: a.route, caller: { kind: 'mcp', label: 'augur-mcp', session: d.session, intent: 'interactive' } }, d.opts), r =>
+    return guarded(async () => d.call('replay', { job: await executionId(a.job), route: a.route, caller: { stamp: { ...d.stamp, origin: 'mcp', originLabel: 'augur-mcp', sessionId: d.stamp?.sessionId ?? d.session }, kind: 'mcp', label: 'augur-mcp', session: d.session, intent: 'interactive' } }, d.opts), r =>
       'rejected' in r ? fail(REPLAY_TEXT.rejected(r.rejected.code, r.rejected.reason), { rejected: r.rejected }) : { text: REPLAY_TEXT.started(r.id), data: { ...r } });
   }
 
@@ -203,23 +205,60 @@ export function createTools(d: McpDeps) {
     return { text: head.length ? `${head.join('\n')}\n${body}` : body, ...(ok ? {} : { isError: true }), data: { id: job.id, state: job.state, replayOf: job.replayOf ?? null, answer, reason: job.reason, patch: job.patch, usage: job.usage, ...(chain.length > 1 ? { chain, retriedAs: job.id } : {}) } };
   }
 
-  async function job(a: { id: string }): Promise<ToolResult> {
-    return guarded(() => followed(a.id), r => {
-      if (!r) return fail('No such job.');
-      if (!isTerminal(r.job.state)) {
-        const note = r.notes.length ? `${r.notes.join('\n')}\n` : '';
-        return { text: `${note}${r.job.replayOf ? REPLAY_TEXT.link(r.job.replayOf) + '\n' : ''}Job ${r.job.id} is ${r.job.state}.`, data: { id: r.job.id, state: r.job.state, replayOf: r.job.replayOf ?? null, ...(r.chain.length > 1 ? { chain: r.chain } : {}) } };
-      }
-      return describeResult(r.job, r.answer, [], r.notes, r.chain);
-    });
+  async function executionId(id: string): Promise<string> {
+    if (!id.includes(':')) return id;
+    const chain = await d.call('ledger_get', { id }, d.opts);
+    if (chain?.job.kind === 'augur-job') return chain.job.localId;
+    throw new Error(`Job ${id} is not a local execution job. This command requires a local Augur job id.`);
   }
 
-  async function jobs(a: { limit?: number }): Promise<ToolResult> {
-    return guarded(() => d.call('list', { limit: Math.min(Math.max(a.limit ?? 20, 1), 100) }, d.opts), list => ({ text: list.map(jobLine).join('\n') || 'No jobs yet.', data: { jobs: list } }));
+  async function job(a: { id: string }): Promise<ToolResult> {
+    return guarded(async () => {
+      const chain = await d.call('ledger_get', { id: a.id }, d.opts);
+      if (!chain) return null;
+      const history = chain.job.kind === 'augur-job' ? (await d.call('events', { id: chain.job.localId }, d.opts)).map(({ at, kind }) => ({ at, kind })) : [];
+      return { ...chain, history };
+    }, r => r ? { text: `${ledgerDetail(r)}${r.history.length ? `\nHistory:\n${r.history.map(e => `${ledgerDate(e.at)}  ${e.kind}`).join('\n')}` : ''}`, data: r } : fail('No such job.'));
+  }
+
+  const query = (a: LedgerFilters): LedgerQuery => ledgerQuery(a, d.stamp?.sessionId ?? d.session);
+
+  async function jobs(a: LedgerFilters & { since?: string }): Promise<ToolResult> {
+    return guarded(async () => {
+      const now = Date.now();
+      const q = ledgerQuery({ ...a, limit: a.limit ?? 20 }, d.stamp?.sessionId ?? d.session, now);
+      if (a.since === undefined) return ledgerPage(await d.call('ledger_list', q, d.opts), a, now);
+      if (a.page !== undefined) throw new Error('Use either a change cursor or a page cursor.');
+      const page = await d.call('ledger_changes', { since: a.since, limit: q.limit }, d.opts);
+      const ids = new Set<string>();
+      let next: string | null | undefined;
+      do {
+        const matches = await d.call('ledger_list', { ...q, limit: 1000, ...(next ? { page: next } : {}) }, d.opts);
+        for (const job of matches.jobs) ids.add(job.id);
+        next = matches.next;
+      } while (next);
+      return { ...page, changes: page.changes.filter(c => ids.has(c.job.id)) };
+    }, r => 'jobs' in r ? { text: r.jobs.map(jobLine).join('\n') || 'No jobs.', data: { ...r } }
+      : { text: r.changes.map(c => `${c.cursor}  ${jobLine(c.job)}`).join('\n') || 'No matching changes.', data: { ...r } });
+  }
+
+  async function jobCounts(a: LedgerFilters): Promise<ToolResult> {
+    return guarded(() => d.call('ledger_counts', query(a), d.opts), counts => ({ text: Object.entries(counts).map(([state, n]) => `${state}: ${n}`).join('\n'), data: { counts } }));
+  }
+
+  async function nodes(): Promise<ToolResult> {
+    return guarded(() => d.call('ledger_nodes', undefined, d.opts), nodes => ({ text: nodes.map(n => `${n.node}  last poll ${ledgerDate(n.lastSeenAt)}  cursor ${n.cursor}  ${n.unreachableSince !== null ? 'unreachable' : n.lastSeenAt === null ? 'unknown' : 'reachable'}  unreachable since ${ledgerDate(n.unreachableSince)}`).join('\n') || 'No registered nodes.', data: { nodes } }));
+  }
+
+  async function alerts(a: { since?: string }): Promise<ToolResult> {
+    return guarded(async () => {
+      const since = a.since === undefined ? null : ledgerTime(a.since);
+      return (await d.call('ledger_alerts', undefined, d.opts)).filter(event => since === null || event.at >= since);
+    }, alerts => ({ text: alerts.map(a => `${ledgerDate(a.at)}  ${a.type}  ${a.jobId}  ${a.summary}`).join('\n') || 'No job alert events.', data: { alerts } }));
   }
 
   async function cancel(a: { id: string }): Promise<ToolResult> {
-    return guarded(() => d.call('cancel', { id: a.id }, d.opts), r => r ? { text: r.ok ? `Cancel requested (${r.state}).` : `Already ${r.state}.`, data: r as unknown as Record<string, unknown> } : fail('No such job.'));
+    return guarded(async () => d.call('cancel', { id: await executionId(a.id) }, d.opts), r => r ? { text: r.ok ? `Cancel requested (${r.state}).` : `Already ${r.state}.`, data: r as unknown as Record<string, unknown> } : fail('No such job.'));
   }
 
   async function balance(a: { days?: number }): Promise<ToolResult> {
@@ -410,7 +449,7 @@ export function createTools(d: McpDeps) {
     return `${x.id}  ${x.author}  ${x.status}  ${x.route}  activity=${x.activity} requester=${x.requester} repo=${x.repo}  data=${x.data} tools=${x.tools} output=${x.output} cwd=${x.cwd} prompt=${source} estimate=${x.estimate ?? 1} deadline=${x.deadline ?? 'none'}  ${x.task}`;
   }
 
-  return { models, aliases, pick, run, replay, job, jobs, cancel, pressure, balance, resets, routes, routeAdd, policy, editPolicy, pickPreview, proseAdd, proseList, proseStatus, gateStatus, gateReport, backlogAdd, backlogList, backlogStatus };
+  return { models, aliases, pick, run, replay, job, jobs, jobCounts, nodes, alerts, cancel, pressure, balance, resets, routes, routeAdd, policy, editPolicy, pickPreview, proseAdd, proseList, proseStatus, gateStatus, gateReport, backlogAdd, backlogList, backlogStatus };
 }
 
 export type Tools = ReturnType<typeof createTools>;

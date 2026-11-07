@@ -57,6 +57,7 @@ export interface LedgerJob {
   /** A live line is transient. Nodes must not send prompt or answer text here. */
   activityLine?: string;
   parentId: string | null;
+  replayOf?: string | null;
   retryOf: string | null;
   retriedAs: string | null;
   usage: UsageReport | null;
@@ -65,6 +66,9 @@ export interface LedgerJob {
 }
 
 export interface LedgerQuery {
+  /** The root filter matches local executions only; localState preserves their original state names. */
+  root?: string;
+  localState?: import('./states.js').JobState;
   session?: string;
   origin?: OriginKind;
   node?: string;
@@ -172,7 +176,7 @@ export function stampFromEnv(env: Record<string, string | undefined>, origin: Or
 }
 
 export function validLedgerJob(v: unknown): v is LedgerJob {
-  if (!object(v) || !keys(v, ['id', 'node', 'localId', 'kind', 'state', 'stamp', 'attribution', 'summary', 'summarySource', 'route', 'model', 'activity', 'createdAt', 'startedAt', 'endedAt', 'durationMs', 'updatedAt', 'lastActivityAt', 'activityLine', 'parentId', 'retryOf', 'retriedAs', 'usage', 'exitReason', 'compacted'])) return false;
+  if (!object(v) || !keys(v, ['id', 'node', 'localId', 'kind', 'state', 'stamp', 'attribution', 'summary', 'summarySource', 'route', 'model', 'activity', 'createdAt', 'startedAt', 'endedAt', 'durationMs', 'updatedAt', 'lastActivityAt', 'activityLine', 'parentId', 'replayOf', 'retryOf', 'retriedAs', 'usage', 'exitReason', 'compacted'])) return false;
   if (!validNode(v.node) || !line(v.localId, 128) || !/^[A-Za-z0-9._-]+$/.test(v.localId) || v.id !== `${v.node}:${v.localId}`) return false;
   if (!LEDGER_KINDS.includes(v.kind as LedgerKind) || !LEDGER_STATES.includes(v.state as LedgerState) || !validStamp(v.stamp)) return false;
   const a = v.attribution;
@@ -184,6 +188,7 @@ export function validLedgerJob(v: unknown): v is LedgerJob {
   if ((v.startedAt !== null && Number(v.startedAt) < Number(v.createdAt)) || (v.endedAt !== null && Number(v.endedAt) < Number(v.startedAt ?? v.createdAt))) return false;
   if (ledgerTerminal(v.state as LedgerState) !== (v.endedAt !== null)) return false;
   if (v.durationMs !== (v.endedAt === null ? null : Number(v.endedAt) - Number(v.startedAt ?? v.createdAt))) return false;
+  if (v.replayOf !== undefined && v.replayOf !== null && (typeof v.replayOf !== 'string' || !/^[A-Za-z0-9._-]{1,128}:[A-Za-z0-9._-]{1,128}$/.test(v.replayOf) || v.replayOf === v.id)) return false;
   if (!['parentId', 'retryOf', 'retriedAs'].every(k => v[k] === null || (typeof v[k] === 'string' && /^[A-Za-z0-9._-]{1,128}:[A-Za-z0-9._-]{1,128}$/.test(v[k] as string) && v[k] !== v.id))) return false;
   if (v.activityLine !== undefined && (!line(v.activityLine, 120) || v.activityLine !== summaryLine(v.activityLine))) return false;
   if (typeof v.compacted !== 'boolean') return false;

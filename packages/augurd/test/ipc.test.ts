@@ -50,6 +50,14 @@ describe('the dispatch calls the web server may pass on', () => {
 });
 
 describe('the control endpoint', () => {
+  it('stamps a replay from the connection without copying the original attribution', async () => {
+    const { o, e } = await boot();
+    const original = await call('submit', request({ text: 'SLEEP 0', cwd: e.root, persistPrompt: true, stamp: { sessionId: 'original' } }), o) as { id: string };
+    await finished(o, original.id);
+    const replay = await call('replay', { job: original.id, route: 'raw', caller: { kind: 'cli' } }, { ...o, stamp: { sessionId: 'replay-session', origin: 'cli', summary: 'Read notes' } }) as { id: string };
+    const record = await finished(o, replay.id);
+    expect(record.ledger).toMatchObject({ stamp: { sessionId: 'replay-session', origin: 'cli' }, summary: 'Read notes', summarySource: 'caller', attribution: { session: 'stamped', origin: 'stamped' } });
+  });
   it('serves session queries, counts, chains, and a replayable ledger watch to agent callers', async () => {
     const { o, svc, e } = await boot();
     svc.config.maxConcurrent = 0;

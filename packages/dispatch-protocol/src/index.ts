@@ -1,4 +1,5 @@
 export * from './job-ledger.js';
+export * from './ledger-query.js';
 export * from './states.js';
 export * from './spec.js';
 export * from './run-options.js';

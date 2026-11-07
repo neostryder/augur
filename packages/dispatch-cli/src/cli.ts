@@ -11,6 +11,8 @@ import type { ActivityId, DataTier, EngineState, OutputMode, ProviderAdded, Snap
 import { stampFromEnv, validStamp, EXIT_CODES, MAX_SCHEMA_BYTES, TOOL_TIERS, validateRunOptions, describeCapabilities, describeFigure, exitCodeForState, isTerminal, renderReport, renderResets, seatLines } from '@augur/dispatch-protocol';
 import type { Stamp, Conversation, Depth, JobRecord, JobRequest, ProseAddParams, ProseStatus, ToolTier } from '@augur/dispatch-protocol';
 import { STATUS_TEXT, duration, isLive, servedText, statusLine } from '@augur/view-model';
+import { ledgerDate, ledgerDetail, ledgerPage, ledgerQuery, ledgerTime } from '@augur/dispatch-protocol';
+import { executionId, renderJobs, watchJobs } from './ledger.js';
 import { bridge, stdioBridge } from './bridge.js';
 import { SERVICE_VERSION, ServiceError, call, configLines, dataDir, disableLogin, enableLogin, ensureToken, loadConfig, loginState, rotateWebToken, setConfigValue, startViaLogin, webAddresses, webCertFingerprint } from '@augur/augurd';
 import { appendPolicyEdits, augurHome, readAliasFlags, readAliasOffers, settleAliasOffer } from '@augur/augurd';
@@ -23,11 +25,11 @@ import { PROFILE_HELP, profileCmd } from './profile.js';
 import { PROVIDER_HELP, providerCmd } from './provider.js';
 import { installOf, realFetch, updateAdvice, updateScriptInstall, versionOf } from './update.js';
 
-export interface Io { out(text: string): void; err(text: string): void; stdin(): string; env: NodeJS.ProcessEnv; cwd: string; /** A person is at the terminal: input and output are both attached to it. */ interactive?: boolean; /** Reads one line with no echo, for a key typed at the terminal. */ readSecret?(prompt: string): Promise<string> }
+export interface Io { out(text: string): void; err(text: string): void; stdin(): string; env: NodeJS.ProcessEnv; cwd: string; /** A person is at the terminal: input and output are both attached to it. */ interactive?: boolean; columns?: number; signal?: AbortSignal; /** Reads one line with no echo, for a key typed at the terminal. */ readSecret?(prompt: string): Promise<string> }
 
 export const JOBS_ACTIVITY_TEXT = {
   stalled: 'STALLED',
-  help: 'augur jobs [--running] [--state <s>] [--root <id>] [--limit <n>]  List jobs; --running lists only live jobs',
+  help: 'augur jobs [counts] [--all] [--session <id>] [--origin <kind>] [--node <id>] [--kind <k>] [--state <s>] [--running] [--root <id>] [--route <name>] [--since <time>] [--until <time>] [--text <text>] [--limit <n>] [--page <cursor>] [--watch] [--refresh] [--json]  List ledger jobs; --running lists only live jobs',
   age: (at: number, now = Date.now()): string => {
     const s = Math.max(0, Math.floor((now - at) / 1000));
     return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.floor(s / 60)}m ago` : s < 86400 ? `${Math.floor(s / 3600)}h ago` : `${Math.floor(s / 86400)}d ago`;
@@ -36,7 +38,7 @@ export const JOBS_ACTIVITY_TEXT = {
 
 export const REPLAY_TEXT = {
   help: 'augur replay <job> <route> [--json]   Run a finished job again on another route',
-  jobHelp: "augur job <job>                       Show one job's status (same as augur status)",
+  jobHelp: "augur job <job>                       Show ledger metadata and chain",
   keepPromptHelp: "  --keep-prompt      Keep this job's prompt and input files, whatever the setting",
   usage: 'Give a job and a route, as in augur replay <job> <route> [--json].',
   link: (id: string) => `replay of ${id}`,
@@ -73,6 +75,7 @@ ${REPLAY_TEXT.keepPromptHelp}
 ${REPLAY_TEXT.help}
 ${REPLAY_TEXT.jobHelp}
 ${JOBS_ACTIVITY_TEXT.help}
+augur nodes [--json]                  list node polling and reachability
 augur conversations [--forget <name>]   list named conversations, or forget one
 augur status                          one line: Claude's use, anything running hot, and the alert count (--waybar for a status bar's JSON)
 augur status <job>
@@ -114,7 +117,8 @@ augur note-prompt --session <id>     tell the service a person sent the message 
 augur routes
 augur models [accept <id> [--name <route>]]   Cogitator uses and offers; only the owner can accept
 augur refresh                         read every provider's usage now
-augur alerts [dismiss <id>|--all]     list the alerts, or dismiss one or all of them
+augur alerts [--since <time>] [--json]  list persisted job alert events
+augur alerts dismiss <id>|--all        dismiss usage alerts
 augur update [--force]                install the newest version, for a copy the macOS install script put in place
 ${KEY_HELP}
 ${LOGIN_HELP}
@@ -133,7 +137,7 @@ Every command takes --json. Exit codes: 0 completed, 1 usage, 2 rejected, 3 need
 interface Parsed { cmd: string[]; flags: Map<string, string | true>; /** Values of the flags that may be given more than once, in order. */ repeated: Map<string, string[]> }
 const REPEATABLE = new Set(['attach', 'fact', 'must-include', 'must-avoid']);
 export function parse(argv: string[]): Parsed {
-  const cmd: string[] = [], flags = new Map<string, string | true>(), repeated = new Map<string, string[]>(), boolean = new Set(['json', 'running', 'wait', 'named', 'follow', 'stderr', 'help', 'if-idle', 'keep-jobs', 'keep-prompt', 'no-failover', 'no-charter', 'urgent', 'waybar', 'all', 'force', 'stdin', 'dry-run', 'no-key', 'best', 'snippet', 'report', 'can-land-later', 'caller-chooses', 'untested', 'yes', 'enable', 'disable', 'purge']);
+  const cmd: string[] = [], flags = new Map<string, string | true>(), repeated = new Map<string, string[]>(), boolean = new Set(['json', 'watch', 'refresh', 'running', 'wait', 'named', 'follow', 'stderr', 'help', 'if-idle', 'keep-jobs', 'keep-prompt', 'no-failover', 'no-charter', 'urgent', 'waybar', 'all', 'force', 'stdin', 'dry-run', 'no-key', 'best', 'snippet', 'report', 'can-land-later', 'caller-chooses', 'untested', 'yes', 'enable', 'disable', 'purge']);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] as string;
     if (a === '-') { cmd.push(a); continue; }
@@ -175,9 +179,9 @@ export async function main(argv: string[], io: Io): Promise<number> {
       case 'replay': {
         if (rest.length !== 2) { io.err(REPLAY_TEXT.usage + '\n'); return EXIT_CODES.usage; }
         const parentId = io.env.AUGUR_JOB_ID;
-        const res = await call('replay', { job: rest[0]!, route: rest[1]!,
-          caller: { kind: parentId ? 'job' : 'cli', intent: runsInsideJob(io) || io.env.AUGUR_CALLER === 'automated' ? 'automated' : 'interactive',
-            ...(parentId ? { label: parentId } : {}), ...(io.env.CLAUDE_CODE_SESSION_ID ? { session: io.env.CLAUDE_CODE_SESSION_ID } : {}), ...(io.interactive ? { interactive: true } : {}) },
+        const res = await call('replay', { job: await executionId(rest[0]!, opts), route: rest[1]!,
+          caller: { stamp: opts.stamp, kind: parentId ? 'job' : 'cli', intent: runsInsideJob(io) || io.env.AUGUR_CALLER === 'automated' ? 'automated' : 'interactive',
+            ...(parentId ? { label: parentId } : {}), ...(stamp.sessionId ? { session: stamp.sessionId } : {}), ...(io.interactive ? { interactive: true } : {}) },
           ...(parentId ? { parent: { jobId: parentId, rootJobId: io.env.AUGUR_ROOT_JOB_ID ?? parentId, depth: 0 } } : {}),
         }, opts);
         if ('rejected' in res) { io.err(REPLAY_TEXT.rejected(res.rejected.code, res.rejected.reason) + '\n'); if (json) io.out(JSON.stringify(res) + '\n'); return EXIT_CODES.rejected; }
@@ -186,33 +190,56 @@ export async function main(argv: string[], io: Io): Promise<number> {
       }
       case 'backlog': return await backlogCmd(rest, p, io, opts, say, opt);
       case 'jobs': {
-        const list = await call('list', { running: p.flags.has('running'), state: opt('state') as never, root: opt('root'), limit: opt('limit') ? Number(opt('limit')) : 25 }, opts);
-        say(list.map(describe).join('\n') || 'No jobs.', list); return 0;
+        if (rest.length && (rest[0] !== 'counts' || rest.length > 1)) throw new Error('Use augur jobs or augur jobs counts.');
+        const now = Date.now();
+        const filters = { all: p.flags.has('all'), session: opt('session'), origin: opt('origin'), node: opt('node'),
+          kind: opt('kind')?.split(','), state: opt('state')?.split(','), running: p.flags.has('running'), root: opt('root'), route: opt('route'),
+          from: opt('since'), until: opt('until'), text: opt('text'), limit: opt('limit') === undefined ? 25 : Number(opt('limit')), page: opt('page') };
+        const query = ledgerQuery(filters, stamp.sessionId, now);
+        if (p.flags.has('refresh')) await call('ledger_refresh', undefined, opts);
+        if (rest[0] === 'counts') {
+          const counts = await call('ledger_counts', query, opts);
+          say(Object.entries(counts).map(([state, n]) => `${state}: ${n}`).join('\n'), counts); return 0;
+        }
+        const width = io.columns ?? Number(io.env.COLUMNS || process.stdout.columns || 160);
+        if (p.flags.has('watch')) { await watchJobs(query, { out: io.out, err: io.err, width, signal: io.signal, tty: io.interactive, page: p => ledgerPage(p, filters, now) }, opts, json); return 0; }
+        const [page, counts] = await Promise.all([call('ledger_list', query, opts), call('ledger_counts', query, opts)]);
+        const result = ledgerPage(page, filters, now);
+        say(renderJobs(result, counts, width), { ...result, counts }); return 0;
+      }
+      case 'nodes': {
+        const nodes = await call('ledger_nodes', undefined, opts);
+        say(nodes.map(n => `${n.node}  last poll ${ledgerDate(n.lastSeenAt)}  cursor ${n.cursor}  ${n.unreachableSince !== null ? 'unreachable' : n.lastSeenAt === null ? 'unknown' : 'reachable'}  unreachable since ${ledgerDate(n.unreachableSince)}`).join('\n') || 'No registered nodes.', nodes); return 0;
       }
       case 'conversations': return await conversationsCmd(p, io, opts, say, opt, json);
-      case 'job':
+      case 'job': {
+        const chain = await call('ledger_get', { id: need(rest[0], 'job id') }, opts);
+        if (!chain) { io.err('No such job.\n'); return EXIT_CODES.usage; }
+        const history = chain.job.kind === 'augur-job' ? (await call('events', { id: chain.job.localId }, opts)).map(({ at, kind }) => ({ at, kind })) : [];
+        say(`${ledgerDetail(chain)}${history.length ? `\nHistory:\n${history.map(e => `${ledgerDate(e.at)}  ${e.kind}`).join('\n')}` : ''}`, { ...chain, history }); return 0;
+      }
       case 'status': {
         if (!rest[0]) return await statusCmd(p.flags.has('waybar'), io, opts, say);
         const j = await call('status', { id: need(rest[0], 'job id') }, opts);
         if (!j) { io.err('No such job.\n'); return EXIT_CODES.usage; }
         say(describe(j), j); return 0;
       }
-      case 'wait': return (await waitFor(need(rest[0], 'job id'), opt('timeout') ? Number(opt('timeout')) : null, io, opts, json)).code;
+      case 'wait': return (await waitFor(await executionId(need(rest[0], 'job id'), opts), opt('timeout') ? Number(opt('timeout')) : null, io, opts, json)).code;
       case 'result': {
-        const r = await resultChain(need(rest[0], 'job id'), opts);
+        const r = await resultChain(await executionId(need(rest[0], 'job id'), opts), opts);
         if (!r) { io.err('No such job.\n'); return EXIT_CODES.usage; }
         const body = r.chain.length > 1 ? { job: r.job, answer: r.answer, chain: r.chain, retriedAs: r.job.id } : { job: r.job, answer: r.answer };
         say(`${r.lines.length ? r.lines.join('\n') + '\n' : ''}${r.answer ?? ''}`, body);
         return isTerminal(r.job.state) ? exitCodeForState(r.job.state) : EXIT_CODES.wait_timeout;
       }
-      case 'logs': return await logs(need(rest[0], 'job id'), p.flags.has('stderr') ? 'stderr' : 'stdout', p.flags.has('follow'), io, opts);
+      case 'logs': return await logs(await executionId(need(rest[0], 'job id'), opts), p.flags.has('stderr') ? 'stderr' : 'stdout', p.flags.has('follow'), io, opts);
       case 'cancel': {
-        const r = await call('cancel', { id: need(rest[0], 'job id') }, opts);
+        const r = await call('cancel', { id: await executionId(need(rest[0], 'job id'), opts) }, opts);
         if (!r) { io.err('No such job.\n'); return EXIT_CODES.usage; }
         say(r.ok ? `Cancel requested (${r.state}).` : `Already ${r.state}.`, r); return 0;
       }
       case 'apply': {
-        const r = await call('apply', { id: need(rest[0], 'job id'), check: p.flags.has('check') }, opts);
+        const r = await call('apply', { id: await executionId(need(rest[0], 'job id'), opts), check: p.flags.has('check') }, opts);
         if (!r) { io.err('No such job.\n'); return EXIT_CODES.usage; }
         say(r.output, r); return r.ok ? 0 : EXIT_CODES.failed;
       }
@@ -329,7 +356,12 @@ export async function main(argv: string[], io: Io): Promise<number> {
       }
       case 'update': return await updateCmd(p.flags.has('force'), io, opts, say);
       case 'refresh': { await engineCall('refresh', [true], io, opts); say(STATUS_TEXT.refreshed, { ok: true }); return 0; }
-      case 'alerts': return await alertsCmd(rest, p.flags.has('all'), io, opts, say);
+      case 'alerts': {
+        if (rest[0] === 'dismiss') return await alertsCmd(rest, p.flags.has('all'), io, opts, say);
+        const since = opt('since') === undefined ? null : ledgerTime(opt('since')!);
+        const alerts = (await call('ledger_alerts', undefined, opts)).filter(a => since === null || a.at >= since);
+        say(alerts.map(a => `${ledgerDate(a.at)}  ${a.type}  ${a.jobId}  ${a.summary}`).join('\n') || 'No job alert events.', alerts); return 0;
+      }
       case 'profile': return await profileCmd(rest, { dryRun: p.flags.has('dry-run') }, { err: io.err, env: io.env, cwd: io.cwd }, say, new Date(), { addProvider: i => engineCall('addProvider', [i], io, opts) as Promise<ProviderAdded> });
       case 'provider': return await providerCmd(rest, { text: new Map([...p.flags].filter((e): e is [string, string] => typeof e[1] === 'string')), stdin: p.flags.has('stdin'), noKey: p.flags.has('no-key'), dryRun: p.flags.has('dry-run') },
         { ...io, out: io.out }, say, { addProvider: i => engineCall('addProvider', [i], io, opts) as Promise<ProviderAdded>, setProviderKey: (pv, field, value) => engineCall('setProviderKey', [pv, field, value], io, opts).then(() => undefined) });
@@ -558,7 +590,7 @@ async function conversationsCmd(p: Parsed, io: Io, opts: Opts, say: (h: string, 
 
 const conversationLine = (c: Conversation) => `${c.name}  ${c.route}  ${c.adapter}  ${c.turns}  ${new Date(c.lastUsedAt).toISOString().slice(0, 19)}Z`;
 function cliStamp(io: Io, opt: (name: string) => string | undefined): Stamp {
-  const stamp = stampFromEnv({ AUGUR_SESSION: opt('session') ?? io.env.AUGUR_SESSION, AUGUR_SESSION_TITLE: opt('session-title') ?? io.env.AUGUR_SESSION_TITLE,
+  const stamp = stampFromEnv({ AUGUR_SESSION: opt('session') ?? io.env.AUGUR_SESSION ?? io.env.CLAUDE_CODE_SESSION_ID, AUGUR_SESSION_TITLE: opt('session-title') ?? io.env.AUGUR_SESSION_TITLE,
     AUGUR_ORIGIN: opt('origin') ?? io.env.AUGUR_ORIGIN, AUGUR_SUMMARY: opt('summary') ?? io.env.AUGUR_SUMMARY }, 'cli');
   const result = { ...stamp, originLabel: 'augur', host: hostname(), pid: process.pid, parentPid: process.ppid };
   if (!validStamp(result)) throw new ServiceError('usage', 'The job stamp is invalid.');

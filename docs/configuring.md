@@ -60,7 +60,7 @@ One request can override the setting. `--keep-prompt` on `augur run`, or `persis
 
 ### Job ledger retention and nodes
 
-The ledger retains full job metadata for `balance.ledger.retentionDays` days in the policy, 90 by default, then keeps a summary row. The value is a whole number from 0 through 3650. The service checks at startup and hourly. Its `config.json` can list `ledgerNodes` entries with `node`, `url`, and an optional secret-store `keyName` reference. The registry is read at startup. [The job ledger](job-ledger.md) describes the endpoint, credentials, queries, and privacy rules.
+The ledger retains full job metadata for `balance.ledger.retentionDays` days in the policy, 90 by default, then keeps a summary row. The value is a whole number from 0 through 3650. The service checks at startup and hourly. Its `config.json` can list `ledgerNodes` entries with `node`, `url`, and an optional secret-store `keyName` reference. The registry is read at startup. `augur jobs`, `augur nodes`, and `augur alerts` read ledger metadata; `augur jobs --refresh` polls the registered nodes. [The job ledger](job-ledger.md) describes the endpoint, credentials, queries, and privacy rules.
 
 ## Cogitator catalog
 

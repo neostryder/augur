@@ -2,6 +2,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES } from '@augur/core';
 import { z } from 'zod';
+import { JOB_STATES, LEDGER_KINDS, LEDGER_STATES, ORIGIN_KINDS } from '@augur/dispatch-protocol';
 import type { ToolResult, Tools } from './tools.js';
 import { REPLAY_TEXT } from './tools.js';
 
@@ -34,6 +35,23 @@ const runSchema = z.object({
   attachments: z.array(z.string()).max(16).optional().describe('Absolute paths of files to send with the prompt, inside cwd. Text files are added to the prompt, images are shown to a model that sees them, and one audio file is transcribed on a transcribe route. An embed job returns the path of the saved vectors.'),
   urgent: z.boolean().optional().describe('The job is wanted now. A local gateway then gives it its normal priority instead of the low one background work gets.'),
 }).passthrough();
+
+const ledgerFilters = {
+  all: z.boolean().optional().describe('List all sessions.'),
+  session: z.string().optional().describe('Session id. Defaults to the calling session.'),
+  origin: z.enum(ORIGIN_KINDS).optional(),
+  node: z.string().optional(),
+  kind: z.array(z.enum(LEDGER_KINDS)).optional(),
+  state: z.array(z.enum([...LEDGER_STATES, ...JOB_STATES])).optional(),
+  running: z.boolean().optional().describe('Include only active work.'),
+  root: z.string().optional().describe('Local execution root id.'),
+  route: z.string().optional(),
+  from: z.string().optional().describe('Creation start: ISO date or elapsed time, such as 90m.'),
+  until: z.string().optional().describe('Creation end: ISO date or elapsed time.'),
+  text: z.string().optional(),
+  limit: z.number().int().min(1).max(1000).optional(),
+  page: z.string().optional().describe('The next page cursor with the same filters.'),
+};
 
 export function buildServer(tools: Tools, version: string): McpServer {
   const server = new McpServer({ name: 'augur', version }, { instructions: INSTRUCTIONS });
@@ -80,15 +98,26 @@ export function buildServer(tools: Tools, version: string): McpServer {
 
   server.registerTool('augur_job', {
     title: 'Read a job', annotations: readOnly,
-    description: 'Returns the state of a job and, once it has finished, its answer. When that job was retried, the answer is the last job in the chain.',
+    description: 'Returns job metadata, attribution, history, and its parent, children, and retries. It contains no prompt or answer text.',
     inputSchema: { id: z.string().describe('The job id.') },
   }, async (a) => out(await tools.job(a)));
 
   server.registerTool('augur_jobs', {
     title: 'List jobs', annotations: readOnly,
-    description: 'Lists recent jobs, newest first.',
-    inputSchema: { limit: z.number().int().min(1).max(100).optional().describe('How many to list. 20 by default.') },
+    description: 'Lists job metadata for the calling session, or all sessions with all. A since cursor returns changes.',
+    inputSchema: { ...ledgerFilters, since: z.string().regex(/^(0|[1-9][0-9]{0,19})$/).optional().describe('Service change cursor. Start with 0 and reuse the returned cursor.') },
   }, async (a) => out(await tools.jobs(a)));
+
+  server.registerTool('augur_job_counts', {
+    title: 'Count jobs', annotations: readOnly, description: 'Counts matching ledger jobs by state.', inputSchema: ledgerFilters,
+  }, async a => out(await tools.jobCounts(a)));
+  server.registerTool('augur_nodes', {
+    title: 'List nodes', annotations: readOnly, description: 'Lists registered nodes, polling cursors, and reachability.',
+  }, async () => out(await tools.nodes()));
+  server.registerTool('augur_alerts', {
+    title: 'List job alert events', annotations: readOnly, description: 'Lists persisted job alert events.',
+    inputSchema: { since: z.string().optional().describe('ISO date or elapsed time, such as 6h.') },
+  }, async a => out(await tools.alerts(a)));
 
   server.registerTool('augur_cancel', {
     title: 'Cancel a job', annotations: { destructiveHint: true, openWorldHint: false },

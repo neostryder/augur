@@ -1,5 +1,6 @@
 // Accepts jobs, applies the rules, launches one runner per job and keeps the store true to what the runners leave on disk.
 import { spawn, spawnSync } from 'node:child_process';
+import { hostname } from 'node:os';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { appendFileSync, closeSync, cpSync, existsSync, mkdtempSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -705,6 +706,7 @@ export class Supervisor {
       if (dryRun) continue;
       const route = routes[item.route] as RouteConfig;
       const req: JobRequest = { route: item.route, activity: item.activity as JobRequest['activity'], dataTier: item.data, tools: item.tools, output: item.output,
+        stamp: { origin: 'service', originLabel: `backlog:${item.id}`, host: hostname(), pid: process.pid, parentPid: process.ppid },
         cwd: item.cwd, prompt: item.prompt, caller: { kind: 'job', label: `backlog:${item.id}`, intent: 'automated' }, released: true,
         // The owner-approved backlog release has no interactive pick; all other rule checks still apply.
         allow: ['unpicked'], failover: false };

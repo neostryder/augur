@@ -119,6 +119,7 @@ export class IpcServer {
   private handle(method: MethodName, params: unknown, role: Role = 'owner', peer: PeerInfo = {}): unknown | Promise<unknown> {
     const p = (params ?? {}) as Record<string, unknown>;
     if (role === 'agent' && !AGENT_METHODS.has(method)) throw new Error(`This caller may not use ${String(method)}. It is for the owner's terminal and app.`);
+    if (['ledger_list', 'ledger_get', 'ledger_counts', 'ledger_changes'].includes(method)) this.store.ledger.refreshLive(this.sup.list({ running: true, limit: 2147483647 }));
     switch (method) {
       case 'ledger_list': return this.store.ledger.list(params as never);
       case 'ledger_get': return this.store.ledger.get(String(p.id ?? ''));
@@ -369,6 +370,7 @@ export class IpcServer {
                 let params = req.params;
                 if (req.method === 'submit' && isObj(params) && params.stamp !== undefined && !validStamp(params.stamp)) throw new Error('The job stamp is invalid.');
                 if (req.method === 'submit' && isObj(params) && isObj(params.caller) && params.caller.stamp !== undefined && !validStamp(params.caller.stamp)) throw new Error('The job stamp is invalid.');
+                if (req.method === 'replay' && isObj(params) && isObj(params.caller) && req.stamp) params = { ...params, caller: { ...params.caller, stamp: { ...req.stamp, ...(isObj(params.caller.stamp) ? params.caller.stamp : {}) } } };
                 if (req.method === 'submit' && isObj(params) && req.stamp) params = { ...params, stamp: { ...req.stamp, ...(isObj(params.caller) && isObj(params.caller.stamp) ? params.caller.stamp : {}), ...(isObj(params.stamp) ? params.stamp : {}) } };
                 return { id: req.id, result: (await this.handle(req.method, params, role, req.method === 'submit' ? await readPipePeer(sock) : pipePeer(sock))) ?? null };
               } catch (e) { return { id: req.id, error: { code: 'failed', message: (e as Error).message } }; }

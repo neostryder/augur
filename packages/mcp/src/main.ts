@@ -16,7 +16,7 @@ const version = typeof __AUGUR_VERSION__ === 'string' ? __AUGUR_VERSION__ : 'dev
 
 const dir = dataDir();
 const read = (name: string): string | null => { try { return readFileSync(join(augurHome(), name), 'utf8'); } catch { return null; } };
-const stamp = { ...stampFromEnv(process.env, 'mcp'), origin: 'mcp' as const, originLabel: 'augur-mcp', host: hostname(), pid: process.pid, parentPid: process.ppid };
+const stamp = { ...stampFromEnv({ ...process.env, AUGUR_SESSION: process.env.AUGUR_SESSION ?? process.env.CLAUDE_CODE_SESSION_ID }, 'mcp'), origin: 'mcp' as const, originLabel: 'augur-mcp', host: hostname(), pid: process.pid, parentPid: process.ppid };
 const tools = createTools({
   stamp,
   call, opts: { dir, role: 'agent' as const, ...(process.env.AUGURD_PIPE ? { pipe: process.env.AUGURD_PIPE } : {}) },

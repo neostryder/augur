@@ -1,6 +1,6 @@
 import { randomUUID, createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
-import { LEDGER_STATES, ORIGIN_KINDS, ledgerId, ledgerTerminal, summaryLine, validCursor, validLedgerJob, validNodeJobPage } from '@augur/dispatch-protocol';
+import { JOB_STATES, LEDGER_STATES, ORIGIN_KINDS, ledgerId, ledgerTerminal, summaryLine, validCursor, validLedgerJob, validNodeJobPage } from '@augur/dispatch-protocol';
 import type { JobRecord, LedgerAlert, LedgerChain, LedgerChange, LedgerJob, LedgerMetadata, LedgerNode, LedgerPage, LedgerQuery, LedgerState, LedgerWatchPage, NodeJobPage } from '@augur/dispatch-protocol';
 
 export interface AlertSink { emit(event: LedgerAlert): void | Promise<void> }
@@ -66,6 +66,7 @@ export class JobLedger {
       lastActivityAt: meta.compacted ? null : live?.lastActivityAt ?? job.lastActivityAt ?? job.startedAt,
       ...(!meta.compacted && live?.activityLine ? { activityLine: summaryLine(live.activityLine) } : {}),
       parentId: job.parentJobId ? ledgerId(this.node, job.parentJobId) : null,
+      replayOf: job.replayOf ? ledgerId(this.node, job.replayOf) : null,
       retryOf: job.retryOf ? ledgerId(this.node, job.retryOf) : null, retriedAs: job.retriedAs ? ledgerId(this.node, job.retriedAs) : null,
       usage: job.usage, exitReason: ledgerTerminal(state) ? job.state : null, compacted: meta.compacted,
     };
@@ -121,7 +122,10 @@ export class JobLedger {
   }
 
   private matches(job: LedgerJob, q: LedgerQuery): boolean {
-    return (q.session === undefined || job.stamp.sessionId === q.session) && (q.origin === undefined || job.stamp.origin === q.origin)
+    const local = job.node === this.node && (q.root !== undefined || q.localState !== undefined) ? this.local.get(job.localId) : null;
+    return (q.root === undefined || local?.rootJobId === q.root || (local !== null && `${this.node}:${local.rootJobId}` === q.root))
+      && (q.localState === undefined || (local ? local.state === q.localState : job.node !== this.node && LEDGER_STATES.includes(q.localState as LedgerState) && q.state?.includes(job.state) === true))
+      && (q.session === undefined || job.stamp.sessionId === q.session) && (q.origin === undefined || job.stamp.origin === q.origin)
       && (q.node === undefined || job.node === q.node) && (q.state === undefined || q.state.includes(job.state))
       && (q.kind === undefined || q.kind.includes(job.kind)) && (q.route === undefined || job.route === q.route)
       && (q.from === undefined || job.createdAt >= q.from) && (q.to === undefined || job.createdAt <= q.to)
@@ -146,18 +150,20 @@ export class JobLedger {
   }
 
   private validateQuery(q: LedgerQuery): void {
-    if (!q || typeof q !== 'object' || Array.isArray(q) || Object.keys(q).some(k => !['session', 'origin', 'node', 'state', 'kind', 'route', 'from', 'to', 'text', 'sort', 'order', 'limit', 'page'].includes(k))) throw new Error('The ledger query is invalid.');
+    if (!q || typeof q !== 'object' || Array.isArray(q) || Object.keys(q).some(k => !['root', 'localState', 'session', 'origin', 'node', 'state', 'kind', 'route', 'from', 'to', 'text', 'sort', 'order', 'limit', 'page'].includes(k))) throw new Error('The ledger query is invalid.');
     if (q.limit !== undefined && (!Number.isInteger(q.limit) || q.limit < 1 || q.limit > 1000)) throw new Error('The ledger limit is invalid.');
     for (const key of ['from', 'to'] as const) if (q[key] !== undefined && (!Number.isFinite(q[key]) || q[key]! < 0)) throw new Error('The ledger time range is invalid.');
     if (q.sort !== undefined && !['createdAt', 'startedAt', 'endedAt', 'durationMs'].includes(q.sort)) throw new Error('The ledger sort is invalid.');
     if (q.order !== undefined && !['asc', 'desc'].includes(q.order)) throw new Error('The ledger order is invalid.');
-    for (const key of ['session', 'origin', 'node', 'route', 'text', 'page'] as const) if (q[key] !== undefined && (typeof q[key] !== 'string' || q[key]!.length > 4096)) throw new Error('The ledger filter is invalid.');
+    if (q.localState !== undefined && !JOB_STATES.includes(q.localState)) throw new Error('The local state filter is invalid.');
+    for (const key of ['root', 'session', 'origin', 'node', 'route', 'text', 'page'] as const) if (q[key] !== undefined && (typeof q[key] !== 'string' || q[key]!.length > 4096)) throw new Error('The ledger filter is invalid.');
     if (q.origin !== undefined && !ORIGIN_KINDS.includes(q.origin)) throw new Error('The ledger origin filter is invalid.');
     if (q.state !== undefined && (!Array.isArray(q.state) || q.state.some(s => !LEDGER_STATES.includes(s)))) throw new Error('The ledger state filter is invalid.');
     if (q.kind !== undefined && (!Array.isArray(q.kind) || q.kind.some(k => !['augur-job', 'media-job', 'llm-request', 'model-load', 'model-evict', 'install', 'download'].includes(k)))) throw new Error('The ledger kind filter is invalid.');
   }
 
   get(id: string): LedgerChain | null {
+    id = id.includes(':') ? id : ledgerId(this.node, id);
     const rows = this.all(), job = rows.find(j => j.id === id);
     if (!job) return null;
     const neighbors = new Map<string, Set<string>>();

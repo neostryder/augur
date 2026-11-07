@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ledgerPage, ledgerQuery, ledgerTime } from '../src/ledger-query.js';
 import { checkBalanceSetting, ledgerId, resolveBalance, stampFromEnv, stampFromHeaders, stampHeaders, summaryLine, validCursor, validLedgerJob, validNodeJobPage, validStamp } from '../src/index.js';
 import type { LedgerJob } from '../src/index.js';
 
@@ -8,6 +9,8 @@ describe('the job ledger contract', () => {
   it('qualifies identifiers with a durable node id', () => {
     expect(ledgerId('eru', '1')).not.toBe(ledgerId('bilbo', '1'));
     for (const node of ['', 'a:b', '../a']) expect(() => ledgerId(node, '1')).toThrow();
+    expect(validLedgerJob({ ...job(), replayOf: 'eru:2' })).toBe(true);
+    for (const replayOf of ['eru:1', 'bare', 1]) expect(validLedgerJob({ ...job(), replayOf })).toBe(false);
   });
   it('validates every work kind and rejects unrecognized fields and task data', () => {
     for (const kind of ['augur-job', 'media-job', 'llm-request', 'model-load', 'model-evict', 'install', 'download']) expect(validLedgerJob({ ...job(), kind })).toBe(true);
@@ -46,5 +49,33 @@ describe('the job ledger contract', () => {
       expect(checkBalanceSetting(['ledger', 'retentionDays'], value)).not.toBeNull();
     }
     expect(checkBalanceSetting(['ledger', 'retentionDays'], 0)).toBeNull();
+  });
+});
+describe('ledger query arguments', () => {
+  const now = Date.parse('2026-11-07T12:00:00Z');
+  it('maps every filter and scopes only the default session', () => {
+    expect(ledgerQuery({}, 'host')).toEqual({ session: 'host' });
+    expect(ledgerQuery({ all: true }, 'host')).toEqual({});
+    expect(ledgerQuery({ session: 'explicit', all: true }, 'host')).toEqual({ session: 'explicit' });
+    expect(ledgerQuery({})).toEqual({});
+    expect(ledgerQuery({ session: 's', origin: 'cli', node: 'eru', kind: ['download'], state: ['running'], root: 'root', route: 'route', from: '6h', until: '90m', text: 'notes', limit: 10, page: 'cursor' }, 'host', now)).toEqual({ session: 's', origin: 'cli', node: 'eru', kind: ['download'], state: ['running', 'stalled'], localState: 'running', root: 'root', route: 'route', from: now - 21600000, to: now - 5400000, text: 'notes', limit: 10, page: 'cursor' });
+  });
+  it('retains execution state names and intersects running with state', () => {
+    expect(ledgerQuery({ state: ['completed'] })).toEqual({ localState: 'completed' });
+    expect(ledgerQuery({ state: ['completed'], running: true })).toEqual({ localState: 'completed', state: ['queued', 'running', 'stalled'] });
+    expect(ledgerQuery({ state: ['failed'], running: true })).toEqual({ localState: 'failed', state: [] });
+  });
+  it('accepts elapsed units and ISO dates and rejects invalid ranges and values', () => {
+    expect(ledgerTime('2d', now)).toBe(now - 172800000);
+    expect(ledgerTime('2026-11-07', now)).toBe(Date.parse('2026-11-07'));
+    for (const value of ['yesterday', '-2h', '9', 'NaN', '2026-99-99']) expect(() => ledgerTime(value, now)).toThrow();
+    for (const filters of [{ origin: 'invalid' }, { kind: ['invalid'] }, { state: ['invalid'] }, { limit: 0 }, { limit: 1.5 }, { limit: 1001 }, { from: '1h', until: '2h' }]) expect(() => ledgerQuery(filters, undefined, now)).toThrow();
+  });
+  it('keeps relative time bounds across pages and rejects changed time filters', () => {
+    const filters = { from: '6h', until: '90m' };
+    const first = ledgerQuery(filters, 's', now);
+    const next = ledgerPage({ jobs: [], next: 'service-cursor' }, filters, now).next!;
+    expect(ledgerQuery({ ...filters, page: next }, 's', now + 99999)).toEqual({ ...first, page: 'service-cursor' });
+    expect(() => ledgerQuery({ ...filters, from: '2d', page: next }, 's', now)).toThrow(/time filters changed/);
   });
 });
