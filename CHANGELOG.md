@@ -4,6 +4,8 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+## [1.20.0] - 2026-11-07
+
 ### Added
 
 - [Visible] [Platform] The new `mcode-exec` adapter runs MiniMax Code on this computer in a copy of the job folder and returns the changes as a patch, so a MiniMax route no longer needs Docker Sandboxes.
