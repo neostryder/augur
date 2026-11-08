@@ -4,6 +4,10 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+### Added
+
+- [Visible] [UI] The Claude Code jobs pane now draws each job as a colored card of three labeled lines, `ORIGIN:`, `JOB:`, and `ACTIVITY:`, so you can see which session or process started it, along with its model, data tier, tools, folder, and timing. The pane opens with this session's jobs, and the `f` key switches to every session. A collapsed `CLOSED` section, opened with the `c` key, lists the last 30 ended jobs with their exit code, tokens, cost, and failure reason. `jobs-live.json` gains a `recent` list and the extra job fields, and the service looks up Claude Code session titles read-only from the desktop app's session store.
+
 ### Changed
 
 - [Visible] [Platform] A model a person asked for now runs without Augur re-checking the claim, because `verifyNamed` defaults to `off` (it was `enforce`); set it to `enforce` to keep the check. Premium models are still refused for automated callers.

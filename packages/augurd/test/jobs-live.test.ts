@@ -15,21 +15,23 @@ afterEach(() => { vi.clearAllMocks(); while (dirs.length) rmSync(dirs.pop()!, { 
 
 function fixture() {
   const home = mkdtempSync(join(tmpdir(), 'augur-jobs-live-')); dirs.push(home);
-  let now = 100000, jobs: JobRecord[] = [];
-  const list = vi.fn(() => jobs), log = vi.fn();
-  const writer = new JobsLiveWriter(home, { list }, () => 10, log, () => now);
-  return { home, writer, list, log, set: (rows: JobRecord[]) => { jobs = rows; }, advance: (ms = 5000) => { now += ms; },
+  let now = 100000, jobs: JobRecord[] = [], closed: JobRecord[] = [];
+  const list = vi.fn((filter: { finished?: boolean }) => (filter.finished ? closed : jobs)), log = vi.fn();
+  const writer = new JobsLiveWriter(home, { list }, () => 10, log, () => now, id => (id === 'sid' ? 'Augur' : undefined));
+  return { home, writer, list, log, set: (rows: JobRecord[]) => { jobs = rows; }, setClosed: (rows: JobRecord[]) => { closed = rows; }, advance: (ms = 5000) => { now += ms; },
     read: () => JSON.parse(readFileSync(join(home, 'jobs-live.json'), 'utf8')) };
 }
 
 const job = (id: string, createdAt = 1) => ({ id, createdAt, route: 'local', activity: 'write_code', state: 'running', startedAt: createdAt,
-  lastActivityAt: createdAt, activityLine: 'Running checks', stalled: false, prompt: 'private input', answer: 'private output', cwd: '/private' }) as unknown as JobRecord;
+  lastActivityAt: createdAt, activityLine: 'Running checks', stalled: false, prompt: 'private input', answer: 'private output', cwd: '/work/repo', dataTier: 'internal', tools: 'read', depth: 0,
+  parentJobId: null, named: false, endedAt: null, exitCode: null, reason: null, usage: null, caller: { kind: 'cli', session: 'sid', intent: 'automated' } }) as unknown as JobRecord;
 
 describe('the live jobs snapshot', () => {
   it('writes only changed jobs and clears the last live job once', () => {
     const f = fixture();
     f.set([job('a')]); f.writer.tick();
     expect(f.list).toHaveBeenCalledWith({ running: true, limit: 50 });
+    expect(f.list).toHaveBeenCalledWith({ finished: true, limit: 30 });
     expect(f.read()).toMatchObject({ updatedAt: 100000, stallMinutes: 10, jobs: [{ id: 'a' }] });
     f.advance(); f.writer.tick();
     expect(renameSync).toHaveBeenCalledTimes(1);
@@ -57,11 +59,36 @@ describe('the live jobs snapshot', () => {
     const f = fixture();
     f.set(Array.from({ length: 60 }, (_, i) => job(String(i), i))); f.writer.tick();
     const feed = f.read();
-    expect(Object.keys(feed).sort()).toEqual(['jobs', 'stallMinutes', 'updatedAt']);
+    expect(Object.keys(feed).sort()).toEqual(['jobs', 'recent', 'stallMinutes', 'updatedAt']);
     expect(feed.jobs).toHaveLength(50);
     expect(feed.jobs.map((row: { id: string }) => row.id)).toEqual(Array.from({ length: 50 }, (_, i) => String(59 - i)));
-    expect(Object.keys(feed.jobs[0]).sort()).toEqual(['activity', 'activityLine', 'id', 'lastActivityAt', 'route', 'stalled', 'startedAt', 'state']);
+    expect(Object.keys(feed.jobs[0]).sort()).toEqual(['activity', 'activityLine', 'createdAt', 'cwd', 'dataTier', 'depth', 'endedAt', 'exitCode', 'id', 'lastActivityAt', 'model', 'named', 'origin',
+      'parentJobId', 'reason', 'route', 'stalled', 'startedAt', 'state', 'summary', 'tools', 'usage']);
     expect(JSON.stringify(feed)).not.toContain('private');
+  });
+
+  it('names the origin from the stamp, then the caller, and looks the session title up by id', () => {
+    const f = fixture();
+    const stamped = { ...job('b'), ledger: { stamp: { sessionId: 'other', sessionTitle: 'Stamped', origin: 'mcp', originLabel: 'augur-mcp', host: 'box', pid: 7 }, summary: 'Read notes', model: 'm1' } };
+    f.set([job('a'), stamped as unknown as JobRecord]);
+    f.writer.tick();
+    const rows = Object.fromEntries(f.read().jobs.map((row: { id: string }) => [row.id, row]));
+    expect(rows.a.origin).toEqual({ kind: 'cli', label: null, sessionId: 'sid', sessionTitle: 'Augur', host: null, pid: null, intent: 'automated' });
+    expect(rows.b.origin).toEqual({ kind: 'mcp', label: 'augur-mcp', sessionId: 'other', sessionTitle: 'Stamped', host: 'box', pid: 7, intent: 'automated' });
+    expect(rows.b).toMatchObject({ summary: 'Read notes', model: 'm1' });
+  });
+
+  it('lists the finished jobs with their outcome and rewrites when the list changes', () => {
+    const f = fixture();
+    const done = { ...job('x'), state: 'completed', endedAt: 5, exitCode: 0, usage: { inputTokens: 10, outputTokens: 2, costUsd: 0.5, source: 'reported' }, reason: 'r'.repeat(300) };
+    f.setClosed([done as unknown as JobRecord]);
+    f.writer.tick();
+    expect(f.read().recent[0]).toMatchObject({ id: 'x', state: 'completed', endedAt: 5, exitCode: 0, usage: { inputTokens: 10, outputTokens: 2, costUsd: 0.5 } });
+    expect(f.read().recent[0].reason).toHaveLength(160);
+    f.advance(); f.writer.tick();
+    expect(renameSync).toHaveBeenCalledTimes(1);
+    f.setClosed([]); f.advance(); f.writer.tick();
+    expect(f.read().recent).toEqual([]);
   });
 
   it('writes a temporary sibling before renaming it over the snapshot', () => {

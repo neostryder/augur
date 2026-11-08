@@ -1,6 +1,7 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
-import { jobStatus, liveJobs, paneRows, statusLine } from '../hooks/view'
+import { closedSummary, jobStatus, liveJobs, paneHeader, paneRows, parseJobs, scopeJobs, statusLine } from '../hooks/view'
+import type { PaneRow } from '../hooks/jobs'
 
 const HOME = 'C:/Users/test'
 const USAGE = `${HOME}/.augur/usage.json`
@@ -8,6 +9,7 @@ const FEED = `${HOME}/.augur/alerts.json`
 const ACKS = `${HOME}/.augur/alerts-acks.jsonl`
 const JOBS = `${HOME}/.augur/jobs-live.json`
 const NOW = Date.parse('2026-10-03T20:00:00Z')
+const SESSION = 'f4102942-2ade-478d-a309-05fd8042827c'
 
 const usage = (generatedAt = '2026-10-03T19:59:00Z') => JSON.stringify({
   schema: 1, generatedAt, providers: {
@@ -46,6 +48,7 @@ function world(on: On, files: Map<string, string>, seen?: string[], app?: object
   on('command.register', async (_$, e) => ({ value: { command: e.name } }))
   on('ui.open', async (_$, e) => { opened.push(e.id); return { value: placed ? { isPlaced: true } : { isPlaced: false, reason: 'no-surface' } } })
   on('session.start', async (_$, e) => ({ cwd: e.cwd }))
+  on('session.id', async () => ({ value: SESSION }))
   // The engine draws nothing of its own above the prompt.
   on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
   return { clock, toasts, status, opened, reads }
@@ -138,27 +141,54 @@ describe('the Augur mod', () => {
   })
 })
 
-const liveJob = (id = 'a', stalled = false) => ({ id, route: 'local', activity: 'write_code', state: 'running', startedAt: NOW - 120000,
-  lastActivityAt: NOW - 90000, activityLine: 'Running checks', stalled })
-const jobsFeed = (updatedAt = NOW, jobs = [liveJob()]) => JSON.stringify({ updatedAt, stallMinutes: 10, jobs })
+const liveJob = (id = 'a', stalled = false, sessionId: string | undefined = SESSION) => ({ id, route: 'local', activity: 'write_code', state: 'running', startedAt: NOW - 120000,
+  lastActivityAt: NOW - 90000, activityLine: 'Running checks', stalled, ...(sessionId ? { origin: { kind: 'cli', sessionId, sessionTitle: sessionId === SESSION ? 'Augur' : 'Other chat' } } : {}) })
+const closedJob = (id = 'z', state = 'completed', sessionId: string | undefined = SESSION) => ({ ...liveJob(id, false, sessionId), state, endedAt: NOW - 60000, exitCode: state === 'completed' ? 0 : 1,
+  usage: { inputTokens: 12345, outputTokens: 812, costUsd: 0.0123 } })
+const jobsFeed = (updatedAt = NOW, jobs: object[] = [liveJob()], recent: object[] = []) => JSON.stringify({ updatedAt, stallMinutes: 10, jobs, recent })
+const flat = (row: PaneRow) => row.lines.map((l) => `${l.label} ${l.segs.map((s) => s.text).join('')}`)
 const PANE = { plugin: 'augur', component: 'Pane', requestId: 'augur-jobs', props: { title: 'Augur jobs', isFocused: false,
   bodyColumns: 80, placement: 'dock', scroll: { offset: 0, bodyRows: 20 }, view: {} } } as const
 
 describe('live jobs', () => {
   test('adds job counts to the existing status and omits an empty job list', () => {
     expect(jobStatus([])).toBeUndefined()
-    expect(jobStatus([liveJob()])).toBe('1 job')
-    const jobs = [liveJob(), liveJob('b', true)]
+    expect(jobStatus([liveJob()] as never)).toBe('1 job')
+    const jobs = [liveJob(), liveJob('b', true)] as never[]
     expect(jobStatus(jobs)).toBe('2 jobs (1 stalled)')
     expect(statusLine(JSON.parse(usage()), 1, NOW, 5, jobs)).toBe('Claude 5h 27% | wk 48% | Grok wk 81% | 1 Augur alert | 2 jobs (1 stalled)')
   })
 
-  test('puts stalled rows first and formats last activity ages', () => {
-    const jobs = [liveJob(), { ...liveJob('b', true), lastActivityAt: NOW - 7200000 }, { ...liveJob('c'), lastActivityAt: NOW - 3000 }]
-    const rows = paneRows(jobs, NOW)
+  test('puts stalled rows first and gives each row an origin, job and activity line', () => {
+    const jobs = [liveJob(), { ...liveJob('b', true), lastActivityAt: NOW - 7200000 }, { ...liveJob('c'), lastActivityAt: NOW - 3000 }] as never[]
+    const rows = paneRows(jobs, NOW, false, SESSION)
     expect(rows.map((row) => row.id)).toEqual(['b', 'a', 'c'])
-    expect(rows.map((row) => row.text)).toEqual(['local | write_code | 2h ago | stalled | Running checks', 'local | write_code | 1m ago | Running checks', 'local | write_code | 3s ago | Running checks'])
-    expect(jobs[0]?.id).toBe('a')
+    expect(rows.map((row) => row.lines.map((l) => l.label))).toEqual(Array(3).fill(['ORIGIN:', 'JOB:', 'ACTIVITY:']))
+    expect(flat(rows[0]!)).toEqual([
+      'ORIGIN: Augur this session  | cli',
+      'JOB: b | local | write_code |  STALLED  | started 2m ago',
+      'ACTIVITY: last output 2h ago | Running checks',
+    ])
+    expect(flat(rows[2]!)[2]).toBe('ACTIVITY: last output 3s ago | Running checks')
+    expect(rows[0]!.color).toBe('warning')
+    expect(rows[1]!.color).toBe('success')
+    expect(jobs[0]).toMatchObject({ id: 'a' })
+  })
+
+  test('names the origin when the session title is missing', () => {
+    const [bare, noOrigin] = paneRows([{ ...liveJob('a'), origin: { kind: 'cli', sessionId: 'abcdef0123456789' } }, liveJob('b', false, '')] as never[], NOW).map(flat)
+    expect(bare![0]).toBe('ORIGIN: session abcdef01 | cli')
+    expect(noOrigin![0]).toBe('ORIGIN: no session | unknown origin')
+  })
+
+  test('draws closed rows with an origin, job and result line', () => {
+    const failed = { ...closedJob('f', 'failed'), reason: 'Route refused: data tier' }
+    const [done, bad] = paneRows([closedJob(), failed] as never[], NOW, true, SESSION)
+    expect(done!.lines.map((l) => l.label)).toEqual(['ORIGIN:', 'JOB:', 'RESULT:'])
+    expect(flat(done!)[1]).toBe('JOB: z | local | write_code |  completed  | ended 1m ago | took 1m 0s')
+    expect(flat(done!)[2]).toBe('RESULT: exit 0 | 12.3k in / 812 out | $0.0123')
+    expect(flat(bad!)[2]).toBe('RESULT: exit 1 | 12.3k in / 812 out | $0.0123 | Route refused: data tier')
+    expect(bad!.lines[2]!.segs.find((sg) => sg.text.startsWith('Route'))?.color).toBe('error')
   })
 
   test('rejects missing, malformed, stale and invalid job snapshots', () => {
@@ -168,6 +198,28 @@ describe('live jobs', () => {
     expect(liveJobs(jobsFeed(NOW - 60000), NOW)).toEqual([liveJob()])
   })
 
+  test('keeps closed jobs one by one, even when the live list is stale', () => {
+    const stale = jobsFeed(NOW - 120000, [liveJob()], [closedJob('x'), { id: 'bad' }, closedJob('y', 'failed')])
+    const parsed = parseJobs(stale, NOW)
+    expect(parsed.live).toEqual([])
+    expect(parsed.recent.map((j) => j.id)).toEqual(['x', 'y'])
+    expect(parseJobs(JSON.stringify({ updatedAt: NOW, stallMinutes: 10, jobs: [] }), NOW).recent).toEqual([])
+    const many = Array.from({ length: 40 }, (_, n) => closedJob(`c${n}`))
+    expect(parseJobs(jobsFeed(NOW, [], many), NOW).recent).toHaveLength(30)
+    expect(parseJobs(jobsFeed(NOW, [], [{ ...closedJob(), state: 'running' }]), NOW).recent).toEqual([])
+  })
+
+  test('scopes to this session and summarizes both views', () => {
+    const mine = parseJobs(jobsFeed(NOW, [liveJob('a'), liveJob('b', false, 'other')], [closedJob('x'), closedJob('y', 'failed', 'other'), closedJob('z', 'failed', 'other')]), NOW)
+    expect(scopeJobs(mine.live, 'session', SESSION).map((j) => j.id)).toEqual(['a'])
+    expect(scopeJobs(mine.live, 'all', SESSION)).toHaveLength(2)
+    expect(scopeJobs(mine.live, 'session', '')).toHaveLength(2)
+    expect(paneHeader(mine.live, mine.recent, 'session', SESSION)).toBe('This session: 1 live, 1 closed | Elsewhere: 1 live, 2 closed')
+    expect(paneHeader(mine.live, mine.recent, 'all', SESSION)).toBe('All sessions: 2 live, 3 closed | This session: 1 live, 1 closed')
+    expect(paneHeader(mine.live, mine.recent, 'session', '')).toBe('All sessions: 2 live, 3 closed')
+    expect(closedSummary(mine.recent)).toBe('2 failed, 1 completed')
+  })
+
   test('draws live jobs on every surface and removes a stale snapshot', async ($, on) => {
     const files = new Map([[JOBS, jobsFeed(NOW, [liveJob(), liveJob('b', true)])]])
     const w = world(on, files)
@@ -175,13 +227,45 @@ describe('live jobs', () => {
     expect(w.status.at(-1)).toBe('2 jobs (1 stalled)')
     for (const surface of ['terminal', 'desktop', 'vscode', 'mobile'] as const) {
       const ui = await $.ui.mount({ ...PANE, surface })
-      expect((await ui.find({ type: 'Text', text: /stalled/ }))?.text).toBe('local | write_code | 1m ago | stalled | Running checks')
+      expect(await ui.find({ type: 'Text', text: /STALLED/ })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: /Running checks/ })).toBeDefined()
+      expect(await ui.find({ key: 'scope' })).toBeDefined()
       await ui.unmount()
     }
     await w.clock.advance(65000)
     expect(w.status.at(-1)).toBeUndefined()
     const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
-    expect((await ui.find({ type: 'Text', text: 'No jobs are running.' }))?.text).toBe('No jobs are running.')
+    expect(await ui.find({ type: 'Text', text: 'No jobs from this session are running.' })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('toggles between this session and every session', async ($, on) => {
+    const files = new Map([[JOBS, jobsFeed(NOW, [liveJob('a'), liveJob('b', false, 'other')])]])
+    world(on, files)
+    await $.session.start({ cwd: HOME, surface: 'desktop', isInteractive: true })
+    const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+    expect(await ui.find({ type: 'Text', text: /Other chat/ })).toBeUndefined()
+    await ui.press({ key: 'scope' })
+    expect(await ui.find({ type: 'Text', text: /Other chat/ })).toBeDefined()
+    await ui.press({ key: 'scope' })
+    expect(await ui.find({ type: 'Text', text: /Other chat/ })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('keeps the closed list folded until it is opened', async ($, on) => {
+    const files = new Map([[JOBS, jobsFeed(NOW, [], [closedJob('x'), closedJob('y', 'failed', 'other')])]])
+    world(on, files)
+    await $.session.start({ cwd: HOME, surface: 'desktop', isInteractive: true })
+    const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+    expect(await ui.find({ key: 'closed' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /RESULT:/ })).toBeUndefined()
+    await ui.press({ key: 'closed' })
+    expect(await ui.find({ type: 'Text', text: /RESULT:/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /Other chat/ })).toBeUndefined()
+    await ui.press({ key: 'scope' })
+    expect(await ui.find({ type: 'Text', text: /Other chat/ })).toBeDefined()
+    await ui.press({ key: 'closed' })
+    expect(await ui.find({ type: 'Text', text: /RESULT:/ })).toBeUndefined()
     await ui.unmount()
   })
 
@@ -207,6 +291,14 @@ describe('live jobs', () => {
     expect(w.opened).toHaveLength(2)
     await $.session.start({ cwd: HOME, surface: 'terminal', isInteractive: true })
     expect(w.opened).toHaveLength(3)
+  })
+
+  test('does not open on its own for jobs from another session', async ($, on) => {
+    const files = new Map([[JOBS, jobsFeed(NOW, [liveJob('b', false, 'other')])]])
+    const w = world(on, files)
+    await $.session.start({ cwd: HOME, surface: 'terminal', isInteractive: true })
+    await w.clock.advance(5000)
+    expect(w.opened).toEqual([])
   })
 
   test('polls live jobs every five seconds and idle jobs every thirty seconds', async ($, on) => {
@@ -237,9 +329,9 @@ describe('live jobs', () => {
     const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
     files.set(JOBS, jobsFeed(NOW + 5000, [{ ...liveJob(), activityLine: 'Waiting', lastActivityAt: NOW + 5000 }]))
     await w.clock.advance(5000)
-    expect((await ui.find({ type: 'Text', text: /Waiting/ }))?.text).toBe('local | write_code | 0s ago | Waiting')
+    expect(await ui.find({ type: 'Text', text: /Waiting/ })).toBeDefined()
     await w.clock.advance(65000)
-    expect((await ui.find({ type: 'Text', text: 'No jobs are running.' }))?.text).toBe('No jobs are running.')
+    expect(await ui.find({ type: 'Text', text: 'No jobs from this session are running.' })).toBeDefined()
     await ui.unmount()
   })
 

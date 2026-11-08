@@ -111,12 +111,13 @@ export class Store {
     const r = this.row(id); return r ? { runnerPid: r.runner_pid, childPid: r.child_pid, expectFile: r.expect_file, timeoutS: r.timeout_s, purged: r.purged === 1 } : null;
   }
 
-  list(filter: { state?: JobState; running?: boolean; root?: string; limit?: number } = {}): JobRecord[] {
+  list(filter: { state?: JobState; running?: boolean; finished?: boolean; root?: string; limit?: number } = {}): JobRecord[] {
     const where: string[] = [], args: Array<string | number> = [];
     if (filter.state) { where.push('state=?'); args.push(filter.state); }
     if (filter.running) where.push("state in ('queued','needs_approval','running','cancel_requested')");
+    if (filter.finished) where.push("state in ('completed','failed','artifact_validation_failed','cancelled','killed','lost')");
     if (filter.root) { where.push('root_job_id=?'); args.push(filter.root); }
-    const sql = `select * from jobs ${where.length ? 'where ' + where.join(' and ') : ''} order by created_at desc, rowid desc limit ?`;
+    const sql = `select * from jobs ${where.length ? 'where ' + where.join(' and ') : ''} order by ${filter.finished ? 'coalesce(ended_at, created_at)' : 'created_at'} desc, rowid desc limit ?`;
     return (this.db.prepare(sql).all(...args, filter.limit ?? 100) as unknown as Row[]).map(toRecord);
   }
 
