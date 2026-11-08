@@ -144,7 +144,8 @@ export function parse(argv: string[]): Parsed {
     if (a.startsWith('--')) {
       const eq = a.indexOf('='), name = a.slice(2, eq < 0 ? undefined : eq);
       if (eq >= 0) flags.set(name, a.slice(eq + 1));
-      else if (boolean.has(name)) flags.set(name, true);
+      // `augur run --named` is a switch, but `augur pick --named <model>` names the model, so there it takes the next word.
+      else if (boolean.has(name) && !(name === 'named' && (argv[0] === 'pick' || argv[0] === 'pick-preview'))) flags.set(name, true);
       else { const v = argv[++i]; if (v === undefined) throw new Error(`--${name} needs a value`); flags.set(name, v); }
       const last = flags.get(name);
       if (REPEATABLE.has(name) && typeof last === 'string') repeated.set(name, [...(repeated.get(name) ?? []), last]);
