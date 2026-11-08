@@ -2,13 +2,19 @@ import type { EngineInterface, Register } from 'claude-code'
 import { atom, read, update } from 'claude-code'
 
 import type { ModAlert } from '../types'
-import { JOBS_TEXT, PACE_BAND, alertText, claudeAlerts, folderOf, liveJobs, paneRows, statusLine, withAck, type Usage } from './view'
+import { JOBS_TEXT, PACE_BAND, alertText, claudeAlerts, closedSummary, folderOf, paneHeader, paneRows, parseJobs, scopeJobs, statusLine, withAck, type Usage } from './view'
+import { LABEL_COLORS, type PaneRow, type Seg } from './jobs'
 
 const ALERTS = { plugin: 'augur', key: 'alerts' } as const
 const CAN_OPEN = { plugin: 'augur', key: 'canOpen' } as const
 const PANE = 'augur-jobs'
-const jobs = atom({ plugin: 'augur', key: 'jobs' } as const, [], { shape: 'jobs-1' })
+const jobs = atom({ plugin: 'augur', key: 'jobs' } as const, [], { shape: 'jobs-2' })
+const recent = atom({ plugin: 'augur', key: 'recent' } as const, [], { shape: 'jobs-2' })
 const jobsOpened = atom({ plugin: 'augur', key: 'jobsOpened' } as const, false)
+const mySession = atom({ plugin: 'augur', key: 'mySession' } as const, '')
+const scope = atom({ plugin: 'augur', key: 'scope' } as const, 'session')
+const closedOpen = atom({ plugin: 'augur', key: 'closedOpen' } as const, false)
+const LABEL_WIDTH = 10
 
 /** Augur rewrites usage.json about once a minute, so a 30-second poll keeps the status line close to it. */
 const POLL_MS = 30_000
@@ -60,9 +66,12 @@ async function poll($: EngineInterface) {
     await $.store.set('seen', [...new Set([...list.map((a) => a.id), ...(seen ?? [])])].slice(0, SEEN_KEEP))
     await $.state.set(ALERTS, list)
   }
-  const list = liveJobs(await readText($, `${folderOf(usageFile)}/jobs-live.json`), await $.clock.now())
+  const parsed = parseJobs(await readText($, `${folderOf(usageFile)}/jobs-live.json`), await $.clock.now())
+  const list = parsed.live
   await update($, jobs, () => list)
-  if (list.length && !await read($, jobsOpened)) {
+  await update($, recent, () => parsed.recent)
+  const mine = await read($, mySession)
+  if (scopeJobs(list, await read($, scope), mine).length && !await read($, jobsOpened)) {
     await update($, jobsOpened, () => true)
     await $.ui.open({ id: PANE, title: JOBS_TEXT.title })
   }
@@ -88,6 +97,8 @@ async function start($: EngineInterface) {
   pollTimer?.cancel()
   lastAlerts = null
   await update($, jobsOpened, () => false)
+  const id = await $.session.id().catch(() => '')
+  await update($, mySession, () => id)
   const home = (await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME')) ?? '~'
   let info: AppInfo = {}
   try { info = JSON.parse((await readText($, `${$.plugin.root}/augur-app.json`)) ?? '{}') as AppInfo } catch { /* defaults below */ }
@@ -112,12 +123,48 @@ export const register: Register = (on) => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text } = $.ui.resolve(e)
-    const rows = paneRows(await read($, jobs), await $.clock.now())
+    const { Box, Button, Text } = $.ui.resolve(e)
+    const now = await $.clock.now()
+    const [allLive, allClosed, view, mine, open] = [await read($, jobs), await read($, recent), await read($, scope), await read($, mySession), await read($, closedOpen)]
+    const liveRows = paneRows(scopeJobs(allLive, view, mine), now, false, mine)
+    const closedJobs = scopeJobs(allClosed, view, mine)
+    const closedRows = paneRows(closedJobs, now, true, mine)
+    const seg = (s: Seg, i: number, closed: boolean) => (
+      <Text key={String(i)} color={s.color} backgroundColor={s.bg} bold={s.bold} italic={s.italic} underline={s.underline} dimColor={s.dim || (closed && !s.bg && !s.bold)}>{s.text}</Text>
+    )
+    // A bordered card per job: the border takes the state's color, and each of the three lines has a label color of its own.
+    const draw = (row: PaneRow) => (
+      <Box key={`${row.closed ? 'closed' : 'live'}-${row.id}`} flexDirection="column" borderStyle="round" borderColor={row.closed ? 'inactive' : row.color} paddingX={1} marginBottom={1}>
+        {row.lines.map((l) => (
+          <Text key={l.label}>
+            <Text bold color={LABEL_COLORS[l.kind]}>{l.label.padEnd(LABEL_WIDTH)}</Text>
+            {l.segs.map((s, i) => seg(s, i, row.closed))}
+          </Text>
+        ))}
+      </Box>
+    )
+    const heading = (label: string, n: number, bg: string) => (
+      <Box>
+        <Text bold color="inverseText" backgroundColor={bg}>{` ${label} `}</Text>
+        <Text bold color={bg}>{` ${n}`}</Text>
+      </Box>
+    )
+    const byState = closedSummary(closedJobs)
     return (
       <Box flexDirection="column">
-        <Text bold>{JOBS_TEXT.title}</Text>
-        {rows.length ? rows.map((row) => <Text color={row.stalled ? 'yellow' : undefined}>{row.text}</Text>) : <Text dimColor>{JOBS_TEXT.empty}</Text>}
+        <Text bold color="claude">{JOBS_TEXT.title}</Text>
+        <Text color="subtle">{paneHeader(allLive, allClosed, view, mine)}</Text>
+        {mine
+          ? <Button key="scope" label={view === 'session' ? JOBS_TEXT.showAll : JOBS_TEXT.showSession} hotkey="f" onPress={() => update($, scope, (v) => (v === 'session' ? 'all' : 'session'))} />
+          : null}
+        <Box marginTop={1} flexDirection="column">
+          {heading(JOBS_TEXT.live.toUpperCase(), liveRows.length, 'success')}
+          {liveRows.length ? liveRows.map(draw) : <Text italic color="subtle">{view === 'session' && mine ? JOBS_TEXT.emptyScope : JOBS_TEXT.empty}</Text>}
+        </Box>
+        <Box marginTop={1}>
+          <Button key="closed" label={`${open ? '[-]' : '[+]'} ${JOBS_TEXT.closedHeading} (${closedRows.length})${byState ? `: ${byState}` : ''}`} hotkey="c" onPress={() => update($, closedOpen, (v) => !v)} />
+        </Box>
+        {open ? <Box marginTop={1} flexDirection="column">{closedRows.length ? closedRows.map(draw) : <Text italic color="subtle">{JOBS_TEXT.noClosed}</Text>}</Box> : null}
       </Box>
     )
   })

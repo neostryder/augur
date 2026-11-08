@@ -31,6 +31,7 @@ import { policySource, routeSource, usageSource, withCurrentLabels } from './sou
 import { Store } from './store.js';
 import { Supervisor } from './supervisor.js';
 import { JobsLiveWriter } from './jobs-live.js';
+import { SessionTitles, desktopSessionsRoot } from './session-titles.js';
 import { ViewHub } from './views.js';
 import { loadLocalSignIn } from './local-signin.js';
 import type { PolicyFile } from '@augur/core';
@@ -194,7 +195,8 @@ export async function startService(opts: ServiceOptions = {}) {
   store.ledger.compact(resolveBalance(policy.read()?.balance).ledger.retentionDays);
   const ledgerMaintenance = setInterval(() => { try { maintainLedger(); } catch { log('The job ledger could not refresh.'); } }, 5000);
   const ledgerRetention = setInterval(() => { try { store.ledger.compact(resolveBalance(policy.read()?.balance).ledger.retentionDays); } catch { log('The job ledger could not compact.'); } }, 3600000);
-  const jobsLive = new JobsLiveWriter(home, supervisor, () => config.stallMinutes, log);
+  const sessionTitles = new SessionTitles(desktopSessionsRoot());
+  const jobsLive = new JobsLiveWriter(home, supervisor, () => config.stallMinutes, log, Date.now, id => sessionTitles.lookup(id));
   jobsLive.tick();
   const timer = setInterval(() => { try { supervisor.tick(); } catch (e) { log(`tick failed: ${(e as Error).message}`); } jobsLive.tick(); }, 500);
   const daily = setInterval(() => { try { supervisor.purge(); } catch (e) { log(`purge failed: ${(e as Error).message}`); } }, 86400000);
