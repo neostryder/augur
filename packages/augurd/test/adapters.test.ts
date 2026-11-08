@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import type { IncomingHttpHeaders, Server } from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -12,6 +13,8 @@ import { parseCount } from '../src/adapters/copilot-exec.js';
 import { insideSandbox, resolveExecutable } from '../src/adapters/util.js';
 import { FAKE, ROUTES, makeEnv, request, submitOk, terminal } from './harness.js';
 import type { Env } from './harness.js';
+
+vi.mock('node:fs', async importOriginal => ({ ...await importOriginal<typeof import('node:fs')>() }));
 
 vi.setConfig({ testTimeout: 90000 });
 const envs: Env[] = [];
@@ -642,6 +645,98 @@ describe('an API connector', () => {
 
 describe('a sandboxed connector on a copy of the workspace', () => {
   const sbxRoute = (adapter: string, workRoot: string, extra: Record<string, string> = {}) => ({ model: 'test/patch', adapter, options: { sandbox: 'fake', workRoot, model: 'm', sbx: process.execPath, sbxPrefixJson: JSON.stringify([FAKE_SBX]), ...extra } });
+
+  it.each(['folder', 'file'])('ignores a job-created .git %s and its clean filter when collecting a patch', async kind => {
+    const e = setup({ adapters: ['mcode-sbx'] });
+    const project = join(e.root, 'project'), marker = join(e.root, 'filter-ran'), script = join(e.root, 'clean.cjs').replaceAll('\\', '/');
+    mkdirSync(project);
+    writeFileSync(script, `require('node:fs').writeFileSync(${JSON.stringify(marker.replaceAll('\\', '/'))}, 'ran');`);
+    const config = `[filter "x"]\n  clean = ${JSON.stringify(`node "${script}"`)}\n`;
+    const metadata = kind === 'folder' ? [['.git/config', config]] : [['hostile.git/config', config], ['.git', 'gitdir: hostile.git\n']];
+    const text = [...metadata, ['.gitattributes', '* filter=x\n']].map(value => `WRITE-JSON ${JSON.stringify(value)}`).join('\n');
+    e.writeRoutes({ mc: sbxRoute('mcode-sbx', join(e.root, 'work')) });
+    const id = submitOk(e.sup, request({ route: 'mc', text: `${text}\nWRITE real.txt\nSLEEP 0`, output: 'patch_only' }, project));
+    const job = await terminal(e.sup, e.store, id);
+    expect(job.state).toBe('completed');
+    expect(existsSync(marker)).toBe(false);
+    const patch = readFileSync(job.patch!.path, 'utf8');
+    expect(patch).toContain('+++ b/real.txt');
+    expect(patch).not.toMatch(/^diff --git a\/\.git(?:\/| )/m);
+  });
+
+  it('starts the job without .git in the copy and keeps the metadata under the job folder', async () => {
+    const e = setup({ adapters: ['mcode-sbx'] });
+    const project = join(e.root, 'project'); mkdirSync(project);
+    e.writeRoutes({ mc: sbxRoute('mcode-sbx', join(e.root, 'work')) });
+    const id = submitOk(e.sup, request({ route: 'mc', text: 'ASSERT-NO-GIT\nWRITE real.txt\nSLEEP 0', output: 'patch_only' }, project));
+    const job = await terminal(e.sup, e.store, id);
+    expect(job.state).toBe('completed');
+    expect(existsSync(join(job.workspace!, '.git'))).toBe(false);
+    expect(existsSync(join(e.dir, 'jobs', id, 'workspace.git', 'config'))).toBe(true);
+    expect(job.patch).toMatchObject({ files: 1 });
+  });
+
+  it.each([
+    ['LF', 'original\n', 'changed\n'],
+    ['CRLF', 'original\r\n', 'changed\r\n'],
+    ['binary', 'original\0', 'changed\0'],
+  ])('records the base tree and preserves a modified %s file in the patch', async (kind, before, after) => {
+    const e = setup({ adapters: ['mcode-sbx'] });
+    const project = join(e.root, 'project'); mkdirSync(project);
+    writeFileSync(join(project, 'keep.txt'), before);
+    execFileSync('git', ['init', '-q'], { cwd: project, windowsHide: true });
+    e.writeRoutes({ mc: sbxRoute('mcode-sbx', join(e.root, 'work')) });
+    const id = submitOk(e.sup, request({ route: 'mc', text: `WRITE-JSON ${JSON.stringify(['keep.txt', after])}\nSLEEP 0`, output: 'patch_only' }, project));
+    const job = await terminal(e.sup, e.store, id);
+    expect(job.state).toBe('completed');
+    expect(readFileSync(join(e.dir, 'jobs', id, 'base-tree'), 'utf8')).toMatch(/^[a-f0-9]{40,64}$/);
+    expect(job.patch).toMatchObject({ files: 1 });
+    const patch = readFileSync(job.patch!.path, 'utf8');
+    expect(patch).toContain(kind === 'binary' ? 'GIT binary patch' : '+++ b/keep.txt');
+    expect(readFileSync(join(project, 'keep.txt'), 'utf8')).toBe(before);
+    expect(e.sup.apply(id)).toMatchObject({ ok: true });
+    expect(readFileSync(join(project, 'keep.txt'), 'utf8')).toBe(after);
+  });
+
+  it('leaves an outside link and its contents out of the copy', async context => {
+    const e = setup({ adapters: ['mcode-sbx'] });
+    const project = join(e.root, 'project'), outside = join(e.root, 'outside');
+    mkdirSync(project); mkdirSync(outside);
+    writeFileSync(join(project, 'keep.txt'), 'regular\n'); writeFileSync(join(outside, 'outside.txt'), 'outside\n');
+    try { symlinkSync(outside, join(project, 'link'), process.platform === 'win32' ? 'junction' : 'dir'); } catch { context.skip(); }
+    e.writeRoutes({ mc: sbxRoute('mcode-sbx', join(e.root, 'work')) });
+    const id = submitOk(e.sup, request({ route: 'mc', text: 'SLEEP 0', output: 'patch_only' }, project));
+    const job = await terminal(e.sup, e.store, id);
+    expect(job.state).toBe('completed');
+    expect(readdirSync(job.workspace!)).toEqual(['keep.txt']);
+    expect(readFileSync(join(job.workspace!, 'keep.txt'), 'utf8')).toBe('regular\n');
+    expect(readFileSync(join(outside, 'outside.txt'), 'utf8')).toBe('outside\n');
+  });
+
+  it('removes a link swapped in after the copy filter checks a directory and records its count', async context => {
+    const e = setup({ adapters: ['mcode-sbx'] });
+    const project = join(e.root, 'project'), outside = join(e.root, 'outside'), link = join(project, 'link');
+    mkdirSync(project); mkdirSync(outside);
+    writeFileSync(join(project, 'keep.txt'), 'regular\n'); writeFileSync(join(outside, 'outside.txt'), 'outside\n');
+    try { symlinkSync(outside, link, process.platform === 'win32' ? 'junction' : 'dir'); } catch { context.skip(); }
+    rmSync(link, { recursive: true }); mkdirSync(link);
+    e.writeRoutes({ mc: sbxRoute('mcode-sbx', join(e.root, 'work')) });
+    const copy = fs.cpSync;
+    const spy = vi.spyOn(fs, 'cpSync').mockImplementation((src, dest, options) => copy(src, dest, { ...options, filter(source, destination) {
+      const accepted = options?.filter?.(source, destination) ?? true;
+      if (source === link && accepted) { rmSync(link, { recursive: true }); symlinkSync(outside, link, process.platform === 'win32' ? 'junction' : 'dir'); }
+      return accepted;
+    } }));
+    try {
+      const id = submitOk(e.sup, request({ route: 'mc', text: 'SLEEP 0', output: 'patch_only' }, project));
+      const job = await terminal(e.sup, e.store, id);
+      expect(job.state).toBe('completed');
+      expect(spy).toHaveBeenCalledWith(project, job.workspace, expect.objectContaining({ dereference: false, verbatimSymlinks: true }));
+      expect(readdirSync(job.workspace!)).toEqual(['keep.txt']);
+      expect(e.store.events(id).filter(event => event.kind === 'workspace_links_removed')).toEqual([expect.objectContaining({ detail: '1' })]);
+      expect(readFileSync(join(outside, 'outside.txt'), 'utf8')).toBe('outside\n');
+    } finally { spy.mockRestore(); }
+  });
 
   it('leaves the original untouched, exports a patch, checks the expected file in the copy, and applies on request', async () => {
     const e = setup({ adapters: ['mcode-sbx', 'opencode-sbx'] });
