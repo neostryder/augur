@@ -30,6 +30,7 @@ import { augurHome, dataDir, pipeName } from './paths.js';
 import { policySource, routeSource, usageSource, withCurrentLabels } from './sources.js';
 import { Store } from './store.js';
 import { Supervisor } from './supervisor.js';
+import { CancelRequests } from './cancel-requests.js';
 import { JobsLiveWriter } from './jobs-live.js';
 import { SessionTitles, desktopSessionsRoot } from './session-titles.js';
 import { ViewHub } from './views.js';
@@ -198,7 +199,8 @@ export async function startService(opts: ServiceOptions = {}) {
   const sessionTitles = new SessionTitles(desktopSessionsRoot());
   const jobsLive = new JobsLiveWriter(home, supervisor, () => config.stallMinutes, log, Date.now, id => sessionTitles.lookup(id));
   jobsLive.tick();
-  const timer = setInterval(() => { try { supervisor.tick(); } catch (e) { log(`tick failed: ${(e as Error).message}`); } jobsLive.tick(); }, 500);
+  const cancelRequests = new CancelRequests(home, supervisor, log);
+  const timer = setInterval(() => { try { supervisor.tick(); } catch (e) { log(`tick failed: ${(e as Error).message}`); } cancelRequests.tick(); jobsLive.tick(); }, 500);
   const daily = setInterval(() => { try { supervisor.purge(); } catch (e) { log(`purge failed: ${(e as Error).message}`); } }, 86400000);
   // The balance report is written once a day, and the check runs hourly so a service left on across midnight still writes it.
   const balanceFile = () => { try { const r = supervisor.balance(7); if (!('error' in r)) { const file = writeDailyReport(home, r, new Date()); if (file) log(`balance report written to ${file}`); } } catch (e) { log(`balance report failed: ${(e as Error).message}`); } };
