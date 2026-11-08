@@ -6,7 +6,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Added
 
-- [Visible] [UI] The Claude Code jobs pane now draws each job as a colored card of three labeled lines, `ORIGIN:`, `JOB:`, and `ACTIVITY:`, so you can see which session or process started it, along with its model, data tier, tools, folder, and timing. The pane opens with this session's jobs, and the `f` key switches to every session. A collapsed `CLOSED` section, opened with the `c` key, lists the last 30 ended jobs with their exit code, tokens, cost, and failure reason. `jobs-live.json` gains a `recent` list and the extra job fields, and the service looks up Claude Code session titles read-only from the desktop app's session store.
+- [Visible] [UI] The `augur-jobs` pane draws each job as a card with colored `ORIGIN:`, `JOB:`, and `ACTIVITY:` or `RESULT:` lines, starts on this session's jobs with `f` to switch to every session, lists the last 30 ended jobs in a collapsed CLOSED section that `c` opens, and opens by itself only for this session's live jobs.
 
 ### Changed
 
