@@ -37,4 +37,4 @@ RestartSec=5
 WantedBy=default.target
 UNIT
 }
-sha256sums=('e7f70def2d8030ebc2457384404dd6421e8fb5940025e54048aea9aceaa84f30')
+sha256sums=('15ff8e5d49cbaf9daa9f06937ff6abc23d66b59254a3bd23551a0dc361c46351')
