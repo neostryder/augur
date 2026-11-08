@@ -34,6 +34,25 @@ export function isPushService(host: string): boolean {
     || host === 'updates.push.services.mozilla.com' || host.endsWith('.push.services.mozilla.com') || host.endsWith('.notify.windows.com');
 }
 
+/** The most one HTTPS response may carry: the fetchers behind this wrapper read usage, update, and model-list JSON, which is far smaller. */
+const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+/** The body of a response as text, refused once it passes `max` bytes (by its declared length or by what has streamed in), so one oversized answer cannot fill memory. */
+async function readCapped(res: Response, max: number): Promise<string> {
+  const declared = Number(res.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > max) { await res.body?.cancel().catch(() => {}); throw new Error('response too large'); }
+  if (!res.body) return '';
+  const reader = res.body.getReader(), chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > max) { await reader.cancel().catch(() => {}); throw new Error('response too large'); }
+    chunks.push(value);
+  }
+  return new TextDecoder().decode(Buffer.concat(chunks));
+}
+
 /** HTTPS, or plain HTTP to this computer or a machine on the home network (a local model gateway). A redirect is followed only to an address that passes the same rule, and one to another origin leaves the request's credentials and body behind. */
 export async function httpsRequest(req: HttpRequest, defaultTimeoutMs = 30000): Promise<HttpResponse> {
   let url = new URL(req.url), method = req.method ?? 'GET', headers = req.headers, body = req.body;
@@ -54,10 +73,11 @@ export async function httpsRequest(req: HttpRequest, defaultTimeoutMs = 30000): 
         url = next;
         continue;
       }
-      return { status: res.status, headers: Object.fromEntries(res.headers.entries()), body: await res.text() };
+      return { status: res.status, headers: Object.fromEntries(res.headers.entries()), body: await readCapped(res, MAX_RESPONSE_BYTES) };
     }
   } catch (e) {
-    throw new Error((e as Error).message === 'HTTPS is required' ? 'HTTPS is required' : 'HTTP request failed');
+    const known = (e as Error).message;
+    throw new Error(known === 'HTTPS is required' || known === 'response too large' ? known : 'HTTP request failed');
   } finally { clearTimeout(timer); }
 }
 

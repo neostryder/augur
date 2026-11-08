@@ -81,6 +81,8 @@ def empty_cuda_cache():
 
 
 LOCAL_CLIENTS = {"127.0.0.1", "::1", "::ffff:127.0.0.1"}
+# The most a busy request may carry while it waits to be handed to another server; a longer one is refused instead of held in memory.
+MAX_FORWARD_BODY = int(os.environ.get("LAYA_MAX_BODY", str(8 * 1024 * 1024)))
 
 
 class LoadWatch:
@@ -262,12 +264,20 @@ class LoadGate:
             if self.watch.busy:
                 headers = dict(scope.get("headers") or [])
                 if self.failover_urls and b"x-laya-forwarded" not in headers:
-                    chunks = []
+                    too_large = lambda: self._json(send, 413, {"error": "The request is too large"})  # noqa: E731
+                    declared = headers.get(b"content-length", b"").decode("latin-1")
+                    if declared.isdigit() and int(declared) > MAX_FORWARD_BODY:
+                        return await too_large()
+                    chunks, total = [], 0
                     while True:
                         message = await receive()
                         if message["type"] == "http.disconnect":
                             return
-                        chunks.append(message.get("body", b""))
+                        chunk = message.get("body", b"")
+                        total += len(chunk)
+                        if total > MAX_FORWARD_BODY:
+                            return await too_large()
+                        chunks.append(chunk)
                         if not message.get("more_body", False):
                             break
                     content_type = headers.get(b"content-type", b"application/json").decode("latin-1")

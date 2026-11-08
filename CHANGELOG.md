@@ -8,6 +8,15 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 - [Visible] [Platform] A model a person asked for now runs without Augur re-checking the claim, because `verifyNamed` defaults to `off` (it was `enforce`); set it to `enforce` to keep the check. Premium models are still refused for automated callers.
 - [Visible] [Docs] The configuration reference now lists the `provider` route option of `hermes-exec` and explains that the DeepInfra host pin for the deepseek, glm, and mimo models lives in Hermes's own `provider_routing` settings and applies to read jobs only when `readMode` is set to `keep`. SECURITY.md and the engine-file list no longer mention OpenCode or sandboxed harnesses.
+- [Visible] [Platform] The desktop app's updater now sets requireSignedVersion, so it installs an update only when the download's signature names the same version the update manifest announces and refuses a manifest that pairs a higher version with an older signed installer. Every published release and early build is already signed with its version, so no existing install loses its update path.
+- [Internal] [Security] The Desktop installers workflow accepts a manual run only from main or a version tag, so code on another branch cannot reach the signing key.
+- [Visible] [Platform] HTTPS responses the service reads for usage, update, and model-list lookups now stop at 8 MiB, and an API route's reply (chat text or embeddings) stops at 64 MiB and fails the job with "response too large". Laya, while busy and handing a request to another server through LAYA_FAILOVER_URLS, answers 413 for a body over 8 MiB, a limit LAYA_MAX_BODY sets in bytes.
+- [Visible] [Platform] In the web chat, one person's uploaded files may total 1024 MB across all their chats (delete a chat that holds files to make room), a single message may hold at most 2 MB of text, and one chat may hold at most 2000 messages (start a new chat to continue).
+- [Internal] [Security] When the service cannot limit its owner or agent token file to its owner because chmod or icacls fails, it now writes a warning to standard error naming the file and folder instead of continuing silently. In that case the folder's own access list is the only protection for the token.
+
+### Fixed
+
+- [Visible] [Platform] A route's parallel limit is now counted per provider and model id, so two routes whose policy labels name the same model share one limit instead of getting one each. A cap keyed by provider/id, such as caps."openai/gpt-x", now holds across every label for that model.
 
 ### Removed
 

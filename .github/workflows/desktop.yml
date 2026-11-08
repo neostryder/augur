@@ -25,6 +25,8 @@ jobs:
           - platform: ubuntu-24.04
             args: '--bundles appimage,deb,rpm'
     runs-on: ${{ matrix.platform }}
+    # A manual run is accepted only from main or a version tag, so a branch's code never reaches the signing key.
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     # Each build waits for the owner's approval in this environment. Keep the signing key in the environment's secrets, not the repository's.
     environment: release
     permissions:
@@ -98,7 +100,7 @@ jobs:
           projectPath: apps/desktop
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || (github.ref == 'refs/heads/main' && format('v{0}', steps.edge-version.outputs.version)) || format('desktop-{0}', github.run_number) }}
           releaseName: "Augur ${{ github.ref_type == 'tag' && github.ref_name || (github.ref == 'refs/heads/main' && steps.edge-version.outputs.version) || github.run_number }}"
-          # A tagged release is published so the in-app updater can find it; a manual run stays a draft.
+          # A tagged release is published so the in-app updater can find it; a build of any other ref stays a draft.
           releaseDraft: ${{ github.ref_type != 'tag' && github.ref != 'refs/heads/main' }}
           prerelease: ${{ github.ref == 'refs/heads/main' }}
           releaseBody: ${{ github.ref == 'refs/heads/main' && 'Automatic build of main for the Early channel. What changed is in [CHANGELOG.md](https://github.com/neostryder/augur/blob/main/CHANGELOG.md).' || 'What changed is in [CHANGELOG.md](https://github.com/neostryder/augur/blob/main/CHANGELOG.md). The installers are not code-signed yet, so the first launch needs one extra step on Windows and macOS; the [README](https://github.com/neostryder/augur#install) shows it for each platform.' }}

@@ -75,6 +75,25 @@ if (mode === 'embeddings') {
   body = JSON.stringify({ model, messages: [{ role: 'user', content }], ...(maxTokens > 0 ? { max_tokens: maxTokens } : {}) });
 }
 
+// A chat answer is text and an embedding batch is a few thousand numbers per input; 64 MiB covers the largest real batch and stops a runaway reply.
+const MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
+/** The body of a response as text, refused once it passes `max` bytes (by its declared length or by what has streamed in), so one oversized answer cannot fill memory. */
+async function readCapped(res: Response, max: number): Promise<string> {
+  const declared = Number(res.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > max) { await res.body?.cancel().catch(() => {}); throw new Error('response too large'); }
+  if (!res.body) return '';
+  const reader = res.body.getReader(), chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > max) { await reader.cancel().catch(() => {}); throw new Error('response too large'); }
+    chunks.push(value);
+  }
+  return new TextDecoder().decode(Buffer.concat(chunks));
+}
+
 const abort = new AbortController();
 const timer = setTimeout(() => abort.abort(), timeoutS * 1000);
 const deadline = Date.now() + timeoutS * 1000;
@@ -86,7 +105,7 @@ const waitS = (r: Response): number => { const v = Number(r.headers.get('retry-a
 let res!: Response, text = '';
 for (let attempt = 1; ; attempt++) {
   // A redirect is never followed: the key rides in a header that a cross-origin redirect would carry to the new host.
-  try { res = await fetch(endpoint, { method: 'POST', headers, body, signal: abort.signal, redirect: 'manual' }); text = await res.text(); }
+  try { res = await fetch(endpoint, { method: 'POST', headers, body, signal: abort.signal, redirect: 'manual' }); text = await readCapped(res, MAX_RESPONSE_BYTES); }
   catch (e) { console.error(`request failed: ${(e as Error).message}`); process.exit(66); }
   if (!preempted(res, text)) break;
   const wait = waitS(res);
