@@ -85,7 +85,7 @@ export interface ServiceConfig {
 
 export const DEFAULT_CONFIG: ServiceConfig = { retentionDays: 30, aliasRefreshHours: 24, persistPrompts: false, maxConcurrent: 8, maxDepth: 2, maxDescendants: 16, proseBatchSize: 10, proseBatchHours: 24, proseRoute: 'claude/opus', proseAutoRun: false,
   ledgerAlerts: { stalled: true, failed: true, overUsualTime: true, usualMultiple: 3, minSamples: 8, webhookUrl: '', webhookFormat: 'augur', webhookKeyName: '' },
-  jobhostPath: null, adapters: ['codex-exec'], requirePick: true, promptRoots: [], verifyNamed: 'enforce', decision: { backend: 'none' }, learn: { recordTasks: false }, runnerStaleS: 20, stallMinutes: 10, engine: true,
+  jobhostPath: null, adapters: ['codex-exec'], requirePick: true, promptRoots: [], verifyNamed: 'off', decision: { backend: 'none' }, learn: { recordTasks: false }, runnerStaleS: 20, stallMinutes: 10, engine: true,
   web: { enabled: false, host: '127.0.0.1', port: 7420, chatPort: 0, chatHost: '0.0.0.0', accessTeam: '', accessAud: '', allowedHosts: [], tlsCert: '', tlsKey: '', tlsAuto: 'auto' },
   runner: { charterDir: '', ambient: 'keep', failover: 'off' } };
 

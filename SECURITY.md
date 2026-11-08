@@ -31,7 +31,7 @@ Hermes, Copilot and short OpenCode prompts travel as command-line arguments, and
 
 The key for an API connector comes from the environment variable its route names, or from the Windows credential store when the route keeps it there. The API caller reads a stored key when the job starts, and the service only asks whether one exists. Neither kind is written to the job's files. Sandboxed harnesses work on a copy of the working folder and hand back a patch, so your folder stays as it is until you run `augur apply`.
 
-When a caller says a person named a model, the service checks that model against the messages it was told a person sent. It keeps the model names from those messages and drops their text. A program running as you could fake that list, so an unconfirmed claim is refused by default. Set verifyNamed to record to accept and note it, or off to accept it silently.
+When a caller says a person named a model, Augur can check that model against the messages it was told a person sent, keeping the model names from those messages and dropping their text. By default Augur takes the caller's word, because a program running as you can fake that list either way. Set `verifyNamed` to `record` to accept and note a claim that cannot be confirmed, or to `enforce` to refuse it. Premium models (Sol, Opus, Grok, Argon) are still refused for automated callers whatever the setting is.
 
 A job that skips the pick or usage check says so in its record.
 
