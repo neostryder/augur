@@ -369,21 +369,21 @@ Runs the Hermes command line with a prompt and reads its usage file.
 | Option | Value | What it does |
 | --- | --- | --- |
 | `model` (required) | text | The model id Hermes passes to its provider. |
-| `readMode` | safe, keep | safe runs read jobs in Hermes safe mode, which ignores your Hermes settings, including any provider pin. keep uses your Hermes settings and still skips rules files. |
+| `readMode` | safe, keep | `safe` (the default) runs read jobs in Hermes safe mode, and safe mode ignores your Hermes settings, including any provider pin (a rule that sends a model's requests only to one named host). `keep` runs read jobs with your Hermes settings, so a provider pin still applies, and still skips rules files. |
 | `command` | text | Full path to the harness, for when it is not on the search path. |
 | `envAllow` | text | Names of environment variables the harness may read, separated by commas. Nothing else from the service is passed on. |
 
 #### `mcode-exec`: MiniMax Code on the host
 
-Runs mcode exec on the host in a copy of the job folder and returns changes as a patch. A read job uses smart permissions and a prompt restriction; file writes are not blocked.
+`mcode-exec` runs `mcode exec` on this computer in a copy of the job folder and returns the changes as a patch. Read jobs use smart permissions and a prompt restriction, but mcode cannot enforce read-only, so file writes are not blocked.
 
 | Option | Value | What it does |
 | --- | --- | --- |
-| `model` | text | The provider/model id mcode uses. Leave empty for its configured default. |
+| `model` | text | The provider/model id mcode uses, or empty for mcode's own default model. |
 | `effort` | text | Passed to the harness as its effort setting. Leave empty for its default. |
 | `command` | text | Full path to the harness, for when it is not on the search path. |
-| `workRoot` | text | The folder for workspace copies. Defaults to the mcode folder under the service data folder. |
-| `maxSteps` | number | Most steps a job may take. Defaults to 60 for a read job and 400 otherwise. |
+| `workRoot` | text | The folder where job copies are made, by default a `mcode` folder in the service data folder. |
+| `maxSteps` | number | The most steps a job may take, by default 60 for a read job and 400 otherwise. |
 | `envAllow` | text | Names of environment variables the harness may read, separated by commas. Nothing else from the service is passed on. |
 
 #### `mcode-sbx`: mcode in a Docker sandbox
