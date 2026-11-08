@@ -29,6 +29,7 @@ export const hermesExec: Adapter = {
   envAllow: ['HERMES_HOME', 'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY', 'SSL_CERT_FILE'],
   validate(route: RouteConfig) {
     if (!optStr(route.options, 'model')) return 'route option model is required';
+    if (route.options?.readMode !== undefined && route.options.readMode !== 'safe' && route.options.readMode !== 'keep') return 'route option readMode must be safe or keep';
     return command(route) ? null : 'hermes was not found on PATH; set the command route option';
   },
   plan(request: JobRequest, route: RouteConfig, ctx: PlanContext): LaunchPlan {
@@ -45,7 +46,7 @@ export const hermesExec: Adapter = {
     const provider = optStr(route.options, 'provider'), effort = request.effort ?? optStr(route.options, 'effort');
     if (provider) args.push('--provider', provider);
     if (effort) args.push('--reasoning', effort);
-    if (request.tools === 'read') args.push('--safe-mode'); else if (request.tools === 'full') args.push('--yolo');
+    if (request.tools === 'read') args.push(optStr(route.options, 'readMode') === 'keep' ? '--ignore-rules' : '--safe-mode'); else if (request.tools === 'full') args.push('--yolo');
     return { command: exe.command, args, cwd: request.cwd, env: {}, stdin: null, files, promptArgs };
   },
   extract(input: ExtractInput): Extraction {
