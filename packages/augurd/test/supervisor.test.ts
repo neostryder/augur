@@ -557,7 +557,7 @@ describe('a job that starts jobs', () => {
     const p = JSON.parse(readFileSync(path, 'utf8'));
     p.balance = { gate: { premium: ['test/ask'], paceLift: [], open: 20, close: 10 }, tiers: { 'test/fake': 'light' } };
     writeFileSync(path, JSON.stringify(p));
-    const pick = await e.sup.pick({ activity: 'write_code', dataTier: 'internal', fits: { 'test/fake': 1, 'test/patch': 0.01, 'test/public': 0.01, 'test/sandboxed': 0.01 } });
+    const pick = await e.sup.pick({ activity: 'write_code', dataTier: 'internal', fits: { 'test/fake': 1, 'test/copy': 0.01, 'test/patch': 0.01, 'test/public': 0.01, 'test/sandboxed': 0.01 } });
     expect('error' in pick ? null : pick.pick).toBe('test/fake');
     const fallback = submitOk(e.sup, request({ text: 'SLEEP 0' }, e.root));
     await terminal(e.sup, e.store, fallback);
