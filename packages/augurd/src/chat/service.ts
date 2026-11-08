@@ -26,6 +26,8 @@ const CALL_SCRIPT = scriptPath(import.meta.url, 'chat-call', './call.ts');
 const DOC_TTL_MS = 60_000;
 const SAVE_EVERY_MS = 1000;
 const MAX_FILES_PER_MESSAGE = 8;
+/** What one person's saved chats may hold: uploaded bytes in all, the length of one message, and the messages in one chat. A limit is reached by deleting chats or starting a new one. */
+const DEFAULT_LIMITS = { userFilesBytes: 1024 * 1048576, messageBytes: 2048 * 1024, chatMessages: 2000 };
 
 /** One streamed process: its lines as objects, and a way to stop it. */
 export interface CallHandle { events: AsyncIterable<Record<string, unknown>>; stop(): void }
@@ -108,6 +110,8 @@ export function titleFrom(text: string): string {
 }
 
 export class ChatService {
+  /** The limits on one person's saved chats; tests lower them. */
+  readonly limits = { ...DEFAULT_LIMITS };
   readonly saved: ChatStore;
   readonly temp: ChatStore;
   private docs = new Map<string, { at: number; value: unknown }>();
@@ -303,6 +307,7 @@ export class ChatService {
     if (!store) throw new Error('No such chat.');
     if (bytes.byteLength === 0) throw new Error('That file is empty.');
     if (bytes.byteLength > CHAT_FILE_MAX_MB * 1048576) throw new Error(`A file may be at most ${CHAT_FILE_MAX_MB} MB.`);
+    if (store.fileBytesOf(this.owner(principal)) + bytes.byteLength > this.limits.userFilesBytes) throw new Error(`Uploads may total at most ${Math.round(this.limits.userFilesBytes / 1048576)} MB. Delete a chat that holds files to make room.`);
     const cleanName = name.replace(/[\\/:*?"<>|\0]/g, '_').slice(0, 120) || 'file';
     const c = classifyFile(cleanName, mime);
     return store.addFile(chat, { name: cleanName, mime: c.mime, kind: c.kind }, bytes, this.owner(principal));
@@ -349,6 +354,8 @@ export class ChatService {
         const text = params.text ?? '';
         const files = (params.files ?? []).slice(0, MAX_FILES_PER_MESSAGE).map(id => store.file(id, owner)).filter((f): f is NonNullable<typeof f> => !!f && f.chat === chat.id).map(f => f.ref);
         if (!text.trim() && !files.length) { yield { t: 'error', message: 'There is nothing to send.' }; return; }
+        if (Buffer.byteLength(text) > this.limits.messageBytes) { yield { t: 'error', message: `A message may be at most ${Math.round(this.limits.messageBytes / 1048576)} MB of text.` }; return; }
+        if (store.messageCount(chat.id) >= this.limits.chatMessages) { yield { t: 'error', message: 'This chat has reached its length limit. Start a new chat to continue.' }; return; }
         const parent = params.parent === undefined ? chat.head : params.parent;
         if (parent && store.getMessage(parent)?.chat !== chat.id) { yield { t: 'error', message: 'That message is not in this chat.' }; return; }
         user = store.addMessage({ chat: chat.id, parent, role: 'user', text, files });

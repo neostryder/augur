@@ -456,6 +456,20 @@ describe('concurrency', () => {
   });
 });
 
+describe('the parallel limit counts a model once however many labels name it', () => {
+  it('holds two routes whose policy labels share a provider and model id to one limit', async () => {
+    const e = setup({ maxConcurrent: 8 });
+    const d = (e.sup as unknown as { d: { policy: () => Record<string, unknown> | null; routes: () => Record<string, unknown> | null } }).d;
+    const base = d.policy() as { providers: Record<string, { models: Record<string, unknown> }> }, baseRoutes = d.routes() as Record<string, unknown>;
+    d.policy = () => ({ ...base, providers: { ...base.providers, test: { ...base.providers.test!, models: { ...base.providers.test!.models, 'test/fake-twin': base.providers.test!.models['test/fake'] } } }, balance: { caps: { 'test/fake-1': { parallel: 1 } } } });
+    d.routes = () => ({ ...baseRoutes, twin: { ...(baseRoutes.fake as object), model: 'test/fake-twin' } });
+    const ids = [submitOk(e.sup, request({ text: 'SLEEP 1', cwd: e.root })), submitOk(e.sup, request({ route: 'twin', text: 'SLEEP 1', cwd: e.root }))];
+    let max = 0;
+    await until(e.sup, () => { max = Math.max(max, ids.filter(id => e.store.get(id)!.state === 'running').length); return ids.every(id => e.store.get(id)!.state === 'completed'); });
+    expect(max).toBe(1);
+  });
+});
+
 describe('the service goes away and comes back', () => {
   it.skipIf(process.platform !== 'win32')('keeps a child alive while its runtime moves aside and a replacement takes its name', async () => {
     const e = setup(), runtime = join(e.root, 'augur-node.exe'), ready = join(e.root, 'ready.json'), done = join(e.root, 'done.json');

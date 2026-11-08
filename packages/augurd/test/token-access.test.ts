@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ensureToken } from '../src/ipc.js';
+import { ensureToken, ownerOnly } from '../src/ipc.js';
 
 describe('token file access', () => {
   it('is limited to the owner', () => {
@@ -26,6 +26,15 @@ describe('token file access', () => {
       expect(agent).toHaveLength(64);
       expect(agent).not.toBe(token);
       if (process.platform !== 'win32') expect(statSync(join(dir, 'agent-token')).mode & 0o077).toBe(0);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  it('reports when a file cannot be limited to its owner', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'augurd-token-'));
+    try {
+      expect(ownerOnly(join(dir, 'no-such-file'), 0o600)).toBe(false);
+      const warnings: string[] = [];
+      ensureToken(dir, 'token', m => warnings.push(m));
+      expect(warnings).toEqual([]);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });

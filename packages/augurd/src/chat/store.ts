@@ -186,6 +186,16 @@ export class ChatStore {
     return { id, name: input.name, mime: input.mime, bytes: bytes.byteLength, kind: input.kind };
   }
 
+  /** Bytes held in uploaded files across every chat a person owns. */
+  fileBytesOf(user = ''): number {
+    return (this.db.prepare('SELECT COALESCE(SUM(f.bytes), 0) AS total FROM files f JOIN chats c ON c.id = f.chat_id WHERE c.user = ?').get(user) as { total: number }).total;
+  }
+
+  /** How many messages a chat holds, across every branch. */
+  messageCount(chat: string): number {
+    return (this.db.prepare('SELECT COUNT(*) AS n FROM messages WHERE chat_id = ?').get(chat) as { n: number }).n;
+  }
+
   file(id: string, user = ''): { ref: ChatFileRef; chat: string; bytes: Uint8Array } | null {
     const r = this.db.prepare('SELECT * FROM files WHERE id = ?').get(id) as FileRow | undefined;
     const bytes = r && this.row(r.chat_id, user) ? this.blobs.get(id) : null;

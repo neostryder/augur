@@ -27,24 +27,27 @@ const routeDestination = (route: RouteConfig): string | null => {
   try { return typeof base === 'string' ? new URL(base).host : null; } catch { return null; }
 };
 
-/** Limits a file or folder to its owner. POSIX gets a mode; Windows has its access list rewritten to the current user alone, since a mode means nothing there. */
-export function ownerOnly(path: string, mode: number): void {
-  try { chmodSync(path, mode); } catch { /* a filesystem with no modes */ }
-  if (process.platform !== 'win32') return;
+/** Limits a file or folder to its owner. POSIX gets a mode; Windows has its access list rewritten to the current user alone, since a mode means nothing there. True when the limit was applied, false when it could not be (the folder's own access list still applies). */
+export function ownerOnly(path: string, mode: number): boolean {
+  let applied = true;
+  try { chmodSync(path, mode); } catch { applied = false; /* a filesystem with no modes */ }
+  if (process.platform !== 'win32') return applied;
   try {
     const domain = process.env.USERDOMAIN, who = (domain ? domain + '\\' : '') + userInfo().username;
     execFileSync('icacls', [path, '/inheritance:r', '/grant:r', `${who}:(F)`], { stdio: 'ignore', windowsHide: true, timeout: 10000 });
-  } catch { /* the profile folder's access list still applies */ }
+    return true;
+  } catch { return false; /* the profile folder's access list still applies */ }
 }
 
-/** The owner's token and the agent token sit in the service's data folder, which is inside the user's profile. Callers read the one for their role from there. */
-export function ensureToken(dir: string, file = 'token'): string {
+/** The owner's token and the agent token sit in the service's data folder, which is inside the user's profile. Callers read the one for their role from there. When the file cannot be limited to its owner, the service says so on standard error and relies on the folder's access list. */
+export function ensureToken(dir: string, file = 'token', warn: (message: string) => void = m => console.error(m)): string {
   mkdirSync(dir, { recursive: true });
   const path = join(dir, file);
-  if (existsSync(path)) { const t = readFileSync(path, 'utf8').trim(); if (t.length >= 32) { ownerOnly(path, 0o600); return t; } }
+  const restrict = (): void => { if (!ownerOnly(path, 0o600)) warn(`The ${file} file could not be limited to its owner, so the folder's access list is all that protects it: ${dir}`); };
+  if (existsSync(path)) { const t = readFileSync(path, 'utf8').trim(); if (t.length >= 32) { restrict(); return t; } }
   const token = randomBytes(32).toString('hex');
   writeFileSync(path, token, { mode: 0o600 });
-  ownerOnly(path, 0o600);
+  restrict();
   return token;
 }
 

@@ -1081,25 +1081,25 @@ export class Supervisor {
     if (!policy || !routes) return null;
     const caps = resolveBalance((policy as { balance?: unknown }).balance).caps;
     if (!Object.values(caps).some(c => (c.parallel ?? 0) > 0)) return null;
-    const label = (route: string): string | undefined => routes[route]?.model;
-    const limitOf = (route: string): number => {
-      const model = label(route);
-      if (!model) return 0;
+    // Labels that name the same provider and model id are one model: the count and the cap are kept per provider/id, never per label.
+    const identity = (route: string): { key: string; limit: number } | null => {
+      const model = routes[route]?.model;
+      if (!model) return null;
       for (const [provider, p] of Object.entries(policy.providers)) {
         const entry = p.models[model];
-        if (entry) return lookup(caps, { label: model, provider, id: entry.id, aliases: entry.aliases })?.parallel ?? 0;
+        if (entry) return { key: `${provider}/${entry.id}`, limit: lookup(caps, { label: model, provider, id: entry.id, aliases: entry.aliases })?.parallel ?? 0 };
       }
-      return 0;
+      return null;
     };
     const running = new Map<string, number>();
-    for (const r of this.d.store.active()) { const m = label(r.route); if (m) running.set(m, (running.get(m) ?? 0) + 1); }
+    for (const r of this.d.store.active()) { const who = identity(r.route); if (who) running.set(who.key, (running.get(who.key) ?? 0) + 1); }
     return {
       admit: (rec: JobRecord): boolean => {
-        const limit = limitOf(rec.route), model = label(rec.route);
-        if (!limit || !model) return true;
-        const n = running.get(model) ?? 0;
-        if (n >= limit) return false;
-        running.set(model, n + 1);
+        const who = identity(rec.route);
+        if (!who || !who.limit) return true;
+        const n = running.get(who.key) ?? 0;
+        if (n >= who.limit) return false;
+        running.set(who.key, n + 1);
         return true;
       },
     };

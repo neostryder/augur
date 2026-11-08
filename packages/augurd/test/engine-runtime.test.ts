@@ -344,6 +344,24 @@ describe('the provider request helper', () => {
     await expect(httpsRequest({ url: `${base}/away` })).rejects.toThrow('HTTPS is required');
   });
 
+  it('stops reading a response that passes the size limit, whether the length is declared or streamed', async () => {
+    const chunk = Buffer.alloc(1024 * 1024, 97);
+    const server = createServer((req, res) => {
+      if (req.url === '/declared') { res.writeHead(200, { 'content-length': String(9 * chunk.length) }); res.end(); return; }
+      if (req.url === '/small') { res.writeHead(200); res.end('ok'); return; }
+      res.writeHead(200);
+      let sent = 0;
+      const more = (): void => { while (sent < 9 && res.write(chunk)) sent++; if (sent < 9) res.once('drain', () => { sent++; more(); }); else res.end(); };
+      more();
+    });
+    await new Promise<void>(r => server.listen(0, '127.0.0.1', () => r()));
+    cleanup.push(() => new Promise<void>(r => { server.closeAllConnections(); server.close(() => r()); }));
+    const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+    expect((await httpsRequest({ url: `${base}/small` })).body).toBe('ok');
+    await expect(httpsRequest({ url: `${base}/declared` })).rejects.toThrow('response too large');
+    await expect(httpsRequest({ url: `${base}/streamed` })).rejects.toThrow('response too large');
+  });
+
   it('leaves the credentials and body behind when a redirect changes origin', async () => {
     const seen: Array<{ auth: string | null; type: string | null; method: string | undefined; body: string }> = [];
     const target = createServer((req, res) => {

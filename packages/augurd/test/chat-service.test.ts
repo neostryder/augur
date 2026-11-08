@@ -185,6 +185,30 @@ describe('chat service', () => {
     expect(events.some(e => e.t === 'error' && /cannot see images/.test(e.message))).toBe(true);
   });
 
+  it('stops uploads at a per-person total and frees the room when a chat is removed', () => {
+    const svc = make(scripted([]));
+    svc.limits.userFilesBytes = 10;
+    const a = svc.create(owner, { route: 'text', tier: 'internal' }), b = svc.create(owner, { route: 'text', tier: 'internal' });
+    svc.upload(owner, a.id, 'a.txt', 'text/plain', new Uint8Array(6));
+    expect(() => svc.upload(owner, b.id, 'b.txt', 'text/plain', new Uint8Array(5))).toThrow(/at most/);
+    svc.upload(owner, b.id, 'b.txt', 'text/plain', new Uint8Array(4));
+    svc.remove(owner, a.id);
+    svc.upload(owner, b.id, 'c.txt', 'text/plain', new Uint8Array(6));
+  });
+
+  it('refuses a message that is too long and a chat that has grown past its limit', async () => {
+    const svc = make(scripted([{ t: 'delta', text: 'ok' }, { t: 'done' }]));
+    svc.limits.messageBytes = 8;
+    const chat = svc.create(owner, { route: 'text', tier: 'internal' });
+    const long = await collect(svc.send(owner, { chat: chat.id, text: 'x'.repeat(9) }));
+    expect(long).toEqual([{ t: 'error', message: expect.stringMatching(/at most/) }]);
+    svc.limits.chatMessages = 2;
+    const first = await collect(svc.send(owner, { chat: chat.id, text: 'hi' }));
+    expect(first.at(-1)!.t).toBe('done');
+    const second = await collect(svc.send(owner, { chat: chat.id, text: 'again' }));
+    expect(second).toEqual([{ t: 'error', message: expect.stringMatching(/length limit/) }]);
+  });
+
   it('cleans uploaded names and sorts files by kind', () => {
     const svc = make(scripted([]));
     const chat = svc.create(owner, { route: 'text', tier: 'internal' });

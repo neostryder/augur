@@ -11,6 +11,7 @@ from urllib.request import urlopen
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
 
+import loadgate  # noqa: E402
 from loadgate import LoadGate, LoadWatch  # noqa: E402
 
 
@@ -498,6 +499,18 @@ class FailoverTests(unittest.TestCase):
         self.assertEqual(status, 201)
         self.assertEqual(received[1][1], b'{"prompt":"hello"}')
         self.assertEqual(received[1][2]["Content-Type"], "application/json")
+
+    def test_a_busy_body_over_the_limit_is_refused_instead_of_buffered(self):
+        url, received = self.upstream()
+        limit = loadgate.MAX_FORWARD_BODY
+        for label, kwargs in (("declared", dict(body=b"x", headers=[(b"content-length", str(limit + 1).encode())])),
+                              ("streamed", dict(messages=[{"type": "http.request", "body": b"x" * limit, "more_body": True},
+                                                          {"type": "http.request", "body": b"x", "more_body": False}]))):
+            with self.subTest(label):
+                status, body, _ = self.call([url], **kwargs)
+                self.assertEqual(status, 413)
+                self.assertEqual(json.loads(body), {"error": "The request is too large"})
+        self.assertEqual(received, [])
 
     def test_a_disconnect_during_the_body_does_not_forward(self):
         url, received = self.upstream()
