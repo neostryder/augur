@@ -9,11 +9,11 @@ const home = () => { const d = mkdtempSync(join(tmpdir(), 'augur-limits-')); dir
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
 
 describe('isUsageLimit', () => {
-  it.each(['Rate limit reached for deep research', 'You have hit your usage limit', 'monthly quota exceeded', 'allowance spent', 'Too many requests', 'You have reached your Deep research limit', 'Insufficient credits'])('reads %s as a spent allowance', (text) => {
+  it.each(['Rate limit reached for deep research', 'You have hit your usage limit', 'monthly quota exceeded', 'allowance spent', 'Too many requests', 'You have reached your Deep research limit', 'Insufficient credits', 'The site says deep research is rate limited, so the run did not start. Wait for the limit to reset, and use another route meanwhile.', 'The site says the free allowance is used up. Wait for it to renew, and use another model meanwhile.'])('reads %s as a spent allowance', (text) => {
     expect(isUsageLimit(text)).toBe(true);
   });
 
-  it.each(['HTTP 429', 'server overloaded', 'at capacity, try again later', 'exit 1', 'the browser was not found'])('does not hold a route for %s', (text) => {
+  it.each(['HTTP 429', 'server overloaded', 'at capacity, try again later', 'exit 1', 'the browser was not found', 'The site accepted the deep research request but showed no plan or report for three minutes, so the run did not start. Use another route meanwhile.'])('does not hold a route for %s', (text) => {
     expect(isUsageLimit(text)).toBe(false);
   });
 });
