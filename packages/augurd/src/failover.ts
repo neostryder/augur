@@ -48,6 +48,8 @@ export function classifyFailure(input: FailureInput): { retry: boolean; why: str
   if (/(?:^|\W)preempted:/.test(`${input.failure ?? ''}\n${input.stderrTail ?? ''}`)) return { retry: true, why: 'preempted' };
   if (input.killedBy === 'timeout' || /no finished (?:reply|picture) from/i.test(`${input.failure ?? ''}\n${input.stderrTail ?? ''}`)) return { retry: input.tools === 'read' || input.tools === 'none', why: 'timed out' };
   if (/the connection to the browser was lost/i.test(`${input.failure ?? ''}\n${input.stderrTail ?? ''}`)) return { retry: input.tools === 'read' || input.tools === 'none', why: 'connection lost' };
+  // A web chat job that stopped before sending anything can move to a fallback without writing files.
+  if (/the browser did not start listening in time|no browser is listening on port|the browser .* was not found|nobody is signed in to|the human check was not finished in time|was not found on|so nothing was sent|so the page no longer matches the site profile/i.test(`${input.failure ?? ''}\n${input.stderrTail ?? ''}`)) return { retry: input.tools === 'read' || input.tools === 'none', why: 'nothing was sent' };
   if (limited(`${input.failure ?? ''}\n${input.stderrTail ?? ''}`)) {
     // A write or full job may have changed files. Retry a limit only when it left no answer and no recorded change.
     if (input.tools === 'write' || input.tools === 'full') {

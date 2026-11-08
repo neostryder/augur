@@ -38,8 +38,31 @@ describe('classifyFailure', () => {
     expect(classifyFailure(base({ tools: 'full', exitCode: 71, [field]: message }))).toEqual({ retry: false, why: 'connection lost' });
   });
 
+  describe.each(['stderrTail', 'failure'] as const)('web chat failures in %s', (field) => {
+    it.each([
+      [65, 'the browser did not start listening in time'],
+      [65, 'no browser is listening on port 9222'],
+      [65, 'the browser Chrome was not found'],
+      [66, 'nobody is signed in to example.com'],
+      [67, 'the human check was not finished in time'],
+      [68, 'the composer was not found on example.com'],
+      [68, 'the send button was not found, so nothing was sent'],
+      [68, 'the picker changed, so the page no longer matches the site profile'],
+    ])('retries exit %s: %s only for a read or none tier', (exitCode, message) => {
+      expect(classifyFailure(base({ tools: 'read', exitCode, [field]: message }))).toEqual({ retry: true, why: 'nothing was sent' });
+      expect(classifyFailure(base({ tools: 'none', exitCode, [field]: message }))).toEqual({ retry: true, why: 'nothing was sent' });
+      expect(classifyFailure(base({ tools: 'write', exitCode, [field]: message }))).toEqual({ retry: false, why: 'nothing was sent' });
+      expect(classifyFailure(base({ tools: 'full', exitCode, [field]: message }))).toEqual({ retry: false, why: 'nothing was sent' });
+    });
+
+    it('does not retry an unrelated failure', () => {
+      expect(classifyFailure(base({ exitCode: 68, [field]: 'an unexpected error occurred' }))).toEqual({ retry: false, why: 'not retryable' });
+    });
+  });
+
   it.each([
     'the connection to the browser was lost',
+    'the browser did not start listening in time',
     'no finished reply from example.com within 60 seconds',
     'no finished picture from example.com within 60 seconds',
   ])('keeps cancel, spawn error, and preempted precedence for %s', (message) => {
