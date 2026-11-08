@@ -388,10 +388,12 @@ fn open_sign_in(app: &tauri::AppHandle, site: String, retry: bool) -> Result<(),
 
 #[tauri::command]
 pub async fn web_session_read(
+    webview: tauri::Webview,
     app: tauri::AppHandle,
     site: String,
     fresh: Option<bool>,
 ) -> Result<Option<Value>, String> {
+    crate::commands::require_popup(&webview)?;
     read_site(&app, &site, None, fresh.unwrap_or(false), false).await
 }
 
