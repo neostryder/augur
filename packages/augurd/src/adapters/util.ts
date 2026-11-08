@@ -10,12 +10,6 @@ export const optNum = (o: Options, k: string): number | undefined => typeof o?.[
 /** The longest command line Windows accepts is 32767 characters. The supervisor rejects a plan above this before launch. */
 export const MAX_COMMAND_LINE = 30000;
 
-/** `C:\a\b` becomes `/c/a/b`, the path a Docker Sandboxes workspace has inside the sandbox. */
-export function insideSandbox(hostPath: string): string {
-  const p = hostPath.replace(/\\/g, '/');
-  return /^[A-Za-z]:/.test(p) ? `/${p[0]!.toLowerCase()}${p.slice(2)}` : p;
-}
-
 export interface Resolved { command: string; prefix: string[] }
 
 /**

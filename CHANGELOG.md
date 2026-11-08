@@ -7,6 +7,11 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 ### Changed
 
 - [Visible] [Platform] A model a person asked for now runs without Augur re-checking the claim, because `verifyNamed` defaults to `off` (it was `enforce`); set it to `enforce` to keep the check. Premium models are still refused for automated callers.
+- [Visible] [Docs] The configuration reference now lists the `provider` route option of `hermes-exec` and explains that the DeepInfra host pin for the deepseek, glm, and mimo models lives in Hermes's own `provider_routing` settings and applies to read jobs only when `readMode` is set to `keep`. SECURITY.md and the engine-file list no longer mention OpenCode or sandboxed harnesses.
+
+### Removed
+
+- [Visible] [Platform] Removed the `mcode-sbx` and `opencode-sbx` adapters, which ran a harness inside a Docker sandbox, along with the route options `sandbox`, `sbx`, `sbxPrefixJson`, the sandbox form of `workRoot`, and the OpenCode `host` pin option. A route that still names either adapter no longer loads, so point it at `mcode-exec` (MiniMax Code on the host, in a copy of the job folder) or `hermes-exec` (Hermes Agent), and drop both ids from the `adapters` list in the service config.
 
 ### Fixed
 
