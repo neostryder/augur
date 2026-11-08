@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -9,13 +9,16 @@ import { secretNameFor } from '../src/key.js';
 const dirs: string[] = [];
 afterEach(() => { while (dirs.length) rmSync(dirs.pop()!, { recursive: true, force: true }); });
 
-function setup() {
+function setup(names = ['my-route', 'prompted', 'piped']) {
   const dir = mkdtempSync(join(tmpdir(), 'augur-key-')); dirs.push(dir);
-  const env = { ...process.env, AUGUR_APP_DIR: dir, AUGUR_KEYSTORE: 'file', MY_KEY: '  sk-test-1234567890  ' };
+  const routesPath = join(dir, 'dispatch', 'routes.json');
+  mkdirSync(join(dir, 'dispatch'), { recursive: true });
+  writeFileSync(routesPath, JSON.stringify({ routes: Object.fromEntries(names.map(name => [name, { model: 'test/model', adapter: 'openai-api', options: { baseUrl: 'https://api.test.example/v1' } }])) }));
+  const env = { ...process.env, AUGUR_APP_DIR: dir, AUGURD_ROUTES: routesPath, AUGUR_KEYSTORE: 'file', MY_KEY: '  sk-test-1234567890  ' };
   const run = async (args: string[], extra: { stdin?: string; secret?: string } = {}) => {
-    let out = '', err = '';
-    const code = await main(args, { out: t => { out += t; }, err: t => { err += t; }, stdin: () => extra.stdin ?? '', env, cwd: dir, interactive: extra.secret !== undefined, ...(extra.secret !== undefined ? { readSecret: async () => extra.secret as string } : {}) });
-    return { code, out, err };
+    let out = '', err = '', reads = 0;
+    const code = await main(args, { out: t => { out += t; }, err: t => { err += t; }, stdin: () => { reads++; return extra.stdin ?? ''; }, env, cwd: dir, interactive: extra.secret !== undefined, ...(extra.secret !== undefined ? { readSecret: async () => { reads++; return extra.secret as string; } } : {}) });
+    return { code, out, err, reads };
   };
   return { dir, run, file: () => JSON.parse(readFileSync(join(dir, 'secrets.json'), 'utf8')) as Record<string, string> };
 }
@@ -27,6 +30,27 @@ describe('augur key', () => {
     expect(r.code).toBe(0);
     expect(file()[routeSecretName('my-route')]).toBe('sk-test-1234567890');
     expect(r.out).toContain('a key of 18 characters');
+    expect(r.out).toContain('Requests with it go to api.test.example');
+    expect(r.out + r.err).not.toContain('sk-test');
+  });
+
+  it('refuses an absent route before reading or storing a key', async () => {
+    const { dir, run } = setup([]);
+    for (const args of [[], ['--env', 'MY_KEY'], ['--stdin']]) {
+      const r = await run(['key', 'set', 'missing', ...args], { stdin: 'piped-key', secret: 'typed-key' });
+      expect(r.code).not.toBe(0);
+      expect(r.err).toContain('There is no route named missing, so add the route first and then save its key.');
+      expect(r.reads).toBe(0);
+      expect(r.out + r.err).not.toMatch(/typed-key|piped-key|sk-test/);
+    }
+    expect(existsSync(join(dir, 'secrets.json'))).toBe(false);
+  });
+
+  it('includes the destination host in the response data for an existing route', async () => {
+    const { run } = setup();
+    const r = await run(['key', 'set', 'my-route', '--env', 'MY_KEY', '--json']);
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.out)).toMatchObject({ stored: true, destination: 'api.test.example' });
     expect(r.out + r.err).not.toContain('sk-test');
   });
 
@@ -42,6 +66,7 @@ describe('augur key', () => {
     expect(code).toBe(0);
     expect(prompts[0]).toContain('sent to api.far.example');
     expect(out).toContain('Requests with it go to api.far.example');
+    expect(readFileSync(join(dir, 'secrets.json'), 'utf8')).toContain('typed-key');
     out = '';
     expect(await typed(['key', 'set', 'bare'])).toBe(0);
     expect(prompts[1]).not.toContain('sent to');
@@ -90,6 +115,7 @@ describe('augur key', () => {
     expect(() => secretNameFor('Not A Route')).toThrow(/not a route name/);
     expect(() => secretNameFor('bad name.field')).toThrow(/Invalid secret name/);
     const { run } = setup();
+    expect((await run(['key', 'set', 'openrouter.apiKey', '--env', 'MY_KEY'])).code).toBe(0);
     expect((await run(['key', 'set', 'Not A Route', '--stdin'], { stdin: 'x' })).code).toBe(1);
   });
 });

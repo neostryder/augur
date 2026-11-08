@@ -21,6 +21,11 @@ export interface EngineLink { api: EngineApi; views: ViewHub }
 const MAX_LINE = 16 * 1024 * 1024;
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
+const routeDestination = (route: RouteConfig): string | null => {
+  const base = route.options?.baseUrl;
+  try { return typeof base === 'string' ? new URL(base).host : null; } catch { return null; }
+};
+
 /** Limits a file or folder to its owner. POSIX gets a mode; Windows has its access list rewritten to the current user alone, since a mode means nothing there. */
 export function ownerOnly(path: string, mode: number): void {
   try { chmodSync(path, mode); } catch { /* a filesystem with no modes */ }
@@ -185,7 +190,7 @@ export class IpcServer {
       case 'gate_status': return this.sup.gateStatus();
       case 'gate_report': return this.sup.gateReport();
       case 'gate_record': return this.sup.gateRecord(params as { kind: string; route: string; scope: string; note?: string });
-      case 'routes': return Object.entries(this.routes() ?? {}).map(([name, r]) => ({ name, model: r.model, adapter: r.adapter, problem: this.sup.routeProblem(r as RouteConfig, name), capabilities: this.sup.routeCapabilities(r as RouteConfig) }));
+      case 'routes': return Object.entries(this.routes() ?? {}).map(([name, r]) => ({ name, model: r.model, adapter: r.adapter, destination: routeDestination(r), problem: this.sup.routeProblem(r as RouteConfig, name), capabilities: this.sup.routeCapabilities(r as RouteConfig) }));
       case 'route_add': return this.routeAdd(params);
       case 'fleet_accept': return this.fleetAccept(String(p.id ?? ''), String(p.name ?? ''));
       case 'engine_state': { const e = this.needEngine(); return { state: this.stateOf(p.keys as EngineKey[] | undefined), views: e.views.info() }; }

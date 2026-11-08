@@ -20,7 +20,7 @@ import { renderStrip } from './views/strip';
 import { PROVIDER_FORM_TEXT, ROUTES_PATH, applyProvider, checkDraft, draftOf, emptyDraft, emptyProviderForm, parseRoutesText, planOfForm, writeRoute, type ProviderFormState, type SetupCurrent } from '@augur/view-model';
 import { LedgerModel, ledgerDuration, type LedgerTransport } from '@augur/view-model';
 import { routeSecretName } from '@augur/dispatch-protocol';
-import type { JobRecord, LedgerAlertSettings, LedgerDeliveryState, UsageSnapshot } from '@augur/dispatch-protocol';
+import type { JobRecord, LedgerAlertSettings, LedgerDeliveryState, Methods, UsageSnapshot } from '@augur/dispatch-protocol';
 import { renderTrayIcon } from './trayicon';
 import qrcode from 'qrcode-generator';
 import { HOSTED } from './hosted';
@@ -60,6 +60,7 @@ type ModelEntryStatus = ModelEntry['status'];
 export class App {
   private config!: AppConfig;
   private snapshot: Snapshot | null = null;
+  private ruleDestinations: RulesModel['destinations'] = null;
   private history: HistoryRow[] = [];
   private alertState: Record<string, unknown> = {};
   private view: 'dashboard' | 'settings' | 'rules' | 'jobs' | 'routes' | 'balance' | 'local' | 'service' | 'setup' | 'pair' = 'dashboard';
@@ -521,7 +522,7 @@ export class App {
   }
 
   private rulesModel(): RulesModel {
-    return { config: this.config, held: heldRows(this.editState), providers: core.policyProviders(this.config), stances: this.stances, plugins: this.pluginMap(), snapshot: this.snapshot,
+    return { config: this.config, destinations: this.ruleDestinations, held: heldRows(this.editState), providers: core.policyProviders(this.config), stances: this.stances, plugins: this.pluginMap(), snapshot: this.snapshot,
       dark: document.documentElement.dataset.theme === 'dark', policyError: this.policyError, mode: this.rulesMode, node: this.nodeState, nodeNote: this.nodeNote, catalog: this.catalog, listing: this.listing, canList: this.shell.kind === 'desktop', ...this.rules, ...(this.rulesMode === 'node' ? { sel: this.nodeSel } : {}) };
   }
 
@@ -548,6 +549,7 @@ export class App {
       this.servicePage.runJobs = this.config.dispatch?.runJobs === true;
       this.root.innerHTML = renderService({ ...this.servicePage, delivery: this.jobDelivery });
     } else if (this.view === 'rules') {
+      await this.loadRuleDestinations();
       // The desktop popup opens at its two-column width so the list and the open model's rules sit side by side.
       this.twoColumns = this.shell.kind === 'desktop';
       registerNodeView();
@@ -1400,6 +1402,34 @@ export class App {
     return Object.entries(this.config.policy?.providers ?? {}).flatMap(([pid, p]) => Object.keys(p.models).map((label) => `${pid}/${label}`)).sort();
   }
 
+  /** Refreshes request hosts before showing any model confirmation controls. */
+  private async loadRuleDestinations(): Promise<void> {
+    this.ruleDestinations = null;
+    let routes: Array<{ model: string; destination: string | null }> | null = null;
+    try {
+      if (this.shell.ledgerCall) routes = await this.shell.ledgerCall('routes') as Methods['routes']['result'];
+      else if (this.shell.dispatch) routes = (await this.augur<Methods['routes']['result']>(['routes', '--json'])).data;
+    } catch { /* read the local file when the service is stopped */ }
+    if (!routes && this.shell.host.readHomeFile) {
+      try {
+        const parsed = parseRoutesText(await this.shell.host.readHomeFile(ROUTES_PATH));
+        if (parsed.ok) routes = parsed.file.routes.map(route => {
+          let destination: string | null = null;
+          try { if (typeof route.options.baseUrl === 'string') destination = new URL(route.options.baseUrl).host; } catch { /* no valid host */ }
+          return { model: route.model, destination };
+        });
+      } catch { /* confirmation stays disabled until routes can be read */ }
+    }
+    if (!routes) return;
+    const destinations: Record<string, string[]> = {};
+    for (const route of routes) {
+      if (!route.destination) continue;
+      const hosts = destinations[route.model] ??= [];
+      if (!hosts.includes(route.destination)) hosts.push(route.destination);
+    }
+    this.ruleDestinations = destinations;
+  }
+
   /** Reads how the balance treats each provider, for the chips on the Rules page. The page works without it. */
   private async loadStances(): Promise<void> {
     if (!this.shell.dispatch) return;
@@ -1874,7 +1904,12 @@ export class App {
     if (d.rsel !== undefined) { this.rules.sel = d.rsel ? { provider: d.rsel, model: d.rmodel || null } : null; this.rules.addError = ''; await this.render(); return true; }
     if (d.rprov) { const o = this.rules.open; if (o.has(d.rprov)) o.delete(d.rprov); else o.add(d.rprov); await this.render(); return true; }
     if (d.rfilter) { this.rules.filter = d.rfilter as RulesFilter; await this.render(); return true; }
-    if (d.status) { const [pid = '', label = ''] = d.status.split('|'); setModelStatus(policy, pid, label, d.value as ModelEntryStatus, this.device); await this.saveRules(); return true; }
+    if (d.status) {
+      if (d.value === 'confirmed' && this.ruleDestinations === null) return true;
+      const [pid = '', label = ''] = d.status.split('|');
+      setModelStatus(policy, pid, label, d.value as ModelEntryStatus, this.device);
+      await this.saveRules(); return true;
+    }
     if (d.listNow) { void this.engine?.listModels(d.listNow); return true; }
     if (d.pauseClear) { setField(policy, d.pauseClear, undefined, this.device); await this.saveRules(); return true; }
     if (d.undo) { const c = policy.history[Number(d.undo)]; if (c) undoChange(policy, c, this.device); await this.saveRules(); return true; }
@@ -1906,6 +1941,7 @@ export class App {
       return true;
     }
     if (d.bulk) {
+      if (d.bulk === 'confirmed' && this.ruleDestinations === null) return true;
       const picked = [...this.rules.picked].map((k) => k.split('|') as [string, string]);
       const n = picked.length;
       if (d.bulk === 'clear') { this.rules.picked.clear(); this.rules.note = ''; this.rules.bulkTier = ''; this.rules.preview = null; }
