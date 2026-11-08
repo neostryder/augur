@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { credentialTarget, routeSecretName, tierNote } from '@augur/dispatch-protocol';
 import type { ExtractInput, JobRequest } from '@augur/dispatch-protocol';
-import { anthropicApi, codexExec, copilotExec, grokExec, hermesExec, mcodeSbx, opencodeSbx, openaiApi } from '../src/adapters/index.js';
+import { anthropicApi, codexExec, copilotExec, grokExec, hermesExec, mcodeExec, mcodeSbx, opencodeSbx, openaiApi } from '../src/adapters/index.js';
 import { parseCount } from '../src/adapters/copilot-exec.js';
 import { insideSandbox, resolveExecutable } from '../src/adapters/util.js';
 import { FAKE, ROUTES, makeEnv, request, submitOk, terminal } from './harness.js';
@@ -81,11 +81,19 @@ describe('what each harness prints, read from real captured output', () => {
       ev({ type: 'step_finish', part: { tokens: { input: 20, output: 6, reasoning: 2, cache: { write: 5, read: 100 } }, cost: 0.00002 } })].join('\n');
     expect(opencodeSbx.extract(input({ stdout }))).toEqual({ answer: 'pong', usage: { inputTokens: 10 + 12544 + 20 + 100 + 5, outputTokens: 10, cachedReadTokens: 12644, cachedWriteTokens: 5, reasoningTokens: 2, costUsd: 0.0001, currency: 'USD', source: 'reported' } });
   });
+
+  it('mcode-exec: reads the result and cache usage without a status line', () => {
+    const line = '{"schemaVersion":1,"type":"exec.result","status":"succeeded","output":"pong","usage":{"inputTokens":681,"outputTokens":28,"cacheReadTokens":10752,"cacheWriteTokens":12,"reasoningTokens":4}}';
+    expect(mcodeExec.extract(input({ stdout: `${line}\n` }))).toEqual({ answer: 'pong', usage: { inputTokens: 11445, outputTokens: 28, cachedReadTokens: 10752, cachedWriteTokens: 12, reasoningTokens: 4, source: 'reported' } });
+    expect(mcodeExec.extract(input({ stdout: line.replace('succeeded', 'failed') })).failure).toBe('mcode finished with status failed');
+    expect(mcodeExec.extract(input({ stdout: 'nothing useful' }))).toEqual({ answer: null, usage: null, failure: 'mcode did not return a result' });
+    expect(mcodeExec.extract(input({ stdout: '{"schemaVersion":' })).failure).toMatch(/did not return/);
+  });
 });
 
 describe('per-call options', () => {
   it('overrides effort in every supporting adapter without changing the route', () => {
-    for (const [adapter, flag] of [[codexExec, 'model_reasoning_effort=high'], [grokExec, '--reasoning-effort'], [copilotExec, '--reasoning-effort'], [hermesExec, '--reasoning'], [mcodeSbx, '--effort'], [opencodeSbx, '--variant']] as const) {
+    for (const [adapter, flag] of [[codexExec, 'model_reasoning_effort=high'], [grokExec, '--reasoning-effort'], [copilotExec, '--reasoning-effort'], [hermesExec, '--reasoning'], [mcodeExec, '--effort'], [mcodeSbx, '--effort'], [opencodeSbx, '--variant']] as const) {
       const route = { model: 'test/fake', adapter: adapter.id, options: { model: 'fake', effort: 'low', command: process.execPath, sbx: process.execPath, sandbox: 'test', workRoot: 'C:/work' } };
       const plan = adapter.plan(req({ effort: 'high' }), route, ctx('hi', 'C:/jobs/j1', 'C:/work/job'));
       expect(plan.args).toContain(flag);
@@ -210,6 +218,45 @@ describe('command lines', () => {
     expect(p.args).toEqual(expect.arrayContaining(['--model', 'gpt-5-mini', '--allow-all-tools', '--no-color']));
     expect(p.promptArgs).toEqual([1]);
   });
+  it.each(['read', 'write', 'full'] as const)('mcode-exec: runs a %s job in the workspace copy', tools => {
+    const r = route('mcode-exec', { command: 'C:/h/mcode.exe' });
+    const p = mcodeExec.plan(req({ tools }), r, ctx('hi', 'C:/jobs/j1', 'C:/work/jobs/j1'));
+    expect(p).toEqual({ command: 'C:/h/mcode.exe', args: ['exec', '--input', '-', '--cwd', 'C:/work/jobs/j1', '--max-steps', tools === 'read' ? '60' : '400', '--permission', tools === 'read' ? 'smart' : 'full', '--output-format', 'json'], cwd: 'C:/work/jobs/j1', env: {}, stdin: tierNote(tools === 'read' ? 'read' : 'full', 'hi') });
+    expect(mcodeExec.capabilities).toMatchObject({ sandboxed: false, isolatesWorkspace: true, enforcesReadOnly: false });
+  });
+
+  it('mcode-exec: passes route options and the request timeout', () => {
+    const r = route('mcode-exec', { command: process.execPath, model: 'custom_provider:test/example', effort: 'low', maxSteps: 7, workRoot: 'C:/work' });
+    const p = mcodeExec.plan(req({ timeoutS: 80 }), r, ctx('hi', 'C:/jobs/j1', 'C:/work/jobs/j1'));
+    expect(p.args.slice(-6)).toEqual(['--model', 'custom_provider:test/example', '--effort', 'low', '--timeout', '80s']);
+    expect(p.args[p.args.indexOf('--max-steps') + 1]).toBe('7');
+    expect(mcodeExec.isolation?.root(r)).toBe('C:/work');
+    expect(() => mcodeExec.plan(req(), r, ctx('hi'))).toThrow(/workspace copy/);
+  });
+
+  it('mcode-exec: resolves the command on PATH and defaults copies to the service data folder', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mcode-path-'));
+    writeFileSync(join(dir, process.platform === 'win32' ? 'mcode.exe' : 'mcode'), '');
+    vi.stubEnv('PATH', dir); vi.stubEnv('AUGURD_DATA', 'C:/service/data');
+    try {
+      const r = route('mcode-exec', {});
+      expect(mcodeExec.validate(r)).toBeNull();
+      const p = mcodeExec.plan(req(), r, ctx('hi', 'C:/jobs/j1', 'C:/work/jobs/j1'));
+      expect(p.command).toBe(join(dir, process.platform === 'win32' ? 'mcode.exe' : 'mcode'));
+      expect(mcodeExec.isolation?.root(r)).toBe(join('C:/service/data', 'mcode'));
+    } finally { vi.unstubAllEnvs(); rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('mcode-exec: validates the command and workspace options without running the harness', () => {
+    vi.stubEnv('PATH', '');
+    try {
+      expect(mcodeExec.validate(route('mcode-exec', {}))).toMatch(/not found on PATH/);
+      expect(mcodeExec.validate(route('mcode-exec', { command: process.execPath }))).toBeNull();
+      expect(mcodeExec.validate(route('mcode-exec', { command: process.execPath, workRoot: '' }))).toMatch(/workRoot/);
+      for (const maxSteps of [0, -1, 1.5, '7']) expect(mcodeExec.validate(route('mcode-exec', { command: process.execPath, maxSteps }))).toMatch(/maxSteps/);
+    } finally { vi.unstubAllEnvs(); }
+  });
+
   it('mcode: runs through sbx in the job folder as the sandbox sees it, prompt on standard input', () => {
     const r = route('mcode-sbx', { sandbox: 'mc-m3', workRoot: 'C:/w', model: 'custom_provider:minimax-direct/MiniMax-M3', sbx: process.execPath });
     const p = mcodeSbx.plan(req({ tools: 'write' }), r, ctx('hi', 'C:/jobs/j1', 'C:\\w\\jobs\\j1'));

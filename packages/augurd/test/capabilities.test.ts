@@ -4,7 +4,7 @@ import type { RouteConfig } from '@augur/dispatch-protocol';
 import { Supervisor } from '../src/supervisor.js';
 import { enabledAdapters } from '../src/adapters/index.js';
 
-const adapters = enabledAdapters(['codex-exec', 'mcode-sbx', 'openai-api', 'anthropic-api', 'fal-api']);
+const adapters = enabledAdapters(['codex-exec', 'mcode-exec', 'mcode-sbx', 'openai-api', 'anthropic-api', 'fal-api']);
 const sup = Object.create(Supervisor.prototype) as Supervisor;
 (sup as unknown as { d: { adapters: typeof adapters } }).d = { adapters };
 const caps = (route: RouteConfig) => sup.routeCapabilities(route);
@@ -43,5 +43,6 @@ describe('what a route reports it can take', () => {
     expect(caps({ model: 'codex/sol', adapter: 'codex-exec' })).toEqual({ attachments: [], vision: false, embed: false, transcribe: false });
     expect(caps({ model: 'a/b', adapter: 'not-enabled' }).attachments).toEqual([]);
     expect(describeCapabilities(caps({ model: 'minimax/MiniMax-M3.1-Flash', adapter: 'mcode-sbx' }))).toBe('text prompts only');
+    expect(describeCapabilities(caps({ model: 'minimax/MiniMax-M3.1-Flash', adapter: 'mcode-exec' }))).toBe('text prompts only');
   });
 });
