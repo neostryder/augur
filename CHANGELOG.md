@@ -11,6 +11,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Changed
 
+- [Visible] [Platform] With `runner.failover` on, a route whose job fails because the provider reports a spent allowance (rate, usage, or credit limits, quota, too many requests, resource exhausted) is now held for 24 hours: new jobs go straight to the first fallback that is not held, its waiting and running jobs with tools `read` or `none` move there too, and holds persist across restarts in `route-limits.json`.
 - [Visible] [Platform] A model a person asked for now runs without Augur re-checking the claim, because `verifyNamed` defaults to `off` (it was `enforce`); set it to `enforce` to keep the check. Premium models are still refused for automated callers.
 - [Visible] [Docs] The configuration reference now lists the `provider` route option of `hermes-exec` and explains that the DeepInfra host pin for the deepseek, glm, and mimo models lives in Hermes's own `provider_routing` settings and applies to read jobs only when `readMode` is set to `keep`. SECURITY.md and the engine-file list no longer mention OpenCode or sandboxed harnesses.
 - [Visible] [Platform] The desktop app's updater now sets requireSignedVersion, so it installs an update only when the download's signature names the same version the update manifest announces and refuses a manifest that pairs a higher version with an older signed installer. Every published release and early build is already signed with its version, so no existing install loses its update path.

@@ -30,6 +30,7 @@ import { fillJobSummary, type JobSummarizer } from './job-summary.js';
 import { inferStamp, type PeerInfo } from './job-stamp.js';
 import { validStamp } from '@augur/dispatch-protocol';
 import { MAX_HOPS, classifyFailure } from './failover.js';
+import { RouteLimits, isUsageLimit } from './route-limits.js';
 import { augurHome, scriptPath } from './paths.js';
 import { hasStoredKey } from './secrets.js';
 import { RubricStore } from './rubrics.js';
@@ -148,12 +149,14 @@ export class Supervisor {
   private releasingBacklog = false;
   private lastBacklogEvaluation = 0;
   private readonly gateFallbackJobs = new Set<string>();
+  private readonly limits: RouteLimits;
   private readonly now: () => number;
   private readonly runner: string;
   constructor(private d: SupervisorDeps) {
     this.now = d.now ?? Date.now;
     this.runner = d.runnerPath ?? scriptPath(import.meta.url, 'runner');
     this.backlog = new PremiumBacklog(d.home ?? augurHome(d.env), () => this.now());
+    this.limits = new RouteLimits(d.home ?? augurHome(d.env), () => this.now());
     const unlinked = this.backlog.list('running').filter(item => !item.result?.jobId);
     const recovered = unlinked.flatMap(item => {
       const job = this.d.store.list({ limit: 10000 }).find(row => row.caller.label === `backlog:${item.id}`);
@@ -312,6 +315,20 @@ export class Supervisor {
     const routes = this.d.routes();
     const route = req.route === input.route && routeOverride ? routeOverride : routes?.[req.route];
     if (!route) return reject('unknown_route', `Route ${req.route} is not in routes.json.`);
+    // A route that hit a usage limit stays held for a day, so the job goes straight to its fallback instead of failing there first.
+    const heldRoute = this.limits.held(req.route);
+    if (heldRoute && !routeOverride && !req.conversation && req.failover !== false && route.fallback?.length) {
+      const hops = chain?.hops ?? [req.route];
+      if (hops.length < MAX_HOPS) {
+        for (const next of route.fallback) {
+          if (hops.includes(next) || this.limits.held(next)) continue;
+          const moved = this.submitTo({ ...req, route: next }, { req: chain?.req ?? input, hops: [...hops, next] });
+          if ('rejected' in moved) continue;
+          this.d.store.event(moved.id, 'failover', `${req.route} to ${next}: held for a usage limit until ${new Date(heldRoute.until).toISOString()}`, this.now());
+          return moved;
+        }
+      }
+    }
     const adapter = this.d.adapters.get(route.adapter);
     if (!adapter) return reject('adapter_unavailable', `Adapter ${route.adapter} is not enabled.`);
     const invalid = this.routeProblem(route, req.route);
@@ -1209,6 +1226,7 @@ export class Supervisor {
       ...(failure ? { failure } : {}), stderrTail, tools: rec.tools, answer, changed: (done.patch?.files ?? 0) > 0,
     });
     if (!verdict.retry) return;
+    if (verdict.why === 'provider limit' && isUsageLimit(`${failure ?? ''}\n${stderrTail}`)) this.holdRoute(rec, failure ?? stderrTail);
     for (const next of fallbacks) {
       if (next === rec.route || held.hops.includes(next)) continue;
       const submitted = this.submitTo({ ...held.req, route: next }, { req: held.req, hops: [...held.hops, next] });
@@ -1220,6 +1238,38 @@ export class Supervisor {
       return;
     }
   }
+
+  /**
+   * Holds a route whose provider reported a spent allowance and moves its other waiting and running read jobs to the next fallback.
+   * A job that may have written files, a conversation, and a job that opted out of failover stay where they are.
+   */
+  private holdRoute(from: JobRecord, why: string): void {
+    const route = from.route, fresh = !this.limits.held(route), hold = this.limits.hold(route, why.trim().split('\n')[0] ?? 'usage limit');
+    if (fresh) this.d.store.event(null, 'route_held', `${route} until ${new Date(hold.until).toISOString()}: ${hold.why}`, this.now());
+    const fallbacks = this.d.routes()?.[route]?.fallback ?? [];
+    for (const job of this.d.store.list({ running: true, limit: 500 })) {
+      if (job.route !== route || job.id === from.id) continue;
+      const held = this.submitted.get(job.id);
+      if (!held || held.req.conversation || held.req.failover === false || held.hops.length >= MAX_HOPS || (job.tools !== 'read' && job.tools !== 'none')) continue;
+      for (const next of fallbacks) {
+        if (next === route || held.hops.includes(next) || this.limits.held(next)) continue;
+        const moved = this.submitTo({ ...held.req, route: next }, { req: held.req, hops: [...held.hops, next] });
+        if ('rejected' in moved) continue;
+        const at = this.now();
+        this.d.store.linkRetry(job.id, moved.id);
+        this.d.store.event(job.id, 'failover_retry', `${route} to ${next}: held for a usage limit, as ${moved.id}`, at);
+        this.d.store.event(moved.id, 'failover', `${route} to ${next}: held for a usage limit`, at);
+        this.cancel(job.id);
+        break;
+      }
+    }
+  }
+
+  /** The routes held for a usage limit, with when each hold ends. */
+  heldRoutes(): Record<string, { since: number; until: number; why: string }> { return this.limits.list(); }
+
+  /** Lifts a route's hold early. */
+  releaseRoute(route: string): boolean { return this.limits.release(route); }
 
   private cleanup(id: string): void {
     this.outputSeen.delete(id);
