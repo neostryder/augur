@@ -150,6 +150,25 @@ describe('command lines', () => {
     expect(big.files?.[0]?.name).toBe('task.md');
     expect(big.args[1]).toMatch(/^Read the file at .*task\.md in full/);
   });
+  it.each([undefined, 'safe', 'keep'])('hermes: applies readMode %s only to read jobs', readMode => {
+    const r = route('hermes-exec', { model: 'test/fake', command: process.execPath, ...(readMode === undefined ? {} : { readMode }) });
+    const args = hermesExec.plan(req({ tools: 'read' }), r, ctx('hi')).args;
+    expect(args).toContain(readMode === 'keep' ? '--ignore-rules' : '--safe-mode');
+    expect(args).not.toContain(readMode === 'keep' ? '--safe-mode' : '--ignore-rules');
+    expect(args).not.toContain('--yolo');
+    for (const tools of ['full', 'write'] as const) {
+      const plan = hermesExec.plan(req({ tools }), r, ctx('hi'));
+      expect(plan.args).toEqual([...args.slice(0, -1), ...(tools === 'full' ? ['--yolo'] : [])]);
+    }
+  });
+  it('hermes: rejects readMode values other than safe or keep', () => {
+    for (const readMode of ['true', 'false', '', 0, 1, false, true]) {
+      expect(hermesExec.validate(route('hermes-exec', { model: 'test/fake', command: process.execPath, readMode }))).toBe('route option readMode must be safe or keep');
+    }
+    for (const readMode of [undefined, 'safe', 'keep']) {
+      expect(hermesExec.validate(route('hermes-exec', { model: 'test/fake', command: process.execPath, ...(readMode === undefined ? {} : { readMode }) }))).toBeNull();
+    }
+  });
   it('grok: prompt from a file, JSON envelope, write approves all tools and read denies Edit and Bash', () => {
     const r = route('grok-exec', { model: 'grok-4.7', command: 'C:/g/grok.exe', effort: 'high' });
     const w = grokExec.plan(req({ tools: 'write' }), r, ctx('go', 'C:/jobs/j1'));

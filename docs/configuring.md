@@ -369,6 +369,7 @@ Runs the Hermes command line with a prompt and reads its usage file.
 | Option | Value | What it does |
 | --- | --- | --- |
 | `model` (required) | text | The model id Hermes passes to its provider. |
+| `readMode` | safe, keep | safe runs read jobs in Hermes safe mode, which ignores your Hermes settings, including any provider pin. keep uses your Hermes settings and still skips rules files. |
 | `command` | text | Full path to the harness, for when it is not on the search path. |
 | `envAllow` | text | Names of environment variables the harness may read, separated by commas. Nothing else from the service is passed on. |
 
