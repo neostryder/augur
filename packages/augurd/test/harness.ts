@@ -25,6 +25,7 @@ const RULES = { providers: { test: { defaults: { dataTier: 'internal', output: '
   'test/text': { id: 'text-1', rule: { output: 'text_only', activities: { research: 'normal', embed: 'normal', transcribe: 'normal', moderate: 'normal' } } },
   'test/sandboxed': { id: 'sbx-1', rule: { sandbox: true, activities: { write_code: 'normal' } } },
   'test/public': { id: 'pub-1', rule: { dataTier: 'public', activities: { write_code: 'normal' } } },
+  'test/copy': { id: 'copy-1', rule: { output: 'patch_only', activities: { write_code: 'normal', research: 'normal' } } },
   'test/patch': { id: 'patch-1', rule: { output: 'patch_only', sandbox: true, activities: { write_code: 'normal', research: 'normal' } } } } } } };
 
 export interface Env {

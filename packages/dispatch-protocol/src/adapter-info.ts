@@ -25,10 +25,6 @@ const model = (help: string, placeholder?: string): OptionSpec => ({ key: 'model
 const effort: OptionSpec = { key: 'effort', label: 'Reasoning effort', kind: 'text', help: 'Passed to the harness as its effort setting. Leave empty for its default.', placeholder: 'high' };
 const command: OptionSpec = { key: 'command', label: 'Command', kind: 'text', help: 'Full path to the harness, for when it is not on the search path.' };
 const envAllow: OptionSpec = { key: 'envAllow', label: 'Extra environment', kind: 'text', help: 'Names of environment variables the harness may read, separated by commas. Nothing else from the service is passed on.' };
-const sandbox: OptionSpec = { key: 'sandbox', label: 'Sandbox name', kind: 'text', required: true, help: 'The Docker sandbox the harness runs inside.' };
-const workRoot: OptionSpec = { key: 'workRoot', label: 'Sandbox workspace', kind: 'text', required: true, help: 'The folder on this computer that the sandbox mounts as its workspace. Each job gets a copy of its folder there.' };
-const sbx: OptionSpec = { key: 'sbx', label: 'sbx command', kind: 'text', help: 'Full path to the sbx command, for when it is not on the search path.' };
-const sbxPrefixJson: OptionSpec = { key: 'sbxPrefixJson', label: 'sbx arguments', kind: 'json', help: 'A JSON array of arguments placed before every sbx call, for wrappers.' };
 const ambient: OptionSpec = { key: 'ambient', label: 'Harness context', kind: 'choice', choices: ['keep', 'trim'], help: "Whether the harness loads its own extra instructions, tools and plugins on this route. trim turns them off, keep leaves them on, and Default follows the service's Harness context setting." };
 
 const apiExtras: OptionSpec[] = [
@@ -49,17 +45,12 @@ export const ADAPTER_INFO: readonly AdapterInfo[] = [
     options: [model('The Grok model id.', 'grok-4.7'), effort, { key: 'maxTurns', label: 'Turn limit', kind: 'number', help: 'Most turns a job may take. Defaults to 60 for a read job and 400 otherwise.' }, command, envAllow] },
   { id: 'hermes-exec', label: 'Hermes Agent', summary: 'Runs the Hermes command line with a prompt and reads its usage file.',
     options: [model('The model id Hermes passes to its provider.'),
+      { key: 'provider', label: 'Provider', kind: 'text', help: "The Hermes provider id passed to `hermes --provider`, such as openrouter; leave it empty to use Hermes's default provider." },
       { key: 'readMode', label: 'Hermes settings for read jobs', kind: 'choice', choices: ['safe', 'keep'], help: '`safe` (the default) runs read jobs in Hermes safe mode, and safe mode ignores your Hermes settings, including any provider pin (a rule that sends a model\'s requests only to one named host). `keep` runs read jobs with your Hermes settings, so a provider pin still applies, and still skips rules files.' }, command, envAllow] },
   { id: 'mcode-exec', label: 'MiniMax Code on the host', summary: '`mcode-exec` runs `mcode exec` on this computer in a copy of the job folder and returns the changes as a patch. Read jobs use smart permissions and a prompt restriction, but mcode cannot enforce read-only, so file writes are not blocked.',
     options: [{ key: 'model', label: 'Model', kind: 'text', help: 'The provider/model id mcode uses, or empty for mcode\'s own default model.' }, effort, command,
       { key: 'workRoot', label: 'Workspace copies', kind: 'text', help: 'The folder where job copies are made, by default a `mcode` folder in the service data folder.' },
       { key: 'maxSteps', label: 'Step limit', kind: 'number', help: 'The most steps a job may take, by default 60 for a read job and 400 otherwise.' }, envAllow] },
-  { id: 'mcode-sbx', label: 'mcode in a Docker sandbox', summary: 'Runs mcode inside a Docker sandbox on a copy of the job folder, and returns changes as a patch.',
-    options: [sandbox, workRoot, model('The model id mcode uses.'), effort,
-      { key: 'maxSteps', label: 'Step limit', kind: 'number', help: 'Most steps a job may take. Defaults to 60 for a read job and 400 otherwise.' }, sbx, sbxPrefixJson, envAllow] },
-  { id: 'opencode-sbx', label: 'OpenCode in a Docker sandbox', summary: 'Runs OpenCode inside a Docker sandbox on a copy of the job folder, and returns changes as a patch.',
-    options: [sandbox, workRoot, model('The provider/model id OpenCode uses.', 'openrouter/deepseek/deepseek-v4.1-flash-1017'), effort,
-      { key: 'host', label: 'Pinned host', kind: 'text', help: 'For an openrouter/ model: the one OpenRouter host that serves every call, for example DeepInfra. Calls never fall back to another host, never use a host that keeps or trains on prompts, and use zero data retention endpoints only.', placeholder: 'DeepInfra' }, sbx, sbxPrefixJson, envAllow] },
   { id: 'openai-api', label: 'OpenAI-style API', summary: 'Sends one prompt to a chat completions, embeddings, or transcription endpoint and returns the text. No tools. Text files and images can go with the prompt.',
     notes: "A local gateway such as Cogitator answers HTTP 503 with the error code `preempted` when it hands its model to a person's request. The API call then waits for the number of seconds in the `Retry-After` header (20 if the header is missing, 120 at most) and sends the request again, for up to three tries in all while the job's `timeoutS` still has time left. If every try comes back preempted, the call fails with an error message starting `preempted:`. Augur treats that error like a provider limit and moves the job to the route's fallback whatever its tool tier, since none of the job ran.",
     options: [{ key: 'baseUrl', label: 'Base URL', kind: 'text', required: true, help: 'The API address up to and including /v1. It must start with https://, or http:// for this computer or a machine on the home network.', placeholder: 'https://api.openai.com/v1' },

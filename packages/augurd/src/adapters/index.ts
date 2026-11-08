@@ -7,14 +7,12 @@ import { genericExec } from './exec.js';
 import { grokExec } from './grok-exec.js';
 import { hermesExec } from './hermes-exec.js';
 import { mcodeExec } from './mcode-exec.js';
-import { mcodeSbx } from './mcode-sbx.js';
-import { opencodeSbx } from './opencode-sbx.js';
 
-export const ALL_ADAPTERS: readonly Adapter[] = [codexExec, hermesExec, copilotExec, grokExec, mcodeExec, mcodeSbx, opencodeSbx, openaiApi, anthropicApi, falApi, genericExec];
+export const ALL_ADAPTERS: readonly Adapter[] = [codexExec, hermesExec, copilotExec, grokExec, mcodeExec, openaiApi, anthropicApi, falApi, genericExec];
 
 /** The adapters a service config allows. */
 export function enabledAdapters(ids: readonly string[], local: readonly Adapter[] = []): Map<string, Adapter> {
   return new Map([...ALL_ADAPTERS, ...local].filter(a => ids.includes(a.id)).map(a => [a.id, a]));
 }
 export { loadLocalAdapters } from './local.js';
-export { anthropicApi, codexExec, copilotExec, falApi, genericExec, grokExec, hermesExec, mcodeExec, mcodeSbx, openaiApi, opencodeSbx };
+export { anthropicApi, codexExec, copilotExec, falApi, genericExec, grokExec, hermesExec, mcodeExec, openaiApi };

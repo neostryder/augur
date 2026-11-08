@@ -141,17 +141,18 @@ Earlier labels keep working. Each entry records the labels it replaces as aliase
 
 A model the catalog adds starts from the rules of the model it comes from and never gets a wider data level than that model had.
 
-All OpenRouter models in the catalog (deepseek, glm, and mimo) are pinned to DeepInfra, a US host, with data collection denied and zero data retention. Their rules record host country US, no prompt retention, no training on prompts, and the pinned host. The opencode-sbx adapter takes the route option `host`, listed as Pinned host in the option table. When `host` is set, the model must be an openrouter model. The job then passes OpenCode an inline config that sets the provider order to that host, turns off fallbacks, sets data_collection to deny, and sets zdr to true. If that host cannot serve the request, OpenRouter fails it instead of using another host.
+All OpenRouter models in the catalog (deepseek, glm, and mimo) have rules that record host country US, no prompt retention, no training on prompts, and the pinned host DeepInfra. Their routes run on the `hermes-exec` adapter, which has no `host` option, so Augur neither applies nor checks the pin. The pin lives in Hermes Agent's own config.yaml, where the `provider_routing.models.<model id>` entry sets `only` and `order` to DeepInfra and `data_collection` to deny, so OpenRouter fails the request instead of using another host. For the pin to apply to read jobs, the route must set the route option `readMode` to `keep`. With the default `safe`, Hermes safe mode ignores the pin.
 
 ```json
 {
   "name": "deepseek",
   "model": "openrouter/deepseek",
-  "adapter": "opencode-sbx",
+  "adapter": "hermes-exec",
   "options": {
-    "sandbox": "oc-ds",
-    "model": "openrouter/deepseek/deepseek-v4.1-flash-1017",
-    "host": "DeepInfra"
+    "model": "deepseek/deepseek-v4.1-flash-1017",
+    "provider": "openrouter",
+    "effort": "medium",
+    "readMode": "keep"
   }
 }
 ```
@@ -242,7 +243,7 @@ A role without `callerChooses` draws its pick by the odds, as any pick does. A r
 
 ### Jobs with no tools
 
-The `none` tool tier runs a job with no tools, as in `augur run <route> --tools none`. A model whose rule allows text only accepts `none` the same way it accepts `read`. The job needs an adapter that holds jobs to reading by itself. `openai-api`, `anthropic-api`, `fal-api` and `grok-exec` accept it (`grok-exec` denies every tool for the job), while `codex-exec`, `copilot-exec`, `hermes-exec`, the sandboxed adapters and `exec` refuse it with `read_not_enforceable`. The `augur_run` tool does not offer `none`.
+The `none` tool tier runs a job with no tools, as in `augur run <route> --tools none`. A model whose rule allows text only accepts `none` the same way it accepts `read`. The job needs an adapter that holds jobs to reading by itself. `openai-api`, `anthropic-api`, `fal-api` and `grok-exec` accept it (`grok-exec` denies every tool for the job), while `codex-exec`, `copilot-exec`, `hermes-exec`, `mcode-exec` and `exec` refuse it with `read_not_enforceable`. The `augur_run` tool does not offer `none`.
 
 ## Adding a provider
 
@@ -369,6 +370,7 @@ Runs the Hermes command line with a prompt and reads its usage file.
 | Option | Value | What it does |
 | --- | --- | --- |
 | `model` (required) | text | The model id Hermes passes to its provider. |
+| `provider` | text | The Hermes provider id passed to `hermes --provider`, such as openrouter; leave it empty to use Hermes's default provider. |
 | `readMode` | safe, keep | `safe` (the default) runs read jobs in Hermes safe mode, and safe mode ignores your Hermes settings, including any provider pin (a rule that sends a model's requests only to one named host). `keep` runs read jobs with your Hermes settings, so a provider pin still applies, and still skips rules files. |
 | `command` | text | Full path to the harness, for when it is not on the search path. |
 | `envAllow` | text | Names of environment variables the harness may read, separated by commas. Nothing else from the service is passed on. |
@@ -384,36 +386,6 @@ Runs the Hermes command line with a prompt and reads its usage file.
 | `command` | text | Full path to the harness, for when it is not on the search path. |
 | `workRoot` | text | The folder where job copies are made, by default a `mcode` folder in the service data folder. |
 | `maxSteps` | number | The most steps a job may take, by default 60 for a read job and 400 otherwise. |
-| `envAllow` | text | Names of environment variables the harness may read, separated by commas. Nothing else from the service is passed on. |
-
-#### `mcode-sbx`: mcode in a Docker sandbox
-
-Runs mcode inside a Docker sandbox on a copy of the job folder, and returns changes as a patch.
-
-| Option | Value | What it does |
-| --- | --- | --- |
-| `sandbox` (required) | text | The Docker sandbox the harness runs inside. |
-| `workRoot` (required) | text | The folder on this computer that the sandbox mounts as its workspace. Each job gets a copy of its folder there. |
-| `model` (required) | text | The model id mcode uses. |
-| `effort` | text | Passed to the harness as its effort setting. Leave empty for its default. |
-| `maxSteps` | number | Most steps a job may take. Defaults to 60 for a read job and 400 otherwise. |
-| `sbx` | text | Full path to the sbx command, for when it is not on the search path. |
-| `sbxPrefixJson` | json | A JSON array of arguments placed before every sbx call, for wrappers. |
-| `envAllow` | text | Names of environment variables the harness may read, separated by commas. Nothing else from the service is passed on. |
-
-#### `opencode-sbx`: OpenCode in a Docker sandbox
-
-Runs OpenCode inside a Docker sandbox on a copy of the job folder, and returns changes as a patch.
-
-| Option | Value | What it does |
-| --- | --- | --- |
-| `sandbox` (required) | text | The Docker sandbox the harness runs inside. |
-| `workRoot` (required) | text | The folder on this computer that the sandbox mounts as its workspace. Each job gets a copy of its folder there. |
-| `model` (required) | text | The provider/model id OpenCode uses. |
-| `effort` | text | Passed to the harness as its effort setting. Leave empty for its default. |
-| `host` | text | For an openrouter/ model: the one OpenRouter host that serves every call, for example DeepInfra. Calls never fall back to another host, never use a host that keeps or trains on prompts, and use zero data retention endpoints only. |
-| `sbx` | text | Full path to the sbx command, for when it is not on the search path. |
-| `sbxPrefixJson` | json | A JSON array of arguments placed before every sbx call, for wrappers. |
 | `envAllow` | text | Names of environment variables the harness may read, separated by commas. Nothing else from the service is passed on. |
 
 #### `openai-api`: OpenAI-style API
@@ -518,7 +490,7 @@ charter/
   charter.json       optional rules that add packs on their own
 ```
 
-The engine files are named `codex`, `copilot`, `grok`, `mcode` and `opencode`. The API adapters and `exec` get `core.md` and the packs with no engine file, and Hermes gets no charter at all, since it keeps its own persona. Any of the files can be left out.
+The engine files are named `codex`, `copilot`, `grok` and `mcode`. The API adapters and `exec` get `core.md` and the packs with no engine file, and Hermes gets no charter at all, since it keeps its own persona. Any of the files can be left out.
 
 A caller adds packs with `augur run --pack code,review` or the `packs` argument of `augur_run`, and `--no-charter` or `no_charter` sends the prompt alone. `charter.json` adds packs by rule:
 
@@ -560,7 +532,7 @@ Each adapter carries the servers its own way:
 | `codex-exec` | Added for that job through `-c mcp_servers.<name>...` overrides, with `denyTools` passed as `disabled_tools`. |
 | `copilot-exec` | Added for that job through `--additional-mcp-config`, with one `--deny-tool` for each denied tool. |
 | `grok-exec` | The Grok CLI has no per-run option for servers, so register each server once with `grok mcp add`. Every Grok job still passes the denied tools with `--deny`. |
-| Any other | The API adapters, `exec`, Hermes, and the sandboxed adapters cannot carry the servers. |
+| Any other | The API adapters, `exec`, Hermes, and `mcode-exec` cannot carry the servers. |
 
 On Codex and Copilot the servers load for no other job. A job on a route that cannot carry its toolkit runs without the tools and records the warning "Route <route> cannot carry the tools for <activity>, so the job runs without them." The pack still goes to any adapter that gets a charter.
 

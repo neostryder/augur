@@ -1,16 +1,16 @@
 import { createServer } from 'node:http';
 import type { IncomingHttpHeaders, Server } from 'node:http';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { delimiter, join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { credentialTarget, routeSecretName, tierNote } from '@augur/dispatch-protocol';
 import type { ExtractInput, JobRequest } from '@augur/dispatch-protocol';
-import { anthropicApi, codexExec, copilotExec, grokExec, hermesExec, mcodeExec, mcodeSbx, opencodeSbx, openaiApi } from '../src/adapters/index.js';
+import { anthropicApi, codexExec, copilotExec, grokExec, hermesExec, mcodeExec, openaiApi } from '../src/adapters/index.js';
 import { parseCount } from '../src/adapters/copilot-exec.js';
-import { insideSandbox, resolveExecutable } from '../src/adapters/util.js';
+import { resolveExecutable } from '../src/adapters/util.js';
 import { FAKE, ROUTES, makeEnv, request, submitOk, terminal } from './harness.js';
 import type { Env } from './harness.js';
 
@@ -21,7 +21,6 @@ const envs: Env[] = [];
 const servers: Server[] = [];
 afterEach(async () => { while (envs.length) envs.pop()!.dispose(); while (servers.length) await new Promise(r => servers.pop()!.close(() => r(null))); });
 const setup = (...a: Parameters<typeof makeEnv>) => { const e = makeEnv(...a); envs.push(e); return e; };
-const FAKE_SBX = join(FAKE, '..', 'fake-sbx.mjs');
 
 const input = (over: Partial<ExtractInput> = {}): ExtractInput => ({ stdout: '', stdoutPath: join(tmpdir(), 'none.log'), stderr: '', exitCode: 0, jobDir: tmpdir(), workspace: null, ...over });
 const req = (over: Partial<JobRequest> = {}): JobRequest => request(over, tmpdir());
@@ -68,23 +67,6 @@ describe('what each harness prints, read from real captured output', () => {
     expect(grokExec.extract(input({ stdout: JSON.stringify({ text: 'hello', sessionId: '' }) }))).not.toHaveProperty('sessionId');
   });
 
-  it('mcode: skips the sbx status line, adds cache reads to input, and fails on a non-succeeded status', () => {
-    const line = '{"schemaVersion":1,"type":"exec.result","status":"succeeded","output":"pong","usage":{"inputTokens":681,"outputTokens":28,"cacheReadTokens":10752}}';
-    const x = mcodeSbx.extract(input({ stdout: `Sandbox mc-m3 started successfully\n${line}\n` }));
-    expect(x).toEqual({ answer: 'pong', usage: { inputTokens: 11433, outputTokens: 28, cachedReadTokens: 10752, source: 'reported' } });
-    expect(mcodeSbx.extract(input({ stdout: line.replace('succeeded', 'failed') })).failure).toMatch(/failed/);
-    expect(mcodeSbx.extract(input({ stdout: 'nothing useful' })).failure).toMatch(/did not return/);
-  });
-
-  it('opencode: last step text is the answer, and tokens and cost add up across steps', () => {
-    const ev = (o: unknown) => JSON.stringify(o);
-    const stdout = [ev({ type: 'step_start', part: {} }), ev({ type: 'text', part: { text: 'let me look' } }),
-      ev({ type: 'step_finish', part: { tokens: { input: 10, output: 4, reasoning: 0, cache: { write: 0, read: 12544 } }, cost: 0.00008 } }),
-      ev({ type: 'step_start', part: {} }), ev({ type: 'text', part: { text: 'pong' } }),
-      ev({ type: 'step_finish', part: { tokens: { input: 20, output: 6, reasoning: 2, cache: { write: 5, read: 100 } }, cost: 0.00002 } })].join('\n');
-    expect(opencodeSbx.extract(input({ stdout }))).toEqual({ answer: 'pong', usage: { inputTokens: 10 + 12544 + 20 + 100 + 5, outputTokens: 10, cachedReadTokens: 12644, cachedWriteTokens: 5, reasoningTokens: 2, costUsd: 0.0001, currency: 'USD', source: 'reported' } });
-  });
-
   it('mcode-exec: reads the result and cache usage without a status line', () => {
     const line = '{"schemaVersion":1,"type":"exec.result","status":"succeeded","output":"pong","usage":{"inputTokens":681,"outputTokens":28,"cacheReadTokens":10752,"cacheWriteTokens":12,"reasoningTokens":4}}';
     expect(mcodeExec.extract(input({ stdout: `${line}\n` }))).toEqual({ answer: 'pong', usage: { inputTokens: 11445, outputTokens: 28, cachedReadTokens: 10752, cachedWriteTokens: 12, reasoningTokens: 4, source: 'reported' } });
@@ -96,8 +78,8 @@ describe('what each harness prints, read from real captured output', () => {
 
 describe('per-call options', () => {
   it('overrides effort in every supporting adapter without changing the route', () => {
-    for (const [adapter, flag] of [[codexExec, 'model_reasoning_effort=high'], [grokExec, '--reasoning-effort'], [copilotExec, '--reasoning-effort'], [hermesExec, '--reasoning'], [mcodeExec, '--effort'], [mcodeSbx, '--effort'], [opencodeSbx, '--variant']] as const) {
-      const route = { model: 'test/fake', adapter: adapter.id, options: { model: 'fake', effort: 'low', command: process.execPath, sbx: process.execPath, sandbox: 'test', workRoot: 'C:/work' } };
+    for (const [adapter, flag] of [[codexExec, 'model_reasoning_effort=high'], [grokExec, '--reasoning-effort'], [copilotExec, '--reasoning-effort'], [hermesExec, '--reasoning'], [mcodeExec, '--effort']] as const) {
+      const route = { model: 'test/fake', adapter: adapter.id, options: { model: 'fake', effort: 'low', command: process.execPath, workRoot: 'C:/work' } };
       const plan = adapter.plan(req({ effort: 'high' }), route, ctx('hi', 'C:/jobs/j1', 'C:/work/job'));
       expect(plan.args).toContain(flag);
       if (adapter !== codexExec) expect(plan.args[plan.args.indexOf(flag) + 1]).toBe('high');
@@ -279,45 +261,9 @@ describe('command lines', () => {
     } finally { vi.unstubAllEnvs(); }
   });
 
-  it('mcode: runs through sbx in the job folder as the sandbox sees it, prompt on standard input', () => {
-    const r = route('mcode-sbx', { sandbox: 'mc-m3', workRoot: 'C:/w', model: 'custom_provider:minimax-direct/MiniMax-M3', sbx: process.execPath });
-    const p = mcodeSbx.plan(req({ tools: 'write' }), r, ctx('hi', 'C:/jobs/j1', 'C:\\w\\jobs\\j1'));
-    expect(p.args.slice(0, 5)).toEqual(['exec', '-i', '-e', 'NO_COLOR=1', '-w']);
-    expect(p.args[5]).toBe('/c/w/jobs/j1');
-    expect(p.args).toEqual(expect.arrayContaining(['--permission', 'full', '--output-format', 'json', '--input', '-']));
-    expect(p.stdin).toBe('hi');
-    expect(mcodeSbx.validate(route('mcode-sbx', { sandbox: 'a', workRoot: 'b' }))).toMatch(/model/);
-    expect(mcodeSbx.isolation?.root(r)).toBe('C:/w');
-  });
-  it('opencode: a long prompt goes into a task file in the workspace', () => {
-    const r = route('opencode-sbx', { sandbox: 'oc-ds', workRoot: 'C:/w', model: 'openrouter/deepseek/deepseek-v4.1-flash', sbx: process.execPath });
-    const short = opencodeSbx.plan(req(), r, ctx('hi', 'C:/jobs/j1', 'C:/w/jobs/j1'));
-    expect(short.args.at(-1)).toBe('hi');
-    expect(short.promptArgs).toEqual([short.args.length - 1]);
-    const long = opencodeSbx.plan(req(), r, ctx('y'.repeat(9000), 'C:/jobs/j1', 'C:/w/jobs/j1'));
-    expect(long.files).toEqual([{ name: '.ai-task.md', content: 'y'.repeat(9000), inWorkspace: true }]);
-    expect(long.args.at(-1)).toMatch(/\.ai-task\.md/);
-    const hard = opencodeSbx.plan(req(), route('opencode-sbx', { sandbox: 'oc-ds', workRoot: 'C:/w', model: 'm', sbx: process.execPath, effort: 'xhigh' }), ctx('hi', 'C:/jobs/j1', 'C:/w/jobs/j1'));
-    expect(hard.args.slice(-3)).toEqual(['--variant', 'high', 'hi']);
-    expect(hard.promptArgs).toEqual([hard.args.length - 1]);
-  });
-  it('opencode: an OpenRouter model can be pinned to one US host with no fallback and no data retention', () => {
-    const r = route('opencode-sbx', { sandbox: 'oc-ds', workRoot: 'C:/w', model: 'openrouter/z-ai/glm-5.3-flash', host: 'DeepInfra', sbx: process.execPath });
-    const plan = opencodeSbx.plan(req(), r, ctx('hi', 'C:/jobs/j1', 'C:/w/jobs/j1'));
-    const at = plan.args.indexOf('OPENCODE_CONFIG_CONTENT=' + JSON.stringify(JSON.parse(plan.args.find(a => a.startsWith('OPENCODE_CONFIG_CONTENT='))!.slice(24))));
-    expect(at).toBeGreaterThan(0);
-    expect(plan.args[at - 1]).toBe('-e');
-    const config = JSON.parse(plan.args[at]!.slice(24));
-    expect(config.provider.openrouter.models['z-ai/glm-5.3-flash'].options.provider).toEqual({ order: ['DeepInfra'], allow_fallbacks: false, data_collection: 'deny', zdr: true });
-    expect(plan.promptArgs).toEqual([plan.args.length - 1]);
-    expect(opencodeSbx.plan(req(), route('opencode-sbx', { sandbox: 'oc-ds', workRoot: 'C:/w', model: 'openrouter/z-ai/glm-5.3-flash', sbx: process.execPath }), ctx('hi', 'C:/jobs/j1', 'C:/w/jobs/j1')).args.join(' ')).not.toContain('OPENCODE_CONFIG_CONTENT');
-    expect(opencodeSbx.validate(route('opencode-sbx', { sandbox: 'a', workRoot: 'b', model: 'anthropic/x', host: 'DeepInfra', sbx: process.execPath }))).toMatch(/openrouter/);
-    expect(opencodeSbx.validate(r)).toBeNull();
-  });
   it('finds a command without cmd.exe, and turns an npm shim into node plus its script', () => {
     const found = resolveExecutable('node');
     expect(found?.prefix).toEqual([]);
-    expect(insideSandbox('C:\\Temp\\sbx\\work\\mc-m3\\jobs\\a')).toBe('/c/Temp/sbx/work/mc-m3/jobs/a');
     if (process.platform === 'win32') { const npm = resolveExecutable('npm'); if (npm && /\.cmd$/i.test(npm.command) === false) expect(npm.prefix.length).toBeGreaterThanOrEqual(0); }
   });
 });
@@ -643,18 +589,33 @@ describe('an API connector', () => {
   });
 });
 
-describe('a sandboxed connector on a copy of the workspace', () => {
-  const sbxRoute = (adapter: string, workRoot: string, extra: Record<string, string> = {}) => ({ model: 'test/patch', adapter, options: { sandbox: 'fake', workRoot, model: 'm', sbx: process.execPath, sbxPrefixJson: JSON.stringify([FAKE_SBX]), ...extra } });
+describe('a host connector on a copy of the workspace', () => {
+  let bin = '';
+  // A fake `mcode` first on PATH, so the adapter finds it the way it finds the real one.
+  beforeEach(() => {
+    bin = mkdtempSync(join(tmpdir(), 'fake-mcode-'));
+    const fixtures = join(FAKE, '..');
+    if (process.platform === 'win32') {
+      for (const f of ['fake-mcode.mjs', 'fake-harness.mjs']) copyFileSync(join(fixtures, f), join(bin, f));
+      writeFileSync(join(bin, 'mcode.cmd'), ['@ECHO off', '"%_prog%"  "%dp0%\\fake-mcode.mjs" %*', ''].join('\r\n'));
+    } else {
+      writeFileSync(join(bin, 'mcode'), ['#!/bin/sh', `exec "${process.execPath}" "${join(fixtures, 'fake-mcode.mjs')}" "$@"`, ''].join('\n'));
+      chmodSync(join(bin, 'mcode'), 0o755);
+    }
+    vi.stubEnv('PATH', bin + delimiter + (process.env.PATH ?? ''));
+  });
+  afterEach(() => { vi.unstubAllEnvs(); rmSync(bin, { recursive: true, force: true }); });
+  const mcodeRoute = (workRoot: string) => ({ model: 'test/copy', adapter: 'mcode-exec', options: { workRoot } });
 
   it.each(['folder', 'file'])('ignores a job-created .git %s and its clean filter when collecting a patch', async kind => {
-    const e = setup({ adapters: ['mcode-sbx'] });
+    const e = setup({ adapters: ['mcode-exec'] });
     const project = join(e.root, 'project'), marker = join(e.root, 'filter-ran'), script = join(e.root, 'clean.cjs').replaceAll('\\', '/');
     mkdirSync(project);
     writeFileSync(script, `require('node:fs').writeFileSync(${JSON.stringify(marker.replaceAll('\\', '/'))}, 'ran');`);
     const config = `[filter "x"]\n  clean = ${JSON.stringify(`node "${script}"`)}\n`;
     const metadata = kind === 'folder' ? [['.git/config', config]] : [['hostile.git/config', config], ['.git', 'gitdir: hostile.git\n']];
     const text = [...metadata, ['.gitattributes', '* filter=x\n']].map(value => `WRITE-JSON ${JSON.stringify(value)}`).join('\n');
-    e.writeRoutes({ mc: sbxRoute('mcode-sbx', join(e.root, 'work')) });
+    e.writeRoutes({ mc: mcodeRoute(join(e.root, 'work')) });
     const id = submitOk(e.sup, request({ route: 'mc', text: `${text}\nWRITE real.txt\nSLEEP 0`, output: 'patch_only' }, project));
     const job = await terminal(e.sup, e.store, id);
     expect(job.state).toBe('completed');
@@ -665,9 +626,9 @@ describe('a sandboxed connector on a copy of the workspace', () => {
   });
 
   it('starts the job without .git in the copy and keeps the metadata under the job folder', async () => {
-    const e = setup({ adapters: ['mcode-sbx'] });
+    const e = setup({ adapters: ['mcode-exec'] });
     const project = join(e.root, 'project'); mkdirSync(project);
-    e.writeRoutes({ mc: sbxRoute('mcode-sbx', join(e.root, 'work')) });
+    e.writeRoutes({ mc: mcodeRoute(join(e.root, 'work')) });
     const id = submitOk(e.sup, request({ route: 'mc', text: 'ASSERT-NO-GIT\nWRITE real.txt\nSLEEP 0', output: 'patch_only' }, project));
     const job = await terminal(e.sup, e.store, id);
     expect(job.state).toBe('completed');
@@ -681,11 +642,11 @@ describe('a sandboxed connector on a copy of the workspace', () => {
     ['CRLF', 'original\r\n', 'changed\r\n'],
     ['binary', 'original\0', 'changed\0'],
   ])('records the base tree and preserves a modified %s file in the patch', async (kind, before, after) => {
-    const e = setup({ adapters: ['mcode-sbx'] });
+    const e = setup({ adapters: ['mcode-exec'] });
     const project = join(e.root, 'project'); mkdirSync(project);
     writeFileSync(join(project, 'keep.txt'), before);
     execFileSync('git', ['init', '-q'], { cwd: project, windowsHide: true });
-    e.writeRoutes({ mc: sbxRoute('mcode-sbx', join(e.root, 'work')) });
+    e.writeRoutes({ mc: mcodeRoute(join(e.root, 'work')) });
     const id = submitOk(e.sup, request({ route: 'mc', text: `WRITE-JSON ${JSON.stringify(['keep.txt', after])}\nSLEEP 0`, output: 'patch_only' }, project));
     const job = await terminal(e.sup, e.store, id);
     expect(job.state).toBe('completed');
@@ -699,12 +660,12 @@ describe('a sandboxed connector on a copy of the workspace', () => {
   });
 
   it('leaves an outside link and its contents out of the copy', async context => {
-    const e = setup({ adapters: ['mcode-sbx'] });
+    const e = setup({ adapters: ['mcode-exec'] });
     const project = join(e.root, 'project'), outside = join(e.root, 'outside');
     mkdirSync(project); mkdirSync(outside);
     writeFileSync(join(project, 'keep.txt'), 'regular\n'); writeFileSync(join(outside, 'outside.txt'), 'outside\n');
     try { symlinkSync(outside, join(project, 'link'), process.platform === 'win32' ? 'junction' : 'dir'); } catch { context.skip(); }
-    e.writeRoutes({ mc: sbxRoute('mcode-sbx', join(e.root, 'work')) });
+    e.writeRoutes({ mc: mcodeRoute(join(e.root, 'work')) });
     const id = submitOk(e.sup, request({ route: 'mc', text: 'SLEEP 0', output: 'patch_only' }, project));
     const job = await terminal(e.sup, e.store, id);
     expect(job.state).toBe('completed');
@@ -714,13 +675,13 @@ describe('a sandboxed connector on a copy of the workspace', () => {
   });
 
   it('removes a link swapped in after the copy filter checks a directory and records its count', async context => {
-    const e = setup({ adapters: ['mcode-sbx'] });
+    const e = setup({ adapters: ['mcode-exec'] });
     const project = join(e.root, 'project'), outside = join(e.root, 'outside'), link = join(project, 'link');
     mkdirSync(project); mkdirSync(outside);
     writeFileSync(join(project, 'keep.txt'), 'regular\n'); writeFileSync(join(outside, 'outside.txt'), 'outside\n');
     try { symlinkSync(outside, link, process.platform === 'win32' ? 'junction' : 'dir'); } catch { context.skip(); }
     rmSync(link, { recursive: true }); mkdirSync(link);
-    e.writeRoutes({ mc: sbxRoute('mcode-sbx', join(e.root, 'work')) });
+    e.writeRoutes({ mc: mcodeRoute(join(e.root, 'work')) });
     const copy = fs.cpSync;
     const spy = vi.spyOn(fs, 'cpSync').mockImplementation((src, dest, options) => copy(src, dest, { ...options, filter(source, destination) {
       const accepted = options?.filter?.(source, destination) ?? true;
@@ -739,14 +700,14 @@ describe('a sandboxed connector on a copy of the workspace', () => {
   });
 
   it('leaves the original untouched, exports a patch, checks the expected file in the copy, and applies on request', async () => {
-    const e = setup({ adapters: ['mcode-sbx', 'opencode-sbx'] });
-    const work = join(e.root, 'sbxwork'); const project = join(e.root, 'project');
+    const e = setup({ adapters: ['mcode-exec'] });
+    const work = join(e.root, 'copies'); const project = join(e.root, 'project');
     mkdirSync(project, { recursive: true }); writeFileSync(join(project, 'keep.txt'), 'original\n');
     execFileSync('git', ['init', '-q'], { cwd: project, windowsHide: true }); mkdirSync(join(project, 'node_modules'), { recursive: true }); writeFileSync(join(project, 'node_modules', 'big.js'), 'x');
-    e.writeRoutes({ ...ROUTES, mc: sbxRoute('mcode-sbx', work) });
+    e.writeRoutes({ ...ROUTES, mc: mcodeRoute(work) });
     const id = submitOk(e.sup, request({ route: 'mc', text: 'WRITE new.txt\nSLEEP 0', expectFile: 'new.txt', output: 'patch_only' }, project));
     const job = await terminal(e.sup, e.store, id);
-    expect(job).toMatchObject({ state: 'completed', adapter: 'mcode-sbx', usage: { inputTokens: 1000, outputTokens: 10, cachedReadTokens: 900 } });
+    expect(job).toMatchObject({ state: 'completed', adapter: 'mcode-exec', usage: { inputTokens: 1000, outputTokens: 10, cachedReadTokens: 900 } });
     expect(existsSync(join(project, 'new.txt'))).toBe(false);
     expect(existsSync(join(job.workspace as string, 'new.txt'))).toBe(true);
     expect(existsSync(join(job.workspace as string, 'node_modules'))).toBe(false);
@@ -758,31 +719,6 @@ describe('a sandboxed connector on a copy of the workspace', () => {
     expect(readFileSync(join(project, 'new.txt'), 'utf8')).toBe('artifact\n');
     expect(e.sup.apply(id)).toMatchObject({ ok: false });
     expect(e.store.events(id).map(x => x.kind)).toContain('patch_applied');
-  });
-
-  it('runs opencode the same way and reads its events', async () => {
-    const e = setup({ adapters: ['opencode-sbx'] });
-    const work = join(e.root, 'sbxwork'); const project = join(e.root, 'project');
-    mkdirSync(project, { recursive: true }); writeFileSync(join(project, 'a.txt'), 'a\n');
-    e.writeRoutes({ oc: sbxRoute('opencode-sbx', work) });
-    const id = submitOk(e.sup, request({ route: 'oc', text: 'SLEEP 0', tools: 'read', output: 'patch_only' }, project));
-    const job = await terminal(e.sup, e.store, id);
-    expect(job.state).toBe('completed');
-    expect(job.usage).toEqual({ inputTokens: 1005, outputTokens: 5, cachedReadTokens: 995, reasoningTokens: 1, costUsd: 0.0005, currency: 'USD', source: 'reported' });
-    expect(e.sup.result(id)?.answer).toBe('done (read)');
-    expect(job.patch).toBeNull();
-  });
-
-  it('carries a long prompt to opencode in a task file that is gone when the job ends', async () => {
-    const e = setup({ adapters: ['opencode-sbx'] });
-    const work = join(e.root, 'sbxwork'); const project = join(e.root, 'project');
-    mkdirSync(project, { recursive: true });
-    e.writeRoutes({ oc: sbxRoute('opencode-sbx', work) });
-    const id = submitOk(e.sup, request({ route: 'oc', text: `${'pad '.repeat(2500)}\nWRITE big.txt\nSLEEP 0`, expectFile: 'big.txt', output: 'patch_only' }, project));
-    const job = await terminal(e.sup, e.store, id);
-    expect(job.state).toBe('completed');
-    expect(existsSync(join(job.workspace as string, '.ai-task.md'))).toBe(false);
-    expect(readFileSync(join(e.dir, 'jobs', id, 'job.json'), 'utf8')).not.toContain('pad pad pad');
   });
 
   it('rejects a write job for a patch-only model on an adapter that does not isolate', () => {
