@@ -39,6 +39,7 @@ import type { ProseItem, ProseStatus } from './prose-queue.js';
 import { appendGate, gateTotals, readGate } from './balance-files.js';
 import { PremiumBacklog } from './premium-backlog.js';
 import type { BacklogItem, BacklogStatus } from './premium-backlog.js';
+import { QUICK_ADAPTERS, Slots } from './slots.js';
 
 export const REPLAY_TEXT = {
   unknownJob: 'No job has that id.',
@@ -1080,16 +1081,25 @@ export class Supervisor {
       if ((this.backlog.list('queued').length || this.backlog.list('awaiting-approval').length) && this.now() - this.lastBacklogEvaluation >= 5000) { this.lastBacklogEvaluation = this.now(); this.releaseDue(this.now()); }
     }
     for (const rec of store.active()) this.watch(rec);
-    let room = this.d.config.maxConcurrent - store.countActive();
-    if (room <= 0) return;
+    const slots = new Slots(this.d.config.maxConcurrent, this.d.config.quickSlots, store.active().map(r => this.isQuick(r.route)));
+    if (slots.free <= 0) return;
     const gate = this.parallelGate();
-    for (const id of store.queued(gate ? 256 : room)) {
-      if (room <= 0) break;
-      const rec = gate ? store.get(id) : null;
+    const scan = gate || this.d.config.quickSlots > 0;
+    for (const id of store.queued(scan ? 256 : slots.free)) {
+      if (slots.free <= 0) break;
+      const rec = scan ? store.get(id) : null;
+      const quick = rec ? this.isQuick(rec.route) : false;
+      if (!slots.canTake(quick)) continue;
       if (gate && rec && !gate.admit(rec)) continue;
+      slots.take(quick);
       this.launch(id);
-      room--;
     }
+  }
+
+  /** A route is quick when it calls a provider's API directly instead of running an agent or a browser chat. */
+  private isQuick(route: string): boolean {
+    const adapter = this.d.routes()?.[route]?.adapter;
+    return !!adapter && QUICK_ADAPTERS.has(adapter);
   }
 
   /** Holds a job back while its route already runs `caps.<route>.parallel` jobs. Null when no cap sets a parallel limit. A launch counts at once, so jobs queued in one tick cannot overshoot. */

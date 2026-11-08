@@ -316,8 +316,8 @@ fn dispatch_setting_allowed(key: &str, value: &str) -> bool {
         return false;
     }
     match key {
-        "retentionDays" | "persistPrompts" | "maxConcurrent" | "maxDepth" | "maxDescendants"
-        | "decision.backend" | "decision.shadow" | "learn.recordTasks" => true,
+        "retentionDays" | "persistPrompts" | "maxConcurrent" | "quickSlots" | "maxDepth"
+        | "maxDescendants" | "decision.backend" | "decision.shadow" | "learn.recordTasks" => true,
         "adapters" => value.split(',').all(|a| a != "exec"),
         _ => false,
     }

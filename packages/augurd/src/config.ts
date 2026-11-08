@@ -57,6 +57,8 @@ export interface ServiceConfig {
   /** Charter folder and whether a harness's own instructions stay on. */
   runner: RunnerSettings;
   maxConcurrent: number;
+  /** Slots that only quick jobs (direct API calls) may take, so they never wait behind a full set of long runs. */
+  quickSlots: number;
   maxDepth: number;
   maxDescendants: number;
   proseBatchSize: number;
@@ -83,7 +85,7 @@ export interface ServiceConfig {
   web: WebSettings;
 }
 
-export const DEFAULT_CONFIG: ServiceConfig = { retentionDays: 30, aliasRefreshHours: 24, persistPrompts: false, maxConcurrent: 8, maxDepth: 2, maxDescendants: 16, proseBatchSize: 10, proseBatchHours: 24, proseRoute: 'claude/opus', proseAutoRun: false,
+export const DEFAULT_CONFIG: ServiceConfig = { retentionDays: 30, aliasRefreshHours: 24, persistPrompts: false, maxConcurrent: 8, quickSlots: 2, maxDepth: 2, maxDescendants: 16, proseBatchSize: 10, proseBatchHours: 24, proseRoute: 'claude/opus', proseAutoRun: false,
   ledgerAlerts: { stalled: true, failed: true, overUsualTime: true, usualMultiple: 3, minSamples: 8, webhookUrl: '', webhookFormat: 'augur', webhookKeyName: '' },
   jobhostPath: null, adapters: ['codex-exec'], requirePick: true, promptRoots: [], verifyNamed: 'off', decision: { backend: 'none' }, learn: { recordTasks: false }, runnerStaleS: 20, stallMinutes: 10, engine: true,
   web: { enabled: false, host: '127.0.0.1', port: 7420, chatPort: 0, chatHost: '0.0.0.0', accessTeam: '', accessAud: '', allowedHosts: [], tlsCert: '', tlsKey: '', tlsAuto: 'auto' },
@@ -169,7 +171,7 @@ export function loadConfig(dir: string): ServiceConfig {
     },
     ...(Array.isArray(raw.ledgerNodes) ? { ledgerNodes: raw.ledgerNodes.filter((v): v is { node: string; url: string; keyName?: string } => typeof v?.node === 'string' && /^[A-Za-z0-9._-]{1,128}$/.test(v.node) && typeof v?.url === 'string' && gatewayAddress(v.url) && (v.keyName === undefined || (typeof v.keyName === 'string' && /^[a-z0-9_-]+\.[A-Za-z0-9_]+$/.test(v.keyName)))) } : {}),
     retentionDays: num(raw.retentionDays, c.retentionDays, 0, 3650), aliasRefreshHours: num(raw.aliasRefreshHours, c.aliasRefreshHours, 0, 8760), persistPrompts: raw.persistPrompts === true,
-    maxConcurrent: num(raw.maxConcurrent, c.maxConcurrent, 1, 64), maxDepth: num(raw.maxDepth, c.maxDepth, 0, 8),
+    maxConcurrent: num(raw.maxConcurrent, c.maxConcurrent, 1, 64), quickSlots: num(raw.quickSlots, c.quickSlots, 0, 63), maxDepth: num(raw.maxDepth, c.maxDepth, 0, 8),
     maxDescendants: num(raw.maxDescendants, c.maxDescendants, 0, 256), proseBatchSize: num(raw.proseBatchSize, c.proseBatchSize, 1, 1000), proseBatchHours: num(raw.proseBatchHours, c.proseBatchHours, 1, 720), proseRoute: typeof raw.proseRoute === 'string' && raw.proseRoute.trim() ? raw.proseRoute.trim() : c.proseRoute, proseAutoRun: raw.proseAutoRun === true,
     jobhostPath: typeof raw.jobhostPath === 'string' ? raw.jobhostPath : defaultJobhost(),
     adapters: Array.isArray(raw.adapters) ? raw.adapters.filter((a): a is string => typeof a === 'string') : c.adapters,
