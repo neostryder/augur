@@ -4,6 +4,8 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+## [1.19.2] - 2026-11-07
+
 ### Fixed
 
 - [Visible] [Platform] With failover on, a web chat job with tools `read` or `none` that stopped before it sent anything (the browser was unavailable, nobody was signed in, a human check was unfinished, or a page control was missing) now retries on the next route in its fallback list. Before, such a job stopped the chain, so a research chain of ChatGPT deep research, then Microsoft 365 Copilot, then plain ChatGPT chat never reached plain ChatGPT chat when Copilot failed this way.
