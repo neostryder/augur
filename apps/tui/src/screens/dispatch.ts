@@ -1,11 +1,11 @@
 // The dispatch page has three screens, switched with [ and ]: the jobs agents started, the routes that join a model to the program that runs it,
 // and the service's own settings. It reads jobs and routes through the service's own calls, as the window app does, and edits routes.json and
 // config.json in the folders the service reads them from.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { ACTIVITIES } from '@augur/core';
-import { augurHome, configLines, dataDir, setConfigValue, type ConfigLine } from '@augur/augurd';
+import { routeFile, augurHome, configLines, dataDir, setConfigValue, type ConfigLine } from '@augur/augurd';
 import { ADAPTER_INFO, LEDGER_KINDS, LEDGER_STATES, ORIGIN_KINDS, ledgerTerminal, adapterInfo, routeSecretName } from '@augur/dispatch-protocol';
 import type { LedgerQuery, LedgerDeliveryState } from '@augur/dispatch-protocol';
 import { inset, tabs, type Key, type Rect, type Screen } from '@augur/terminal';
@@ -398,10 +398,7 @@ export class DispatchPage implements Page {
         setProviderKey: async (provider, field, value) => { await ctx.link.run('setProviderKey', provider, field, value); },
         readRoutes: async () => (existsSync(this.routesPath) ? readFileSync(this.routesPath, 'utf8') : null),
         writeRoutes: async (text) => {
-          mkdirSync(dirname(this.routesPath), { recursive: true });
-          const tmp = `${this.routesPath}.${process.pid}.tmp`;
-          writeFileSync(tmp, text);
-          renameSync(tmp, this.routesPath);
+          routeFile(this.routesPath).update(() => text);
         },
       });
       f.key = '';
@@ -491,11 +488,12 @@ export class DispatchPage implements Page {
     if (!page.file) return;
     page.formError = '';
     try {
-      const text = writeRoute(page.file, name, draft);
-      mkdirSync(dirname(this.routesPath), { recursive: true });
-      const tmp = `${this.routesPath}.${process.pid}.tmp`;
-      writeFileSync(tmp, text);
-      renameSync(tmp, this.routesPath);
+      routeFile(this.routesPath).update(text => {
+        const latest = parseRoutesText(text);
+        if (!latest.ok) throw new Error(latest.error);
+        if (page.sel === '+' && Object.hasOwn(latest.file.raw.routes as Record<string, unknown>, name)) throw new Error(`A route named ${name} already exists. Nothing was written.`);
+        return writeRoute(latest.file, name, draft);
+      });
       this.closeRoute();
       page.note = done;
       await this.refresh(ctx);

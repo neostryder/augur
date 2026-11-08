@@ -1,6 +1,6 @@
 // `augur provider`: adds a provider of a standard shape from a base URL, a model and a key. The route goes in routes.json, the model goes into the rules to wait for
 // the owner's confirmation, a balance reading is added when the API has one, and the key is stored the way `augur key set` stores it, never on the command line.
-import { appDirs, createKeyStore } from '@augur/augurd';
+import { appDirs, createKeyStore, routeFile } from '@augur/augurd';
 import type { KeyStore } from '@augur/augurd';
 import type { ProviderAdded, ProviderAddition } from '@augur/core';
 import { EXIT_CODES } from '@augur/dispatch-protocol';
@@ -8,7 +8,7 @@ import { PRESETS, SHAPES, parseRoutesText, planProvider } from '@augur/view-mode
 import type { ProviderPlan, TemplateInput } from '@augur/view-model';
 import { KINDS, readValue } from './key.js';
 import type { KeyIo } from './key.js';
-import { readText, routesPath, writeAtomic } from './profile.js';
+import { readText, routesPath } from './profile.js';
 
 export const PROVIDER_HELP = `augur provider templates             the presets and shapes that need only a base URL, a model and a key
 augur provider add <template> [route] --model <id> [--base-url <url>] [--provider <id>] [--label <name>] [--balance-url <url> --balance-path <$.path>] [--max-tokens <n>]
@@ -75,8 +75,16 @@ export async function providerCmd(rest: string[], flags: ProviderFlags, io: Prov
     // A model that was already in the rules keeps its label, so the route points at the label the rules page shows.
     const label = added.labels[plan.model.id] ?? plan.model.label;
     const entry = { ...plan.route.entry, model: label };
-    const raw = current.file.raw;
-    writeAtomic(routesPath(io.env), `${JSON.stringify({ ...raw, routes: { ...(raw.routes as Raw), [plan.route.name]: entry } }, null, 2)}\n`);
+    try {
+      routeFile(routesPath(io.env)).update(text => {
+        const latest = parseRoutesText(text);
+        if (!latest.ok) throw new Error(latest.error);
+        const raw = latest.file.raw, routes = { ...(raw.routes as Raw) };
+        if (Object.hasOwn(routes, plan.route!.name)) throw new Error(`A route named ${plan.route!.name} already exists. Nothing was written.`);
+        routes[plan.route!.name] = entry;
+        return `${JSON.stringify({ ...raw, routes }, null, 2)}\n`;
+      });
+    } catch (error) { io.err(`${(error as Error).message}\n`); return EXIT_CODES.failed; }
   }
 
   const stored: string[] = [], missing: string[] = [];

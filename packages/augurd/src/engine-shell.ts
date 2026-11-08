@@ -9,7 +9,7 @@ import { promisify } from 'node:util';
 import { compareVersions, keyMayGoTo, parseResetLog, serializeResets } from '@augur/core';
 import type { AlertFeed, AppConfig, EngineShell, Host, HttpRequest, HttpResponse, ModelCatalog, Platform, Snapshot, UpdateInfo } from '@augur/core';
 import { claudeInstall, claudeRemove, claudeStatus, defaultClaudePaths, type ClaudePaths } from './claude-install.js';
-import { atomicWrite, isCredentialFile, readText, resolveHomePath } from './home-files.js';
+import { atomicWrite, routeFile, isCredentialFile, readText, resolveHomePath } from './home-files.js';
 import { createKeyStore, runHelper, type KeyStore } from './keystore.js';
 import { appDirs } from './paths.js';
 import type { ViewHub } from './views.js';
@@ -115,7 +115,11 @@ export function createEngineShell(opts: EngineShellOptions): NodeEngineShell {
     secret: async name => (await keys.get(name).catch(() => null)) ?? bwsSecret(name).catch(() => null),
     saveSecret: (name, value) => keys.set(name, value),
     readHomeFile: async path => readText(resolveHomePath(home, path, await exportPath())),
-    writeHomeFileAtomic: async (path, text) => atomicWrite(resolveHomePath(home, path, await exportPath()), text, isCredentialFile(path) ? 0o600 : undefined),
+    writeHomeFileAtomic: async (path, text) => {
+      const target = resolveHomePath(home, path, await exportPath());
+      if (path === 'dispatch/routes.json' || path.endsWith('/dispatch/routes.json')) routeFile(target).update(() => text);
+      else atomicWrite(target, text, isCredentialFile(path) ? 0o600 : undefined);
+    },
     async run(command, args, timeoutMs = 30000) {
       const allowed = (command === 'grok' && args.length === 1 && args[0] === 'models')
         || (command === 'bws' && args.length === 5 && args[0] === 'secret' && args[1] === 'list' && isUuid(args[2]) && args[3] === '-o' && args[4] === 'json');

@@ -3,7 +3,7 @@
 // A model arrives unreviewed, so nothing runs it until the owner confirms it in Model rules.
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { appendPolicyEdits, augurHome } from '@augur/augurd';
+import { appendPolicyEdits, augurHome, routeFile } from '@augur/augurd';
 import type { ProviderAdded, ProviderAddition } from '@augur/core';
 import { EXIT_CODES, balanceLeaves } from '@augur/dispatch-protocol';
 import { PROFILE_KIND, PROFILE_SECRET_OPTION, modelsSection, parseRoutesText, planProfileFile } from '@augur/view-model';
@@ -128,8 +128,18 @@ export async function profileCmd(rest: string[], flags: { dryRun: boolean }, io:
       return EXIT_CODES.failed;
     }
     if (plan.routes.length) {
-      const raw = current.file.raw, merged = { ...raw, routes: { ...(raw.routes as Raw), ...Object.fromEntries(plan.routes.map(r => [r.name, r.entry])) } };
-      writeAtomic(routesPath(io.env), `${JSON.stringify(merged, null, 2)}\n`);
+      try {
+        routeFile(routesPath(io.env)).update(text => {
+          const latest = parseRoutesText(text);
+          if (!latest.ok) throw new Error(latest.error);
+          const raw = latest.file.raw, routes = { ...(raw.routes as Raw) };
+          for (const route of plan.routes) {
+            if (Object.hasOwn(routes, route.name)) throw new Error(`A route named ${route.name} already exists. Nothing was written.`);
+            routes[route.name] = route.entry;
+          }
+          return `${JSON.stringify({ ...raw, routes }, null, 2)}\n`;
+        });
+      } catch (error) { io.err(`${(error as Error).message}\n`); return EXIT_CODES.failed; }
     }
     const at = now.toISOString();
     if (plan.edits.length) appendPolicyEdits(`${plan.edits.map((e, i) => JSON.stringify({ id: `${at}-profile-${i}`, at, by: 'augur profile import', provider: '', model: '', field: e.field, value: e.value })).join('\n')}\n`, augurHome(io.env));

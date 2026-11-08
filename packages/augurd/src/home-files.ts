@@ -3,6 +3,7 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, normalize, posix, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { withFileLock } from './file-lock.js';
 
 const LOGIN_FILES = ['.claude/.credentials.json', '.codex/auth.json', '.grok/auth.json', '.codex/models_cache.json'];
 /** The login files that hold tokens: written readable by their owner only. */
@@ -52,6 +53,21 @@ export function resolveHomePath(home: string, path: string, exportPath: string |
 
 export function readText(path: string): string | null {
   try { return readFileSync(path, 'utf8'); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null; throw e; }
+}
+
+export interface RouteFile {
+  read(): string | null;
+  update(change: (text: string | null) => string | null): void;
+}
+
+export function routeFile(path: string): RouteFile {
+  return {
+    read: () => readText(path),
+    update: change => withFileLock(path, () => {
+      const text = change(readText(path));
+      if (text !== null) atomicWrite(path, text);
+    }, { timeoutMessage: 'The routes file is busy. Nothing was written. Try again.', keepLive: true }),
+  };
 }
 
 /** Writes beside the target and renames over it, so a reader sees the old file or the new one and never half of one. */
