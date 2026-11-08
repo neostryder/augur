@@ -491,6 +491,9 @@ describe('augur pick and augur pressure', () => {
 
   it('prints odds, takes the top score with --best, and previews without a draw', async () => {
     const { run } = await boot();
+    // `pick --named <model>` takes the model as its value, where `run --named` is a switch.
+    expect(parse(['pick', '--activity', 'write_code', '--data', 'internal', '--named', 'test/fake']).flags.get('named')).toBe('test/fake');
+    expect(parse(['run', 'route', '--named', '--wait']).flags.get('named')).toBe(true);
     const best = await run(['pick', '--activity', 'write_code', '--data', 'internal', '--best', '--json']);
     expect(best.code).toBe(0);
     const body = JSON.parse(best.out) as { pick: string; drawn: boolean; seed: string | null; ranking: Array<{ model: string; odds: number }> };

@@ -8,6 +8,10 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 - [Visible] [Platform] A model a person asked for now runs without Augur re-checking the claim, because `verifyNamed` defaults to `off` (it was `enforce`); set it to `enforce` to keep the check. Premium models are still refused for automated callers.
 
+### Fixed
+
+- [Visible] [Platform] `augur pick --named <model>` and `augur pick-preview --named <model>` now read the model name after the flag, where before they took `--named` as a switch with no value, ignored the model, and left an ask-first model such as `xai/grok` refused even when named. `--named=<model>` works as it did before, and `augur run --named` is unchanged and stays a switch.
+
 ## [1.20.0] - 2026-11-07
 
 ### Added
