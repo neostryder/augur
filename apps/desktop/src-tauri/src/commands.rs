@@ -299,7 +299,9 @@ pub async fn write_home_file_atomic(
 ) -> Result<(), String> {
     require_popup(&webview)?;
     let path = allowed_home_path(&app, &path).await?;
-    tokio::fs::create_dir_all(path.parent().ok_or("Invalid path")?).await.map_err(|error| error.to_string())?;
+    tokio::fs::create_dir_all(path.parent().ok_or("Invalid path")?)
+        .await
+        .map_err(|error| error.to_string())?;
     let _lock = lock_routes_file(&path).await?;
     atomic_write(&path, &text).await
 }
