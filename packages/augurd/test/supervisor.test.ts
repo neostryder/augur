@@ -673,6 +673,40 @@ describe('runtime failover', () => {
     expect(e.store.events(next.id).find(ev => ev.kind === 'failover')?.detail).toBe('limited to fake: provider limit');
   });
 
+  it('holds a route after a usage limit and sends the next job straight to the fallback', async () => {
+    const e = setup({ runner: runnerOn });
+    add(e, { limited: limit(['fake']) });
+    submitOk(e.sup, request({ route: 'limited', text: 'SLEEP 0', cwd: e.root }));
+    await settled(e);
+    expect(Object.keys(e.sup.heldRoutes())).toEqual(['limited']);
+    const id = submitOk(e.sup, request({ route: 'limited', text: 'SLEEP 0', cwd: e.root }));
+    expect(e.store.get(id)).toMatchObject({ route: 'fake' });
+    expect(e.store.events(id).find(ev => ev.kind === 'failover')?.detail).toContain('limited to fake: held for a usage limit until');
+    await settled(e);
+    expect(e.store.get(id)!.state).toBe('completed');
+    expect(e.sup.releaseRoute('limited')).toBe(true);
+    expect(e.sup.heldRoutes()).toEqual({});
+  });
+
+  it('does not hold a route for a busy signal that clears on its own', async () => {
+    const e = setup({ runner: runnerOn });
+    add(e, { busy: { ...limit(['fake']), options: { command: process.execPath, argsJson: JSON.stringify(['-e', 'process.stderr.write("429 try again later\\n");process.exit(1)']) } } });
+    submitOk(e.sup, request({ route: 'busy', text: 'SLEEP 0', cwd: e.root }));
+    await settled(e);
+    expect(e.sup.heldRoutes()).toEqual({});
+    const id = submitOk(e.sup, request({ route: 'busy', text: 'SLEEP 0', cwd: e.root }));
+    expect(e.store.get(id)).toMatchObject({ route: 'busy' });
+  });
+
+  it('leaves a job that opted out of failover on its route while the route is held', async () => {
+    const e = setup({ runner: runnerOn });
+    add(e, { limited: limit(['fake']) });
+    submitOk(e.sup, request({ route: 'limited', text: 'SLEEP 0', cwd: e.root }));
+    await settled(e);
+    const id = submitOk(e.sup, request({ route: 'limited', text: 'SLEEP 0', cwd: e.root, failover: false }));
+    expect(e.store.get(id)).toMatchObject({ route: 'limited' });
+  });
+
   it('skips a fallback a rule rejects and tries the next', async () => {
     const e = setup({ runner: runnerOn });
     add(e, { limited: limit(['ghost', 'fake']) });
