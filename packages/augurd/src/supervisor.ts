@@ -2,7 +2,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { hostname } from 'node:os';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { appendFileSync, closeSync, cpSync, existsSync, mkdtempSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, cpSync, existsSync, mkdtempSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, readSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES } from '@augur/core';
@@ -106,6 +106,15 @@ export const copyFilterWithCaps = (maxFiles = COPY_MAX_FILES, maxBytes = COPY_MA
   };
 };
 const GIT = ['-c', 'core.autocrlf=false', '-c', 'core.safecrlf=false'];
+const NULL_DEVICE = process.platform === 'win32' ? 'NUL' : '/dev/null';
+
+function removeWorkspaceLinks(path: string): number {
+  const st = lstatSync(path);
+  if (st.isSymbolicLink()) { rmSync(path, { recursive: true, force: true }); return 1; }
+  if (!st.isDirectory()) return 0;
+  return readdirSync(path).reduce((count, name) => count + removeWorkspaceLinks(join(path, name)), 0);
+}
+
 const CONVERSATION_NAME = /^[A-Za-z0-9._-]{1,64}$/;
 
 interface RunnerResult { exitCode: number | null; signal?: string | null; killedBy: 'cancel' | 'timeout' | null; endedAt: number; spawnError?: string }
@@ -974,15 +983,27 @@ export class Supervisor {
     return { ok: r.status === 0, out: `${r.stdout ?? ''}${r.stderr ?? ''}`.trim() };
   }
 
+  private workspaceGit(rec: JobRecord, ws: string, args: string[]): { ok: boolean; out: string } {
+    const dir = this.jobDir(rec.id), env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.toUpperCase().startsWith('GIT_')));
+    const r = spawnSync('git', [...GIT, '-c', 'core.fsmonitor=false', '-c', `core.hooksPath=${join(dir, 'workspace-hooks')}`,
+      '-c', `core.attributesFile=${NULL_DEVICE}`, '-c', 'protocol.allow=never', `--git-dir=${join(dir, 'workspace.git')}`, `--work-tree=${ws}`, ...args],
+    { cwd: ws, encoding: 'utf8', windowsHide: true, maxBuffer: 256 * 1024 * 1024,
+      env: { ...env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: NULL_DEVICE, GIT_ATTR_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' } });
+    return { ok: r.status === 0, out: `${r.stdout ?? ''}${r.stderr ?? ''}`.trim() };
+  }
+
   /** Copies the working directory into the adapter's own folder and records the starting tree, so what the job changed can be diffed later. */
   private prepareWorkspace(rec: JobRecord, ws: string): string | null {
     try {
       mkdirSync(dirname(ws), { recursive: true });
-      cpSync(rec.cwd, ws, { recursive: true, filter: copyFilterWithCaps() });
+      cpSync(rec.cwd, ws, { recursive: true, dereference: false, verbatimSymlinks: true, filter: copyFilterWithCaps() });
+      const removed = removeWorkspaceLinks(ws);
+      if (removed) this.d.store.event(rec.id, 'workspace_links_removed', String(removed), this.now());
+      mkdirSync(join(this.jobDir(rec.id), 'workspace-hooks'), { recursive: true });
     } catch (e) { return `copying the working directory failed: ${(e as Error).message}`; }
-    if (!this.git(ws, ['init', '-q']).ok) return 'git could not record the starting tree';
-    this.git(ws, ['add', '-A']);
-    const tree = this.git(ws, ['write-tree']);
+    if (!this.workspaceGit(rec, ws, ['init', '-q', `--template=${join(this.jobDir(rec.id), 'workspace-hooks')}`]).ok) return 'git could not record the starting tree';
+    this.workspaceGit(rec, ws, ['add', '-A', '--', '.', ':(exclude,icase)**/.git']);
+    const tree = this.workspaceGit(rec, ws, ['write-tree']);
     if (!tree.ok) return 'git could not record the starting tree';
     writeFileSync(join(this.jobDir(rec.id), 'base-tree'), tree.out.split('\n').pop() ?? '');
     return null;
@@ -991,13 +1012,13 @@ export class Supervisor {
   private collectPatch(rec: JobRecord): void {
     const ws = rec.workspace, base = (() => { try { return readFileSync(join(this.jobDir(rec.id), 'base-tree'), 'utf8').trim(); } catch { return ''; } })();
     if (!ws || !base || !existsSync(ws)) return;
-    this.git(ws, ['add', '-A']);
-    const names = this.git(ws, ['diff', '--cached', '--name-only', base]);
+    this.workspaceGit(rec, ws, ['add', '-A', '--', '.', ':(exclude,icase)**/.git']);
+    const names = this.workspaceGit(rec, ws, ['diff', '--cached', '--no-ext-diff', '--no-textconv', '--name-only', base]);
     const files = names.ok ? names.out.split('\n').filter(Boolean).length : 0;
     if (!files) return;
     const patch = join(this.jobDir(rec.id), 'changes.patch');
     // git writes the file itself: routing a diff through a text stream would strip the CR of CRLF lines and the patch would no longer apply.
-    if (this.git(ws, ['diff', '--cached', '--binary', `--output=${patch}`, base]).ok) this.d.store.setPatch(rec.id, patch, files);
+    if (this.workspaceGit(rec, ws, ['diff', '--cached', '--no-ext-diff', '--no-textconv', '--binary', `--output=${patch}`, base]).ok) this.d.store.setPatch(rec.id, patch, files);
   }
 
   private launch(id: string): void {

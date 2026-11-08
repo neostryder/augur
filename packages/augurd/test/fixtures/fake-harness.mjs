@@ -2,7 +2,8 @@
 //   SLEEP n | WRITE file | EXIT n | GRANDCHILD marker | ESCAPE marker | HANG | BUSY n | ENV NAME | FLOOD mb | SUBMIT-CHILD
 // Understands the arguments `codex exec` gets: `-o <file>` receives the final message, and `--json` makes it print a turn.completed event.
 import { spawn } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 
 const args = process.argv.slice(2);
 const outFile = args.includes('-o') ? args[args.indexOf('-o') + 1] : null;
@@ -21,6 +22,8 @@ function run() {
     const [cmd, ...rest] = line.trim().split(/\s+/), arg = rest.join(' ');
     if (cmd === 'SLEEP') sleep = Number(arg);
     else if (cmd === 'WRITE') writeFileSync(arg, 'artifact\n');
+    else if (cmd === 'WRITE-JSON') { const [path, content] = JSON.parse(arg); mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, content); }
+    else if (cmd === 'ASSERT-NO-GIT' && existsSync('.git')) throw new Error('the workspace already has .git');
     else if (cmd === 'EXIT') code = Number(arg);
     else if (cmd === 'HANG') hang = true;
     else if (cmd === 'BUSY') { const until = Date.now() + Number(arg) * 1000; while (Date.now() < until) { /* burns processor time and prints nothing */ } }
