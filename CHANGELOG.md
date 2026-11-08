@@ -16,6 +16,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 ### Fixed
 
 - [Internal] [Security] For jobs that run on a copy of the job folder, the copy is made without following links, and links found inside it are removed. The patch is collected with any git settings, hooks, filters, and attributes the job could have written in the copy ignored.
+- [Internal] [Security] Every change to `routes.json` from the service, the `augur` command, the terminal app, or the desktop app now holds a lock and re-reads the file first, so two writers can no longer overwrite each other or skip the check that a route name is not taken. A busy file reports "The routes file is busy. Nothing was written. Try again."
 
 ## [1.19.2] - 2026-11-07
 

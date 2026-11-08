@@ -1,9 +1,9 @@
 // The setup interview. Choices go through the shared steps in view-model. This file draws them and edits the answer object.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { ACTIVITIES, allPlugins, applyEdit, emptyPolicy, type EngineState } from '@augur/core';
-import { augurHome } from '@augur/augurd';
+import { routeFile, augurHome } from '@augur/augurd';
 import type { UsageSnapshot } from '@augur/dispatch-protocol';
 import { routeSecretName } from '@augur/dispatch-protocol';
 import { inset, type Key, type Rect, type Screen } from '@augur/terminal';
@@ -920,10 +920,7 @@ export class SetupPage implements Page {
         setProviderKey: async (provider, field, value) => { await ctx.link.run('setProviderKey', provider, field, value); },
         readRoutes: async () => (existsSync(this.routesPath) ? readFileSync(this.routesPath, 'utf8') : null),
         writeRoutes: async (text) => {
-          mkdirSync(dirname(this.routesPath), { recursive: true });
-          const tmp = `${this.routesPath}.${process.pid}.tmp`;
-          writeFileSync(tmp, text);
-          renameSync(tmp, this.routesPath);
+          routeFile(this.routesPath).update(() => text);
         },
       });
       const added = noteAdded(this.model ?? model, plan.provider);

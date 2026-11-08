@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -7,6 +7,8 @@ import type { AppConfig, EngineShell } from '@augur/core';
 import type { RouteAddParams } from '@augur/dispatch-protocol';
 import { call } from '../src/client.js';
 import { IpcServer } from '../src/ipc.js';
+import { atomicWrite, routeFile } from '../src/home-files.js';
+import type { RouteFile } from '../src/home-files.js';
 import type { Supervisor } from '../src/supervisor.js';
 import { ViewHub } from '../src/views.js';
 
@@ -28,7 +30,7 @@ function fakeShell() {
 const stops: Array<() => Promise<void>> = [];
 afterEach(async () => { while (stops.length) await stops.pop()!(); });
 
-async function boot(approval?: 'all' | 'none') {
+async function boot(approval?: 'all' | 'none', beforeUpdate?: (file: RouteFile) => void) {
   const root = mkdtempSync(join(tmpdir(), 'augur-route-add-'));
   const routesPath = join(root, 'routes.json');
   const engine = new UsageEngine(fakeShell(), { hosted: 'https://augur.example.com' });
@@ -40,9 +42,13 @@ async function boot(approval?: 'all' | 'none') {
   }
   const sup = { knownAdapters: () => ['codex-exec', 'openai-api'], proseAdd: (raw: Record<string, unknown>, hold: boolean) => ({ ...raw, status: hold ? 'awaiting-approval' : 'queued' }) } as unknown as Supervisor;
   const token = 'k'.repeat(64);
+  const file = routeFile(routesPath);
   const server = new IpcServer(sup, {} as never, token, () => { try { return JSON.parse(readFileSync(routesPath, 'utf8')).routes ?? {}; } catch { return null; } }, () => ({}), {
-    read: () => { try { return readFileSync(routesPath, 'utf8'); } catch { return null; } },
-    write: (text: string) => writeFileSync(routesPath, text),
+    read: file.read,
+    update: change => {
+      beforeUpdate?.(file);
+      file.update(text => { expect(existsSync(`${routesPath}.lock`)).toBe(true); return change(text); });
+    },
   }, 'a'.repeat(64));
   server.attachEngine({ api: engine, views: new ViewHub() });
   const pipe = process.platform === 'win32' ? `\\\\.\\pipe\\augur-route-add-${Date.now()}-${Math.floor(Math.random() * 1e6)}` : join(root, 's.sock');
@@ -147,6 +153,58 @@ describe('Cogitator offers', () => {
 });
 
 describe('route_add', () => {
+  it.each(['acme', 'other'])('preserves a concurrent writer of %s after the name reads', async name => {
+    const owner = { adapter: 'codex-exec', options: { keep: true } };
+    let interleaved: string | null = null;
+    const { routesPath, add } = await boot(undefined, file => {
+      file.update(() => {
+        interleaved = JSON.stringify({ keep: true, routes: { [name]: owner } });
+        return interleaved;
+      });
+    });
+    const result = await add(good);
+    const text = readFileSync(routesPath, 'utf8'), parsed = JSON.parse(text);
+    expect(parsed.keep).toBe(true);
+    expect(parsed.routes[name]).toEqual(owner);
+    if (name === 'acme') {
+      expect(result.ok).toBe(false);
+      expect(result.text).toContain('already exists');
+      expect(result.text).toContain('Nothing was written');
+      expect(text).toBe(interleaved);
+    } else {
+      expect(result.ok, result.text).toBe(true);
+      expect(parsed.routes.acme.adapter).toBe('codex-exec');
+    }
+    expect(existsSync(`${routesPath}.lock`)).toBe(false);
+  });
+
+  it('refuses an old lock held by a live writer without changing the file', async () => {
+    const { routesPath, add } = await boot();
+    const original = JSON.stringify({ routes: {} });
+    atomicWrite(routesPath, original);
+    writeFileSync(`${routesPath}.lock`, `${process.pid}\n`);
+    const old = new Date(Date.now() - 60000);
+    utimesSync(`${routesPath}.lock`, old, old);
+    const result = await add(good);
+    expect(result.ok).toBe(false);
+    expect(result.text).toContain('Nothing was written');
+    expect(result.text).toContain('Try again');
+    expect(readFileSync(routesPath, 'utf8')).toBe(original);
+    expect(JSON.parse(readFileSync(routesPath, 'utf8'))).toEqual({ routes: {} });
+    expect(existsSync(`${routesPath}.lock`)).toBe(true);
+  });
+
+  it('recovers an abandoned lock before adding a route', async () => {
+    const { routesPath, add } = await boot();
+    writeFileSync(`${routesPath}.lock`, '');
+    const old = new Date(Date.now() - 60000);
+    utimesSync(`${routesPath}.lock`, old, old);
+    const result = await add(good);
+    expect(result.ok, result.text).toBe(true);
+    expect(JSON.parse(readFileSync(routesPath, 'utf8')).routes.acme.adapter).toBe('codex-exec');
+    expect(existsSync(`${routesPath}.lock`)).toBe(false);
+  });
+
   it('holds agent prose additions when agentApproval is all', async () => {
     const all = await boot('all');
     const params = { requester: 'agent', repo: 'repo', target: 'new', kind: 'write', surface: 'doc', audience: 'readers', voice: 'plain', urgency: 'normal' };

@@ -6,6 +6,7 @@ import { INBOX_FILE } from '@augur/core';
 import { ownerOnly } from './ipc.js';
 import { withFileLock } from './file-lock.js';
 import { checkAliasPin } from './alias-pins.js';
+import { routeFile } from './home-files.js';
 
 export const ALIAS_INBOX = 'alias-inbox.jsonl';
 export const ALIAS_STATE = 'alias-refresh.json';
@@ -152,15 +153,21 @@ export function settleAliasOffer(home: string, label: string, accept: boolean, n
       ownerOnly(inbox, 0o600);
     } catch { return { ok: false, error: 'The owner edit could not be queued. The offer is still pending.' }; }
     const routesPath = join(home, 'dispatch', 'routes.json');
-    let routes: { routes?: Record<string, { model?: string; options?: Record<string, unknown> }> };
-    try { routes = JSON.parse(readFileSync(routesPath, 'utf8')); } catch { return { ok: false, error: 'routes.json could not be read. The policy edit is queued; the offer is still pending.' }; }
     const warnings: string[] = [];
-    for (const [name, route] of Object.entries(routes.routes ?? {})) {
-      if (route.model !== offer.label) continue;
-      if (route.options?.model === offer.from) route.options.model = offer.to;
-      else if (typeof route.options?.model === 'string') warnings.push(`route ${name} still names ${route.options.model}; change it yourself`);
-    }
-    try { writeAtomic(routesPath, JSON.stringify(routes, null, 2) + '\n'); } catch { return { ok: false, error: 'routes.json could not be written. The policy edit is queued; the offer is still pending.' }; }
+    let readFailed = false;
+    try {
+      routeFile(routesPath).update(text => {
+        let routes: { routes?: Record<string, { model?: string; options?: Record<string, unknown> }> };
+        try { if (text === null) throw new Error(); routes = JSON.parse(text); } catch { readFailed = true; return null; }
+        for (const [name, route] of Object.entries(routes.routes ?? {})) {
+          if (route.model !== offer!.label) continue;
+          if (route.options?.model === offer!.from) route.options.model = offer!.to;
+          else if (typeof route.options?.model === 'string') warnings.push(`route ${name} still names ${route.options.model}; change it yourself`);
+        }
+        return JSON.stringify(routes, null, 2) + '\n';
+      });
+    } catch (error) { return { ok: false, error: `routes.json could not be written. The policy edit is queued; the offer is still pending. ${(error as Error).message}` }; }
+    if (readFailed) return { ok: false, error: 'routes.json could not be read. The policy edit is queued; the offer is still pending.' };
     try { mkdirSync(decisionDir, { recursive: true }); appendFileSync(join(decisionDir, 'decisions.jsonl'), JSON.stringify({ kind: 'alias_swap', label: offer.label, from: offer.from, to: offer.to, at: now.toISOString() }) + '\n', { encoding: 'utf8', mode: 0o600 }); } catch { /* the decision record is best effort */ }
     return removeSettledOffer(home, offer, warnings);
   }

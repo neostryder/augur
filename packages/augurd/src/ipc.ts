@@ -11,6 +11,7 @@ import { DEFAULT_APPROVAL, RULES_ONLY_PROVIDERS, allPlugins, callEngine, cogitat
 import { pipePeer, readPipePeer, type PeerInfo } from './job-stamp.js';
 import { validStamp } from '@augur/dispatch-protocol';
 import { buildAccounting } from './accounting.js';
+import type { RouteFile } from './home-files.js';
 import type { Store } from './store.js';
 import type { Supervisor } from './supervisor.js';
 import type { ViewHub, ViewLink } from './views.js';
@@ -87,7 +88,7 @@ export class IpcServer {
   ledgerSettings: () => import('@augur/dispatch-protocol').Methods['ledger_settings']['result'] = () => { throw new Error('Job alert settings are unavailable.'); };
   setLedgerSetting: (key: string, value: string) => void = () => { throw new Error('Job alert settings are unavailable.'); };
   ledgerDelivery: () => import('@augur/dispatch-protocol').LedgerDeliveryState[] = () => [];
-  constructor(private sup: Supervisor, private store: Store, private token: string, private routes: () => Record<string, RouteConfig> | null, private rates: () => RateCard = () => ({}), private routeFile: { read(): string | null; write(text: string): void } | null = null, private agentToken: string | null = null, private aliasRefresh?: (label?: string) => Promise<unknown>) {}
+  constructor(private sup: Supervisor, private store: Store, private token: string, private routes: () => Record<string, RouteConfig> | null, private rates: () => RateCard = () => ({}), private routeFile: RouteFile | null = null, private agentToken: string | null = null, private aliasRefresh?: (label?: string) => Promise<unknown>) {}
 
   /** The web token grants job alert settings; execution calls cannot waive the pick or claim an interactive caller. */
   async dispatch(method: string, params: unknown, peer: PeerInfo = {}): Promise<unknown> {
@@ -217,17 +218,21 @@ export class IpcServer {
 
   private writeRoute(name: string, entry: Record<string, unknown>): string | null {
     if (!this.routeFile) return 'This service cannot write routes.';
-    const text = this.routeFile.read();
-    let data: Record<string, unknown> = { routes: {} };
-    if (text !== null && text.trim()) {
-      try { data = JSON.parse(text) as Record<string, unknown>; } catch { return 'routes.json is not valid JSON, so nothing was written.'; }
-      if (!isObj(data) || (data.routes !== undefined && !isObj(data.routes))) return 'routes.json must be an object with a routes object, so nothing was written.';
-    }
-    const routes = { ...(isObj(data.routes) ? data.routes : {}) };
-    if (Object.hasOwn(routes, name)) return `A route named ${name} already exists. Nothing was written.`;
-    routes[name] = entry;
-    this.routeFile.write(`${JSON.stringify({ ...data, routes }, null, 2)}\n`);
-    return null;
+    let problem: string | null = null;
+    try {
+      this.routeFile.update(text => {
+        let data: Record<string, unknown> = { routes: {} };
+        if (text !== null && text.trim()) {
+          try { data = JSON.parse(text) as Record<string, unknown>; } catch { problem = 'routes.json is not valid JSON, so nothing was written.'; return null; }
+          if (!isObj(data) || (data.routes !== undefined && !isObj(data.routes))) { problem = 'routes.json must be an object with a routes object, so nothing was written.'; return null; }
+        }
+        const routes = { ...(isObj(data.routes) ? data.routes : {}) };
+        if (Object.hasOwn(routes, name)) { problem = `A route named ${name} already exists. Nothing was written.`; return null; }
+        routes[name] = entry;
+        return `${JSON.stringify({ ...data, routes }, null, 2)}\n`;
+      });
+    } catch (error) { return (error as Error).message; }
+    return problem;
   }
 
   private providerKind(id: string): 'builtin' | 'custom' | 'rules-only' | 'none' {

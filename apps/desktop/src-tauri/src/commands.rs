@@ -124,6 +124,93 @@ async fn allowed_home_path(app: &tauri::AppHandle, path: &str) -> Result<PathBuf
     Ok(full)
 }
 
+struct RouteFileLock(PathBuf);
+
+impl Drop for RouteFileLock {
+    fn drop(&mut self) {
+        if std::fs::read_to_string(&self.0)
+            .ok()
+            .and_then(|text| text.trim().parse::<u32>().ok())
+            == Some(std::process::id())
+        {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+}
+
+#[cfg(unix)]
+fn route_lock_owner_dead(pid: u32) -> bool {
+    unsafe extern "C" {
+        fn kill(pid: i32, signal: i32) -> i32;
+    }
+    let Ok(pid) = i32::try_from(pid) else {
+        return false;
+    };
+    unsafe { kill(pid, 0) != 0 && std::io::Error::last_os_error().raw_os_error() == Some(3) }
+}
+
+#[cfg(windows)]
+fn route_lock_owner_dead(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError};
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut std::ffi::c_void;
+    }
+    unsafe {
+        let handle = OpenProcess(0x1000, 0, pid);
+        if handle.is_null() {
+            GetLastError() == 87
+        } else {
+            CloseHandle(handle);
+            false
+        }
+    }
+}
+
+async fn lock_routes_file(path: &Path) -> Result<RouteFileLock, String> {
+    use std::io::Write;
+    let lock = path.with_file_name(format!(
+        "{}.lock",
+        path.file_name().ok_or("Invalid path")?.to_string_lossy()
+    ));
+    let started = std::time::Instant::now();
+    loop {
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock)
+        {
+            Ok(mut file) => {
+                let guard = RouteFileLock(lock);
+                writeln!(file, "{}", std::process::id()).map_err(|error| error.to_string())?;
+                return Ok(guard);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let pid = std::fs::read_to_string(&lock)
+                    .ok()
+                    .and_then(|text| text.trim().parse::<u32>().ok())
+                    .filter(|pid| *pid > 0);
+                let age = std::fs::metadata(&lock)
+                    .and_then(|meta| meta.modified())
+                    .ok()
+                    .and_then(|time| time.elapsed().ok())
+                    .unwrap_or_default();
+                if pid
+                    .map(route_lock_owner_dead)
+                    .unwrap_or(age > Duration::from_secs(30))
+                {
+                    let _ = std::fs::remove_file(&lock);
+                }
+                if started.elapsed() >= Duration::from_secs(2) {
+                    return Err("The routes file is busy. Nothing was written. Try again.".into());
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+}
+
 async fn atomic_write(path: &Path, text: &str) -> Result<(), String> {
     let parent = path.parent().ok_or("Invalid path")?;
     tokio::fs::create_dir_all(parent)
@@ -212,6 +299,8 @@ pub async fn write_home_file_atomic(
 ) -> Result<(), String> {
     require_popup(&webview)?;
     let path = allowed_home_path(&app, &path).await?;
+    tokio::fs::create_dir_all(path.parent().ok_or("Invalid path")?).await.map_err(|error| error.to_string())?;
+    let _lock = lock_routes_file(&path).await?;
     atomic_write(&path, &text).await
 }
 

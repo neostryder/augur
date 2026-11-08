@@ -1,6 +1,6 @@
 // augurd: the local dispatch service. Jobs run in their own runner processes, so stopping or restarting this process never stops a job.
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { LayaBackend, ServerPool, ShadowBackend, createBackend, DEFAULT_SERVERS } from '@augur/decision';
 import type { DecisionBackend } from '@augur/decision';
 import { ACTIVITIES, HOSTED, UsageEngine, registerBalanceSave } from '@augur/core';
@@ -19,6 +19,7 @@ import type { AliasSmoke } from './alias-files.js';
 import { openRouterEndpoints, providerListings } from './alias-listings.js';
 import { DecisionLog } from './decisions.js';
 import { createEngineShell } from './engine-shell.js';
+import { routeFile } from './home-files.js';
 import { IpcServer, ensureToken, webToken } from './ipc.js';
 import { webCertNames } from './web-cert.js';
 import { WebServer, webDir } from './web.js';
@@ -131,10 +132,7 @@ export async function startService(opts: ServiceOptions = {}) {
     routes: routesNow, policy: () => policy.read(), usage: () => usage.read(), jobsOff });
   const smokeAlias = createAliasSmoke({ home, routes: routesNow, policy: () => policy.read(), submit: (request, route) => supervisor.submit(request, route), getJob: id => store.get(id) });
   const runAliasRefresh = singleFlight(async (label?: string) => refreshAliasFiles(home, providerListings, label, new Date(), smokeAlias, (provider, modelId) => provider === 'openrouter' ? openRouterEndpoints(modelId) : Promise.resolve(null)));
-  const server = new IpcServer(supervisor, store, token, routesNow, rates, {
-    read: () => { try { return readFileSync(routesPath, 'utf8'); } catch { return null; } },
-    write: (text: string) => { mkdirSync(dirname(routesPath), { recursive: true }); const tmp = `${routesPath}.tmp`; writeFileSync(tmp, text, 'utf8'); renameSync(tmp, routesPath); },
-  }, agentToken, runAliasRefresh);
+  const server = new IpcServer(supervisor, store, token, routesNow, rates, routeFile(routesPath), agentToken, runAliasRefresh);
   // The engine is ready before the endpoint opens, so no caller ever finds the service half started.
   const override = process.env.AUGURD_ENGINE === '0' ? false : process.env.AUGURD_ENGINE === '1' ? true : undefined;
   engine = (opts.engine ?? override ?? config.engine) ? await startEngine(server, log) : null;
