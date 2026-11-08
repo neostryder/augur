@@ -372,6 +372,19 @@ Runs the Hermes command line with a prompt and reads its usage file.
 | `command` | text | Full path to the harness, for when it is not on the search path. |
 | `envAllow` | text | Names of environment variables the harness may read, separated by commas. Nothing else from the service is passed on. |
 
+#### `mcode-exec`: MiniMax Code on the host
+
+Runs mcode exec on the host in a copy of the job folder and returns changes as a patch. A read job uses smart permissions and a prompt restriction; file writes are not blocked.
+
+| Option | Value | What it does |
+| --- | --- | --- |
+| `model` | text | The provider/model id mcode uses. Leave empty for its configured default. |
+| `effort` | text | Passed to the harness as its effort setting. Leave empty for its default. |
+| `command` | text | Full path to the harness, for when it is not on the search path. |
+| `workRoot` | text | The folder for workspace copies. Defaults to the mcode folder under the service data folder. |
+| `maxSteps` | number | Most steps a job may take. Defaults to 60 for a read job and 400 otherwise. |
+| `envAllow` | text | Names of environment variables the harness may read, separated by commas. Nothing else from the service is passed on. |
+
 #### `mcode-sbx`: mcode in a Docker sandbox
 
 Runs mcode inside a Docker sandbox on a copy of the job folder, and returns changes as a patch.

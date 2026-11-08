@@ -19,7 +19,7 @@ describe('adapter info', () => {
     for (const adapter of ALL_ADAPTERS) {
       const info = adapterInfo(adapter.id)!;
       const required = info.options.filter(o => o.required);
-      if (!required.length) expect(adapter.validate(route(adapter.id, {}))).toBeNull();
+      if (!required.length) expect(adapter.validate(route(adapter.id, adapter.id === 'mcode-exec' ? { command: process.execPath } : {}))).toBeNull();
       else expect(adapter.validate(route(adapter.id, {}))).not.toBeNull();
     }
   });
