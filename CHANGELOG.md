@@ -17,6 +17,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 - [Internal] [Security] For jobs that run on a copy of the job folder, the copy is made without following links, and links found inside it are removed. The patch is collected with any git settings, hooks, filters, and attributes the job could have written in the copy ignored.
 - [Internal] [Security] Every change to `routes.json` from the service, the `augur` command, the terminal app, or the desktop app now holds a lock and re-reads the file first, so two writers can no longer overwrite each other or skip the check that a route name is not taken. A busy file reports "The routes file is busy. Nothing was written. Try again."
+- [Internal] [Security] The web chat service now counts each accepted send toward the user's daily message limit in a separate per-user daily counter, so deleting a chat no longer gives messages back and retries count too. If the browser disconnects while the service is still looking up models, the chat stops there and does not start the model call.
 
 ## [1.19.2] - 2026-11-07
 

@@ -112,6 +112,7 @@ export class ChatService {
   readonly temp: ChatStore;
   private docs = new Map<string, { at: number; value: unknown }>();
   private running = new Map<string, () => void>();
+  private closed = false;
   private caller: Caller;
   private now: () => number;
 
@@ -122,7 +123,7 @@ export class ChatService {
     this.caller = d.caller ?? spawnCaller;
   }
 
-  close(): void { for (const stop of this.running.values()) stop(); this.saved.close(); this.temp.close(); }
+  close(): void { this.closed = true; for (const stop of this.running.values()) stop(); this.saved.close(); this.temp.close(); }
 
   private user(principal: Principal): ChatUser | null {
     if (principal.kind === 'owner') return null;
@@ -141,12 +142,16 @@ export class ChatService {
     if (user && DATA_TIERS.indexOf(tier) > DATA_TIERS.indexOf(user.tierCap)) throw new Error('The chat data tier exceeds this user\'s tier cap.');
   }
 
+  private day(): number {
+    const midnight = new Date(this.now());
+    midnight.setHours(0, 0, 0, 0);
+    return midnight.getTime();
+  }
+
   private quota(principal: Principal): void {
     const user = this.user(principal);
     if (!user || user.dailyMessages === null) return;
-    const midnight = new Date(this.now());
-    midnight.setHours(0, 0, 0, 0);
-    const count = this.saved.countMessages(user.id, midnight.getTime()) + this.temp.countMessages(user.id, midnight.getTime());
+    const count = this.saved.dailyUsage(user.id, this.day());
     if (count >= user.dailyMessages) throw new Error('This user has reached the daily message limit.');
   }
 
@@ -321,84 +326,99 @@ export class ChatService {
     try { this.access(principal, routeName, chat.tier); this.quota(principal); } catch (e) { yield { t: 'error', message: (e as Error).message }; return; }
     const why = this.clearance(routeName, route, chat.tier);
     if (why) { yield { t: 'error', message: why }; return; }
-    let info: ChatModelInfo | undefined;
+    let stopped = false, handle: CallHandle | undefined;
+    this.running.set(chat.id, () => { stopped = true; handle?.stop(); });
     try {
-      info = (await this.models(principal)).find(m => m.route === routeName);
-      this.access(principal, routeName, chat.tier);
-      this.quota(principal);
-    } catch (e) { yield { t: 'error', message: (e as Error).message }; return; }
-    if (this.running.has(chat.id)) { yield { t: 'error', message: 'This chat is already writing a reply.' }; return; }
-    if (!store.get(chat.id, owner)) { yield { t: 'error', message: 'No such chat.' }; return; }
-    if (!info) { yield { t: 'error', message: 'That route is not available.' }; return; }
+      let info: ChatModelInfo | undefined;
+      try {
+        info = (await this.models(principal)).find(m => m.route === routeName);
+        if (this.closed) return;
+        this.access(principal, routeName, chat.tier);
+        this.quota(principal);
+      } catch (e) { yield { t: 'error', message: (e as Error).message }; return; }
+      if (!store.get(chat.id, owner)) { yield { t: 'error', message: 'No such chat.' }; return; }
+      if (!info) { yield { t: 'error', message: 'That route is not available.' }; return; }
 
-    // Where the new messages hang. A retry answers an existing user message again; anything else adds a user message under `parent`, or the head.
-    let user: ChatMessage;
-    if (params.retry) {
-      const m = store.getMessage(params.retry);
-      if (!m || m.chat !== chat.id || m.role !== 'user') { yield { t: 'error', message: 'That message cannot be answered again.' }; return; }
-      user = m;
-    } else {
-      const text = params.text ?? '';
-      const files = (params.files ?? []).slice(0, MAX_FILES_PER_MESSAGE).map(id => store.file(id, owner)).filter((f): f is NonNullable<typeof f> => !!f && f.chat === chat.id).map(f => f.ref);
-      if (!text.trim() && !files.length) { yield { t: 'error', message: 'There is nothing to send.' }; return; }
-      const parent = params.parent === undefined ? chat.head : params.parent;
-      if (parent && store.getMessage(parent)?.chat !== chat.id) { yield { t: 'error', message: 'That message is not in this chat.' }; return; }
-      user = store.addMessage({ chat: chat.id, parent, role: 'user', text, files });
-    }
-    const assistant = store.addMessage({ chat: chat.id, parent: user.id, role: 'assistant', route: routeName, state: 'streaming' });
-
-    const thread = store.path(chat.id, user.id);
-    if (!info.vision && thread.some(m => m.files.some(f => f.kind === 'image'))) {
-      const message = `${info.label} cannot see images. Pick a model that can, or start the chat again without them.`;
-      store.updateMessage(assistant.id, { state: 'error', error: message });
-      yield { t: 'start', user, assistant };
-      yield { t: 'error', message };
-      return;
-    }
-
-    // Files go to a folder only this reply reads, and the folder goes when the reply ends.
-    const scratch = join(this.d.dir, 'chat-tmp', assistant.id);
-    mkdirSync(scratch, { recursive: true });
-    const wire = thread.map(m => ({ role: m.role, text: m.text, files: m.files.filter(f => f.kind === 'image' || f.kind === 'text').flatMap(f => {
-      const hit = store.file(f.id, owner);
-      if (!hit) return [];
-      const path = join(scratch, f.id + extname(f.name));
-      writeFileSync(path, hit.bytes);
-      return [{ path, kind: f.kind, mime: f.mime }];
-    }) }));
-    const body: Record<string, unknown> = {};
-    const { system } = applySettings(info.settings, cleanSettings(info.settings, chat.settings), body);
-    const k = this.keyArgs(routeName, route);
-    const handle = this.caller(['--shape', info.shape, '--url', optStr(route.options, 'baseUrl') as string, '--model', optStr(route.options, 'model') as string, ...k.args, ...this.headers(route),
-      '--timeout-s', String(typeof route.options?.timeoutS === 'number' ? route.options.timeoutS : 600)],
-    JSON.stringify({ system, messages: wire.filter(m => m.text || m.files.length), body, maxTokens: typeof route.options?.maxTokens === 'number' ? route.options.maxTokens : undefined }), buildEnv([], k.env));
-
-    let text = '', reasoning = '', usage: ChatMessage['usage'], served: Record<string, string> | undefined, failed: string | null = null, stopped = false, lastSave = 0;
-    this.running.set(chat.id, () => { stopped = true; handle.stop(); });
-    const save = (state?: ChatMessage['state']) => store.updateMessage(assistant.id, { text, reasoning, ...(usage ? { usage } : {}), ...(served ? { served } : {}), ...(state ? { state } : {}), ...(failed ? { error: failed } : {}) });
-    try {
-      yield { t: 'start', user, assistant };
-      for await (const ev of handle.events) {
-        if (ev.t === 'delta' && typeof ev.text === 'string') { text += ev.text; yield { t: 'delta', text: ev.text }; }
-        else if (ev.t === 'think' && typeof ev.text === 'string') { reasoning += ev.text; yield { t: 'think', text: ev.text }; }
-        else if (ev.t === 'usage') { usage = ev.usage as ChatMessage['usage']; yield { t: 'usage', usage: usage! }; }
-        else if (ev.t === 'served') served = ev.served as Record<string, string>;
-        else if (ev.t === 'error') failed = shownError(principal, String(ev.message ?? 'the reply failed'));
-        if (this.now() - lastSave > SAVE_EVERY_MS) { save(); lastSave = this.now(); }
+      // Where the new messages hang. A retry answers an existing user message again; anything else adds a user message under `parent`, or the head.
+      let user: ChatMessage;
+      if (params.retry) {
+        const m = store.getMessage(params.retry);
+        if (!m || m.chat !== chat.id || m.role !== 'user') { yield { t: 'error', message: 'That message cannot be answered again.' }; return; }
+        user = m;
+      } else {
+        const text = params.text ?? '';
+        const files = (params.files ?? []).slice(0, MAX_FILES_PER_MESSAGE).map(id => store.file(id, owner)).filter((f): f is NonNullable<typeof f> => !!f && f.chat === chat.id).map(f => f.ref);
+        if (!text.trim() && !files.length) { yield { t: 'error', message: 'There is nothing to send.' }; return; }
+        const parent = params.parent === undefined ? chat.head : params.parent;
+        if (parent && store.getMessage(parent)?.chat !== chat.id) { yield { t: 'error', message: 'That message is not in this chat.' }; return; }
+        user = store.addMessage({ chat: chat.id, parent, role: 'user', text, files });
       }
-    } catch (e) { failed = (e as Error).message; }
-    finally { this.running.delete(chat.id); try { rmSync(scratch, { recursive: true, force: true }); } catch { /* the folder goes with the next sweep */ } }
+      const assistant = store.addMessage({ chat: chat.id, parent: user.id, role: 'assistant', route: routeName, state: 'streaming' });
 
-    const state: ChatMessage['state'] = stopped ? 'stopped' : failed ? 'error' : 'done';
-    save(state);
-    if (state === 'done' && chat.title === 'New chat' && !params.retry) {
-      const title = titleFrom(user.text);
-      store.update(chat.id, { title }, owner);
-      yield { t: 'title', title };
-    }
-    const final = store.getMessage(assistant.id)!;
-    if (failed && !stopped) yield { t: 'error', message: failed };
-    yield { t: 'done', message: final };
+      const thread = store.path(chat.id, user.id);
+      if (!stopped && !info.vision && thread.some(m => m.files.some(f => f.kind === 'image'))) {
+        const message = `${info.label} cannot see images. Pick a model that can, or start the chat again without them.`;
+        store.updateMessage(assistant.id, { state: 'error', error: message });
+        yield { t: 'start', user, assistant };
+        yield { t: 'error', message };
+        return;
+      }
+
+      if (principal.kind === 'user') this.saved.incrementDailyUsage(principal.user, this.day());
+      if (stopped) {
+        store.updateMessage(assistant.id, { state: 'stopped' });
+        yield { t: 'start', user, assistant };
+        if (this.closed) return;
+        const final = store.getMessage(assistant.id);
+        if (final) yield { t: 'done', message: final };
+        return;
+      }
+
+      // Files go to a folder only this reply reads, and the folder goes when the reply ends.
+      const scratch = join(this.d.dir, 'chat-tmp', assistant.id);
+      mkdirSync(scratch, { recursive: true });
+      const wire = thread.map(m => ({ role: m.role, text: m.text, files: m.files.filter(f => f.kind === 'image' || f.kind === 'text').flatMap(f => {
+        const hit = store.file(f.id, owner);
+        if (!hit) return [];
+        const path = join(scratch, f.id + extname(f.name));
+        writeFileSync(path, hit.bytes);
+        return [{ path, kind: f.kind, mime: f.mime }];
+      }) }));
+      const body: Record<string, unknown> = {};
+      const { system } = applySettings(info.settings, cleanSettings(info.settings, chat.settings), body);
+      const k = this.keyArgs(routeName, route);
+      handle = this.caller(['--shape', info.shape, '--url', optStr(route.options, 'baseUrl') as string, '--model', optStr(route.options, 'model') as string, ...k.args, ...this.headers(route),
+        '--timeout-s', String(typeof route.options?.timeoutS === 'number' ? route.options.timeoutS : 600)],
+      JSON.stringify({ system, messages: wire.filter(m => m.text || m.files.length), body, maxTokens: typeof route.options?.maxTokens === 'number' ? route.options.maxTokens : undefined }), buildEnv([], k.env));
+
+      let text = '', reasoning = '', usage: ChatMessage['usage'], served: Record<string, string> | undefined, failed: string | null = null, lastSave = 0;
+      const save = (state?: ChatMessage['state']) => store.updateMessage(assistant.id, { text, reasoning, ...(usage ? { usage } : {}), ...(served ? { served } : {}), ...(state ? { state } : {}), ...(failed ? { error: failed } : {}) });
+      try {
+        yield { t: 'start', user, assistant };
+        for await (const ev of handle.events) {
+          if (ev.t === 'delta' && typeof ev.text === 'string') { text += ev.text; yield { t: 'delta', text: ev.text }; }
+          else if (ev.t === 'think' && typeof ev.text === 'string') { reasoning += ev.text; yield { t: 'think', text: ev.text }; }
+          else if (ev.t === 'usage') { usage = ev.usage as ChatMessage['usage']; yield { t: 'usage', usage: usage! }; }
+          else if (ev.t === 'served') served = ev.served as Record<string, string>;
+          else if (ev.t === 'error') failed = shownError(principal, String(ev.message ?? 'the reply failed'));
+          if (this.now() - lastSave > SAVE_EVERY_MS) { save(); lastSave = this.now(); }
+        }
+      } catch (e) { failed = (e as Error).message; }
+      finally { try { rmSync(scratch, { recursive: true, force: true }); } catch { /* the folder goes with the next sweep */ } }
+
+      if (this.closed) return;
+      const state: ChatMessage['state'] = stopped ? 'stopped' : failed ? 'error' : 'done';
+      save(state);
+      if (state === 'done' && chat.title === 'New chat' && !params.retry) {
+        const title = titleFrom(user.text);
+        store.update(chat.id, { title }, owner);
+        yield { t: 'title', title };
+      }
+      const final = store.getMessage(assistant.id);
+      if (!final) return;
+      if (failed && !stopped) yield { t: 'error', message: failed };
+      yield { t: 'done', message: final };
+    } finally { this.running.delete(chat.id); }
   }
 }
 
