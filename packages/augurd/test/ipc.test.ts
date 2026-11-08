@@ -234,8 +234,24 @@ describe('the control endpoint', () => {
     const rej = await call('submit', request({ route: 'ask' }, e.root), o);
     expect(rej).toMatchObject({ rejected: { code: 'ask_first' } });
     const routes = await call('routes', undefined, o);
-    expect(routes.find(r => r.name === 'fake')).toEqual({ name: 'fake', model: 'test/fake', adapter: 'codex-exec', problem: null, capabilities: { attachments: [], vision: false, embed: false, transcribe: false } });
+    expect(routes.find(r => r.name === 'fake')).toEqual({ name: 'fake', model: 'test/fake', adapter: 'codex-exec', destination: null, problem: null, capabilities: { attachments: [], vision: false, embed: false, transcribe: false } });
     expect(JSON.stringify(routes)).not.toContain('prefixArgs');
+  });
+
+  it('carries only destination hosts in route data for model confirmation', async () => {
+    const { o, e } = await boot();
+    e.writeRoutes({
+      remote: { model: 'test/new', adapter: 'openai-api', options: { baseUrl: 'https://api.example:8443/private-path?private-query', model: 'new', keySource: 'store' } },
+      other: { model: 'test/new', adapter: 'openai-api', options: { baseUrl: 'https://other.example/v1', model: 'new' } },
+      invalid: { model: 'test/new', adapter: 'openai-api', options: { baseUrl: 'invalid', model: 'new' } },
+    });
+    const routes = await call('routes', undefined, o);
+    expect(routes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'remote', model: 'test/new', destination: 'api.example:8443' }),
+      expect.objectContaining({ name: 'other', model: 'test/new', destination: 'other.example' }),
+      expect.objectContaining({ name: 'invalid', destination: null }),
+    ]));
+    expect(JSON.stringify(routes)).not.toMatch(/private-path|private-query|baseUrl|keySource/);
   });
 
   it('keeps a running job going when the service stops, and a new service picks it up', async () => {

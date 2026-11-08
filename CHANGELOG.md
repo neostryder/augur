@@ -4,6 +4,10 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+### Changed
+
+- [Visible] [Security] `augur key set` now refuses a route that does not exist and names the host the key will be sent to. Model rules shows the destination host of each route before a model is confirmed, and its Confirm buttons stay disabled until the route list loads.
+
 ## [1.19.2] - 2026-11-07
 
 ### Fixed

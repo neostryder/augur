@@ -3,6 +3,7 @@
 import { appDirs, createKeyStore, checkSecretName } from '@augur/augurd';
 import type { KeyStore } from '@augur/augurd';
 import { EXIT_CODES, routeSecretName } from '@augur/dispatch-protocol';
+import { parseRoutesText } from '@augur/view-model';
 import { readText, routesPath } from './profile.js';
 
 export interface KeyIo {
@@ -25,11 +26,12 @@ export function secretNameFor(name: string): string {
 
 /** The host a route's requests go to, when the route names one. A key is sent there, so it is shown before the key is typed. */
 export function routeDestination(name: string, env: NodeJS.ProcessEnv): string | null {
-  const text = readText(routesPath(env));
-  if (!text) return null;
+  const parsed = parseRoutesText(readText(routesPath(env)));
+  if (!parsed.ok) throw new Error(parsed.error);
+  const route = parsed.file.routes.find(r => r.name === name);
+  if (!route) throw new Error(`There is no route named ${name}, so add the route first and then save its key.`);
+  const base = route.options.baseUrl;
   try {
-    const route = (JSON.parse(text) as { routes?: Record<string, { options?: Record<string, unknown> }> }).routes?.[name];
-    const base = route?.options?.baseUrl;
     return typeof base === 'string' ? new URL(base).host : null;
   } catch { return null; }
 }
@@ -56,7 +58,7 @@ export async function keyCmd(rest: string[], flags: { env?: string; stdin: boole
     const value = await readValue(flags, io, name, where);
     if (typeof value !== 'string') { io.err(`${value.error}\n`); return EXIT_CODES.usage; }
     await keys.set(secret, value);
-    say(`${name}: a key of ${value.length} characters is stored in ${KINDS[keys.kind] ?? keys.kind}.${where ? ` Requests with it go to ${where}.` : ''} Run augur test ${name.includes('.') ? '<route>' : name} to check it works.`, { name, secret, stored: true, length: value.length, store: keys.kind });
+    say(`${name}: a key of ${value.length} characters is stored in ${KINDS[keys.kind] ?? keys.kind}.${where ? ` Requests with it go to ${where}.` : ''} Run augur test ${name.includes('.') ? '<route>' : name} to check it works.`, { name, secret, stored: true, length: value.length, store: keys.kind, destination: where });
     return EXIT_CODES.completed;
   } catch (e) { io.err(`${(e as Error).message}\n`); return EXIT_CODES.failed; }
 }

@@ -103,7 +103,7 @@ export interface Methods {
   prose_status: { params: undefined; result: ProseQueueStatus };
   prose_run: { params: { dryRun?: boolean; caller?: import('./spec.js').Caller } | undefined; result: { started: boolean; batchId?: string; items?: string[]; reason?: string } };
   prose_approve: { params: { id: string }; result: ProseItem | { error: string } };
-  routes: { params: undefined; result: Array<{ name: string; model: string; adapter: string; problem: string | null; capabilities: RouteCapabilities }> };
+  routes: { params: undefined; result: Array<{ name: string; model: string; adapter: string; destination: string | null; problem: string | null; capabilities: RouteCapabilities }> };
   /** Adds one route and, optionally, its model. The model stays unreviewed. An existing route name is refused and nothing is written. */
   route_add: { params: RouteAddParams; result: RouteAddAnswer };
   /** The owner's acceptance of a live Cogitator offer. New entries still require review. */

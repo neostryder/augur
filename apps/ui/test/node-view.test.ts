@@ -76,8 +76,13 @@ describe('node view rendering', () => {
 
   it('offers review for a new entry and the catalog for an empty activity', () => {
     const m = model(); m.config.policy!.providers.openrouter!.models['openrouter/terra']!.status = 'unreviewed';
+    m.destinations = { 'openrouter/terra': ['api.example:8443'] };
     const html = renderNodeView(m);
     expect(html).toContain('Confirm rules');
+    expect(html).toContain('Requests for this model go to api.example:8443.');
+    expect(html.indexOf('Requests for this model go to')).toBeLessThan(html.indexOf('data-value="confirmed"'));
+    m.destinations = null;
+    expect(renderNodeView(m)).toMatch(/data-value="confirmed"[^>]*disabled/);
     expect(html).toContain('No models in this mix');
     expect(html).toContain('data-node-copy');
     expect(html).toContain('data-node-add="openrouter/terra"');

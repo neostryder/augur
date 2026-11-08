@@ -1,4 +1,4 @@
-import { migrateConfig } from '@augur/core';
+import { emptyPolicy, migrateConfig } from '@augur/core';
 import { describe, expect, it } from 'vitest';
 import { renderRules, type RulesModel } from '../src/views/rules';
 import type { BulkPreview } from '@augur/view-model';
@@ -9,6 +9,32 @@ const model = (over: Partial<RulesModel> = {}): RulesModel => ({
   catalog: {}, listing: new Set(), canList: false, ...over });
 
 describe('the bulk bar', () => {
+  it('shows every selected unreviewed model destination before Confirm, including multiple routes', () => {
+    const m = model({ picked: new Set(), destinations: {} });
+    m.config.policy = emptyPolicy();
+    const models = m.config.policy.providers.codex = { defaults: {}, models: {} };
+    for (let i = 0; i < 12; i++) {
+      const label = `codex/new-${i}`;
+      models.models[label] = { id: `new-${i}`, source: 'manual', status: 'unreviewed', rule: {}, firstSeen: '' };
+      m.picked.add(`codex|${label}`);
+      m.destinations![label] = [`api${i}.example:8443`];
+    }
+    m.destinations!['codex/new-0']!.push('other.example');
+    const html = renderRules(m), confirm = html.indexOf('data-bulk="confirmed"');
+    for (let i = 0; i < 12; i++) {
+      expect(html.indexOf(`codex/new-${i}</b>`)).toBeLessThan(confirm);
+      expect(html.indexOf(`api${i}.example:8443`)).toBeGreaterThan(0);
+      expect(html.indexOf(`api${i}.example:8443`)).toBeLessThan(confirm);
+    }
+    expect(html).toContain('Requests for this model go to api0.example:8443, other.example.');
+  });
+
+  it('disables confirmation when routes could not be read', () => {
+    const html = renderRules(model({ destinations: null }));
+    expect(html).toContain('Could not load the route list, so the Confirm buttons are off. Try again.');
+    expect(html).toMatch(/data-bulk="confirmed"[^>]*disabled/);
+  });
+
   it('offers a field, its value and a preview, and applies nothing until the list is shown', () => {
     const html = renderRules(model());
     expect(html).toContain('data-bulk-field');

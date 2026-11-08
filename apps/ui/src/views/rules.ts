@@ -24,6 +24,8 @@ export interface RulesModel {
   nodeGhost?: string;
   nodeNote?: string;
   config: AppConfig;
+  /** Request hosts by model label; null when routes could not be read. */
+  destinations?: Record<string, string[]> | null;
   /** Changes agents asked for that wait for the owner's yes. */
   held: HeldRow[];
   providers: Array<{ id: string; name: string; metered: boolean }>;
@@ -77,6 +79,11 @@ function colorOf(m: RulesModel, pid: string): string {
 }
 
 const policyOf = (m: RulesModel) => m.config.policy ?? { providers: {}, stamps: {}, history: [] };
+
+export function modelDestination(m: RulesModel, label: string): string {
+  const hosts = m.destinations?.[label];
+  return hosts?.length ? `<p class="rnote">${esc(`Requests for this model go to ${hosts.join(', ')}.`)}</p>` : '';
+}
 
 /** Models waiting for a decision: new ones from a live list, and imported ones not yet confirmed. */
 export { pendingCount };
@@ -225,8 +232,8 @@ function detail(m: RulesModel): string {
   if (entry) {
     const path = fieldPath(pid, model, 'status');
     const text = statusText(policyOf(m), pid, entry);
-    html += `<div class="card rstatus"><span class="grow">${esc(text)}</span>
-      ${entry.status === 'confirmed' || entry.status === 'hidden' ? '' : `<button class="btn small primary" data-status="${esc(path)}" data-value="confirmed">${RULES_TEXT.confirm}</button>`}
+    html += `${modelDestination(m, model!)}<div class="card rstatus"><span class="grow">${esc(text)}</span>
+      ${entry.status === 'confirmed' || entry.status === 'hidden' ? '' : `<button class="btn small primary" data-status="${esc(path)}" data-value="confirmed" ${m.destinations === null ? 'disabled' : ''}>${RULES_TEXT.confirm}</button>`}
       <button class="btn small" data-status="${esc(path)}" data-value="${entry.status === 'hidden' ? 'unreviewed' : 'hidden'}">${entry.status === 'hidden' ? RULES_TEXT.show : RULES_TEXT.hide}</button></div>`;
   }
 
@@ -334,6 +341,7 @@ export function renderRules(m: RulesModel): string {
   if (m.policyError) html += `<div class="card rbanner bad"><span class="grow"><b>${RULES_TEXT.policyFailed}</b> ${RULES_TEXT.policyOlder} ${esc(m.policyError)}</span><button class="btn small" data-action="retry-policy">Try again</button></div>`;
 
   html += heldCards(m.held);
+  if (m.destinations === null) html += '<div class="card rbanner bad">Could not load the route list, so the Confirm buttons are off. Try again.</div>';
   if (pending) html += `<div class="card rbanner"><span class="grow">${RULES_TEXT.pending(pending)}</span>
     ${m.filter === 'needs' ? '' : '<button class="btn small" data-rfilter="needs">Show them</button>'}</div>`;
   if (m.mode === 'node') return html + '<augur-node-view></augur-node-view></div>';
@@ -344,8 +352,15 @@ export function renderRules(m: RulesModel): string {
   const blocks = m.providers.map((p) => providerBlock(m, p)).join('');
   html += `<div class="rules ${m.sel ? 'has-sel' : ''}"><div class="rlist">${blocks || `<div class="rempty big">${RULES_TEXT.noMatch}</div>`}</div><div class="rdetail">${detail(m)}</div></div>`;
 
+  const destinations = [...m.picked].map(key => {
+    const [pid = '', label = ''] = key.split('|');
+    const entry = policyOf(m).providers[pid]?.models[label];
+    const destination = entry && entry.status !== 'confirmed' ? modelDestination(m, label) : '';
+    return destination ? `<li><b>${esc(label)}</b>${destination}</li>` : '';
+  }).join('');
   if (m.picked.size) html += `<div class="rbulk"><span><b>${m.picked.size}</b> selected</span>
-    <button class="btn small primary" data-bulk="confirmed">Confirm</button>
+    ${destinations ? `<div class="rpreview"><ul>${destinations}</ul></div>` : ''}
+    <button class="btn small primary" data-bulk="confirmed" ${m.destinations === null ? 'disabled' : ''}>Confirm</button>
     <button class="btn small" data-bulk="hidden">Hide</button>
     <select id="r-bulk-tier" data-bulk-tier aria-label="Set most sensitive data on the selected models">${opt('', 'Set data tier', m.bulkTier)}${DATA_TIERS.map((t) => opt(t, DATA_TIER_LABELS[t], m.bulkTier)).join('')}</select>
     <select id="r-bulk-act" aria-label="Activity">${ACTIVITIES.map((a) => opt(a, ACTIVITY_LABELS[a], '')).join('')}</select>
