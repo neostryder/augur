@@ -39,9 +39,18 @@ describe('chat store', () => {
       try {
         expect(s.get('legacy')?.title).toBe('Legacy');
         expect(s.get('legacy', 'alice')).toBeNull();
+        expect(s.dailyUsage('alice', 0)).toBe(0);
+        s.incrementDailyUsage('alice', 0);
+        s.incrementDailyUsage('alice', 0);
+        expect(s.dailyUsage('alice', 0)).toBe(2);
+        expect(s.dailyUsage('bob', 0)).toBe(0);
+        expect(s.dailyUsage('alice', 86400000)).toBe(0);
       } finally { s.close(); }
       const reopened = new ChatStore(path, memoryBlobs());
-      try { expect(reopened.list().map(c => c.id)).toEqual(['legacy']); } finally { reopened.close(); }
+      try {
+        expect(reopened.list().map(c => c.id)).toEqual(['legacy']);
+        expect(reopened.dailyUsage('alice', 0)).toBe(2);
+      } finally { reopened.close(); }
     } finally { env.dispose(); }
   });
 

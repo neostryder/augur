@@ -36,6 +36,16 @@ function make(caller: Caller, routes: Record<string, RouteConfig> = { text: rout
 
 const collect = async (g: AsyncGenerator<ChatEvent>) => { const out: ChatEvent[] = []; for await (const e of g) out.push(e); return out; };
 
+function discovering() {
+  let release!: () => void;
+  const pending = new Promise<void>(done => { release = done; });
+  const seen: Array<{ args: string[]; stdin: string }> = [], reply = scripted([{ t: 'delta', text: 'ok' }, { t: 'done' }], seen);
+  const svc = make((args, stdin, env) => args.includes('capabilities') ? {
+    events: (async function* () { await pending; yield { schema: 1 }; })(), stop() { /* nothing to stop */ },
+  } : reply(args, stdin, env), { text: route({ requestClass: 'cogitator' }) });
+  return { svc, seen, release };
+}
+
 describe('chat service', () => {
   it('lists chat routes with their settings and the rules verdict', async () => {
     const svc = make(scripted([]));
@@ -80,6 +90,80 @@ describe('chat service', () => {
     const done = events.at(-1) as Extract<ChatEvent, { t: 'done' }>;
     expect(done.message.state).toBe('error');
     expect(done.message.text).toBe('par');
+  });
+
+  it('remembers a stop during discovery and clears it before a later send', async () => {
+    const { svc, seen, release } = discovering(), chat = svc.create(owner, { route: 'text', tier: 'internal' });
+    expect(svc.stop(owner, chat.id)).toBe(false);
+    const stream = svc.send(owner, { chat: chat.id, text: 'q' }), first = stream.next();
+    expect(await collect(svc.send(owner, { chat: chat.id, text: 'overlap' }))).toEqual([{ t: 'error', message: 'This chat is already writing a reply.' }]);
+    expect(svc.stop(owner, chat.id)).toBe(true);
+    expect(svc.stop(owner, chat.id)).toBe(true);
+    release();
+    expect((await first).value).toMatchObject({ t: 'start' });
+    const events = await collect(stream);
+    expect(events).toEqual([{ t: 'done', message: expect.objectContaining({ state: 'stopped', text: '' }) }]);
+    expect((events[0] as Extract<ChatEvent, { t: 'done' }>).message.usage).toBeUndefined();
+    expect(svc.get(owner, chat.id)!.tree.at(-1)).toMatchObject({ state: 'stopped', text: '' });
+    expect(seen).toEqual([]);
+    expect(svc.stop(owner, chat.id)).toBe(false);
+    expect((await collect(svc.send(owner, { chat: chat.id, text: 'next' }))).at(-1)).toMatchObject({ t: 'done', message: { state: 'done' } });
+    expect(seen).toHaveLength(1);
+  });
+
+  it.each(['remove', 'purge', 'orphan', 'close'] as const)('prevents a reply after %s during discovery', async action => {
+    const { svc, seen, release } = discovering(), alice = { kind: 'user', user: 'alice' } as const;
+    stores.at(-1)!.addUser({ id: 'alice', name: 'Alice', models: ['text'] });
+    const chat = svc.create(alice, { route: 'text' }), events = collect(svc.send(alice, { chat: chat.id, text: 'q' }));
+    if (action === 'remove') expect(svc.remove(alice, chat.id)).toBe(true);
+    else if (action === 'close') { svc.close(); services.splice(services.indexOf(svc), 1); }
+    else svc[action](owner, 'alice');
+    release();
+    if (action === 'close') expect(await events).toEqual([]);
+    else expect(await events).toEqual([{ t: 'error', message: 'No such chat.' }]);
+    expect(seen).toEqual([]);
+  });
+
+  it('clears a remembered stop when access is revoked during discovery', async () => {
+    const { svc, seen, release } = discovering(), alice = { kind: 'user', user: 'alice' } as const, users = stores.at(-1)!;
+    users.addUser({ id: 'alice', name: 'Alice', models: ['text'], dailyMessages: 1 });
+    const chat = svc.create(alice, { route: 'text' }), events = collect(svc.send(alice, { chat: chat.id, text: 'q' }));
+    expect(svc.stop(alice, chat.id)).toBe(true);
+    users.updateUser('alice', { models: [] });
+    release();
+    expect(await events).toEqual([{ t: 'error', message: 'This user cannot use that route.' }]);
+    expect(seen).toEqual([]);
+    expect(svc.stop(alice, chat.id)).toBe(false);
+    users.updateUser('alice', { models: ['text'] });
+    expect((await collect(svc.send(alice, { chat: chat.id, text: 'next' }))).at(-1)).toMatchObject({ t: 'done', message: { state: 'done' } });
+  });
+
+  it('clears a remembered stop when the reader ends the stream at its start event', async () => {
+    const { svc, release } = discovering(), chat = svc.create(owner, { route: 'text', tier: 'internal' });
+    const stream = svc.send(owner, { chat: chat.id, text: 'q' }), first = stream.next();
+    expect(svc.stop(owner, chat.id)).toBe(true);
+    release();
+    expect((await first).value).toMatchObject({ t: 'start' });
+    await stream.return(undefined);
+    expect(svc.stop(owner, chat.id)).toBe(false);
+    expect(svc.get(owner, chat.id)!.tree.at(-1)?.state).toBe('stopped');
+    expect((await collect(svc.send(owner, { chat: chat.id, text: 'next' }))).at(-1)).toMatchObject({ t: 'done', message: { state: 'done' } });
+  });
+
+  it.each(['remove', 'purge', 'orphan', 'close'] as const)('stops the provider on %s during a reply', async action => {
+    let stopped = 0;
+    const svc = make(() => ({ events: (async function* () { yield { t: 'done' }; })(), stop() { stopped++; } }));
+    const alice = { kind: 'user', user: 'alice' } as const;
+    stores.at(-1)!.addUser({ id: 'alice', name: 'Alice', models: ['text'] });
+    const chat = svc.create(alice, { route: 'text' }), stream = svc.send(alice, { chat: chat.id, text: 'q' });
+    expect((await stream.next()).value).toMatchObject({ t: 'start' });
+    if (action === 'remove') svc.remove(alice, chat.id);
+    else if (action === 'close') { svc.close(); services.splice(services.indexOf(svc), 1); }
+    else svc[action](owner, 'alice');
+    expect(stopped).toBe(1);
+    const events = await collect(stream);
+    if (action === 'orphan') expect(events.at(-1)).toMatchObject({ t: 'done', message: { state: 'stopped' } });
+    else expect(events).toEqual([]);
   });
 
   it('refuses a tier the model is not cleared for, and a tier drop once messages exist', async () => {
@@ -186,7 +270,7 @@ describe('chat principals', () => {
     expect(shown).not.toMatch(/org-123/);
   });
 
-  it('counts saved and temporary user messages from local midnight and guards concurrent sends', async () => {
+  it('counts saved and temporary sends from local midnight and guards concurrent sends', async () => {
     let at = new Date(2026, 10, 2, 23, 59).getTime();
     const { svc, users } = ready(() => at);
     users.updateUser('alice', { dailyMessages: 1 });
@@ -201,6 +285,66 @@ describe('chat principals', () => {
     expect(await collect(svc.send(alice, { chat: saved.id, text: 'over' }))).toEqual([expect.objectContaining({ message: expect.stringMatching(/daily message limit/) })]);
     const other = svc.create(bob, { route: 'text' });
     expect((await collect(svc.send(bob, { chat: other.id, text: 'q' }))).some(e => e.t === 'done')).toBe(true);
+  });
+
+  it.each(['remove', 'purge', 'orphan'] as const)('retains saved and temporary usage after %s', async action => {
+    const { svc, users } = ready();
+    users.updateUser('alice', { dailyMessages: 2 });
+    for (const temporary of [false, true]) {
+      const chat = svc.create(alice, { route: 'text', temporary });
+      expect((await collect(svc.send(alice, { chat: chat.id, text: 'q' }))).at(-1)).toMatchObject({ t: 'done' });
+      if (action === 'remove') svc.remove(alice, chat.id);
+    }
+    if (action !== 'remove') svc[action](owner, 'alice');
+    const chat = svc.create(alice, { route: 'text' });
+    expect(await collect(svc.send(alice, { chat: chat.id, text: 'over' }))).toEqual([{ t: 'error', message: 'This user has reached the daily message limit.' }]);
+    expect(svc.get(alice, chat.id)!.tree).toEqual([]);
+  });
+
+  it.each([false, true])('counts each retry without adding another user row (temporary: %s)', async temporary => {
+    const { svc, users, seen } = ready();
+    users.updateUser('alice', { dailyMessages: 3 });
+    const chat = svc.create(alice, { route: 'text', temporary });
+    const first = await collect(svc.send(alice, { chat: chat.id, text: 'q' }));
+    const user = (first[0] as Extract<ChatEvent, { t: 'start' }>).user;
+    for (let n = 0; n < 2; n++) expect((await collect(svc.send(alice, { chat: chat.id, retry: user.id, text: '' }))).at(-1)).toMatchObject({ t: 'done' });
+    expect(await collect(svc.send(alice, { chat: chat.id, retry: user.id, text: '' }))).toEqual([{ t: 'error', message: 'This user has reached the daily message limit.' }]);
+    expect(svc.get(alice, chat.id)!.tree.filter(m => m.role === 'user')).toHaveLength(1);
+    expect(seen).toHaveLength(3);
+    users.updateUser('alice', { dailyMessages: 4 });
+    expect((await collect(svc.send(alice, { chat: chat.id, retry: user.id, text: '' }))).at(-1)).toMatchObject({ t: 'done' });
+    expect(seen).toHaveLength(4);
+  });
+
+  it('counts unlimited user sends, excludes owner sends, and retains temporary usage on reopen', async () => {
+    const { svc, users } = ready(() => 1000), chat = svc.create(alice, { route: 'text', temporary: true });
+    await collect(svc.send(alice, { chat: chat.id, text: 'q' }));
+    const own = svc.create(owner, { route: 'text', tier: 'internal' });
+    await collect(svc.send(owner, { chat: own.id, text: 'owner' }));
+    const midnight = new Date(1000); midnight.setHours(0, 0, 0, 0);
+    expect(svc.saved.dailyUsage('alice', midnight.getTime())).toBe(1);
+    expect(svc.saved.dailyUsage('', midnight.getTime())).toBe(0);
+    svc.close(); services.splice(services.indexOf(svc), 1);
+    users.updateUser('alice', { dailyMessages: 1 });
+    const env = envs.at(-1)!, policy = policySource(join(env.home, 'policy.json'));
+    const reopened = new ChatService({ users, now: () => 1000, dir: env.dir, routes: () => ({ text: route() }), adapters: new Set(['openai-api']), policy: () => policy.read(), usage: () => null, log: () => undefined, caller: scripted([]) });
+    services.push(reopened);
+    expect(reopened.list(alice)).toEqual([]);
+    const next = reopened.create(alice, { route: 'text' });
+    expect(await collect(reopened.send(alice, { chat: next.id, text: 'over' }))).toEqual([{ t: 'error', message: 'This user has reached the daily message limit.' }]);
+  });
+
+  it('does not count sends rejected by access or invalid input', async () => {
+    const { svc, users, seen } = ready();
+    users.updateUser('alice', { dailyMessages: 1 });
+    const chat = svc.create(alice, { route: 'text' });
+    users.updateUser('alice', { models: [] });
+    expect(await collect(svc.send(alice, { chat: chat.id, text: 'q' }))).toEqual([{ t: 'error', message: 'This user cannot use that route.' }]);
+    users.updateUser('alice', { models: ['text'] });
+    expect(await collect(svc.send(alice, { chat: chat.id, text: '' }))).toEqual([{ t: 'error', message: 'There is nothing to send.' }]);
+    expect(await collect(svc.send(alice, { chat: chat.id, retry: 'missing', text: '' }))).toEqual([{ t: 'error', message: 'That message cannot be answered again.' }]);
+    expect((await collect(svc.send(alice, { chat: chat.id, text: 'accepted' }))).at(-1)).toMatchObject({ t: 'done' });
+    expect(seen).toHaveLength(1);
   });
 
   it('refuses disabled users on every operation and revoked devices on existing principals', async () => {
@@ -253,6 +397,7 @@ describe('chat principals', () => {
     const svc = make(() => ({ events: (async function* () { yield { t: 'delta', text: 'ok' }; yield { t: 'done' }; })(), stop() { stopped++; } })), users = stores.at(-1)!;
     users.addUser({ id: 'alice', name: 'Alice', models: ['text'] });
     users.addUser({ id: 'bob', name: 'Bob', models: ['text'] });
+    users.updateUser('alice', { dailyMessages: 2 });
     const chat = svc.create(alice, { route: 'text' }), stream = svc.send(alice, { chat: chat.id, text: 'q' });
     expect((await stream.next()).value).toMatchObject({ t: 'start' });
     expect(await collect(svc.send(alice, { chat: chat.id, text: 'second' }))).toEqual([{ t: 'error', message: 'This chat is already writing a reply.' }]);
@@ -265,5 +410,7 @@ describe('chat principals', () => {
     expect(stopped).toBe(1);
     const events = await collect(stream);
     expect(events.at(-1)).toMatchObject({ t: 'done', message: { state: 'stopped' } });
+    expect((await collect(svc.send(alice, { chat: chat.id, text: 'next' }))).at(-1)).toMatchObject({ t: 'done' });
+    expect(await collect(svc.send(alice, { chat: chat.id, text: 'over' }))).toEqual([{ t: 'error', message: 'This user has reached the daily message limit.' }]);
   });
 });

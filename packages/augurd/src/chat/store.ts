@@ -62,6 +62,9 @@ export class ChatStore {
         id TEXT PRIMARY KEY, chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE, name TEXT NOT NULL, mime TEXT NOT NULL, bytes INTEGER NOT NULL, kind TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS files_chat ON files(chat_id);
+      CREATE TABLE IF NOT EXISTS usage_daily (
+        user TEXT NOT NULL, day INTEGER NOT NULL, count INTEGER NOT NULL, PRIMARY KEY (user, day)
+      );
     `);
     if (!(this.db.prepare('PRAGMA table_info(chats)').all() as Array<{ name: string }>).some(c => c.name === 'user')) this.db.exec("ALTER TABLE chats ADD COLUMN user TEXT NOT NULL DEFAULT ''");
     this.db.exec('CREATE INDEX IF NOT EXISTS chats_user ON chats(user);');
@@ -121,8 +124,12 @@ export class ChatStore {
     return gone;
   }
 
-  countMessages(user: string, since: number): number {
-    return (this.db.prepare("SELECT COUNT(*) AS n FROM messages m JOIN chats c ON c.id = m.chat_id WHERE c.user = ? AND m.role = 'user' AND m.at >= ?").get(user, since) as { n: number }).n;
+  dailyUsage(user: string, day: number): number {
+    return (this.db.prepare('SELECT count FROM usage_daily WHERE user = ? AND day = ?').get(user, day) as { count: number } | undefined)?.count ?? 0;
+  }
+
+  incrementDailyUsage(user: string, day: number): void {
+    this.db.prepare('INSERT INTO usage_daily (user, day, count) VALUES (?, ?, 1) ON CONFLICT (user, day) DO UPDATE SET count = count + 1').run(user, day);
   }
 
   orphan(user: string): void { this.db.prepare('UPDATE chats SET user = ? WHERE user = ?').run(`deleted:${randomUUID()}`, user); }
