@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DecisionLog } from '../src/decisions.js';
@@ -36,9 +36,12 @@ describe('picks through the service', () => {
     const p = JSON.parse(readFileSync(policyPath, 'utf8'));
     p.balance = { gate: { premium: ['test/fake'], paceLift: ['test/fake'], open: 20, close: 10 } };
     writeFileSync(policyPath, JSON.stringify(p));
+    // The usage reader caches by modification time and size, and these rewrites are all the same length, so each write gets its own mtime.
+    let tick = 0;
     const setGap = (gap: number) => {
-      const now = Date.now(), windowSeconds = 7 * 86400;
+      const now = Date.now(), windowSeconds = 7 * 86400, stamp = Math.floor(now / 1000) + ++tick;
       writeFileSync(join(e.home, 'usage.json'), JSON.stringify({ providers: { test: { fetchedAt: new Date(now).toISOString(), meters: [{ id: 'weekly', windowKind: 'weekly', usedPct: 50 - gap, windowSeconds, resetsAt: new Date(now + windowSeconds * 500).toISOString() }] } } }));
+      utimesSync(join(e.home, 'usage.json'), stamp, stamp);
     };
     setGap(20); e.sup.tick();
     expect(JSON.parse(readFileSync(statePath, 'utf8')).state.test).toBe(true);
