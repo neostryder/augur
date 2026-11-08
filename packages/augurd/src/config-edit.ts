@@ -38,6 +38,7 @@ export const CONFIG_KEYS: readonly ConfigKey[] = [
   { key: 'proseRoute', label: 'Prose route', help: 'Route label used for prose batches. claude/opus by default.', kind: 'text', check: t => t.trim() ? null : 'proseRoute must not be empty.' },
   { key: 'proseAutoRun', label: 'Run prose batches automatically', help: 'Allows the service to start due prose batches. Off by default.', kind: 'bool' },
   { key: 'maxConcurrent', label: 'Jobs at once', help: 'How many jobs run together while the rest wait. 8 by default.', kind: 'number', min: 1, max: 64 },
+  { key: 'quickSlots', label: 'Slots kept for quick jobs', help: 'Holds this many of the "Jobs at once" slots back from long jobs such as Codex runs and web chats so quick API jobs do not wait behind them (2 by default, 0 turns it off).', kind: 'number', min: 0, max: 63 },
   { key: 'maxDepth', label: 'Nesting depth', help: 'How many levels deep jobs may start jobs of their own. 2 by default.', kind: 'number', min: 0, max: 8 },
   { key: 'maxDescendants', label: 'Jobs one job can start', help: 'The most that one job, and the jobs it starts, can add up to. 16 by default.', kind: 'number', min: 0, max: 256 },
   { key: 'decision.backend', label: 'Task classifier', help: 'Answers the questions behind augur pick --task. Laya runs on your own machines, Jev is a hosted service that uses your key, and none turns it off.', kind: 'choice', choices: ['none', 'laya', 'jev'] },

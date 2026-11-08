@@ -6,6 +6,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Added
 
+- [Visible] [Platform] Added the "Slots kept for quick jobs" setting (`quickSlots`, default 2) to hold job slots back from long jobs such as Codex runs and web chats, so quick API jobs no longer wait up to 30 minutes behind them. Set it to 0 to turn the reservation off.
 - [Visible] [UI] The `augur-jobs` pane draws each job as a card with colored `ORIGIN:`, `JOB:`, and `ACTIVITY:` or `RESULT:` lines, starts on this session's jobs with `f` to switch to every session, lists the last 30 ended jobs in a collapsed CLOSED section that `c` opens, and opens by itself only for this session's live jobs.
 - [Visible] [UI] Live cards in the augur-jobs pane have a Cancel job button that needs a second press and writes to `cancel-requests.jsonl`, which augurd reads to cancel the job, and the pane has an Open Augur button (hotkey `a`) that starts the app.
 

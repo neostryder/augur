@@ -82,6 +82,10 @@ Idle time counts back through usage history to the last reading at or above the 
 
 The stall time (`stallMinutes`, 10 minutes by default, minimum 1) sets how long a live job can go without producing output before Augur flags it as stalled. A job counts as stalled only while its process is still alive, and Augur never cancels a stalled job on its own, so you decide whether to cancel it. Set it in the app's Service settings or with `augur config`. Stalled jobs carry a marker on the app's Jobs page, in the terminal app's Jobs tab, and in `augur jobs`.
 
+### Job slots
+
+The service runs at most `maxConcurrent` jobs at once across every route ("Jobs at once", 8 by default), and the rest wait in the queue in the order they were created. Long jobs such as Codex write_code runs or deep research chats can take 25 to 30 minutes each, so `quickSlots` ("Slots kept for quick jobs", default 2, from 0 to 63) holds that many slots back from them for API jobs that finish in seconds. Only routes on the `anthropic-api` and `openai-api` adapters, such as `claude-api-opus`, call a provider's API directly and count as quick, while jobs on `codex-exec`, `web-chat`, `copilot-exec`, `grok-exec`, `hermes-exec`, `mcode-exec`, or any other command count as long. Quick jobs may use any free slot and long jobs always keep at least one, so the defaults allow at most 6 long jobs at once, still subject to each route's parallel limit under the balance caps. Set the value in the app's Service settings or with `augur config set quickSlots <n>`, use 0 to turn the reservation off, and restart the service to apply it.
+
 ### Keeping prompts
 
 **Keep prompts** (`persistPrompts`) is off by default, so the service deletes a job's prompt and input files as soon as the job has started. When it is on, the service keeps the prompt as `prompt.txt` in the job folder next to the input files. A kept prompt is deleted with its job when retention runs (`retentionDays`, 30 by default).

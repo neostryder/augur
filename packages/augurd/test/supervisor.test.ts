@@ -6,6 +6,7 @@ import { JOBHOST, ROUTES, killEverything, makeEnv, processesWith, request, sleep
 import type { Env } from './harness.js';
 import { REJECTION_CATEGORIES, systemdScopes } from '../src/supervisor.js';
 import { genericExec } from '../src/adapters/exec.js';
+import { QUICK_ADAPTERS } from '../src/slots.js';
 import { REJECTION_CODES, type Adapter } from '@augur/dispatch-protocol';
 
 vi.setConfig({ testTimeout: 90000 });
@@ -436,6 +437,24 @@ describe('concurrency', () => {
     let max = 0;
     await until(e.sup, () => { max = Math.max(max, e.store.countActive()); return ids.every(id => e.store.get(id)!.state === 'completed'); });
     expect(max).toBeLessThanOrEqual(2);
+  });
+
+  it('keeps slots for quick routes so a long run cannot crowd them out', async () => {
+    QUICK_ADAPTERS.add('exec');
+    try {
+      const e = setup({ maxConcurrent: 3, quickSlots: 2 });
+      const long = Array.from({ length: 3 }, () => submitOk(e.sup, request({ text: 'SLEEP 1', cwd: e.root })));
+      const quick = submitOk(e.sup, request({ route: 'raw', text: 'SLEEP 1', cwd: e.root }));
+      let maxLong = 0, quickStartedWhileLongRan = false;
+      await until(e.sup, () => {
+        const running = long.filter(id => e.store.get(id)!.state === 'running').length;
+        maxLong = Math.max(maxLong, running);
+        if (running > 0 && e.store.get(quick)!.state === 'running') quickStartedWhileLongRan = true;
+        return long.every(id => e.store.get(id)!.state === 'completed') && ['completed', 'failed'].includes(e.store.get(quick)!.state);
+      });
+      expect(maxLong).toBe(1);
+      expect(quickStartedWhileLongRan).toBe(true);
+    } finally { QUICK_ADAPTERS.delete('exec'); }
   });
 
   it('holds a route to its parallel limit across every route on its model, while other models run freely', async () => {
