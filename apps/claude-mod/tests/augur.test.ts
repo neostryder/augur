@@ -8,6 +8,7 @@ const USAGE = `${HOME}/.augur/usage.json`
 const FEED = `${HOME}/.augur/alerts.json`
 const ACKS = `${HOME}/.augur/alerts-acks.jsonl`
 const JOBS = `${HOME}/.augur/jobs-live.json`
+const CANCELS = `${HOME}/.augur/cancel-requests.jsonl`
 const NOW = Date.parse('2026-10-03T20:00:00Z')
 const SESSION = 'f4102942-2ade-478d-a309-05fd8042827c'
 
@@ -266,6 +267,51 @@ describe('live jobs', () => {
     expect(await ui.find({ type: 'Text', text: /Other chat/ })).toBeDefined()
     await ui.press({ key: 'closed' })
     expect(await ui.find({ type: 'Text', text: /RESULT:/ })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('cancels a live job after a second press and shows a note until the service reports it', async ($, on) => {
+    const files = new Map([[JOBS, jobsFeed(NOW, [liveJob('a'), liveJob('b')])]])
+    world(on, files)
+    await $.session.start({ cwd: HOME, surface: 'desktop', isInteractive: true })
+    const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+    expect(await ui.find({ key: 'cancel-a' })).toBeDefined()
+    expect(await ui.find({ key: 'cancel-b' })).toBeDefined()
+    await ui.press({ key: 'cancel-a' })
+    expect(files.get(CANCELS)).toBeUndefined()
+    expect((await ui.find({ key: 'cancel-a' }))?.props).toMatchObject({ label: 'Press again to cancel this job' })
+    expect((await ui.find({ key: 'cancel-b' }))?.props).toMatchObject({ label: 'Cancel job' })
+    await ui.press({ key: 'cancel-a' })
+    expect(files.get(CANCELS)).toBe('{"id":"a","at":"2026-10-03T20:00:00.000Z","by":"claude"}\n')
+    expect(await ui.find({ key: 'cancel-a' })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /Cancelling/ })).toBeDefined()
+    expect(await ui.find({ key: 'cancel-b' })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('shows a note instead of a button for a job that is already being cancelled, and none on closed cards', async ($, on) => {
+    const files = new Map([[JOBS, jobsFeed(NOW, [{ ...liveJob('a'), state: 'cancel_requested' }], [closedJob('x')])]])
+    world(on, files)
+    await $.session.start({ cwd: HOME, surface: 'desktop', isInteractive: true })
+    const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+    expect(await ui.find({ key: 'cancel-a' })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /Cancelling/ })).toBeDefined()
+    await ui.press({ key: 'closed' })
+    expect(await ui.find({ key: 'cancel-x' })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('adds a second request to the file and offers Open Augur when the installer left its path', async ($, on) => {
+    const files = new Map([[JOBS, jobsFeed(NOW, [liveJob('a'), liveJob('b')])]])
+    world(on, files, undefined, { exe: 'C:/Program Files/Augur/augur.exe' })
+    const ran: string[][] = []
+    on('process.run', async (_$, e) => { ran.push([...e.argv]); return { value: { exitCode: 0, stdout: '', stderr: '' } } as never })
+    await $.session.start({ cwd: HOME, surface: 'desktop', isInteractive: true })
+    const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+    for (const id of ['a', 'b']) { await ui.press({ key: `cancel-${id}` }); await ui.press({ key: `cancel-${id}` }) }
+    expect(files.get(CANCELS)!.trim().split('\n').map((l) => JSON.parse(l).id)).toEqual(['a', 'b'])
+    await ui.press({ key: 'open-app' })
+    expect(ran).toEqual([['explorer.exe', 'C:/Program Files/Augur/augur.exe']])
     await ui.unmount()
   })
 

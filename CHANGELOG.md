@@ -7,6 +7,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 ### Added
 
 - [Visible] [UI] The `augur-jobs` pane draws each job as a card with colored `ORIGIN:`, `JOB:`, and `ACTIVITY:` or `RESULT:` lines, starts on this session's jobs with `f` to switch to every session, lists the last 30 ended jobs in a collapsed CLOSED section that `c` opens, and opens by itself only for this session's live jobs.
+- [Visible] [UI] Live cards in the augur-jobs pane have a Cancel job button that needs a second press and writes to `cancel-requests.jsonl`, which augurd reads to cancel the job, and the pane has an Open Augur button (hotkey `a`) that starts the app.
 
 ### Changed
 

@@ -18,6 +18,10 @@ export const JOBS_TEXT = {
   elsewhere: 'Elsewhere',
   live: 'live',
   closed: 'closed',
+  cancel: 'Cancel job',
+  cancelSure: 'Press again to cancel this job',
+  cancelling: 'Cancelling...',
+  openApp: 'Open Augur',
   closedHeading: 'CLOSED',
   showAll: 'Show all sessions',
   showSession: 'Show this session only',
@@ -135,7 +139,7 @@ export function closedSummary(recent: readonly ModJob[]): string {
 export type Seg = { text: string; color?: string; bg?: string; bold?: boolean; dim?: boolean; italic?: boolean; underline?: boolean }
 export type LineKind = 'origin' | 'job' | 'activity' | 'result'
 export type PaneLine = { kind: LineKind; label: string; segs: Seg[] }
-export type PaneRow = { id: string; closed: boolean; stalled: boolean; color: string; lines: PaneLine[] }
+export type PaneRow = { id: string; closed: boolean; stalled: boolean; state: string; color: string; lines: PaneLine[] }
 
 /** Each line type has its own label color, so the three lines of a row read apart at a glance. */
 export const LABEL_COLORS: Record<LineKind, string> = { origin: 'suggestion', job: 'claude', activity: 'permission', result: 'merged' }
@@ -249,7 +253,7 @@ export function paneRows(jobs: readonly ModJob[], now: number, closed = false, m
     ? (a: ModJob, b: ModJob) => (b.endedAt ?? b.lastActivityAt) - (a.endedAt ?? a.lastActivityAt)
     : (a: ModJob, b: ModJob) => Number(b.stalled) - Number(a.stalled) || (b.startedAt ?? b.createdAt ?? 0) - (a.startedAt ?? a.createdAt ?? 0)
   return [...jobs].sort(order).map((job) => ({
-    id: job.id, closed, stalled: job.stalled, color: stateColor(job),
+    id: job.id, closed, stalled: job.stalled, state: job.state, color: stateColor(job),
     lines: [originLine(job, mine), jobLine(job, now, closed), closed ? resultLine(job) : activityLine(job, now)],
   }))
 }

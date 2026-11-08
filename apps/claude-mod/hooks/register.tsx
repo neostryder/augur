@@ -14,6 +14,10 @@ const jobsOpened = atom({ plugin: 'augur', key: 'jobsOpened' } as const, false)
 const mySession = atom({ plugin: 'augur', key: 'mySession' } as const, '')
 const scope = atom({ plugin: 'augur', key: 'scope' } as const, 'session')
 const closedOpen = atom({ plugin: 'augur', key: 'closedOpen' } as const, false)
+/** The job whose Cancel button was pressed once and now asks for a second press. */
+const confirming = atom({ plugin: 'augur', key: 'confirming' } as const, '')
+/** Jobs whose cancel request has been written, so their button gives way to a note until the service reports the new state. */
+const cancelling = atom({ plugin: 'augur', key: 'cancelling' } as const, [] as string[])
 const LABEL_WIDTH = 10
 
 /** Augur rewrites usage.json about once a minute, so a 30-second poll keeps the status line close to it. */
@@ -70,6 +74,7 @@ async function poll($: EngineInterface) {
   const list = parsed.live
   await update($, jobs, () => list)
   await update($, recent, () => parsed.recent)
+  await update($, cancelling, (ids) => ids.filter((id) => list.some((j) => j.id === id)))
   const mine = await read($, mySession)
   if (scopeJobs(list, await read($, scope), mine).length && !await read($, jobsOpened)) {
     await update($, jobsOpened, () => true)
@@ -85,6 +90,14 @@ async function dismiss($: EngineInterface, id: string) {
   // Augur applies the line on its next check and drops the alert everywhere it shows.
   const file = `${folderOf(usageFile)}/alerts-acks.jsonl`
   await $.fs.write(file, withAck(await readText($, file), id, new Date(await $.clock.now()).toISOString()))
+}
+
+async function cancelJob($: EngineInterface, id: string) {
+  // The service applies the line within a couple of seconds and empties the file.
+  const file = `${folderOf(usageFile)}/cancel-requests.jsonl`
+  await $.fs.write(file, withAck(await readText($, file), id, new Date(await $.clock.now()).toISOString()))
+  await update($, confirming, () => '')
+  await update($, cancelling, (ids) => [...new Set([...ids, id])])
 }
 
 async function openAugur($: EngineInterface) {
@@ -126,6 +139,8 @@ export const register: Register = (on) => {
     const { Box, Button, Text } = $.ui.resolve(e)
     const now = await $.clock.now()
     const [allLive, allClosed, view, mine, open] = [await read($, jobs), await read($, recent), await read($, scope), await read($, mySession), await read($, closedOpen)]
+    const [sure, asked] = [await read($, confirming), await read($, cancelling)]
+    const canOpen = (await $.state.get(CAN_OPEN)).value === true
     const liveRows = paneRows(scopeJobs(allLive, view, mine), now, false, mine)
     const closedJobs = scopeJobs(allClosed, view, mine)
     const closedRows = paneRows(closedJobs, now, true, mine)
@@ -133,6 +148,12 @@ export const register: Register = (on) => {
       <Text key={String(i)} color={s.color} backgroundColor={s.bg} bold={s.bold} italic={s.italic} underline={s.underline} dimColor={s.dim || (closed && !s.bg && !s.bold)}>{s.text}</Text>
     )
     // A bordered card per job: the border takes the state's color, and each of the three lines has a label color of its own.
+    // A live card ends with a Cancel button that asks twice, because a cancel stops the work. Once asked, it gives way to a note.
+    const stopper = (row: PaneRow) => (
+      row.state === 'cancel_requested' || asked.includes(row.id)
+        ? <Text color="warning" italic>{JOBS_TEXT.cancelling}</Text>
+        : <Button key={`cancel-${row.id}`} label={sure === row.id ? JOBS_TEXT.cancelSure : JOBS_TEXT.cancel} onPress={() => (sure === row.id ? cancelJob($, row.id) : update($, confirming, () => row.id))} />
+    )
     const draw = (row: PaneRow) => (
       <Box key={`${row.closed ? 'closed' : 'live'}-${row.id}`} flexDirection="column" borderStyle="round" borderColor={row.closed ? 'inactive' : row.color} paddingX={1} marginBottom={1}>
         {row.lines.map((l) => (
@@ -141,6 +162,7 @@ export const register: Register = (on) => {
             {l.segs.map((s, i) => seg(s, i, row.closed))}
           </Text>
         ))}
+        {row.closed ? null : stopper(row)}
       </Box>
     )
     const heading = (label: string, n: number, bg: string) => (
@@ -154,6 +176,7 @@ export const register: Register = (on) => {
       <Box flexDirection="column">
         <Text bold color="claude">{JOBS_TEXT.title}</Text>
         <Text color="subtle">{paneHeader(allLive, allClosed, view, mine)}</Text>
+        {canOpen ? <Button key="open-app" label={JOBS_TEXT.openApp} hotkey="a" onPress={() => openAugur($)} /> : null}
         {mine
           ? <Button key="scope" label={view === 'session' ? JOBS_TEXT.showAll : JOBS_TEXT.showSession} hotkey="f" onPress={() => update($, scope, (v) => (v === 'session' ? 'all' : 'session'))} />
           : null}
