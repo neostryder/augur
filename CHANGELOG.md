@@ -4,9 +4,18 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+### Added
+
+- [Visible] [Platform] The new `mcode-exec` adapter runs MiniMax Code on this computer in a copy of the job folder and returns the changes as a patch, so a MiniMax route no longer needs Docker Sandboxes.
+- [Visible] [Platform] Hermes routes have a `readMode` option. With `keep`, read jobs use your Hermes settings, so a provider pin still applies, while the default, `safe`, ignores them.
+
 ### Changed
 
 - [Visible] [Security] `augur key set` now refuses a route that does not exist and names the host the key will be sent to. Model rules shows the destination host of each route before a model is confirmed, and its Confirm buttons stay disabled until the route list loads.
+
+### Fixed
+
+- [Internal] [Security] For jobs that run on a copy of the job folder, the copy is made without following links, and links found inside it are removed. The patch is collected with any git settings, hooks, filters, and attributes the job could have written in the copy ignored.
 
 ## [1.19.2] - 2026-11-07
 
