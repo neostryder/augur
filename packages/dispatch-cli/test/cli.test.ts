@@ -383,7 +383,7 @@ describe('a job retried after it failed', () => {
 
   it('follows the chain from wait, result and run --wait', async () => {
     const { run, e } = await boot({ runner: { failover: 'on' } });
-    e.writeRoutes({ ...ROUTES, limited: limit });
+    e.writeRoutes({ ...ROUTES, limited: limit, limitedtoo: limit });
     const start = await run(['run', 'limited', '--prompt', 'SLEEP 0', '--json']);
     expect(start.code).toBe(0);
     const id = (JSON.parse(start.out) as { id: string }).id;
@@ -404,7 +404,13 @@ describe('a job retried after it failed', () => {
     expect(body.retriedAs).toBe(body.job.id);
     expect(body.answer).toBe('final message');
     expect(body.job.state).toBe('completed');
-    const waited = await run(['run', 'limited', '--prompt', 'SLEEP 0', '--wait']);
+    // A route that reported a spent allowance is held for a day, so the next job on it goes straight to the fallback and no retry is needed.
+    const held = await run(['run', 'limited', '--prompt', 'SLEEP 0', '--wait']);
+    expect(held.code).toBe(0);
+    expect(held.out).not.toMatch(/retried on/);
+    expect(held.out).toContain('final message');
+    // Another route with its own limit still fails first and follows the chain.
+    const waited = await run(['run', 'limitedtoo', '--prompt', 'SLEEP 0', '--wait']);
     expect(waited.code).toBe(0);
     expect(waited.out).toMatch(/retried on fake as [0-9a-f]+/);
     expect(waited.out).toContain('final message');
