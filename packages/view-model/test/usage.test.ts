@@ -55,6 +55,8 @@ describe('usage', () => {
     expect(statusLabel(provider('a', [], { status: { indicator: 'minor', description: 'Slow' } }))).toEqual({ label: 'Degraded', severe: false, description: 'Slow' });
     expect(statusLabel(provider('a', [], { status: { indicator: 'none' } }))).toBeNull();
     expect(notesParts(provider('a', [], { notes: { resetsAvailable: 1, latencyMs: 812.4 } }))).toEqual(['1 limit reset available', 'Answered in 812 ms']);
+    expect(notesParts(provider('a', [], { notes: { creditExpiresAt: '2026-11-27T00:00:00.000Z', creditExpiring: 456.27, creditCurrency: 'USD' } }))[0]).toMatch(/^\$456\.27 of promotional credit ends Nov 2[67]$/);
+    expect(notesParts(provider('a', [], { notes: { consoleSignIn: true } }))).toEqual(['Claude API credit is not read yet. Sign in to the Claude Console in settings.']);
     expect(errorText(provider('a', [], { error: 'Timed out.', stale: true }), () => '5m ago')).toBe('Refresh failed: Timed out. Showing the figures from 5m ago.');
     expect(errorText(provider('a', [], { error: 'No key.', fetchedAt: null }), () => '')).toBe('No key.');
   });

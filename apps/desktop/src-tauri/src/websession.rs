@@ -20,6 +20,8 @@ use tokio::sync::oneshot;
 const CACHE_FOR: Duration = Duration::from_secs(600);
 // Limit resets change a few times a month, so they are read far less often than a balance.
 const CLAUDE_CACHE_FOR: Duration = Duration::from_secs(6 * 3600);
+// A balance and a month of spend move with every call, so the Console reading is kept for half an hour.
+const CONSOLE_CACHE_FOR: Duration = Duration::from_secs(30 * 60);
 // A reading that found no sign-in is kept briefly, so a provider that refreshes every minute does not open a window each time.
 const SIGNED_OUT_CACHE_FOR: Duration = Duration::from_secs(900);
 const WATCH_EVERY: Duration = Duration::from_secs(5);
@@ -79,6 +81,14 @@ fn site(id: &str) -> Option<Site> {
             cache_for: CLAUDE_CACHE_FOR,
             timeout_message: "Could not read the Claude usage page within 45 seconds. Check that you are still signed in to claude.ai under Claude in settings.",
         }),
+        "console" => Some(Site {
+            title: "Sign in to the Claude Console",
+            sign_in_url: "https://platform.claude.com/login",
+            read_url: "https://platform.claude.com/settings/billing",
+            script: CONSOLE_SCRIPT,
+            cache_for: CONSOLE_CACHE_FOR,
+            timeout_message: "Could not read the Claude Console billing page within 45 seconds. Check that you are still signed in to platform.claude.com under Claude API in settings.",
+        }),
         _ => None,
     }
 }
@@ -86,6 +96,7 @@ fn site(id: &str) -> Option<Site> {
 // The reader script lives in its own file so the core tests can run it against saved page text.
 const TYPESAFE_SCRIPT: &str = include_str!("readers/typesafe.js");
 const CLAUDE_SCRIPT: &str = include_str!("readers/claude.js");
+const CONSOLE_SCRIPT: &str = include_str!("readers/console.js");
 // Keep provider pages from closing the sign-in window before the user finishes.
 const SIGN_IN_GUARD: &str = "try { Object.defineProperty(window, 'close', { value: function () {}, writable: false, configurable: false }); } catch (e) {}";
 
@@ -663,6 +674,7 @@ mod tests {
         assert!(!landed("https://console.typesafe.ai/", false));
         assert!(!landed("https://console.typesafe.ai/login", false));
         assert!(!landed("https://claude.ai/login", false));
+        assert!(!landed("https://platform.claude.com/login", false));
         assert!(!landed("https://console.typesafe.ai/auth/callback", false));
     }
 
@@ -676,6 +688,7 @@ mod tests {
     fn reads_a_session_that_was_still_valid() {
         assert!(landed("https://console.typesafe.ai/dashboard", false));
         assert!(landed("https://claude.ai/new", false));
+        assert!(landed("https://platform.claude.com/settings/billing", false));
         assert!(landed("https://console.typesafe.ai/design", false));
     }
 
