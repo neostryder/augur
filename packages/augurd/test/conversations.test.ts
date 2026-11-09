@@ -27,7 +27,8 @@ function probe(id: string): Adapter {
     plan(req, _route, ctx) {
       seen.push({ prompt: ctx.prompt, ...(ctx.resume ? { resume: ctx.resume } : {}) });
       const hang = ctx.prompt.includes('HANG'), fail = ctx.prompt.includes('FAIL');
-      const code = hang ? 'setInterval(()=>{},1000)' : fail ? 'process.stderr.write("rate limit\\n");process.exit(1)' : 'process.exit(0)';
+      const wrote = /file (\S+) was written/.exec(ctx.prompt)?.[1];
+      const code = wrote ? `require('node:fs').writeFileSync(${JSON.stringify(wrote)},'done')` : hang ? 'setInterval(()=>{},1000)' : fail ? 'process.stderr.write("rate limit\\n");process.exit(1)' : 'process.exit(0)';
       return { command: process.execPath, args: ['-e', code], cwd: req.cwd, env: {}, stdin: null };
     },
     extract(input) {
@@ -241,5 +242,37 @@ describe('a named conversation', () => {
     expect(seen[0]?.resume).toEqual({ id: secondId, fresh: true, name: 'g2' });
     await terminal(e.sup, e.store, next);
     expect(e.store.conversation('g2')).toMatchObject({ turns: 1, nativeId: secondId });
+  });
+
+  it('resumes a Grok job that ends its turn without the expected file, in the same session, and forgets the helper conversation', async () => {
+    const e = open('grok-exec');
+    report = 'grok-session-1';
+    e.writeRoutes({ g: { model: 'test/fake', adapter: 'grok-exec', options: {} } });
+    const first = submitOk(e.sup, request({ route: 'g', text: 'ok', cwd: e.root, expectFile: 'late.txt' }));
+    expect((await terminal(e.sup, e.store, first)).state).toBe('artifact_validation_failed');
+    const resumed = e.store.get(first)!.retriedAs;
+    expect(resumed).toBeTruthy();
+    expect((await terminal(e.sup, e.store, resumed!)).state).toBe('completed');
+    expect(seen[1]?.resume).toEqual({ id: 'grok-session-1', fresh: false, name: `resume-${first}` });
+    expect(seen[1]?.prompt).toContain('file late.txt was written');
+    expect(e.store.conversation(`resume-${first}`)).toBeNull();
+  });
+
+  it('does not resume a job on another adapter, or one with no session id', async () => {
+    const e = open('sess');
+    report = 'some-session';
+    e.writeRoutes({ s: { model: 'test/fake', adapter: 'sess', options: {} } });
+    const other = submitOk(e.sup, request({ route: 's', text: 'ok', cwd: e.root, expectFile: 'a.txt' }));
+    const done = await terminal(e.sup, e.store, other);
+    expect(done.state).toBe('artifact_validation_failed');
+    expect(done.retriedAs).toBeUndefined();
+
+    const g = open('grok-exec');
+    report = null;
+    g.writeRoutes({ g: { model: 'test/fake', adapter: 'grok-exec', options: {} } });
+    const bare = submitOk(g.sup, request({ route: 'g', text: 'ok', cwd: g.root, expectFile: 'b.txt' }));
+    const bareDone = await terminal(g.sup, g.store, bare);
+    expect(bareDone.state).toBe('artifact_validation_failed');
+    expect(bareDone.retriedAs).toBeUndefined();
   });
 });

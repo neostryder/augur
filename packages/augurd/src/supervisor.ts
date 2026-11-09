@@ -146,6 +146,10 @@ function readJobFile(path: string): JobFile | null {
 }
 
 const MAX_ATTACHMENTS = 16;
+/** A Grok job that ends its turn without its expected file is resumed in the same session, at most this many times, under a conversation with this name prefix. */
+const MAX_RESUMES = 2;
+const RESUME_PREFIX = 'resume-';
+const RESUMABLE = new Set(['grok-exec']);
 /** A route's size cap for one kind of attachment, in megabytes. */
 const optMb = (route: RouteConfig, key: string, fallback: number): number => optNum(route.options, key) ?? fallback;
 
@@ -159,7 +163,7 @@ export class Supervisor {
   private outputSeen = new Set<string>();
   private readonly activityCache = new Map<string, { at: number; lastActivityAt: number; activityLine: string; heartbeatAt: number }>();
   /** The request and the routes already used for each job this process launched. A restart drops the map, and then that job is not retried. */
-  private readonly submitted = new Map<string, { req: JobRequest; hops: string[] }>();
+  private readonly submitted = new Map<string, { req: JobRequest; hops: string[]; resumes?: number }>();
   private releasingBacklog = false;
   private lastBacklogEvaluation = 0;
   private readonly gateFallbackJobs = new Set<string>();
@@ -322,7 +326,7 @@ export class Supervisor {
     }, undefined, job);
   }
 
-  private submitTo(input: JobRequest, chain?: { req: JobRequest; hops: string[] }, routeOverride?: RouteConfig, replayOf: string | null = null): SubmitResult {
+  private submitTo(input: JobRequest, chain?: { req: JobRequest; hops: string[]; resumes?: number }, routeOverride?: RouteConfig, replayOf: string | null = null): SubmitResult {
     let req = input;
     const bad = this.validate(req);
     if (bad) return reject('bad_request', bad);
@@ -1233,8 +1237,30 @@ export class Supervisor {
     this.gateFallbackJobs.delete(rec.id);
     if (done && isTerminal(done.state)) this.settleConversation(done, done.state === 'completed', sessionId);
     if (done) this.d.decisions?.outcome(rec.id, model, done.state, done.reason, done.endedAt && done.startedAt ? done.endedAt - done.startedAt : null);
+    this.resumeUnfinished(rec, sessionId);
+    if (rec.conversation?.startsWith(RESUME_PREFIX) && done && isTerminal(done.state)) this.d.store.forgetConversation(rec.conversation);
     this.retryFailed(rec, res, failure, answer, stderr);
     this.cleanup(rec.id);
+  }
+
+  /**
+   * A Grok job that ends its turn without the file the request expects, usually after starting background work and stopping to wait for it, is resumed in
+   * the same Grok session with a short note, up to MAX_RESUMES times. The resumed turn is a new job linked to the first, on the same route and with the same request.
+   */
+  private resumeUnfinished(rec: JobRecord, sessionId: string | null): void {
+    const store = this.d.store, done = store.get(rec.id), held = this.submitted.get(rec.id);
+    if (!done || done.state !== 'artifact_validation_failed' || !sessionId || !RESUMABLE.has(rec.adapter) || !held?.req.expectFile || held.req.conversation) return;
+    const resumes = held.resumes ?? 0;
+    if (resumes >= MAX_RESUMES) return;
+    const name = `${RESUME_PREFIX}${rec.id}`, at = this.now();
+    if (!store.conversation(name)) store.insertConversation({ name, route: rec.route, adapter: rec.adapter, nativeId: sessionId, cwd: rec.cwd, tools: rec.tools, turns: 1, createdAt: at, lastUsedAt: at });
+    const file = held.req.expectFile;
+    const text = `Your last turn ended before the file ${file} was written, so the task is not finished. Carry on from where you stopped. If you started background work, wait for it with a command that blocks until it exits instead of ending your turn, then finish by writing ${file}.`;
+    const submitted = this.submitTo({ ...held.req, prompt: { text }, conversation: name, persistPrompt: false, allow: ['unpicked'] }, { req: held.req, hops: held.hops, resumes: resumes + 1 });
+    if ('rejected' in submitted) { store.forgetConversation(name); store.event(rec.id, 'resume_refused', submitted.rejected.reason, at); return; }
+    store.linkRetry(rec.id, submitted.id);
+    store.event(rec.id, 'resumed', `ended its turn without ${file}; resumed as ${submitted.id}`, at);
+    store.event(submitted.id, 'resume', `turn ${resumes + 2} of the Grok session, because ${file} was missing`, at);
   }
 
   /** Submits the original request on the next fallback route when the failure can be retried. The failed job keeps its state. */
