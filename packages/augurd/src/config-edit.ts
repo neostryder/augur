@@ -22,7 +22,7 @@ export interface ConfigKey {
 
 export const JOBS_ACTIVITY_TEXT = {
   label: 'Stall time (minutes)',
-  help: 'Augur flags a live job as stalled after it produces no output for this many minutes, and never cancels it on its own. The default is 10 and the minimum is 1.',
+  help: 'Augur flags a live job as stalled after this many minutes with no output and no work from its processes (processor use, data moved, or new processes started), and never cancels it on its own. The default is 10 and the minimum is 1.',
 };
 
 export const CONFIG_KEYS: readonly ConfigKey[] = [

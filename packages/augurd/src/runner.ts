@@ -67,7 +67,8 @@ function endFollowed(): void {
 }
 
 const accountingFile = join(dir, 'activity.txt');
-const childEnv = viaHost && job.timeoutS ? { ...process.env, AUGUR_ACTIVITY_FILE: accountingFile } : process.env;
+// The job host reports the Job Object's totals for every job, so a stall flag can tell a silent job that works from one that is stuck.
+const childEnv = viaHost ? { ...process.env, AUGUR_ACTIVITY_FILE: accountingFile } : process.env;
 const child = spawn(argv[0] as string, argv.slice(1), {
   cwd: job.cwd, env: scope ? scopeEnv : childEnv, windowsHide: true, detached: !win,
   stdio: [job.stdin === 'prompt' ? 'pipe' : 'ignore', out, err],
@@ -96,6 +97,8 @@ function killTree(why: 'cancel' | 'timeout'): void {
 const cancelPoll = setInterval(() => { if (existsSync(join(dir, 'cancel.request'))) killTree('cancel'); }, 300);
 // The timeout is an inactivity limit, never a wall-clock one: a job that is working is left alone however long it takes. A job is working while it writes
 // output, uses CPU or I/O in its process tree, or starts new processes. When the process table cannot be read, the job counts as working.
+// Every job is looked at, with or without a limit, and the time it last worked goes to the `active` file, which the service reads for the stall flag.
+// A harness that prints nothing until it exits (Grok) would otherwise look stalled after the stall time on every run.
 // On Windows the job host reports the Job Object's totals to a file once a second; elsewhere the runner reads the process table.
 const readTree = (): Promise<TreeSample | null> => new Promise(resolve => {
   if (win) {
@@ -110,7 +113,9 @@ const readTree = (): Promise<TreeSample | null> => new Promise(resolve => {
   p.on('close', () => { clearTimeout(giveUp); const rows = parsePsRows(text); resolve(rows.length && child.pid !== undefined ? sampleTree(rows, child.pid) : null); });
 });
 const logTime = () => ['stdout.log', 'stderr.log'].reduce((t, f) => { try { return Math.max(t, statSync(join(dir, f)).mtimeMs); } catch { return t; } }, 0);
-let lastActive = Date.now(), before: TreeSample | null = null, beforeAt = 0, looking = false;
+const activeFile = join(dir, 'active');
+const markActive = (at: number) => { try { writeFileSync(activeFile, 'a'); utimesSync(activeFile, at / 1000, at / 1000); } catch { /* the next look writes it */ } };
+let lastActive = Date.now(), marked = 0, before: TreeSample | null = null, beforeAt = 0, looking = false;
 const lookForWork = async () => {
   if (looking || killedBy || child.pid === undefined) return;
   looking = true;
@@ -119,13 +124,14 @@ const lookForWork = async () => {
     lastActive = Math.max(lastActive, logTime());
     if (!after || !before || wasActive(before, after, now - beforeAt)) lastActive = now;
     if (after) { before = after; beforeAt = now; }
+    if (lastActive > marked) { markActive(lastActive); marked = lastActive; }
     if (job.timeoutS && now - lastActive > job.timeoutS * 1000) killTree('timeout');
   } finally { looking = false; }
 };
-const timer = job.timeoutS ? setInterval(() => { void lookForWork(); }, lookEveryMs(job.timeoutS)) : null;
+const timer = setInterval(() => { void lookForWork(); }, lookEveryMs(job.timeoutS ?? 60));
 
 child.on('exit', (code, signal) => {
-  clearInterval(heartbeat); clearInterval(cancelPoll); if (watcher) clearInterval(watcher); if (timer) clearInterval(timer);
+  clearInterval(heartbeat); clearInterval(cancelPoll); if (watcher) clearInterval(watcher); clearInterval(timer);
   // Whatever the job left running ends with it, as the job host's Job Object does on Windows: the rest of its process group, and its scope.
   if (!win && child.pid !== undefined) {
     try { process.kill(-child.pid, 'SIGKILL'); } catch { /* the group is already empty */ }
