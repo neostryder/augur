@@ -2,7 +2,7 @@ import type { AwaitingItem } from '@augur/view-model';
 import type { AppConfig, Meter, ProviderPlugin, ProviderSnapshot, Snapshot } from '@augur/core';
 import type { UpdateState } from '../app';
 import { series, type HistoryRow } from '../core';
-import { BACKLOG_TEXT, USAGE_TEXT, errorText, localCard, notesParts, paceInfo, statusLabel, tightest as tightestMeter, windowed } from '@augur/view-model';
+import { BACKLOG_TEXT, USAGE_TEXT, errorText, localCard, paceInfo, statusLabel, tightest as tightestMeter, usageRows, windowed } from '@augur/view-model';
 import { ICON, ago, esc, money, sevOf, until, when } from '../util';
 import { chart } from './chart';
 import { localCardBody } from './local';
@@ -92,21 +92,22 @@ function cardHtml(model: DashboardModel, pid: string): string {
   const plugin = model.plugins.get(pid);
   const name = p?.name ?? plugin?.name ?? pid;
   const collapsed = model.config.layout.collapsed.includes(pid);
-  const hidden = model.config.layout.hiddenMeters[pid] ?? [];
   const usage = p?.links?.usage ?? plugin?.links.usage;
   let body = '';
   const local = pid === 'cogitator' ? localCard(model.snapshot) : null;
   if (local) body += localCardBody(local);
   if (p) {
-    for (const m of p.meters) if (!hidden.includes(m.id)) body += meterHtml(model, pid, m);
+    const rows = usageRows(p, model.config.layout);
+    for (const m of rows.meters) body += meterHtml(model, pid, m);
     const gate = model.gates?.find(x => x.provider === pid);
     if (gate) body += `<div class="mfoot"><span class="grow">${gate.state === 'closed' && (gate.gap === null || gate.gap < gate.close) ? 'On pace' : 'Gate'}</span><span class="pace">${gate.state === 'open' ? 'Open' : 'Closed'}${gate.gap === null ? '' : `, ${Math.round(gate.gap)} points behind pace`}${gate.window ? `; ${esc(gate.window)}` : ''}; gated ${esc(gate.labels.join(', '))}</span></div>`;
-    const tiles = p.money.filter((x) => x.amount != null && !hidden.includes('$' + x.id));
+    const tiles = rows.money;
     if (tiles.length) {
       body += '<div class="money">' + tiles.map((x) => `<div class="tile"><div class="l">${esc(x.label)}</div>
         <div class="v">${esc(money(x.amount, x.currency))}${x.total != null ? `<small>of ${esc(money(x.total, x.currency))}</small>` : ''}</div></div>`).join('') + '</div>';
     }
-    const notes = notesLine(p);
+    const notes = rows.notes.map(esc).join(' &middot; ');
+    if (rows.status && !local && !gate) body += `<div class="notes" role="status">${esc(rows.status)}</div>`;
     if (notes) body += `<div class="notes">${notes}</div>`;
     if (p.error) body += `<div class="err">${ICON.warn}<span>${esc(errorText(p, ago))}</span></div>`;
   } else {
@@ -120,10 +121,6 @@ function cardHtml(model: DashboardModel, pid: string): string {
       ${usage ? `<a class="ext" href="${esc(usage)}" data-open="${esc(usage)}" title="Open ${esc(name)} usage page" aria-label="Open ${esc(name)} usage page">${ICON.ext}</a>` : ''}
       <button class="link" data-collapse="${esc(pid)}" title="${collapsed ? 'Expand' : 'Collapse'}" aria-label="${collapsed ? 'Expand' : 'Collapse'} ${esc(name)}" style="transform:rotate(${collapsed ? -90 : 0}deg)">${ICON.chevron}</button></h2>
     <div class="body">${body}</div></section>`;
-}
-
-function notesLine(p: ProviderSnapshot): string {
-  return notesParts(p).map(esc).join(' &middot; ');
 }
 
 /** Only the desktop shell can check for updates, so the phone never shows this. Hovering lists the changes from updateTip, and a click installs with no confirmation step. */
@@ -164,6 +161,7 @@ export function renderDashboard(model: DashboardModel): string {
   if (!enabled.length) {
     return html + `<div class="empty-state">No providers turned on yet.<br><button class="btn primary" data-action="settings">Choose providers</button></div>`;
   }
+  html += `<label><input type="checkbox" data-show-hidden-rows ${model.config.layout.showHiddenRows ? 'checked' : ''}>${USAGE_TEXT.showHiddenRows}</label>`;
   const t = tightest(model);
   if (t) {
     const sev = sevOf(t.m.usedPct!);

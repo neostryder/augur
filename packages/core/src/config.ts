@@ -11,7 +11,7 @@ export const DEFAULT_HOTKEY = 'Ctrl+Super+U';
 
 export function defaultConfig(): AppConfig {
   return { schema: 1, providers: builtinProviders.map(provider => ({ id: provider.id, enabled: true, settings: {} })), custom: [],
-    layout: { theme: 'system', columns: 'auto', hiddenMeters: {}, collapsed: [] },
+    layout: { theme: 'system', columns: 'auto', hiddenMeters: {}, showHiddenRows: false, collapsed: [] },
     alerts: { enabled: false, pctThresholds: [50, 75, 90], paceRatio: { session: 0.8, weekly: 0.8, other: null }, balanceBelow: {}, idlePct: 5, idleHours: 6, outlets: defaultOutlets() }, exportPath: null,
     // A new install starts on the neutral balance. An install that already has a config never passes through here, so it keeps whatever it names, or the classic rules when it names none.
     policy: { ...emptyPolicy(), balance: { profile: 'neutral' } }, agentApproval: DEFAULT_APPROVAL };
@@ -39,7 +39,7 @@ export function migrateConfig(value: unknown): AppConfig {
     layout: { theme: ['system', 'light', 'dark'].includes(layout.theme) ? layout.theme : 'system',
       columns: ['auto', 1, 2].includes(layout.columns) ? layout.columns : 'auto',
       nodeView: { sheen: obj(layout.nodeView).sheen !== false, animation: obj(layout.nodeView).animation !== false, ticks: obj(layout.nodeView).ticks !== false },
-      hiddenMeters: obj(layout.hiddenMeters), collapsed: Array.isArray(layout.collapsed) ? layout.collapsed.filter((id: unknown) => typeof id === 'string') : [] },
+      hiddenMeters: obj(layout.hiddenMeters), showHiddenRows: layout.showHiddenRows === true, collapsed: Array.isArray(layout.collapsed) ? layout.collapsed.filter((id: unknown) => typeof id === 'string') : [] },
     alerts: { enabled: alerts.enabled === true, pctThresholds: Array.isArray(alerts.pctThresholds) ? alerts.pctThresholds.filter((n: unknown) => typeof n === 'number' && n >= 0 && n <= 100) : defaults.alerts.pctThresholds,
       paceRatio: { session: ratio(pace.session, defaults.alerts.paceRatio.session), weekly: ratio(pace.weekly, defaults.alerts.paceRatio.weekly), other: ratio(pace.other, defaults.alerts.paceRatio.other) },
       balanceBelow: Object.fromEntries(Object.entries(obj(alerts.balanceBelow)).filter(([, n]) => typeof n === 'number' && Number.isFinite(n))),

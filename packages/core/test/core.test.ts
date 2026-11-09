@@ -303,6 +303,17 @@ describe('engine, pace, history and alerts', () => {
     expect(config.providers.find(p => p.id === 'claude')?.enabled).toBe(false);
     expect(config.providers).toHaveLength(11);
   });
+  it('defaults hidden money rows to off and preserves only a boolean layout flag', () => {
+    expect(defaultConfig().layout.showHiddenRows).toBe(false);
+    expect(migrateConfig({}).layout.showHiddenRows).toBe(false);
+    expect(migrateConfig({ layout: { showHiddenRows: 'true' } }).layout.showHiddenRows).toBe(false);
+    const config = migrateConfig({ layout: { showHiddenRows: true, hiddenMeters: { gemini: ['$month'] } },
+      providers: [{ id: 'openai-api', settings: { monthlyBudgetUsd: '125.50' } }] });
+    const saved = migrateConfig(JSON.parse(JSON.stringify(config)));
+    expect(saved.layout.showHiddenRows).toBe(true);
+    expect(saved.layout.hiddenMeters).toEqual({ gemini: ['$month'] });
+    expect(saved.providers.find(p => p.id === 'openai-api')?.settings.monthlyBudgetUsd).toBe('125.50');
+  });
   it('keeps jobs off until they are chosen, and reads only an explicit yes', () => {
     expect(migrateConfig({}).dispatch).toEqual({ runJobs: false });
     expect(migrateConfig({ dispatch: { runJobs: 'yes' } }).dispatch).toEqual({ runJobs: false });

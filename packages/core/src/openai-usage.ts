@@ -4,16 +4,19 @@ import { imageCost, OPENAI_IMAGE_PRICES } from './openai-prices.js';
 export const OPENAI_USAGE_TEXT = {
   name: 'OpenAI API',
   web: 'Read OpenAI billing page',
-  webHelp: 'Shows prepaid credit, promotional credit with its end date, and the spend so far this month.',
+  webHelp: "Read the platform.openai.com billing page to show your organization's spend this month and the Monthly budget bar.",
+  budget: 'Monthly budget',
+  budgetHelp: "Your organization's monthly spending budget in US dollars. Leave empty for $250.",
   signin: 'Sign in to platform.openai.com',
   signinHelp: 'Augur uses this sign-in to open your OpenAI billing page.',
   signInNote: 'Not signed in. Sign in to platform.openai.com in Settings to load billing figures.',
   challengeNote: 'A Cloudflare check is blocking the billing page. Open the billing page from Settings and pass the check.',
-  missingNote: 'The billing page opened but showed no credit or spend figures.',
+  missingNote: 'The billing page showed no spend figure. Open it from settings and check that you are signed in.',
   unavailableNote: 'The local job ledger is not available in this view.',
   credit: 'API credit left',
   promo: 'Promotional credit',
-  spend: 'Spend this month',
+  spend: 'Spent this month (organization)',
+  activity: (calls: number, tokens: number) => `${calls.toLocaleString()} request${calls === 1 ? '' : 's'}, ${tokens.toLocaleString()} tokens, last 7 days`,
   ends: (date: string) => `Ends ${date}`,
   periods: { today: 'Today', week: 'Last 7 days', month: 'Month to date' },
   estimate: (label: string) => `${label}, estimated cost`,
@@ -55,6 +58,6 @@ export function openaiLedger(jobs: readonly JobUsage[], now: Date): ProviderResu
   const periods = { today: sum(rows.filter(j => j.at >= day)), week: sum(rows.filter(j => j.at >= week)), month: sum(rows.filter(j => j.at >= month)) };
   const models = Object.fromEntries([...new Set(rows.filter(j => j.at >= month).map(j => j.model))].sort()
     .map(model => [model, sum(rows.filter(j => j.at >= month && j.model === model))]));
-  return { meters: [], money: Object.entries(periods).map(([id, total]) => ({ id: `ledger-${id}`, label: OPENAI_USAGE_TEXT.estimate(OPENAI_USAGE_TEXT.periods[id as keyof typeof periods]), amount: total.costUsd, currency: 'USD', estimated: true })),
+  return { meters: [], money: [],
     notes: { openaiLedger: { periods, models }, openaiImagePricingUnknown: rows.some(j => j.at >= month && Object.hasOwn(OPENAI_IMAGE_PRICES, j.model) && OPENAI_IMAGE_PRICES[j.model]!.textInputPerM !== undefined && j.usage && j.usage.inputTokens > 0 && j.usage.textInputTokens === undefined) } };
 }

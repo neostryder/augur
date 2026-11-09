@@ -1,5 +1,5 @@
 // What the usage page says about each provider and meter, apart from how it is drawn.
-import type { AppConfig, HistoryRow, Meter, ProviderSnapshot, Snapshot } from '@augur/core';
+import type { AppConfig, HistoryRow, LayoutConfig, Meter, ProviderSnapshot, Snapshot } from '@augur/core';
 import { money, pace, when } from './format.js';
 import { OPENAI_USAGE_TEXT as OPENAI_TEXT, type UsageTotal } from '@augur/core';
 
@@ -66,23 +66,15 @@ export function notesParts(p: ProviderSnapshot): string[] {
   if (n.resetsChallenge) out.push('claude.ai is showing a Cloudflare check. Open it from settings and pass it so your resets can be read.');
   if (n.openaiSignIn) out.push(OPENAI_TEXT.signInNote);
   if (n.openaiChallenge) out.push(OPENAI_TEXT.challengeNote);
-  if (n.openaiImagePricingUnknown) out.push(OPENAI_TEXT.imagePricing);
   if (n.openaiBillingMissing) out.push(OPENAI_TEXT.missingNote);
   if (n.openaiLedgerUnavailable) out.push(OPENAI_TEXT.unavailableNote);
   if (p.id === 'codex' && typeof n.chatgptJobsWeek === 'number') out.push(OPENAI_TEXT.chatgpt(n.chatgptJobsWeek));
   if (n.openaiLedger) {
     const { periods, models } = n.openaiLedger as { periods: Record<string, UsageTotal>; models: Record<string, UsageTotal> };
-    for (const [key, label] of Object.entries(OPENAI_TEXT.periods)) {
-      const total = periods[key];
-      if (total) out.push(OPENAI_TEXT.counts(label, total.calls, total.inputTokens, total.outputTokens, total.images));
-    }
-    for (const [model, total] of Object.entries(models)) out.push(OPENAI_TEXT.model(model,
+    const week = periods.week;
+    if (week) out.push(OPENAI_TEXT.activity(week.calls, week.inputTokens + week.outputTokens));
+    for (const [model, total] of Object.entries(models)) if (total.calls > 0) out.push(OPENAI_TEXT.model(model,
       OPENAI_TEXT.counts('', total.calls, total.inputTokens, total.outputTokens, total.images), total.costUsd === null ? '' : OPENAI_TEXT.cost(total.costUsd)));
-    const total = periods.month;
-    if (total && total.costCalls < total.calls) out.push(OPENAI_TEXT.unpriced(total.calls - total.costCalls));
-  }
-  if (Array.isArray(n.openaiPromos)) for (const promo of n.openaiPromos) {
-    if (typeof promo.amount === 'number' && typeof promo.detail === 'string') out.push(`${OPENAI_TEXT.promo}: ${money(promo.amount)}; ${promo.detail}`);
   }
   if (n.consoleSignIn) out.push('Claude API credit is not read yet. Sign in to the Claude Console in settings.');
   if (n.consoleChallenge) out.push('The Claude Console is showing a Cloudflare check. Open it from settings and pass it so your credit can be read.');
@@ -90,6 +82,14 @@ export function notesParts(p: ProviderSnapshot): string[] {
   if (n.balanceMissing) out.push('The TypeSafe billing page opened but showed no credit balance');
   if (typeof n.latencyMs === 'number') out.push(`Answered in ${Math.round(n.latencyMs)} ms${n.model ? `, ${n.model}` : ''}`);
   return out;
+}
+
+export function usageRows(p: ProviderSnapshot, layout: LayoutConfig): { meters: Meter[]; money: ProviderSnapshot['money']; notes: string[]; status: string } {
+  const hidden = layout.hiddenMeters[p.id] ?? [];
+  const meters = p.meters.filter(m => !hidden.includes(m.id));
+  const money = p.money.filter(row => row.amount != null && (layout.showHiddenRows === true || row.amount !== 0) && !hidden.includes('$' + row.id));
+  const notes = notesParts(p);
+  return { meters, money, notes, status: !meters.length && !money.length && !notes.length && !p.error && !statusLabel(p) ? USAGE_TEXT.noUsage : '' };
 }
 
 /** The line under a provider whose last refresh failed. */
@@ -100,6 +100,8 @@ export function errorText(p: ProviderSnapshot, agoText: (iso: string) => string)
 
 export const USAGE_TEXT = {
   waiting: 'Waiting for the first refresh.',
+  noUsage: 'No usage this month',
+  showHiddenRows: 'Show hidden rows',
   none: 'No providers turned on yet.',
   notRefreshed: 'Not refreshed yet',
   mostUsed: 'Most-used limit right now',

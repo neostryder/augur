@@ -2119,6 +2119,7 @@ export class App {
     }
     if (d.providerRefresh) { this.provider(d.providerRefresh).refreshSeconds = t.value ? Number(t.value) : null; await this.saveConfig(); return; }
     if (d.field) { const [pid, key] = d.field.split('|') as [string, string]; this.provider(pid).settings[key] = t.value; await this.saveConfig(); return; }
+    if (d.showHiddenRows !== undefined) { this.config.layout.showHiddenRows = t.checked; await this.saveConfig(); await this.render(); return; }
     if (d.meterVis) {
       const [pid, id] = d.meterVis.split('|') as [string, string];
       const list = this.config.layout.hiddenMeters[pid] ?? [];

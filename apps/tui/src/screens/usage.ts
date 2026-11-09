@@ -2,7 +2,7 @@
 // selected limit. The arrow keys move between providers and limits; the selection follows the item, not the row, as figures change.
 import { allPlugins, type AppConfig, type HistoryRow, type Meter, type ProviderSnapshot } from '@augur/core';
 import { bar, box, center, spans, textWidth, wrap, type Key, type Rect, type Screen, type Spans, type Style } from '@augur/terminal';
-import { BACKLOG_TEXT, USAGE_TEXT, ago, errorText, money, notesParts, paceInfo, series, sevOf, statusLabel, tightest, until, windowed, type AwaitingItem } from '@augur/view-model';
+import { BACKLOG_TEXT, USAGE_TEXT, ago, errorText, money, paceInfo, series, sevOf, statusLabel, tightest, until, usageRows, windowed, type AwaitingItem } from '@augur/view-model';
 import type { Ctx, Hint, Overlay, Page } from '../page.js';
 import { sevStyle, type Theme } from '../theme.js';
 
@@ -50,6 +50,8 @@ export class UsagePage implements Page {
       out.push(text(BACKLOG_TEXT.hint, { dim: true }));
       out.push(blank);
     }
+    out.push(text(`[${config.layout.showHiddenRows ? 'x' : ' '}] ${USAGE_TEXT.showHiddenRows} (h)`, { dim: true }));
+    out.push(blank);
     const inner = w - 2;
     const visible = (pid: string, p: ProviderSnapshot | undefined) => (p?.meters ?? []).filter((m) => !(config.layout.hiddenMeters[pid] ?? []).includes(m.id));
     const labelW = Math.min(18, Math.max(8, ...this.enabled(config).flatMap((pid) => visible(pid, snap?.providers[pid]).map((m) => textWidth(m.label)))));
@@ -59,7 +61,8 @@ export class UsagePage implements Page {
       out.push({ item: `p:${pid}`, draw: (s, x, y, ww, sel) => this.header(s, x, y, ww, sel, theme, pid, p, plugin?.name ?? pid, collapsed, now) });
       if (collapsed) continue;
       if (!p) { out.push(text(USAGE_TEXT.waiting, { dim: true })); out.push(blank); continue; }
-      for (const m of visible(pid, p)) {
+      const rows = usageRows(p, config.layout);
+      for (const m of rows.meters) {
         const pc = paceInfo(m, state.history, pid, now);
         out.push({ item: `m:${pid}|${m.id}`, draw: (s, x, y, ww, sel) => this.meterRow(s, x, y, ww, sel, theme, labelW, state.history, pid, m, pc.elapsedPct, now) });
         const foot = this.meterFoot(theme, m, pc, now);
@@ -70,14 +73,14 @@ export class UsagePage implements Page {
         [gate.state === 'closed' && (gate.gap === null || gate.gap < this.gateClose) ? 'On pace' : 'Gate', { dim: true }],
         [`  ${gate.state === 'open' ? 'Open' : 'Closed'}${gate.gap === null ? '' : `, ${Math.round(gate.gap)} points behind pace`}${gate.window ? `; ${gate.window}` : ''}  ${gate.labels.join(', ')}`],
       ]) });
-      const hidden = config.layout.hiddenMeters[pid] ?? [];
-      const tiles = p.money.filter((x) => x.amount != null && !hidden.includes('$' + x.id));
+      const tiles = rows.money;
       if (tiles.length) {
         const list: Array<readonly [string, Style?]> = tiles.flatMap((x, i) => [...(i ? [['   '] as const] : []), [`${x.label} `, { dim: true }] as const,
           [money(x.amount, x.currency), { bold: true }] as const, ...(x.total != null ? [[` of ${money(x.total, x.currency)}`, { dim: true }] as const] : [])]);
         out.push({ draw: (s, x, y, ww) => spans(s, x + 2, y, ww - 2, list) });
       }
-      for (const n of notesParts(p)) for (const line of wrap(n, inner - 2)) out.push(text(line, { dim: true }, 2));
+      if (rows.status && !gate) out.push(text(rows.status, { dim: true }, 2));
+      for (const n of rows.notes) for (const line of wrap(n, inner - 2)) out.push(text(line, { dim: true }, 2));
       if (p.error) for (const line of wrap(errorText(p, (iso) => ago(iso, now)), inner - 2)) out.push(text(line, theme.crit, 2));
       out.push(blank);
     }
@@ -153,6 +156,12 @@ export class UsagePage implements Page {
     const items = this.items(ctx), i = Math.max(0, items.indexOf(this.selected));
     const pid = this.selected.slice(2).split('|')[0]!;
     switch (key.label) {
+      case 'h': {
+        const config = structuredClone(ctx.state.config);
+        config.layout.showHiddenRows = !config.layout.showHiddenRows;
+        await ctx.run('saveConfig', config);
+        return true;
+      }
       case 'up': case 'k': this.selected = items[Math.max(0, i - 1)] ?? ''; return true;
       case 'down': case 'j': this.selected = items[Math.min(items.length - 1, i + 1)] ?? ''; return true;
       case 'pageup': this.selected = items[Math.max(0, i - 8)] ?? ''; return true;
@@ -204,8 +213,8 @@ export class UsagePage implements Page {
 
   hints(): Hint[] {
     return this.selected.startsWith('m:')
-      ? [['Enter', '7-day chart'], ['Space', 'Collapse'], ['Alt+Up/Down', 'Move'], ['o', 'Usage page'], ['r', 'Refresh']]
-      : [['Space', 'Collapse or expand'], ['Alt+Up/Down', 'Move'], ['o', 'Usage page'], ['r', 'Refresh']];
+      ? [['Enter', '7-day chart'], ['Space', 'Collapse'], ['Alt+Up/Down', 'Move'], ['o', 'Usage page'], ['h', USAGE_TEXT.showHiddenRows], ['r', 'Refresh']]
+      : [['Space', 'Collapse or expand'], ['Alt+Up/Down', 'Move'], ['o', 'Usage page'], ['h', USAGE_TEXT.showHiddenRows], ['r', 'Refresh']];
   }
 }
 
