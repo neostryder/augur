@@ -324,6 +324,39 @@ describe('an API connector', () => {
     expect(m.seen[0]!.headers['anthropic-version']).toBe('2023-06-01');
   });
 
+  it('sends the text above the cache-break marker as a cached system block, with a one hour time when the route asks', async () => {
+    const m = await mock(() => ({ json: { content: [{ type: 'text', text: 'ok' }], usage: { input_tokens: 5, output_tokens: 1 } } }));
+    const e = setup({ adapters: ['anthropic-api'] }, { ...process.env, AUGUR_TEST_API_KEY: 'k-anthropic' });
+    const prompt = 'Standing brief.\n\n<!-- augur:cache-break -->\n\nThe job.';
+    e.writeRoutes({ claude: { model: 'test/text', adapter: 'anthropic-api', options: { baseUrl: m.url, model: 'haiku-x', apiKeyEnv: 'AUGUR_TEST_API_KEY' } }, long: { model: 'test/text', adapter: 'anthropic-api', options: { baseUrl: m.url, model: 'haiku-x', apiKeyEnv: 'AUGUR_TEST_API_KEY', cacheTtl: '1h' } } });
+    const first = submitOk(e.sup, { ...textReq('claude', prompt), cwd: e.root });
+    expect((await terminal(e.sup, e.store, first)).state).toBe('completed');
+    expect(m.seen[0]!.body).toMatchObject({ system: [{ type: 'text', text: 'Standing brief.', cache_control: { type: 'ephemeral' } }], messages: [{ role: 'user', content: 'The job.' }] });
+    expect(JSON.stringify(m.seen[0]!.body)).not.toContain('augur:cache-break');
+    expect((m.seen[0]!.body as { system: [{ cache_control: object }] }).system[0].cache_control).toEqual({ type: 'ephemeral' });
+    const second = submitOk(e.sup, { ...textReq('long', prompt), cwd: e.root });
+    expect((await terminal(e.sup, e.store, second)).state).toBe('completed');
+    expect(m.seen[1]!.body).toMatchObject({ system: [{ cache_control: { type: 'ephemeral', ttl: '1h' } }] });
+  });
+
+  it('sends a prompt without the marker unchanged, and a marker with nothing after it as the plain prompt', async () => {
+    const m = await mock(() => ({ json: { content: [{ type: 'text', text: 'ok' }], usage: { input_tokens: 5, output_tokens: 1 } } }));
+    const e = setup({ adapters: ['anthropic-api'] }, { ...process.env, AUGUR_TEST_API_KEY: 'k-anthropic' });
+    e.writeRoutes({ claude: { model: 'test/text', adapter: 'anthropic-api', options: { baseUrl: m.url, model: 'haiku-x', apiKeyEnv: 'AUGUR_TEST_API_KEY' } } });
+    expect((await terminal(e.sup, e.store, submitOk(e.sup, { ...textReq('claude', 'No marker here.'), cwd: e.root }))).state).toBe('completed');
+    expect(m.seen[0]!.body).toMatchObject({ messages: [{ role: 'user', content: 'No marker here.' }] });
+    expect(m.seen[0]!.body).not.toHaveProperty('system');
+    expect((await terminal(e.sup, e.store, submitOk(e.sup, { ...textReq('claude', 'Only a brief.\n<!-- augur:cache-break -->\n'), cwd: e.root }))).state).toBe('completed');
+    expect(m.seen[1]!.body).toMatchObject({ messages: [{ role: 'user', content: 'Only a brief.' }] });
+    expect(m.seen[1]!.body).not.toHaveProperty('system');
+  });
+
+  it('rejects a cacheTtl that is not 5m or 1h, and one on an OpenAI-style route', () => {
+    expect(anthropicApi.validate({ model: 'a/b', adapter: 'anthropic-api', options: { baseUrl: 'https://x', model: 'x', apiKeyEnv: 'K', cacheTtl: '2h' } })).toMatch(/cacheTtl/);
+    expect(anthropicApi.validate({ model: 'a/b', adapter: 'anthropic-api', options: { baseUrl: 'https://x', model: 'x', apiKeyEnv: 'K', cacheTtl: '1h' } })).toBeNull();
+    expect(openaiApi.validate({ model: 'a/b', adapter: 'openai-api', options: { baseUrl: 'https://x', model: 'x', apiKeyEnv: 'K', cacheTtl: '1h' } })).toMatch(/Anthropic/);
+  });
+
   it('refuses to send a key over plain http to a remote host, and allows http for localhost', () => {
     const e = setup({ adapters: ['openai-api'] }, { ...process.env, AUGUR_TEST_API_KEY: 'k' });
     e.writeRoutes({ chat: { model: 'test/text', adapter: 'openai-api', options: { baseUrl: 'http://api.example.com/v1', model: 'x', apiKeyEnv: 'AUGUR_TEST_API_KEY' } } });

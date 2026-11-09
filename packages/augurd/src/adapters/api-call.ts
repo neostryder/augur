@@ -17,7 +17,7 @@ const keyName = opt('--key-name') ?? opt('--key-target')?.replace(/\.augur$/, ''
 const extraHeaders = opt('--headers-json'), mode = opt('--mode') ?? 'chat', resultFile = opt('--result-file');
 interface Attached { path: string; kind: 'text' | 'image' | 'audio' }
 const attachments = JSON.parse(opt('--attachments-json') ?? '[]') as Attached[];
-const maxTokens = Number(opt('--max-tokens') ?? '4096'), timeoutS = Number(opt('--timeout-s') ?? '900');
+const maxTokens = Number(opt('--max-tokens') ?? '4096'), timeoutS = Number(opt('--timeout-s') ?? '900'), cacheTtl = opt('--cache-ttl');
 if (!shape || !url || !model || (!keyEnv && !keyName)) { console.error('missing --shape, --url, --model or --key-env'); process.exit(64); }
 
 const fallbackKeyName = opt('--fallback-key-name');
@@ -42,7 +42,13 @@ const MEDIA: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg
 const mediaOf = (path: string, fallback: string): string => MEDIA[extname(path).toLowerCase()] ?? fallback;
 const texts = attachments.filter(a => a.kind === 'text').map(a => ({ name: basename(a.path), text: readFileSync(a.path, 'utf8') }));
 const images = attachments.filter(a => a.kind === 'image').map(a => ({ media: mediaOf(a.path, 'image/png'), data: readFileSync(a.path).toString('base64') }));
-const withTexts = promptText + texts.map(t => `\n\n--- ${t.name} ---\n${t.text}`).join('');
+// An Anthropic-style prompt may carry one marker line. Everything above it is the part that repeats from job to job (a standing brief, a style guide), and is sent as
+// a cached system block so a later job that opens with the same text reads it at the cache-read price. Everything below it, and the attachments, is the job itself.
+const CACHE_BREAK = '<!-- augur:cache-break -->';
+const breakAt = anthropic && mode === 'chat' ? promptText.indexOf(CACHE_BREAK) : -1;
+const stablePrefix = breakAt >= 0 ? promptText.slice(0, breakAt).trim() : '';
+const jobText = breakAt >= 0 ? promptText.slice(breakAt + CACHE_BREAK.length).trim() : promptText;
+const withTexts = jobText + texts.map(t => `\n\n--- ${t.name} ---\n${t.text}`).join('');
 
 let body: string | FormData;
 if (mode === 'embeddings') {
@@ -69,7 +75,11 @@ if (mode === 'embeddings') {
   body = form;
 } else if (anthropic) {
   const content = [...images.map(i => ({ type: 'image', source: { type: 'base64', media_type: i.media, data: i.data } })), { type: 'text', text: withTexts }];
-  body = JSON.stringify({ model, max_tokens: maxTokens, messages: [{ role: 'user', content: images.length ? content : withTexts }] });
+  const system = stablePrefix && withTexts.trim() ? [{ type: 'text', text: stablePrefix, cache_control: { type: 'ephemeral', ...(cacheTtl === '1h' ? { ttl: '1h' } : {}) } }] : null;
+  // A marker with nothing after it leaves no job to send apart from the prefix, so the prefix goes as the prompt.
+  const only = stablePrefix && !withTexts.trim() ? stablePrefix : withTexts;
+  const userContent = images.length ? content.map(b => b.type === 'text' ? { ...b, text: only } : b) : only;
+  body = JSON.stringify({ model, max_tokens: maxTokens, ...(system ? { system } : {}), messages: [{ role: 'user', content: userContent }] });
 } else {
   const content = images.length ? [{ type: 'text', text: withTexts }, ...images.map(i => ({ type: 'image_url', image_url: { url: `data:${i.media};base64,${i.data}` } }))] : withTexts;
   body = JSON.stringify({ model, messages: [{ role: 'user', content }], ...(maxTokens > 0 ? { max_tokens: maxTokens } : {}) });

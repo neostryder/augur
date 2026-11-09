@@ -13,7 +13,7 @@ const CAPS: AdapterCapabilities = { permissionRequests: false, sessions: false, 
  * A bare model over HTTP: one prompt in, one text answer out, no tools and no files. It runs as a job like any other, so it can be timed out and cancelled.
  * Route options: `baseUrl`, `model`, `keySource` (`env`, the default, or `store`), `apiKeyEnv` (the environment variable that holds the key, for `env`), `maxTokens`, `timeoutS`,
  * `mode` (`chat`, the default, `embeddings`, `transcribe` or `moderation`; the last three are for an OpenAI-style endpoint and its embed, transcribe and moderate activities), `maxImageMb` and `maxAudioMb`,
- * `headersJson` (extra request headers, never secrets), `requestClass` (`cogitator` sends the source, route, activity and priority class, `none` or nothing sends none) and `maxInput` (the largest prompt, in characters, the supervisor accepts).
+ * `cacheTtl` (`5m`, the default, or `1h`, how long an Anthropic-style route keeps the cached part of a prompt that carries the cache-break marker), `headersJson` (extra request headers, never secrets), `requestClass` (`cogitator` sends the source, route, activity and priority class, `none` or nothing sends none) and `maxInput` (the largest prompt, in characters, the supervisor accepts).
  */
 /** Names a route may not set as a plain header: they carry credentials, and a credential belongs in the key store. */
 const SECRET_HEADERS = /^(authorization|proxy-authorization|x-api-key|api-key|cookie|set-cookie)$/i;
@@ -67,6 +67,9 @@ function make(id: string, shape: 'openai' | 'anthropic'): Adapter {
       for (const k of ['maxImageMb', 'maxAudioMb']) { const v = route.options?.[k]; if (v !== undefined && !(typeof v === 'number' && v > 0)) return `${k} must be a number of megabytes above zero`; }
       const headers = optStr(route.options, 'headersJson');
       if (headers !== undefined) { const bad = headerProblem(headers); if (bad) return bad; }
+      const ttl = optStr(route.options, 'cacheTtl');
+      if (ttl !== undefined && ttl !== '5m' && ttl !== '1h') return 'cacheTtl must be 5m or 1h, or left out';
+      if (ttl !== undefined && shape !== 'anthropic') return 'cacheTtl applies to an Anthropic-style route only';
       const cls = optStr(route.options, 'requestClass');
       if (cls !== undefined && cls !== 'cogitator' && cls !== 'none') return 'requestClass must be cogitator or none, or left out';
       const max = route.options?.maxInput;
@@ -91,6 +94,7 @@ function make(id: string, shape: 'openai' | 'anthropic'): Adapter {
         ...(headers ? ['--headers-json', JSON.stringify(headers)] : []),
         ...(mode !== 'chat' ? ['--mode', mode] : []), ...(files.length ? ['--attachments-json', JSON.stringify(files.map(f => ({ path: f.path, kind: f.kind })))] : []),
         ...(mode === 'embeddings' ? ['--result-file', join(ctx.jobDir, 'vectors.json')] : []),
+        ...(shape === 'anthropic' && optStr(o, 'cacheTtl') ? ['--cache-ttl', optStr(o, 'cacheTtl') as string] : []),
         '--max-tokens', String(optNum(o, 'maxTokens') ?? 4096), '--timeout-s', String(optNum(o, 'timeoutS') ?? request.timeoutS ?? 900)];
       return { command: process.execPath, args, cwd: request.cwd, env: {}, stdin: ctx.prompt };
     },
