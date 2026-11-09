@@ -74,6 +74,8 @@ To see your TypeSafe balance, open Jev in settings and choose Sign in. Augur kee
 
 To count your Claude limit resets, open Claude in settings, turn on Read resets from claude.ai and choose Sign in. Augur keeps that session in its own window and uses it only to read your usage page, about every six hours. Without the sign-in, enter the count under Limit resets in hand.
 
+To see your Claude API credit, open Claude API in settings, turn on Read credit from the Console, and choose Sign in. Augur keeps that session in its own window and uses it only to read the billing page of platform.claude.com, at most every 30 minutes. Augur then shows the credit left, each promotional grant with the date it ends, and the month's spend so far. The Admin API does not report any of these figures for a personal organization.
+
 If the sign-in window closes within 90 seconds, before it reaches your identity provider and before you sign in, Augur reopens it once, one second later. Whenever the window closes without a signed-in reading, the settings and setup screens show a notice that names the site and says whether the window was reopened.
 
 ## Signing in to Claude and Codex

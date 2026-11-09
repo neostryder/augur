@@ -32,7 +32,7 @@ export const claudeApi: ProviderPlugin = {
   color: { light: '#3987e5', dark: '#5598e7' }, links: { usage: 'https://platform.claude.com/settings/billing' },
   fields: [
     { key: 'apiKey', label: 'API key', kind: 'secret', required: true },
-    { key: 'web', label: 'Read credit from the Console', kind: 'toggle', help: 'Shows your prepaid and promotional credit, when the promotional credit ends, and spend so far this month, read from the Claude Console billing page. The Admin API has none of these for a personal organization. Sign in below once.' },
+    { key: 'web', label: 'Read credit from the Console', kind: 'toggle', help: 'Shows prepaid and promotional credit, when promotional credit ends, and this month\'s spend, read from the Claude Console billing page. Sign in once below.' },
     { key: 'signin', label: 'Claude Console', kind: 'signin', site: 'console', help: 'Sign in to platform.claude.com once so Augur can read your credit.' },
   ], modelListMode: 'catalog',
   async fetch(host, settings, options) {
