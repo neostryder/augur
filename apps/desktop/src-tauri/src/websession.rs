@@ -688,7 +688,10 @@ mod tests {
     fn reads_a_session_that_was_still_valid() {
         assert!(landed("https://console.typesafe.ai/dashboard", false));
         assert!(landed("https://claude.ai/new", false));
-        assert!(landed("https://platform.claude.com/settings/billing", false));
+        assert!(landed(
+            "https://platform.claude.com/settings/billing",
+            false
+        ));
         assert!(landed("https://console.typesafe.ai/design", false));
     }
 
