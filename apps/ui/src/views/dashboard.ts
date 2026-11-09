@@ -2,7 +2,7 @@ import type { AwaitingItem } from '@augur/view-model';
 import type { AppConfig, Meter, ProviderPlugin, ProviderSnapshot, Snapshot } from '@augur/core';
 import type { UpdateState } from '../app';
 import { series, type HistoryRow } from '../core';
-import { BACKLOG_TEXT, USAGE_TEXT, errorText, localCard, paceInfo, statusLabel, tightest as tightestMeter, openaiDays, usageRows, windowed } from '@augur/view-model';
+import { BACKLOG_TEXT, COMPUTER_TEXT, USAGE_TEXT, errorText, localCard, paceInfo, statusLabel, tightest as tightestMeter, openaiDays, usageRows, windowed } from '@augur/view-model';
 import { ICON, ago, esc, money, sevOf, until, when } from '../util';
 import { chart, dailySpendStrip } from './chart';
 import { localCardBody } from './local';
@@ -159,10 +159,16 @@ function subLine(model: DashboardModel): string {
   return model.snapshot ? `Updated ${ago(model.snapshot.generatedAt)}` : 'Not refreshed yet';
 }
 
+/** The version this app is running, shown beside the page title; blank when the host cannot say. */
+function runningVersion(version: string | null | undefined): string {
+  const v = (version ?? '').trim();
+  return v ? `<span class="build" title="${esc(COMPUTER_TEXT.version(v))}">${esc(v)}</span>` : '';
+}
+
 export function renderDashboard(model: DashboardModel): string {
   const themeIcon = model.config.layout.theme === 'light' ? ICON.sun : model.config.layout.theme === 'dark' ? ICON.moon : ICON.auto;
   const themeName = model.config.layout.theme === 'system' ? 'System theme' : model.config.layout.theme === 'light' ? 'Light theme' : 'Dark theme';
-  let html = `<header class="top"><div><h1>Usage</h1><div class="sub">${subLine(model)}</div></div><span class="grow"></span>
+  let html = `<header class="top"><div><h1>Usage${runningVersion(model.update?.version)}</h1><div class="sub">${subLine(model)}</div></div><span class="grow"></span>
     ${updateButton(model)}${reviewButton(model)}<button class="icon" data-action="theme" title="${themeName}, click to change" aria-label="${themeName}, click to change">${themeIcon}</button>
     ${model.canDispatch ? `<button class="icon" data-action="jobs" title="Jobs and routes" aria-label="Jobs and routes">${ICON.jobs}</button>` : ''}
     <button class="icon" data-action="rules" title="Model rules" aria-label="Model rules">${ICON.rules}</button>
