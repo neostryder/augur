@@ -309,6 +309,30 @@ describe('an API connector', () => {
       return e;
     };
 
+    it.each([
+      ['openai-api/image-fast', 'gpt-image-2.6-flare'],
+      ['openai-api/image-quality', 'gpt-image-2.6-sunburst'],
+    ])('defaults the API model for %s in images mode', (model, expected) => {
+      const defaultRoute = { ...route, model, options: { baseUrl: options.baseUrl, keySource: 'store', mode: 'images' } };
+      expect(openaiApi.validate(defaultRoute)).toBeNull();
+      const plan = openaiApi.plan(generation(), defaultRoute, ctx(''));
+      expect(plan.args[plan.args.indexOf('--model') + 1]).toBe(expected);
+    });
+
+    it('keeps an explicit API model ahead of the images default', () => {
+      const explicitRoute = { ...route, model: 'openai-api/image-fast' };
+      expect(openaiApi.validate(explicitRoute)).toBeNull();
+      const plan = openaiApi.plan(generation(), explicitRoute, ctx(''));
+      expect(plan.args[plan.args.indexOf('--model') + 1]).toBe(options.model);
+    });
+
+    it.each([
+      ['openai-api/unknown', 'images'],
+      ['openai-api/image-fast', 'chat'],
+    ])('requires an API model for %s in %s mode', (model, mode) => {
+      expect(openaiApi.validate({ ...route, model, options: { baseUrl: options.baseUrl, keySource: 'store', mode } })).toBe('route option model is required');
+    });
+
     it('validates image options and keeps images off an Anthropic-style route', () => {
       expect(openaiApi.validate(route)).toBeNull();
       expect(anthropicApi.validate({ ...route, adapter: 'anthropic-api' })).toMatch(/only chat/);

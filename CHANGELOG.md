@@ -33,6 +33,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Fixed
 
+- [Visible] [Providers] **Example image routes saved without a Model no longer stop with "route option model is required".** An `images` route with an empty Model now takes its model from the route's label, and a Model you set still wins.
 - [Visible] [Platform] **Sandboxed jobs no longer copy Rust or Maven build output into the workspace.** The copy skips a `target` folder that sits next to a `Cargo.toml` or `pom.xml`. Augur also checks the working directory at submit time and refuses one over 20000 files or 512 MB with a bad_request asking for a smaller `cwd`, before any job exists or the service stalls on the copy.
 - [Visible] [Platform] The prose queue no longer fails every item with "cwd may not be inside the service data folder." Each prose group now runs in an `augur-prose-scratch` folder under the operating system's temporary folder, which is deleted when the group finishes, and items that failed before can be requeued and run.
 - [Visible] [Platform] A route's parallel limit is now counted per provider and model id, so two routes whose policy labels name the same model share one limit instead of getting one each. A cap keyed by provider/id, such as caps."openai/gpt-x", now holds across every label for that model.
