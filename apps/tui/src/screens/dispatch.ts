@@ -11,7 +11,8 @@ import type { LedgerQuery, LedgerDeliveryState } from '@augur/dispatch-protocol'
 import { inset, tabs, type Key, type Rect, type Screen } from '@augur/terminal';
 import {
   APPROVAL_LEVELS, APPROVAL_TEXT, CLASSIFIER_TEXT, DISPATCH_TEXT, MODE_TEXT, checkDraft, draftOf, emptyDraft,
-  LedgerModel, LEDGER_STATE_LABELS, LEDGER_TEXT, ledgerDuration, ledgerFacts, ledgerTime, type LedgerTransport,
+  LedgerModel, LEDGER_STATE_LABELS, LEDGER_TEXT, ledgerFacts, ledgerTime, type LedgerTransport,
+  JOBS_CARD_TEXT, jobsCards, ledgerJobsSnapshot,
   parseRoutesText, writeRoute, type RouteDraft, type RoutesFile,
   PROVIDER_CHOICES, PROVIDER_FORM_TEXT, applyProvider, emptyProviderForm, planOfForm, planRows, providerFields, routeEntryText, type ProviderFormState,
 } from '@augur/view-model';
@@ -153,6 +154,12 @@ export class DispatchPage implements Page {
 
   async key(key: Key, ctx: Ctx): Promise<boolean> {
     if (this.form.typing()) return this.form.key(key, this.rows(ctx));
+    if (this.formKey === 'jobs' && key.label === 'f') {
+      this.jobs.setScope(this.jobs.scope === 'session' ? 'all' : 'session');
+      await this.jobs.refresh(this.transport(ctx));
+      return true;
+    }
+    if (this.formKey === 'jobs' && key.label === 'c') { this.jobs.closedExpanded = !this.jobs.closedExpanded; return true; }
     if (key.label === '[' || key.label === ']') { this.go(['jobs', 'routes', 'service'][(['jobs', 'routes', 'service'].indexOf(this.sub) + (key.label === ']' ? 1 : 2)) % 3] as Sub, ctx); return true; }
     if (key.label === 'escape') {
       if (this.sub === 'jobs' && this.jobs.selected) { this.jobs.selected = null; this.jobs.detail = null; return true; }
@@ -166,7 +173,8 @@ export class DispatchPage implements Page {
     const form = this.form.hints(this.rows(ctx));
     if (this.form.typing()) return form;
     const back: Hint[] = this.formKey === 'job' || this.formKey === 'route' || this.formKey === 'provider' ? [['Esc', DISPATCH_TUI_TEXT.back]] : [];
-    return [...form, ...back, ['[ ]', DISPATCH_TUI_TEXT.tabHint]];
+    const jobs: Hint[] = this.formKey === 'jobs' ? [['f', JOBS_CARD_TEXT.scope], ['c', JOBS_CARD_TEXT.closedSection]] : [];
+    return [...form, ...back, ...jobs, ['[ ]', DISPATCH_TUI_TEXT.tabHint]];
   }
 
   private go(sub: Sub, ctx: Ctx): void {
@@ -232,7 +240,7 @@ export class DispatchPage implements Page {
     const { theme } = ctx, jobs = this.jobs, T = LEDGER_TEXT;
     const reload = () => jobs.refresh(this.transport(ctx));
     const rows: Row[] = [
-      { kind: 'choice', id: 'jobs-scope', label: T.scope, value: jobs.scope, options: [['session', T.session], ['all', T.all]], set: async value => { jobs.setScope(value === 'session' ? 'session' : 'all'); await reload(); } },
+      { kind: 'choice', id: 'jobs-scope', label: JOBS_CARD_TEXT.scope, value: jobs.scope, options: [['session', JOBS_CARD_TEXT.scopeSession], ['all', JOBS_CARD_TEXT.scopeAll]], set: async value => { jobs.setScope(value === 'session' ? 'session' : 'all'); await reload(); } },
       { kind: 'text', id: 'jobs-session', label: T.sessionId, value: jobs.scope === 'session' ? jobs.session : jobs.filters.session ?? '', save: async value => { if (jobs.scope === 'session') { jobs.session = value.trim(); jobs.reset(); } else jobs.setFilter('session', value.trim()); await reload(); } },
       { kind: 'choice', id: 'jobs-state', label: T.state, value: jobs.filters.state?.[0] ?? '', options: [['', 'All'], ...LEDGER_STATES.map(state => [state, LEDGER_STATE_LABELS[state]] as const)], set: async value => { jobs.setFilter('state', value ? [value] : undefined); await reload(); } },
       { kind: 'text', id: 'jobs-text', label: T.text, value: jobs.filters.text ?? '', save: async value => { jobs.setFilter('text', value.trim()); await reload(); } },
@@ -252,14 +260,24 @@ export class DispatchPage implements Page {
       rows.push({ kind: 'note', text: node.node + ': ' + (node.unreachableSince === null ? T.reachable : T.unreachable + ' since ' + ledgerTime(node.unreachableSince)) + ' / Last poll: ' + ledgerTime(node.lastPollAt ?? node.lastSeenAt), style: node.unreachableSince === null ? 'muted' : 'warn' });
     }
     if (jobs.error) rows.push({ kind: 'note', text: jobs.error, style: 'crit' });
+    const cards = jobsCards(jobs.cards ?? ledgerJobsSnapshot(jobs.jobs ?? [], ctx.now), { now: ctx.now, scope: jobs.scope, sessionId: jobs.session, expanded: jobs.closedExpanded });
     if (jobs.jobs === null) rows.push({ kind: 'note', text: T.loading });
-    else if (!jobs.jobs.length) rows.push({ kind: 'note', text: T.empty });
-    for (const job of jobs.jobs ?? []) rows.push({
-      kind: 'item', id: 'j:' + job.id, label: job.summary || job.route || job.id,
-      sub: [job.kind, job.node, job.stamp.sessionTitle || job.stamp.sessionId || 'Unknown session', job.stamp.originLabel || job.stamp.origin || 'Unknown origin', job.attribution.origin, job.stamp.pid ? 'PID ' + job.stamp.pid : '', job.compacted ? T.compacted : '', job.activityLine ?? '', job.lastActivityAt === null ? '' : JOBS_ACTIVITY_TEXT.age(job.lastActivityAt, ctx.now)].filter(Boolean).join(' / '),
-      chips: [[LEDGER_STATE_LABELS[job.state], job.state === 'failed' || job.state === 'stalled' ? theme.crit : ledgerTerminal(job.state) ? theme.muted : theme.accent]],
-      right: ledgerDuration(job, ctx.now), enter: () => this.openJob(ctx, job.id), enterLabel: DISPATCH_TUI_TEXT.open,
-    });
+    else if (!cards.live.length) rows.push({ kind: 'note', text: cards.empty });
+    const addCards = (list: typeof cards.live) => {
+      for (const card of list) {
+        rows.push({ kind: 'item', id: 'j:' + card.id, label: card.id,
+          sub: jobs.jobs?.find(job => job.id === card.id)?.compacted ? T.compacted : undefined,
+          chips: [[card.state.replace(/_/g, ' '), card.stalled || card.state === 'failed' ? theme.crit : card.closed ? theme.muted : theme.accent]],
+          enter: () => this.openJob(ctx, card.id), enterLabel: DISPATCH_TUI_TEXT.open });
+        for (const line of card.lines) rows.push({ kind: 'note', text: `${line.label} ${line.text}`, style: line.kind === 'origin' ? 'bold' : card.stalled && line.kind === 'timing' ? 'warn' : 'muted' });
+      }
+    };
+    addCards(cards.live);
+    rows.push({ kind: 'toggle', id: 'jobs-closed', label: cards.closedHeading, on: cards.expanded, set: on => { jobs.closedExpanded = on; } });
+    if (cards.expanded) {
+      if (!cards.recent.length) rows.push({ kind: 'note', text: cards.noClosed });
+      addCards(cards.recent);
+    }
     rows.push({ kind: 'buttons', id: 'jobs-pages', label: '', buttons: [
       { button: T.first, run: async () => { jobs.reset(); await reload(); } },
       ...(jobs.next ? [{ button: T.next, run: async () => { jobs.nextPage(); await reload(); } }] : []),
