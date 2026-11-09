@@ -6,7 +6,7 @@
 // Standard output is one JSON object: { answer, usage, served }. A failure exits non-zero with a short message on standard error.
 
 import { readFileSync, writeFileSync } from 'node:fs';
-import { basename, extname } from 'node:path';
+import { basename, extname, join } from 'node:path';
 import { missingKeyMessage, resolveApiKey } from './api-key.ts';
 
 const args = process.argv.slice(2);
@@ -15,10 +15,13 @@ const shape = opt('--shape'), url = opt('--url'), model = opt('--model'), keyEnv
 // --key-target is the Windows credential name that jobs queued before --key-name carried; it is read the same way.
 const keyName = opt('--key-name') ?? opt('--key-target')?.replace(/\.augur$/, ''), keyFile = opt('--key-file'), fileOnly = args.includes('--key-file-only');
 const extraHeaders = opt('--headers-json'), mode = opt('--mode') ?? 'chat', resultFile = opt('--result-file');
+const resultDir = opt('--result-dir'), imageSize = opt('--image-size') ?? '1024x1024', imageQuality = opt('--image-quality') ?? 'auto';
+const imageCount = Number(opt('--image-count') ?? '1'), imageFormat = opt('--image-format') ?? 'png';
 interface Attached { path: string; kind: 'text' | 'image' | 'audio' }
 const attachments = JSON.parse(opt('--attachments-json') ?? '[]') as Attached[];
-const maxTokens = Number(opt('--max-tokens') ?? '4096'), timeoutS = Number(opt('--timeout-s') ?? '900'), cacheTtl = opt('--cache-ttl');
+const maxTokens = Number(opt('--max-tokens') ?? '4096'), timeoutS = Number(opt('--timeout-s') ?? (mode === 'images' ? '300' : '900')), cacheTtl = opt('--cache-ttl');
 if (!shape || !url || !model || (!keyEnv && !keyName)) { console.error('missing --shape, --url, --model or --key-env'); process.exit(64); }
+if (mode === 'images' && (!resultDir || !['png', 'jpeg', 'webp'].includes(imageFormat))) { console.error('images needs --result-dir and an image format of png, jpeg or webp'); process.exit(64); }
 
 const fallbackKeyName = opt('--fallback-key-name');
 const keySource = { ...(keyEnv ? { keyEnv } : {}), ...(keyName ? { keyName } : {}), ...(keyFile ? { keyFile } : {}), ...(fallbackKeyName ? { fallbackKeyName } : {}), fileOnly };
@@ -31,7 +34,7 @@ for await (const chunk of process.stdin) promptText += chunk;
 
 const anthropic = shape === 'anthropic';
 const base = url.replace(/\/+$/, '');
-const endpoint = mode === 'embeddings' ? `${base}/embeddings` : mode === 'transcribe' ? `${base}/audio/transcriptions` : mode === 'moderation' ? `${base}/moderations` : anthropic ? `${base.replace(/\/v1$/, '')}/v1/messages` : `${base}/chat/completions`;
+const endpoint = mode === 'images' ? `${base}/images/${attachments.some(a => a.kind === 'image') ? 'edits' : 'generations'}` : mode === 'embeddings' ? `${base}/embeddings` : mode === 'transcribe' ? `${base}/audio/transcriptions` : mode === 'moderation' ? `${base}/moderations` : anthropic ? `${base.replace(/\/v1$/, '')}/v1/messages` : `${base}/chat/completions`;
 const headers: Record<string, string> = anthropic
   ? { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }
   : { authorization: `Bearer ${key}`, 'content-type': 'application/json' };
@@ -41,7 +44,7 @@ const MEDIA: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg
   '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.ogg': 'audio/ogg', '.oga': 'audio/ogg', '.opus': 'audio/ogg', '.flac': 'audio/flac', '.webm': 'audio/webm', '.aac': 'audio/aac' };
 const mediaOf = (path: string, fallback: string): string => MEDIA[extname(path).toLowerCase()] ?? fallback;
 const texts = attachments.filter(a => a.kind === 'text').map(a => ({ name: basename(a.path), text: readFileSync(a.path, 'utf8') }));
-const images = attachments.filter(a => a.kind === 'image').map(a => ({ media: mediaOf(a.path, 'image/png'), data: readFileSync(a.path).toString('base64') }));
+const images = mode === 'images' ? [] : attachments.filter(a => a.kind === 'image').map(a => ({ media: mediaOf(a.path, 'image/png'), data: readFileSync(a.path).toString('base64') }));
 // An Anthropic-style prompt may carry one marker line. Everything above it is the part that repeats from job to job (a standing brief, a style guide), and is sent as
 // a cached system block so a later job that opens with the same text reads it at the cache-read price. Everything below it, and the attachments, is the job itself.
 const CACHE_BREAK = '<!-- augur:cache-break -->';
@@ -51,7 +54,17 @@ const jobText = breakAt >= 0 ? promptText.slice(breakAt + CACHE_BREAK.length).tr
 const withTexts = jobText + texts.map(t => `\n\n--- ${t.name} ---\n${t.text}`).join('');
 
 let body: string | FormData;
-if (mode === 'embeddings') {
+if (mode === 'images') {
+  const fields = { model, prompt: promptText, n: imageCount, size: imageSize, quality: imageQuality, output_format: imageFormat };
+  const files = attachments.filter(a => a.kind === 'image');
+  if (files.length) {
+    const form = new FormData();
+    for (const [k, v] of Object.entries(fields)) form.append(k, String(v));
+    for (const file of files) form.append('image[]', new Blob([readFileSync(file.path)], { type: mediaOf(file.path, 'image/png') }), basename(file.path));
+    for (const k of Object.keys(headers)) if (k.toLowerCase() === 'content-type') delete headers[k];
+    body = form;
+  } else body = JSON.stringify(fields);
+} else if (mode === 'embeddings') {
   // A prompt that is a JSON array of strings is a batch, one input per string; any other prompt is one input.
   const batch = (() => { try { const v: unknown = JSON.parse(promptText); return Array.isArray(v) && v.length && v.every(x => typeof x === 'string') ? v as string[] : null; } catch { return null; } })();
   const inputs = [...(batch ?? (promptText.trim() ? [promptText.trim()] : [])), ...texts.map(t => t.text)];
@@ -86,7 +99,7 @@ if (mode === 'embeddings') {
 }
 
 // A chat answer is text and an embedding batch is a few thousand numbers per input; 64 MiB covers the largest real batch and stops a runaway reply.
-const MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
+const MAX_RESPONSE_BYTES = (mode === 'images' ? 128 : 64) * 1024 * 1024;
 /** The body of a response as text, refused once it passes `max` bytes (by its declared length or by what has streamed in), so one oversized answer cannot fill memory. */
 async function readCapped(res: Response, max: number): Promise<string> {
   const declared = Number(res.headers.get('content-length'));
@@ -119,12 +132,12 @@ for (let attempt = 1; ; attempt++) {
   catch (e) { console.error(`request failed: ${(e as Error).message}`); process.exit(66); }
   if (!preempted(res, text)) break;
   const wait = waitS(res);
-  if (attempt >= PREEMPT_TRIES || Date.now() + wait * 1000 >= deadline) { console.error(`preempted: the gateway gave the model to another request and asked for a retry elsewhere. ${text.slice(0, 200)}`); process.exit(69); }
+  if (attempt >= PREEMPT_TRIES || Date.now() + wait * 1000 >= deadline) { console.error(`preempted: the gateway gave the model to another request and asked for a retry elsewhere. ${mode === 'images' ? '' : text.slice(0, 200)}`); process.exit(69); }
   await new Promise(done => setTimeout(done, wait * 1000));
 }
 clearTimeout(timer);
 if (res.status >= 300 && res.status < 400) { console.error(`HTTP ${res.status}: the endpoint redirected the request, and Augur does not follow a redirect with a key attached. Set the route's base URL to the address the redirect points to.`); process.exit(2); }
-if (!res.ok) { console.error(`HTTP ${res.status}: ${text.slice(0, 300)}`); process.exit(2); }
+if (!res.ok) { console.error(`HTTP ${res.status}: ${mode === 'images' ? 'the image request failed' : text.slice(0, 300)}`); process.exit(2); }
 
 interface Json { [k: string]: unknown }
 let data: Json;
@@ -134,7 +147,17 @@ const obj = (v: unknown): Json => (typeof v === 'object' && v !== null ? v as Js
 
 let answer = '';
 let usage: Json | null = null;
-if (mode === 'embeddings') {
+if (mode === 'images') {
+  const rows = (Array.isArray(data.data) ? data.data : []).map(obj);
+  if (!rows.length || rows.some(r => typeof r.b64_json !== 'string' || r.b64_json.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(r.b64_json))) { console.error('the response held no valid image data'); process.exit(68); }
+  const files = rows.map((_, i) => `image-${i + 1}.${imageFormat}`);
+  try { for (let i = 0; i < rows.length; i++) writeFileSync(join(resultDir as string, files[i]!), Buffer.from(rows[i]!.b64_json as string, 'base64')); }
+  catch { console.error('the image files could not be saved'); process.exit(68); }
+  const revisedPrompt = rows.find(r => typeof r.revised_prompt === 'string')?.revised_prompt;
+  answer = JSON.stringify({ files, model: String(data.model ?? model), ...(revisedPrompt !== undefined ? { revisedPrompt } : {}) });
+  const u = obj(data.usage), read = obj(u.input_tokens_details).cached_tokens;
+  if (Object.keys(u).length) usage = { inputTokens: num(u.input_tokens), outputTokens: num(u.output_tokens), ...(typeof read === 'number' ? { cachedReadTokens: num(read) } : {}) };
+} else if (mode === 'embeddings') {
   const rows = (Array.isArray(data.data) ? data.data as Json[] : []).map(r => Array.isArray(r.embedding) ? r.embedding as number[] : []);
   if (!rows.length || !rows[0]!.length) { console.error('the response held no embeddings'); process.exit(68); }
   const vectors = JSON.stringify({ model: String(data.model ?? model), dimensions: rows[0]!.length, vectors: rows });
