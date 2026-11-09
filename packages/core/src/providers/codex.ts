@@ -62,7 +62,10 @@ export const codex: ProviderPlugin = {
     const credits = obj(data.credits), resets = obj(data.rate_limit_reset_credits);
     const money = credits.has_credits && num(credits.balance) !== null ? [{ id: 'credits', label: 'Workspace credits', amount: round(num(credits.balance), 2), currency: 'USD' }] : [];
     const models = Object.fromEntries(Object.entries(obj(data.model_usage)).map(([key, value]) => [key, obj(value).available]));
-    return { meters, money, plan: data.plan_type ?? null, notes: { resets_available: resets.available_count ?? null, limit_reached: obj(data.rate_limit).limit_reached ?? null, models } };
+    const now = (host.now?.() ?? new Date()).getTime();
+    const jobs = await host.jobUsage?.(now - 7 * 86400000).catch(() => null);
+    const chatgptJobsWeek = jobs?.filter(j => j.provider === 'chatgpt' && j.at >= now - 7 * 86400000 && j.at <= now).length;
+    return { meters, money, plan: data.plan_type ?? null, notes: { ...(chatgptJobsWeek !== undefined ? { chatgptJobsWeek } : {}), resets_available: resets.available_count ?? null, limit_reached: obj(data.rate_limit).limit_reached ?? null, models } };
   },
   // The Codex CLI caches its model list in models_cache.json, and marks models it no longer offers with visibility hide.
   async listModels(host) {

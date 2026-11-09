@@ -19,6 +19,8 @@ import type { AliasSmoke } from './alias-files.js';
 import { openRouterEndpoints, providerListings } from './alias-listings.js';
 import { DecisionLog } from './decisions.js';
 import { createEngineShell } from './engine-shell.js';
+import type { EngineShellOptions } from './engine-shell.js';
+import { usageLedger } from './usage-ledger.js';
 import { routeFile } from './home-files.js';
 import { IpcServer, ensureToken, webToken } from './ipc.js';
 import { webCertNames } from './web-cert.js';
@@ -98,10 +100,10 @@ export function createAliasSmoke(deps: {
 }
 
 /** Starts the usage engine and hands it to the control endpoint. A failure is logged and leaves the dispatch side running. */
-async function startEngine(server: IpcServer, log: (msg: string) => void): Promise<UsageEngine | null> {
+async function startEngine(server: IpcServer, log: (msg: string) => void, jobUsage: EngineShellOptions['jobUsage']): Promise<UsageEngine | null> {
   try {
     const views = new ViewHub();
-    const api = new UsageEngine(createEngineShell({ views, log }), { hosted: HOSTED });
+    const api = new UsageEngine(createEngineShell({ views, log, jobUsage }), { hosted: HOSTED });
     await api.start();
     server.attachEngine({ api, views });
     log('usage engine started');
@@ -137,7 +139,7 @@ export async function startService(opts: ServiceOptions = {}) {
   const server = new IpcServer(supervisor, store, token, routesNow, rates, routeFile(routesPath), agentToken, runAliasRefresh);
   // The engine is ready before the endpoint opens, so no caller ever finds the service half started.
   const override = process.env.AUGURD_ENGINE === '0' ? false : process.env.AUGURD_ENGINE === '1' ? true : undefined;
-  engine = (opts.engine ?? override ?? config.engine) ? await startEngine(server, log) : null;
+  engine = (opts.engine ?? override ?? config.engine) ? await startEngine(server, log, async since => usageLedger(store.list({ since, limit: 2147483647 }), routesNow(), policy.read(), rates(), dir)) : null;
   try { await server.start(opts.pipe ?? pipeName(dir)); }
   catch (e) { engine?.stop(); await engine?.flush(); store.close(); throw e; }
   // The web app listens only when the owner turned it on. A port that is taken is logged and leaves the rest of the service running.

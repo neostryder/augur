@@ -1,5 +1,6 @@
 import { claude } from './claude.js';
 import { claudeApi } from './claude-api.js';
+import { openaiApi } from './openai-api.js';
 import { codex } from './codex.js';
 import { grok } from './grok.js';
 import { minimax } from './minimax.js';
@@ -9,7 +10,7 @@ import { jev } from './jev.js';
 import { copilot } from './copilot.js';
 import { cogitator } from './cogitator.js';
 
-export { claudeApi, claude, codex, grok, minimax, openrouter, fal, jev, copilot, cogitator };
+export { openaiApi, claudeApi, claude, codex, grok, minimax, openrouter, fal, jev, copilot, cogitator };
 export { baseOf as cogitatorBase } from './cogitator.js';
 export { openrouterDef } from './openrouter.def.js';
-export const builtinProviders = [claude, codex, grok, minimax, openrouter, fal, jev, copilot, cogitator, claudeApi];
+export const builtinProviders = [claude, codex, grok, minimax, openrouter, fal, jev, copilot, cogitator, claudeApi, openaiApi];

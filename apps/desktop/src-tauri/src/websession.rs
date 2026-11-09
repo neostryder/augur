@@ -89,6 +89,14 @@ fn site(id: &str) -> Option<Site> {
             cache_for: CONSOLE_CACHE_FOR,
             timeout_message: "Could not read the Claude Console billing page within 45 seconds. Check that you are still signed in to platform.claude.com under Claude API in settings.",
         }),
+        "openai" => Some(Site {
+            title: OPENAI_SIGN_IN_TITLE,
+            sign_in_url: OPENAI_BILLING_URL,
+            read_url: OPENAI_BILLING_URL,
+            script: OPENAI_SCRIPT,
+            cache_for: CONSOLE_CACHE_FOR,
+            timeout_message: OPENAI_TIMEOUT_MESSAGE,
+        }),
         _ => None,
     }
 }
@@ -97,6 +105,12 @@ fn site(id: &str) -> Option<Site> {
 const TYPESAFE_SCRIPT: &str = include_str!("readers/typesafe.js");
 const CLAUDE_SCRIPT: &str = include_str!("readers/claude.js");
 const CONSOLE_SCRIPT: &str = include_str!("readers/console.js");
+const OPENAI_SCRIPT: &str = include_str!("readers/openai.js");
+const OPENAI_BILLING_URL: &str =
+    "https://platform.openai.com/settings/organization/billing/overview";
+const OPENAI_SIGN_IN_TITLE: &str = "Sign in to OpenAI billing";
+const OPENAI_TIMEOUT_MESSAGE: &str =
+    "Open OpenAI billing in settings and check your sign-in after the reading timed out.";
 // Keep provider pages from closing the sign-in window before the user finishes.
 const SIGN_IN_GUARD: &str = "try { Object.defineProperty(window, 'close', { value: function () {}, writable: false, configurable: false }); } catch (e) {}";
 

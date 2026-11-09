@@ -51,6 +51,22 @@ describe('usage', () => {
     expect(paceInfo(m(98), [], 'a', NOW).text).not.toBe('Spent');
   });
 
+  it('reports OpenAI sign-in and challenge notes and ChatGPT jobs on the Codex card', () => {
+    expect(notesParts(provider('openai-api', [], { notes: { openaiSignIn: true } }))).toEqual(['Not signed in. Sign in to platform.openai.com in Settings to load billing figures.']);
+    expect(notesParts(provider('openai-api', [], { notes: { openaiChallenge: true } }))).toEqual(['A Cloudflare check is blocking the billing page. Open the billing page from Settings and pass the check.']);
+    expect(notesParts(provider('codex', [], { notes: { chatgptJobsWeek: 4 } }))).toEqual(['Includes ChatGPT chat jobs run through Augur: 4 in the last 7 days']);
+    expect(notesParts(provider('openai-api', [], { notes: { chatgptJobsWeek: 4 } }))).toEqual([]);
+  });
+
+  it('shows local periods, month breakdown and promotional expiry', () => {
+    const total = { calls: 2, inputTokens: 100, outputTokens: 20, images: 1, costUsd: 0.05, costCalls: 1, estimated: true };
+    const parts = notesParts(provider('openai-api', [], { notes: { openaiLedger: { periods: { today: total, week: total, month: total }, models: { example: total } }, openaiPromos: [{ amount: 5, detail: 'Ends 2026-12-01' }] } }));
+    expect(parts[0]).toBe('Today: 2 calls, 100 input tokens, 20 output tokens, 1 image');
+    expect(parts[3]).toBe('example, month to date: 2 calls, 100 input tokens, 20 output tokens, 1 image, estimated $0.05000');
+    expect(parts[4]).toBe('Calls with no cost estimate: 1. Estimates cover priced calls only.');
+    expect(parts[5]).toBe('Promotional credit: $5.00; Ends 2026-12-01');
+  });
+
   it('words status, notes and errors', () => {
     expect(statusLabel(provider('a', [], { status: { indicator: 'minor', description: 'Slow' } }))).toEqual({ label: 'Degraded', severe: false, description: 'Slow' });
     expect(statusLabel(provider('a', [], { status: { indicator: 'none' } }))).toBeNull();

@@ -93,6 +93,7 @@ const isUuid = (s: string | undefined) => !!s && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a
 
 export interface EngineShellOptions {
   views: ViewHub;
+  jobUsage?: Host['jobUsage'];
   env?: NodeJS.ProcessEnv;
   dirs?: { config: string; data: string };
   keys?: KeyStore;
@@ -178,6 +179,7 @@ export function createEngineShell(opts: EngineShellOptions): NodeEngineShell {
       if (!views.provider('websession')) return null;
       return (await views.request('websession', 'webSession', { site, fresh: options?.fresh === true }, 90000)) as Record<string, unknown> | null;
     },
+    jobUsage: opts.jobUsage,
     now: () => new Date(),
     env: name => env[name] ?? null,
     log,

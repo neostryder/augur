@@ -26,6 +26,7 @@ export interface Money {
   currency: string;
   /** Set when the amount is part of a known total, such as credits bought. */
   total?: number | null;
+  estimated?: true;
   detail?: string | null;
 }
 
@@ -89,6 +90,16 @@ export interface HttpResponse {
 
 export type Platform = 'windows' | 'macos' | 'linux' | 'browser';
 
+export interface JobUsage {
+  provider: string;
+  route: string;
+  model: string;
+  at: number;
+  images: number | null;
+  costUsd: number | null;
+  usage: { inputTokens: number; outputTokens: number; cachedReadTokens?: number; textInputTokens?: number } | null;
+}
+
 /**
  * Everything a plugin may do outside plain computation. Each shell supplies its own:
  * the desktop app routes these through Rust commands, the PWA through a proxy,
@@ -114,6 +125,7 @@ export interface Host {
   copilotUsage?(): Promise<HttpResponse>;
   /** Reads an account page through a browser session the shell keeps signed in, for providers with no usage API. Resolves to null when there is no session. */
   webSession?(site: string, options?: { fresh?: boolean }): Promise<Record<string, unknown> | null>;
+  jobUsage?(since: number): Promise<JobUsage[]>;
   now?(): Date;
   /** Optional environment lookup for local login paths and account names. */
   env?(name: string): string | null;
