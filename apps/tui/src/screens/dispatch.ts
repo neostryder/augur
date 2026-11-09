@@ -267,7 +267,7 @@ export class DispatchPage implements Page {
       for (const card of list) {
         rows.push({ kind: 'item', id: 'j:' + card.id, label: card.id,
           sub: jobs.jobs?.find(job => job.id === card.id)?.compacted ? T.compacted : undefined,
-          chips: [[card.state.replace(/_/g, ' '), card.stalled || card.state === 'failed' ? theme.crit : card.closed ? theme.muted : theme.accent]],
+          chips: [[card.state.replace(/_/g, ' '), card.tone === 'bad' ? theme.crit : card.tone === 'warn' ? theme.warn : card.tone === 'ok' ? theme.good : card.tone === 'idle' ? theme.muted : theme.accent]],
           enter: () => this.openJob(ctx, card.id), enterLabel: DISPATCH_TUI_TEXT.open });
         for (const line of card.lines) rows.push({ kind: 'note', text: `${line.label} ${line.text}`, style: line.kind === 'origin' ? 'bold' : card.stalled && line.kind === 'timing' ? 'warn' : 'muted' });
       }

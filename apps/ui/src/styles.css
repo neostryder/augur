@@ -495,7 +495,11 @@ input[type=color] { width: 26px; height: 22px; border: 0; padding: 0; background
 .job-card .jmain { gap: 6px; }
 .job-card-origin > b { color: var(--accent); }
 .job-card-activity > b, .job-card-result > b { color: var(--muted); }
-.job-card.stalled { border-left: 3px solid var(--accent); }
+.job-card.tone-run { border-left: 3px solid var(--accent); }
+.job-card.tone-ok { border-left: 3px solid var(--good); }
+.job-card.tone-warn { border-left: 3px solid var(--warn); }
+.job-card.tone-bad { border-left: 3px solid var(--crit); }
+.job-card.tone-idle { border-left: 3px solid var(--line); }
 .ledger-columns { color: var(--muted); font-size: calc(10px * var(--fs)); border-bottom: 1px solid var(--line); }
 .ledger-row .jmain, .ledger-row .jsub, .ledger-times { min-width: 0; overflow-wrap: anywhere; }
 .ledger-state, .ledger-times { display: flex; flex-direction: column; gap: 5px; align-items: flex-start; }

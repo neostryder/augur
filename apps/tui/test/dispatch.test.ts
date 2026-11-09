@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { stripTypeScriptTypes } from 'node:module';
 import { describe, expect, it } from 'vitest';
 import type { JobsLiveRow, LedgerJob } from '@augur/dispatch-protocol';
+import { Screen } from '@augur/terminal';
 import { JOBS_CARD_TEXT, jobCard } from '@augur/view-model';
 import { DispatchPage, tail } from '../src/screens/dispatch.js';
 import { pages } from '../src/index.js';
@@ -49,6 +50,18 @@ function dispatch(answers: Record<string, unknown> = {}, runJobs = true, results
 }
 
 describe('dispatch page: jobs', () => {
+  it.each([['failed', 'crit'], ['completed', 'good']] as const)('colors a %s card chip', async (state, color) => {
+    const closed: JobsLiveRow = { id: 'closed', route: 'local', activity: 'research', state, startedAt: NOW - 1000, endedAt: NOW, lastActivityAt: NOW, activityLine: '', stalled: false };
+    const t = dispatch({ ledger_list: { jobs: [], next: null, cards: { updatedAt: NOW, jobs: [], recent: [closed] } } });
+    await t.load(); await t.app.key(ch('c'));
+    const screen = new Screen(120, 70);
+    t.app.draw(screen);
+    const y = Array.from({ length: screen.height }, (_, y) => y).find(y => screen.row(y).includes(closed.id) && screen.row(y).includes(state));
+    expect(y).toBeDefined();
+    const x = screen.row(y!).lastIndexOf(state);
+    expect(screen.cell(x, y!).style.fg).toBe(t.ctx().theme[color].fg);
+  });
+
   it('keeps a reachable node history gap visible on the Jobs page', async () => {
     const t = dispatch({ ledger_nodes: [{ node: 'eru', cursor: '10', lastSeenAt: NOW, unreachableSince: null, gap: { at: NOW, from: '1', to: '10', retentionDays: 7 } }] });
     await t.load();

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { JobsLiveRow, JobsLiveSnapshot } from '@augur/dispatch-protocol';
 import { JOBS_CARD_TEXT, jobCard, jobsCards } from '../src/jobs-cards.js';
+import type { JobCardTone } from '../src/index.js';
 
 const NOW = 180000;
 const job = (over: Partial<JobsLiveRow> = {}): JobsLiveRow => ({
@@ -11,6 +12,19 @@ const job = (over: Partial<JobsLiveRow> = {}): JobsLiveRow => ({
 const snapshot = (jobs: JobsLiveRow[] = [], recent: JobsLiveRow[] = []): JobsLiveSnapshot => ({ updatedAt: NOW, stallMinutes: 10, jobs, recent });
 
 describe('shared job cards', () => {
+  it.each<[string, boolean, JobCardTone]>([
+    ['running', false, 'run'], ['queued', false, 'run'],
+    ['completed', false, 'ok'], ['done', false, 'ok'],
+    ['needs_approval', false, 'warn'], ['cancel_requested', false, 'warn'],
+    ['cancelled', false, 'warn'], ['canceled', false, 'warn'], ['killed', false, 'warn'],
+    ['failed', false, 'bad'], ['artifact_validation_failed', false, 'bad'],
+    ['lost', false, 'bad'], ['node-lost', false, 'bad'],
+    ['stalled', true, 'warn'], ['unknown', false, 'idle'],
+  ])('assigns a tone for %s and gives the stalled flag precedence', (state, stalled, tone) => {
+    expect(jobCard(job({ state, stalled }), NOW).tone).toBe(tone);
+    expect(jobCard(job({ state, stalled: true }), NOW).tone).toBe('warn');
+  });
+
   it('filters both lists by session without changing the snapshot', () => {
     const feed = snapshot([job(), job({ id: 'other', origin: { sessionId: 'other' } })], [job({ id: 'closed', state: 'completed', endedAt: 170000 })]);
     const cards = jobsCards(feed, { now: NOW, scope: 'session', sessionId: 's', expanded: true });
