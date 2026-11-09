@@ -185,8 +185,9 @@ describe('naming a model', () => {
   it('takes the claim as true at a keyboard, and otherwise wants one of the last three messages to have named the model', () => {
     expect(checkNamed('codex/astra', null, true, [], t)).toEqual({ ok: true, via: 'interactive' });
     expect(checkNamed('codex/astra', 's1', false, [msg()], t)).toEqual({ ok: true, via: 'prompt' });
-    expect(checkNamed('codex/astra', 's1', false, [msg({ models: [] }), msg({ models: [] }), msg({ models: [] }), msg()], t)).toMatchObject({ ok: false });
+    expect(checkNamed('codex/astra', 's1', false, [...Array.from({ length: 10 }, () => msg({ models: [] })), msg()], t)).toMatchObject({ ok: false });
     expect(checkNamed('codex/astra', 's2', false, [msg()], t)).toMatchObject({ ok: false });
+    expect(checkNamed('codex/astra', 's1', false, [msg(), msg({ models: [] })], t)).toEqual({ ok: true, via: 'prompt' });
     expect(checkNamed('codex/astra', 's1', false, [msg({ at: t - 7 * 3600000 })], t)).toMatchObject({ ok: false });
     expect(checkNamed('codex/astra', null, false, [msg()], t)).toMatchObject({ ok: false, reason: expect.stringContaining('no session') });
   });
