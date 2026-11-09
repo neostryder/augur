@@ -21,6 +21,33 @@ describe('the working-directory copy for a sandboxed job', () => {
     expect(existsSync(join(dst, 'node_modules'))).toBe(false);
   });
 
+  it.each(['Cargo.toml', 'pom.xml'])('skips target beside %s', marker => {
+    const src = tmp(), dst = join(tmp(), 'ws');
+    writeFileSync(join(src, marker), '');
+    mkdirSync(join(src, 'target'));
+    writeFileSync(join(src, 'target', 'build.bin'), 'output');
+    cpSync(src, dst, { recursive: true, filter: copyFilterWithCaps(1, 0) });
+    expect(existsSync(join(dst, marker))).toBe(true);
+    expect(existsSync(join(dst, 'target'))).toBe(false);
+  });
+
+  it('copies target without a build marker in its parent', () => {
+    const src = tmp(), dst = join(tmp(), 'ws');
+    writeFileSync(join(src, 'Cargo.toml'), '');
+    mkdirSync(join(src, 'nested', 'target'), { recursive: true });
+    writeFileSync(join(src, 'nested', 'target', 'data.txt'), 'data');
+    cpSync(src, dst, { recursive: true, filter: copyFilterWithCaps() });
+    expect(existsSync(join(dst, 'nested', 'target', 'data.txt'))).toBe(true);
+  });
+
+  it('copies a file named target beside a build marker', () => {
+    const src = tmp(), dst = join(tmp(), 'ws');
+    writeFileSync(join(src, 'pom.xml'), '');
+    writeFileSync(join(src, 'target'), 'data');
+    cpSync(src, dst, { recursive: true, filter: copyFilterWithCaps() });
+    expect(existsSync(join(dst, 'target'))).toBe(true);
+  });
+
   it('skips a link back into itself, so a loop cannot form', () => {
     const src = tmp(), dst = join(tmp(), 'ws');
     writeFileSync(join(src, 'a.txt'), 'a');
@@ -28,6 +55,12 @@ describe('the working-directory copy for a sandboxed job', () => {
     cpSync(src, dst, { recursive: true, filter: copyFilterWithCaps() });
     expect(existsSync(join(dst, 'a.txt'))).toBe(true);
     expect(existsSync(join(dst, 'loop'))).toBe(false);
+  });
+
+  it('refuses a folder past the byte cap with a reason that suggests a smaller one', () => {
+    const src = tmp(), dst = join(tmp(), 'ws');
+    writeFileSync(join(src, 'data.txt'), '123456');
+    expect(() => cpSync(src, dst, { recursive: true, filter: copyFilterWithCaps(10, 5) })).toThrow(/pass a smaller cwd/);
   });
 
   it('refuses a folder past the file cap with a reason that suggests a smaller one', () => {

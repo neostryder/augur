@@ -11,7 +11,7 @@ import type { ActivityId, DataTier, EngineState, OutputMode, ProviderAdded, Snap
 import { stampFromEnv, validStamp, EXIT_CODES, MAX_SCHEMA_BYTES, TOOL_TIERS, validateRunOptions, describeCapabilities, describeFigure, exitCodeForState, isTerminal, renderReport, renderResets, seatLines } from '@augur/dispatch-protocol';
 import type { Stamp, Conversation, Depth, JobRecord, JobRequest, ProseAddParams, ProseStatus, ToolTier } from '@augur/dispatch-protocol';
 import { STATUS_TEXT, duration, isLive, servedText, statusLine } from '@augur/view-model';
-import { ledgerDate, ledgerDetail, ledgerPage, ledgerQuery, ledgerTime } from '@augur/dispatch-protocol';
+import { failureLine, ledgerDate, ledgerDetail, ledgerPage, ledgerQuery, ledgerTime } from '@augur/dispatch-protocol';
 import { executionId, renderJobs, watchJobs } from './ledger.js';
 import { bridge, stdioBridge } from './bridge.js';
 import { SERVICE_VERSION, ServiceError, call, configLines, dataDir, disableLogin, enableLogin, ensureToken, loadConfig, loginState, rotateWebToken, setConfigValue, startViaLogin, webAddresses, webCertFingerprint } from '@augur/augurd';
@@ -230,7 +230,8 @@ export async function main(argv: string[], io: Io): Promise<number> {
         const r = await resultChain(await executionId(need(rest[0], 'job id'), opts), opts);
         if (!r) { io.err('No such job.\n'); return EXIT_CODES.usage; }
         const body = r.chain.length > 1 ? { job: r.job, answer: r.answer, chain: r.chain, retriedAs: r.job.id } : { job: r.job, answer: r.answer };
-        say(`${r.lines.length ? r.lines.join('\n') + '\n' : ''}${r.answer ?? ''}`, body);
+        const reason = ['failed', 'artifact_validation_failed', 'killed', 'lost'].includes(r.job.state) && r.job.reason ? failureLine(r.job.reason) : null;
+        say(`${r.lines.length ? r.lines.join('\n') + '\n' : ''}${reason ? `Reason: ${reason}\n` : ''}${r.answer ?? ''}`, body);
         return isTerminal(r.job.state) ? exitCodeForState(r.job.state) : EXIT_CODES.wait_timeout;
       }
       case 'logs': return await logs(await executionId(need(rest[0], 'job id'), opts), p.flags.has('stderr') ? 'stderr' : 'stdout', p.flags.has('follow'), io, opts);

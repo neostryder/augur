@@ -62,6 +62,7 @@ export interface LedgerJob {
   retriedAs: string | null;
   usage: UsageReport | null;
   exitReason: string | null;
+  failureReason?: string;
   compacted: boolean;
 }
 
@@ -144,6 +145,7 @@ export const STAMP_HEADERS: Readonly<Record<keyof Stamp, string>> = {
 
 export const ledgerTerminal = (state: LedgerState): boolean => ['done', 'failed', 'canceled'].includes(state);
 export const summaryLine = (text: string): string => text.replace(/[^\x20-\x7e]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
+export const failureLine = (text: string): string => text.replace(/[^\x20-\x7e]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300);
 const object = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const keys = (v: Record<string, unknown>, allowed: readonly string[]): boolean => Object.keys(v).every(k => allowed.includes(k));
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0;
@@ -201,7 +203,7 @@ export function stampFromEnv(env: Record<string, string | undefined>, origin: Or
 }
 
 export function validLedgerJob(v: unknown): v is LedgerJob {
-  if (!object(v) || !keys(v, ['id', 'node', 'localId', 'kind', 'state', 'stamp', 'attribution', 'summary', 'summarySource', 'route', 'model', 'activity', 'createdAt', 'startedAt', 'endedAt', 'durationMs', 'updatedAt', 'lastActivityAt', 'activityLine', 'parentId', 'replayOf', 'retryOf', 'retriedAs', 'usage', 'exitReason', 'compacted'])) return false;
+  if (!object(v) || !keys(v, ['id', 'node', 'localId', 'kind', 'state', 'stamp', 'attribution', 'summary', 'summarySource', 'route', 'model', 'activity', 'createdAt', 'startedAt', 'endedAt', 'durationMs', 'updatedAt', 'lastActivityAt', 'activityLine', 'parentId', 'replayOf', 'retryOf', 'retriedAs', 'usage', 'exitReason', 'failureReason', 'compacted'])) return false;
   if (!validNode(v.node) || !line(v.localId, 128) || !/^[A-Za-z0-9._-]+$/.test(v.localId) || v.id !== `${v.node}:${v.localId}`) return false;
   if (!LEDGER_KINDS.includes(v.kind as LedgerKind) || !LEDGER_STATES.includes(v.state as LedgerState) || !validStamp(v.stamp)) return false;
   const a = v.attribution;
@@ -209,6 +211,7 @@ export function validLedgerJob(v: unknown): v is LedgerJob {
   if (!line(v.summary, 120) || v.summary !== summaryLine(v.summary) || !['caller', 'local-model', 'none'].includes(String(v.summarySource))) return false;
   if ((v.summarySource === 'none') !== (v.summary === '')) return false;
   if (!['route', 'model', 'exitReason'].every(k => nullableLine(v[k])) || !line(v.activity, 120)) return false;
+  if (v.failureReason !== undefined && (v.state !== 'failed' || !line(v.failureReason, 300) || v.failureReason !== failureLine(v.failureReason))) return false;
   if (!['createdAt', 'updatedAt'].every(k => finite(v[k])) || !['startedAt', 'endedAt', 'durationMs', 'lastActivityAt'].every(k => time(v[k]))) return false;
   if ((v.startedAt !== null && Number(v.startedAt) < Number(v.createdAt)) || (v.endedAt !== null && Number(v.endedAt) < Number(v.startedAt ?? v.createdAt))) return false;
   if (ledgerTerminal(v.state as LedgerState) !== (v.endedAt !== null)) return false;

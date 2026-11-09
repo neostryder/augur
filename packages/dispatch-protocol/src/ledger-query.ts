@@ -92,6 +92,7 @@ export function ledgerDetail(chain: LedgerChain): string {
     `Updated: ${ledgerDate(j.updatedAt)}  Last activity: ${ledgerDate(j.lastActivityAt)}`,
     `Ended: ${ledgerDate(j.endedAt)}  Duration: ${ledgerDuration(j)}`,
     `Usage: ${JSON.stringify(j.usage)}  Exit reason: ${j.exitReason ?? '-'}`,
+    ...(j.failureReason ? [`Reason: ${j.failureReason}`] : []),
     `Parent: ${j.parentId ?? '-'}  Children: ${chain.children.map(c => c.id).join(', ') || '-'}`,
     ...(j.replayOf ? [`replay of ${j.replayOf}`] : []),
     `Retry of: ${j.retryOf ?? '-'}  Retried as: ${j.retriedAs ?? '-'}`,

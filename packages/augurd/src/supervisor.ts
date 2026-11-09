@@ -2,7 +2,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { hostname, tmpdir } from 'node:os';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { appendFileSync, closeSync, cpSync, existsSync, mkdtempSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, readSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, cpSync, existsSync, mkdtempSync, lstatSync, mkdirSync, opendirSync, openSync, readFileSync, readdirSync, readSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES } from '@augur/core';
@@ -99,6 +99,7 @@ export const copyFilterWithCaps = (maxFiles = COPY_MAX_FILES, maxBytes = COPY_MA
     if (COPY_EXCLUDE.has(name) || SECRET_FILE.test(name)) return false;
     let st; try { st = lstatSync(src); } catch { return false; }
     if (st.isSymbolicLink()) return false;
+    if (st.isDirectory() && name === 'target' && readdirSync(dirname(src)).some(entry => entry === 'Cargo.toml' || entry === 'pom.xml')) return false;
     if (st.isFile()) {
       files += 1; bytes += st.size;
       if (files > maxFiles) throw new Error(`the working directory holds more than ${maxFiles} files; pass a smaller cwd with only what the job needs`);
@@ -107,6 +108,18 @@ export const copyFilterWithCaps = (maxFiles = COPY_MAX_FILES, maxBytes = COPY_MA
     return true;
   };
 };
+function checkWorkspace(cwd: string): void {
+  const filter = copyFilterWithCaps();
+  const walk = (src: string): void => {
+    if (!filter(src) || !lstatSync(src).isDirectory()) return;
+    const dir = opendirSync(src);
+    try {
+      let entry;
+      while ((entry = dir.readSync()) !== null) walk(join(src, entry.name));
+    } finally { dir.closeSync(); }
+  };
+  walk(cwd);
+}
 const GIT = ['-c', 'core.autocrlf=false', '-c', 'core.safecrlf=false'];
 const NULL_DEVICE = process.platform === 'win32' ? 'NUL' : '/dev/null';
 
@@ -395,6 +408,10 @@ export class Supervisor {
     }
     const id = randomBytes(6).toString('hex'), dir = this.jobDir(id);
     const workspace = adapter.isolation ? join(adapter.isolation.root(route), 'jobs', id) : null;
+    if (workspace) {
+      try { checkWorkspace(req.cwd); }
+      catch (e) { return reject('bad_request', (e as Error).message); }
+    }
     // The charter is prefixed before the adapter plans, so every transport receives it. The stored prompt length stays the caller's text.
     const ambient = resolveAmbient(route.options?.ambient, this.d.config.runner.ambient);
     // A resumed conversation already carries the charter from its first turn.

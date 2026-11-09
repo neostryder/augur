@@ -6,6 +6,15 @@ import type { LedgerJob } from '../src/index.js';
 const job = (): LedgerJob => ({ id: 'eru:1', node: 'eru', localId: '1', kind: 'llm-request', state: 'running', stamp: {}, attribution: { session: 'unknown', origin: 'unknown', process: 'unknown', host: 'unknown' }, summary: '', summarySource: 'none', route: null, model: 'summarize', activity: 'summarize', createdAt: 1, startedAt: 2, endedAt: null, durationMs: null, updatedAt: 2, lastActivityAt: 2, parentId: null, retryOf: null, retriedAs: null, usage: null, exitReason: null, compacted: false });
 
 describe('the job ledger contract', () => {
+  it('accepts an optional failure reason only as a bounded line on a failed record', () => {
+    const failed = { ...job(), state: 'failed', endedAt: 12, durationMs: 10, exitReason: 'failed' };
+    expect(validLedgerJob(failed)).toBe(true);
+    expect(validLedgerJob({ ...failed, failureReason: 'copying the working directory failed' })).toBe(true);
+    expect(validLedgerJob({ ...failed, failureReason: 'x'.repeat(300) })).toBe(true);
+    for (const failureReason of ['x'.repeat(301), 'two\nlines', ' control\x1b', null, 1]) expect(validLedgerJob({ ...failed, failureReason })).toBe(false);
+    expect(validLedgerJob({ ...job(), failureReason: 'still running' })).toBe(false);
+  });
+
   it('accepts only advancing metadata gaps with valid times and optional retention days', () => {
     const gap = { at: 1000, from: '1', to: '10' };
     expect(validLedgerGap(gap)).toBe(true); expect(validLedgerGap({ ...gap, retentionDays: 7 })).toBe(true);
