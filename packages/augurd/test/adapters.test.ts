@@ -6,6 +6,7 @@ import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { PolicyFile } from '@augur/core';
 import { credentialTarget, routeSecretName, tierNote } from '@augur/dispatch-protocol';
 import type { ExtractInput, JobRequest } from '@augur/dispatch-protocol';
 import { anthropicApi, codexExec, copilotExec, grokExec, hermesExec, mcodeExec, openaiApi } from '../src/adapters/index.js';
@@ -293,6 +294,141 @@ describe('an API connector', () => {
     return { url: `http://127.0.0.1:${(server.address() as { port: number }).port}`, seen };
   }
   const textReq = (route: string, text = 'say pong') => request({ route, activity: 'research', tools: 'read', output: 'text_only', text });
+
+  describe('images mode', () => {
+    const options = { baseUrl: 'https://x/v1', model: 'x', apiKeyEnv: 'K', mode: 'images' };
+    const route = { model: 'test/text', adapter: 'openai-api', options };
+    const image = { path: 'C:/jobs/j1/input.png', kind: 'image' as const, bytes: 8 };
+    const generation = () => req({ activity: 'generate_images', tools: 'none', output: 'text_only' });
+    const env = (url: string, extra: Record<string, unknown> = {}) => {
+      const e = setup({ adapters: ['openai-api'] }, { ...process.env, AUGUR_TEST_API_KEY: 'k' });
+      const path = join(e.home, 'policy.json'), policy = JSON.parse(readFileSync(path, 'utf8')) as PolicyFile;
+      Object.assign(policy.providers.test!.models['test/text']!.activities, { generate_images: 'normal', image_to_image: 'normal' });
+      writeFileSync(path, JSON.stringify(policy));
+      e.writeRoutes({ images: { ...route, options: { ...options, baseUrl: url, apiKeyEnv: 'AUGUR_TEST_API_KEY', ...extra } } });
+      return e;
+    };
+
+    it('validates image options and keeps images off an Anthropic-style route', () => {
+      expect(openaiApi.validate(route)).toBeNull();
+      expect(anthropicApi.validate({ ...route, adapter: 'anthropic-api' })).toMatch(/only chat/);
+      for (const [key, values] of Object.entries({ imageSize: ['', 1024, false, '0x1024', '1024'], imageQuality: ['', 'best', 1, false], imageCount: [0, 5, 1.5, '2', false, NaN, Infinity], imageFormat: ['', 'jpg', 'gif', 1, false] })) {
+        for (const value of values) expect(openaiApi.validate({ ...route, options: { ...options, [key]: value } })).toContain(key);
+      }
+      for (const imageSize of ['auto', '1024x1024', '1536x864']) for (const imageQuality of ['low', 'medium', 'high', 'xhigh', 'max', 'auto']) for (const imageCount of [1, 2, 3, 4]) for (const imageFormat of ['png', 'jpeg', 'webp']) {
+        expect(openaiApi.validate({ ...route, options: { ...options, imageSize, imageQuality, imageCount, imageFormat } })).toBeNull();
+      }
+    });
+
+    it('plans generation and edits with a result folder, image options and a five minute default', () => {
+      const plan = openaiApi.plan(generation(), route, ctx('a landscape'));
+      const value = (args: string[], key: string) => args[args.indexOf(key) + 1];
+      for (const [key, expected] of Object.entries({ '--mode': 'images', '--result-dir': 'C:/jobs/j1', '--image-size': '1024x1024', '--image-quality': 'auto', '--image-count': '1', '--image-format': 'png', '--timeout-s': '300' })) expect(value(plan.args, key)).toBe(expected);
+      expect(plan.stdin).toBe('a landscape');
+      expect(plan.args).not.toContain('--attachments-json');
+      expect(openaiApi.attachmentKinds?.(route)).toEqual(['image']);
+      const edit = openaiApi.plan({ ...generation(), activity: 'image_to_image' }, { ...route, options: { ...options, imageSize: '1536x1024', imageQuality: 'high', imageCount: 2, imageFormat: 'webp', timeoutS: 45 } }, { ...ctx('paint it'), attachments: [image] });
+      for (const [key, expected] of Object.entries({ '--result-dir': 'C:/jobs/j1', '--image-size': '1536x1024', '--image-quality': 'high', '--image-count': '2', '--image-format': 'webp', '--timeout-s': '45' })) expect(value(edit.args, key)).toBe(expected);
+      expect(JSON.parse(value(edit.args, '--attachments-json')!)).toEqual([{ path: image.path, kind: 'image' }]);
+      expect(value(openaiApi.plan({ ...generation(), timeoutS: 60 }, route, ctx('draw')).args, '--timeout-s')).toBe('60');
+    });
+
+    it('keeps image activities, attachments and output on their allowed routes', () => {
+      for (const activity of ['generate_images', 'image_to_image'] as const) for (const mode of ['chat', 'embeddings', 'transcribe', 'moderation']) {
+        expect(() => openaiApi.plan({ ...generation(), activity }, { ...route, options: { ...options, mode } }, ctx('draw'))).toThrow();
+      }
+      for (const activity of ['research', 'embed', 'transcribe', 'moderate'] as const) expect(() => openaiApi.plan({ ...generation(), activity }, route, ctx('draw'))).toThrow();
+      expect(() => openaiApi.plan(generation(), route, { ...ctx('draw'), attachments: [image] })).toThrow(/takes no attachments/);
+      expect(() => openaiApi.plan({ ...generation(), activity: 'image_to_image' }, route, ctx('draw'))).toThrow(/at least one image/);
+      for (const kind of ['text', 'audio'] as const) expect(() => openaiApi.plan({ ...generation(), activity: 'image_to_image' }, route, { ...ctx('draw'), attachments: [{ ...image, kind }] })).toThrow(/only image attachments/);
+      expect(() => openaiApi.plan({ ...generation(), tools: 'write' }, route, ctx('draw'))).toThrow(/tools none or read/);
+      expect(() => openaiApi.plan({ ...generation(), output: 'write_files' }, route, ctx('draw'))).toThrow(/output text_only/);
+    });
+
+    it('extracts file names and token usage from the answer envelope', () => {
+      const answer = JSON.stringify({ files: ['image-1.png', 'image-2.png'], model: 'x', revisedPrompt: 'a landscape' });
+      expect(openaiApi.extract(input({ stdout: JSON.stringify({ answer, usage: { inputTokens: 10, outputTokens: 20, cachedReadTokens: 3 } }) }))).toEqual({ answer, usage: { inputTokens: 10, outputTokens: 20, cachedReadTokens: 3, source: 'reported' } });
+    });
+
+    it.each(['png', 'jpeg', 'webp'])('posts generation JSON and saves %s files without base64 in the answer or logs', async imageFormat => {
+      const bytes = Buffer.from('image output bytes'), encoded = bytes.toString('base64');
+      const m = await mock(() => ({ json: { model: 'image-test', data: [{ b64_json: encoded, revised_prompt: 'a clear landscape' }, { b64_json: encoded }], usage: { input_tokens: 12, output_tokens: 24, input_tokens_details: { cached_tokens: 4 }, cost: 99 } } }));
+      const e = env(`${m.url}/v1`, { imageCount: 2, imageFormat, imageSize: '1536x1024', imageQuality: 'high' });
+      const id = submitOk(e.sup, { ...textReq('images', 'a landscape'), activity: 'generate_images', cwd: e.root });
+      const job = await terminal(e.sup, e.store, id);
+      expect(job).toMatchObject({ state: 'completed', usage: { inputTokens: 12, outputTokens: 24, cachedReadTokens: 4, source: 'reported' } });
+      expect(job.usage).not.toHaveProperty('costUsd');
+      expect(m.seen[0]!.url).toBe('/v1/images/generations');
+      expect(m.seen[0]!.headers['content-type']).toBe('application/json');
+      expect(m.seen[0]!.body).toEqual({ model: 'x', prompt: 'a landscape', n: 2, size: '1536x1024', quality: 'high', output_format: imageFormat });
+      expect(JSON.parse(e.sup.result(id)?.answer ?? '')).toEqual({ files: [`image-1.${imageFormat}`, `image-2.${imageFormat}`], model: 'image-test', revisedPrompt: 'a clear landscape' });
+      for (const file of [`image-1.${imageFormat}`, `image-2.${imageFormat}`]) expect(readFileSync(join(e.dir, 'jobs', id, file))).toEqual(bytes);
+      expect(e.sup.result(id)?.answer).not.toContain(encoded);
+      expect(e.sup.logs(id, 'stdout')!.text).not.toContain(encoded);
+      expect(e.sup.logs(id, 'stderr')!.text).not.toContain(encoded);
+    });
+
+    it('posts multiple images as multipart edits and saves the returned files', async () => {
+      const bytes = Buffer.from('edited output bytes'), png = Buffer.from('89504e470d0a1a0a', 'hex');
+      const m = await mock(() => ({ json: { data: [{ b64_json: bytes.toString('base64') }], usage: { input_tokens: 5, output_tokens: 8, input_tokens_details: { cached_tokens: 0 } } } }));
+      const e = env(m.url, { imageFormat: 'jpeg' });
+      writeFileSync(join(e.root, 'one.png'), png); writeFileSync(join(e.root, 'two.png'), png);
+      const id = submitOk(e.sup, { ...textReq('images', 'paint these'), activity: 'image_to_image', cwd: e.root, attach: ['one.png', 'two.png'] });
+      expect(await terminal(e.sup, e.store, id)).toMatchObject({ state: 'completed', usage: { inputTokens: 5, outputTokens: 8, cachedReadTokens: 0 } });
+      expect(m.seen[0]!.url).toBe('/images/edits');
+      expect(m.seen[0]!.headers['content-type']).toMatch(/^multipart\/form-data; boundary=/);
+      const form = await new Response(m.seen[0]!.raw, { headers: { 'content-type': String(m.seen[0]!.headers['content-type']) } }).formData();
+      for (const [key, value] of Object.entries({ model: 'x', prompt: 'paint these', n: '1', size: '1024x1024', quality: 'auto', output_format: 'jpeg' })) expect(form.get(key)).toBe(value);
+      expect([...form.keys()].sort()).toEqual(['image[]', 'image[]', 'model', 'n', 'output_format', 'prompt', 'quality', 'size']);
+      expect(form.getAll('image[]').map(f => (f as File).name)).toEqual(['one.png', 'two.png']);
+      expect(JSON.parse(e.sup.result(id)?.answer ?? '')).toEqual({ files: ['image-1.jpeg'], model: 'x' });
+      expect(readFileSync(join(e.dir, 'jobs', id, 'image-1.jpeg'))).toEqual(bytes);
+      expect(e.sup.logs(id, 'stdout')!.text).not.toContain(bytes.toString('base64'));
+      expect(e.sup.logs(id, 'stderr')!.text).not.toContain(bytes.toString('base64'));
+    });
+
+    it('uses default generation options and leaves missing usage unreported', async () => {
+      const m = await mock(() => ({ json: { data: [{ b64_json: Buffer.from('output').toString('base64') }] } }));
+      const e = env(m.url);
+      const id = submitOk(e.sup, { ...textReq('images'), activity: 'generate_images', cwd: e.root });
+      expect(await terminal(e.sup, e.store, id)).toMatchObject({ state: 'completed', usage: null });
+      expect(m.seen[0]!.body).toEqual({ model: 'x', prompt: 'say pong', n: 1, size: '1024x1024', quality: 'auto', output_format: 'png' });
+      expect(existsSync(join(e.dir, 'jobs', id, 'image-1.png'))).toBe(true);
+    });
+
+    it.each([{ data: [] }, { data: [{ url: 'https://x/image.png' }] }, { data: [{ b64_json: 'invalid image data' }] }])('refuses a response without valid base64 images: $data', async ({ data }) => {
+      const m = await mock(() => ({ json: { data } })), e = env(m.url);
+      const id = submitOk(e.sup, { ...textReq('images'), activity: 'generate_images', cwd: e.root });
+      expect((await terminal(e.sup, e.store, id)).state).toBe('failed');
+      expect(e.sup.logs(id, 'stderr')!.text).toContain('no valid image data');
+      expect(existsSync(join(e.dir, 'jobs', id, 'image-1.png'))).toBe(false);
+    });
+
+    it('keeps image response data out of HTTP error logs', async () => {
+      const encoded = Buffer.from('private output bytes').toString('base64');
+      const m = await mock(() => ({ status: 400, json: { error: encoded } })), e = env(m.url);
+      const id = submitOk(e.sup, { ...textReq('images'), activity: 'generate_images', cwd: e.root });
+      expect((await terminal(e.sup, e.store, id)).state).toBe('failed');
+      expect(e.sup.logs(id, 'stderr')!.text).toContain('HTTP 400');
+      expect(e.sup.logs(id, 'stderr')!.text).not.toContain(encoded);
+    });
+
+    it('refuses image responses larger than 128 MiB', async () => {
+      const m = await mock(() => ({ json: {}, headers: { 'content-length': String(128 * 1024 * 1024 + 1) } })), e = env(m.url);
+      const id = submitOk(e.sup, { ...textReq('images'), activity: 'generate_images', cwd: e.root });
+      expect((await terminal(e.sup, e.store, id)).state).toBe('failed');
+      expect(e.sup.logs(id, 'stderr')!.text).toContain('response too large');
+    });
+
+    it('does not follow an image endpoint redirect', async () => {
+      const other = await mock(() => ({ json: {} }));
+      const m = await mock(() => ({ status: 307, json: {}, headers: { location: `${other.url}/images/generations` } })), e = env(m.url);
+      const id = submitOk(e.sup, { ...textReq('images'), activity: 'generate_images', cwd: e.root });
+      expect((await terminal(e.sup, e.store, id)).state).toBe('failed');
+      expect(e.sup.logs(id, 'stderr')!.text).toContain('redirected');
+      expect(other.seen).toHaveLength(0);
+    });
+  });
 
   it('calls an OpenAI-style endpoint with the key from the environment, and reports usage and cost', async () => {
     const m = await mock(() => ({ json: { choices: [{ message: { content: 'pong' } }], usage: { prompt_tokens: 100, completion_tokens: 3, prompt_tokens_details: { cached_tokens: 40 }, completion_tokens_details: { reasoning_tokens: 1 }, cost: 0.00012 } } }));
