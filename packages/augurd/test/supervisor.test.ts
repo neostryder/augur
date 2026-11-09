@@ -1,5 +1,5 @@
 import { copyFileSync, renameSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, utimesSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { JOBHOST, ROUTES, killEverything, makeEnv, processesWith, request, sleep, submitOk, terminal, until } from './harness.js';
@@ -69,6 +69,8 @@ describe('a job that finishes', () => {
     expect(request?.named).toBeUndefined();
     expect(request?.cwd).toBeTruthy();
     expect(existsSync(request!.cwd)).toBe(false);
+    // A job may not run inside the service data folder, so the prose scratch folder must sit outside it.
+    expect(relative(resolve(e.dir), resolve(request!.cwd)).startsWith('..')).toBe(true);
   });
 
   it('starts a due service batch only when proseAutoRun is enabled', async () => {

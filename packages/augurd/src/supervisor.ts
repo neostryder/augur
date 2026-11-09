@@ -1,6 +1,6 @@
 // Accepts jobs, applies the rules, launches one runner per job and keeps the store true to what the runners leave on disk.
 import { spawn, spawnSync } from 'node:child_process';
-import { hostname } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { appendFileSync, closeSync, cpSync, existsSync, mkdtempSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, readSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -206,7 +206,8 @@ export class Supervisor {
     }
   }
 
-  private proseScratch(): string { const p = join(this.d.dir, 'prose-scratch'); mkdirSync(p, { recursive: true }); return mkdtempSync(join(p, 'group-')); }
+  /** An empty working folder for one prose group. It sits outside the service data folder, because a job may not run inside it. */
+  private proseScratch(): string { const p = join(tmpdir(), 'augur-prose-scratch'); mkdirSync(p, { recursive: true }); return mkdtempSync(join(p, 'group-')); }
 
   attributeJob(id: string, peer: PeerInfo): void {
     const job = this.d.store.get(id);

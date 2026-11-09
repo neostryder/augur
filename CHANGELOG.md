@@ -25,6 +25,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Fixed
 
+- [Visible] [Platform] The prose queue no longer fails every item with "cwd may not be inside the service data folder." Each prose group now runs in an `augur-prose-scratch` folder under the operating system's temporary folder, which is deleted when the group finishes, and items that failed before can be requeued and run.
 - [Visible] [Platform] A route's parallel limit is now counted per provider and model id, so two routes whose policy labels name the same model share one limit instead of getting one each. A cap keyed by provider/id, such as caps."openai/gpt-x", now holds across every label for that model.
 
 ### Removed
