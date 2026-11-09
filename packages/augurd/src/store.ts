@@ -111,8 +111,9 @@ export class Store {
     const r = this.row(id); return r ? { runnerPid: r.runner_pid, childPid: r.child_pid, expectFile: r.expect_file, timeoutS: r.timeout_s, purged: r.purged === 1 } : null;
   }
 
-  list(filter: { state?: JobState; running?: boolean; finished?: boolean; root?: string; limit?: number } = {}): JobRecord[] {
+  list(filter: { since?: number; state?: JobState; running?: boolean; finished?: boolean; root?: string; limit?: number } = {}): JobRecord[] {
     const where: string[] = [], args: Array<string | number> = [];
+    if (filter.since !== undefined) { where.push('coalesce(started_at, created_at)>=?'); args.push(filter.since); }
     if (filter.state) { where.push('state=?'); args.push(filter.state); }
     if (filter.running) where.push("state in ('queued','needs_approval','running','cancel_requested')");
     if (filter.finished) where.push("state in ('completed','failed','artifact_validation_failed','cancelled','killed','lost')");

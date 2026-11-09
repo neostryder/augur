@@ -24,6 +24,8 @@ Claude API appears in Settings with a password field, a Test key button, a Read 
 
 Use Test key to check the Claude API key. Usage refresh does not test it. A Test key result lasts for the current session.
 
+OpenAI API appears in Settings and on the Usage page as a card that always shows Augur's own ledger of jobs run on `openai-api` routes: calls, input and output tokens, images, and an estimated cost for today, the last 7 days, and the month so far, with a per-model breakdown for the month. Costs come from a price table and are labeled estimated. A call whose model has no known price shows tokens but no cost. Image generation jobs are priced, and image edit jobs are not, because Augur does not record how their input splits between text and images. The ledger covers only jobs Augur ran and does not show your billing balance. For the balance, Settings has a Read OpenAI billing page switch and a platform.openai.com sign-in (site openai). With the switch on and a signed-in session, usage refresh reads the billing page in a window of its own, at most every 30 minutes, and shows prepaid credit, promotional credit with its end date, and the spend so far this month. If a Cloudflare check appears, the card tells you to open the billing page from settings and pass it. With the switch off, the card uses only the local ledger and usage refresh stays offline.
+
 On Anthropic-style routes, a prompt may hold one `<!-- augur:cache-break -->` line, and the text above it becomes a cached system block while the text below it plus any attachments becomes the user message. A prompt with no line, or with the line at the very end, is sent as one user message. Only Anthropic-style routes act on the line, and the route option `cacheTtl` accepts `5m` (default) or `1h` and is rejected on an OpenAI-style route. Cached reads cost a small fraction of the input price, and writes cost 1.25 times the input price with `5m` or 2 times with `1h`. On Opus 5.5, Sonnet 5.5, and Haiku 5.5, nothing is cached unless the text above the line reaches 512 tokens, and usage reports list cache reads and cache writes separately.
 
 ## Where the settings live
@@ -495,6 +497,19 @@ The `claude-exec` adapter runs `claude -p` with tools, while `anthropic-api` rem
 With no route or service setting, this adapter trims profile context through `--bare`. Set `ambient: trim` on the route to trim it even when the service keeps context. `ambient: keep` loads the service account's profile instructions, hooks, plugins, and settings on every turn, increasing billed input. Read jobs use Read, Grep, and Glob; `allowWeb: true` also enables WebSearch and WebFetch. The none tier disables built-in tools. A toolkit can add its named MCP servers to either tier.
 
 A named conversation uses a UUID for its first session and resumes it on later jobs. A job without a named conversation disables transcript persistence. JSON schemas remain instructions in the prompt.
+
+### Images from OpenAI
+
+To make images, send jobs to an `openai-api` route whose Request type is `images`. A `generate_images` job takes a prompt and no attachments. An `image_to_image` job takes a prompt plus one or more image attachments and goes to the edits endpoint. Augur saves each returned image in the job's folder as image-1.png, image-2.png, and so on. The answer is one JSON object naming the files, the model, and the revised prompt when the API returns one. The answer never contains image data.
+
+The route has these options:
+
+- Image size: auto or WIDTHxHEIGHT. The default is 1024x1024.
+- Image quality: low, medium, high, xhigh, max, or auto. Only the newest image models accept xhigh and max. The default is auto.
+- Image count: 1 to 4. The default is 1.
+- Image format: png, jpeg, or webp. The default is png.
+
+The default timeout is 300 seconds, and Augur accepts responses up to 128 MiB. Use the example route openai-image-fast on gpt-image-2.6-flare for quick, cheap drafts. Use openai-image-quality on gpt-image-2.6-sunburst for detailed work and precise edits.
 
 ### Video from fal
 

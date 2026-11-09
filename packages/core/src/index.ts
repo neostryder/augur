@@ -1,4 +1,5 @@
 export * from './types.js';
+export * from './openai-usage.js';
 export * from './shell.js';
 export * from './generic.js';
 export * from './engine.js';

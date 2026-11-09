@@ -1,6 +1,7 @@
 // What the usage page says about each provider and meter, apart from how it is drawn.
 import type { AppConfig, HistoryRow, Meter, ProviderSnapshot, Snapshot } from '@augur/core';
 import { money, pace, when } from './format.js';
+import { OPENAI_USAGE_TEXT as OPENAI_TEXT, type UsageTotal } from '@augur/core';
 
 /** A meter with a window and a percentage, as opposed to a credit count. */
 export const windowed = (m: Meter): boolean => m.windowKind !== 'credits' && m.usedPct != null;
@@ -66,6 +67,26 @@ export function notesParts(p: ProviderSnapshot): string[] {
   if (typeof n.creditExpiresAt === 'string' && typeof n.creditExpiring === 'number') {
     const cur = typeof n.creditCurrency === 'string' ? n.creditCurrency : 'USD';
     out.push(`${n.creditExpiring.toLocaleString([], { style: 'currency', currency: cur })} of promotional credit ends ${new Date(n.creditExpiresAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}`);
+  }
+  if (n.openaiSignIn) out.push(OPENAI_TEXT.signInNote);
+  if (n.openaiChallenge) out.push(OPENAI_TEXT.challengeNote);
+  if (n.openaiImagePricingUnknown) out.push(OPENAI_TEXT.imagePricing);
+  if (n.openaiBillingMissing) out.push(OPENAI_TEXT.missingNote);
+  if (n.openaiLedgerUnavailable) out.push(OPENAI_TEXT.unavailableNote);
+  if (p.id === 'codex' && typeof n.chatgptJobsWeek === 'number') out.push(OPENAI_TEXT.chatgpt(n.chatgptJobsWeek));
+  if (n.openaiLedger) {
+    const { periods, models } = n.openaiLedger as { periods: Record<string, UsageTotal>; models: Record<string, UsageTotal> };
+    for (const [key, label] of Object.entries(OPENAI_TEXT.periods)) {
+      const total = periods[key];
+      if (total) out.push(OPENAI_TEXT.counts(label, total.calls, total.inputTokens, total.outputTokens, total.images));
+    }
+    for (const [model, total] of Object.entries(models)) out.push(OPENAI_TEXT.model(model,
+      OPENAI_TEXT.counts('', total.calls, total.inputTokens, total.outputTokens, total.images), total.costUsd === null ? '' : OPENAI_TEXT.cost(total.costUsd)));
+    const total = periods.month;
+    if (total && total.costCalls < total.calls) out.push(OPENAI_TEXT.unpriced(total.calls - total.costCalls));
+  }
+  if (Array.isArray(n.openaiPromos)) for (const promo of n.openaiPromos) {
+    if (typeof promo.amount === 'number' && typeof promo.detail === 'string') out.push(`${OPENAI_TEXT.promo}: ${money(promo.amount)}; ${promo.detail}`);
   }
   if (n.consoleSignIn) out.push('Claude API credit is not read yet. Sign in to the Claude Console in settings.');
   if (n.consoleChallenge) out.push('The Claude Console is showing a Cloudflare check. Open it from settings and pass it so your credit can be read.');
