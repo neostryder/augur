@@ -212,11 +212,11 @@ describe('a named conversation', () => {
     expect(e.store.get(id)!.retriedAs).toBeUndefined();
   });
 
-  it('gives grok a session id up front and drops it when the first turn fails', async () => {
+  it.each(['grok-exec', 'claude-exec'])('gives %s a session id up front and drops it when the first turn fails', async adapter => {
     report = null;
-    const e = open('grok-exec');
+    const e = open(adapter);
     report = null;
-    e.writeRoutes({ g: { model: 'test/fake', adapter: 'grok-exec', options: {} } });
+    e.writeRoutes({ g: { model: 'test/fake', adapter, options: {} } });
     const id = submitOk(e.sup, request({ route: 'g', text: 'ok', cwd: e.root, conversation: 'g1' }));
     const uuid = e.store.conversation('g1')!.nativeId;
     expect(uuid).toMatch(UUID);

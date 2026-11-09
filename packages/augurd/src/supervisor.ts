@@ -977,7 +977,7 @@ export class Supervisor {
       return { rejected: { code: 'bad_request', reason: `Conversation ${name} was opened with the ${existing.tools} tool tier. A resumed Codex session keeps that tier, because resume cannot set the sandbox again.` } };
     }
     let nativeId: string | null = fresh ? null : existing?.nativeId ?? null;
-    if (fresh && adapter.id === 'grok-exec') nativeId = randomUUID();
+    if (fresh && (adapter.id === 'grok-exec' || adapter.id === 'claude-exec')) nativeId = randomUUID();
     if (!fresh && !nativeId) return { rejected: { code: 'bad_request', reason: `Conversation ${name} has no session id to resume.` } };
     return { resume: { id: nativeId, fresh, name }, turn: turns + 1, nativeId, fresh, existing: !!existing };
   }

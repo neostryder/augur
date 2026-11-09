@@ -18,6 +18,7 @@ mkdirSync(out, { recursive: true });
 const entries = {
   augurd: join(root, 'packages/augurd/src/main.ts'),
   runner: join(root, 'packages/augurd/src/runner.ts'),
+  'claude-call': join(root, 'packages/augurd/src/adapters/claude-call.ts'),
   'api-call': join(root, 'packages/augurd/src/adapters/api-call.ts'),
   'fal-call': join(root, 'packages/augurd/src/adapters/fal-call.ts'),
   'chat-call': join(root, 'packages/augurd/src/chat/call.ts'),

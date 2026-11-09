@@ -98,11 +98,11 @@ function checkOption(spec: OptionSpec, value: string): string | null {
   return null;
 }
 
-function storedOptions(d: RouteDraft): Record<string, string | number> {
-  const out: Record<string, string | number> = {};
+function storedOptions(d: RouteDraft): Record<string, string | number | boolean> {
+  const out: Record<string, string | number | boolean> = {};
   for (const spec of adapterInfo(d.adapter)?.options ?? []) {
     const v = (d.options[spec.key] ?? '').trim();
-    if (v) out[spec.key] = spec.kind === 'number' ? Number(v) : v;
+    if (v) out[spec.key] = spec.kind === 'number' ? Number(v) : spec.kind === 'choice' && spec.choices?.join(',') === 'false,true' ? v === 'true' : v;
   }
   return out;
 }

@@ -86,7 +86,7 @@ The stall time (`stallMinutes`, 10 minutes by default, minimum 1) sets how long 
 
 ### Job slots
 
-The service runs at most `maxConcurrent` jobs at once across every route ("Jobs at once", 8 by default), and the rest wait in the queue in the order they were created. Long jobs such as Codex write_code runs or deep research chats can take 25 to 30 minutes each, so `quickSlots` ("Slots kept for quick jobs", default 2, from 0 to 63) holds that many slots back from them for API jobs that finish in seconds. Only routes on the `anthropic-api` and `openai-api` adapters, such as `claude-api-opus`, call a provider's API directly and count as quick, while jobs on `codex-exec`, `web-chat`, `copilot-exec`, `grok-exec`, `hermes-exec`, `mcode-exec`, or any other command count as long. Quick jobs may use any free slot and long jobs always keep at least one, so the defaults allow at most 6 long jobs at once, still subject to each route's parallel limit under the balance caps. Set the value in the app's Service settings or with `augur config set quickSlots <n>`, use 0 to turn the reservation off, and restart the service to apply it.
+The service runs at most `maxConcurrent` jobs at once across every route ("Jobs at once", 8 by default), and the rest wait in the queue in the order they were created. Long jobs such as Codex write_code runs or deep research chats can take 25 to 30 minutes each, so `quickSlots` ("Slots kept for quick jobs", default 2, from 0 to 63) holds that many slots back from them for API jobs that finish in seconds. Only routes on the `anthropic-api` and `openai-api` adapters, such as `claude-api-opus`, call a provider's API directly and count as quick, while jobs on `codex-exec`, `web-chat`, `copilot-exec`, `grok-exec`, `claude-exec`, `hermes-exec`, `mcode-exec`, or any other command count as long. Quick jobs may use any free slot and long jobs always keep at least one, so the defaults allow at most 6 long jobs at once, still subject to each route's parallel limit under the balance caps. Set the value in the app's Service settings or with `augur config set quickSlots <n>`, use 0 to turn the reservation off, and restart the service to apply it.
 
 ### Keeping prompts
 
@@ -249,7 +249,7 @@ A role without `callerChooses` draws its pick by the odds, as any pick does. A r
 
 ### Jobs with no tools
 
-The `none` tool tier runs a job with no tools, as in `augur run <route> --tools none`. A model whose rule allows text only accepts `none` the same way it accepts `read`. The job needs an adapter that holds jobs to reading by itself. `openai-api`, `anthropic-api`, `fal-api` and `grok-exec` accept it (`grok-exec` denies every tool for the job), while `codex-exec`, `copilot-exec`, `hermes-exec`, `mcode-exec` and `exec` refuse it with `read_not_enforceable`. The `augur_run` tool does not offer `none`.
+The `none` tool tier runs a job with no tools, as in `augur run <route> --tools none`. A model whose rule allows text only accepts `none` the same way it accepts `read`. The job needs an adapter that holds jobs to reading by itself. `openai-api`, `anthropic-api`, `fal-api`, `claude-exec`, and `grok-exec` accept it (`claude-exec` disables built-in tools, and `grok-exec` denies every tool for the job), while `codex-exec`, `copilot-exec`, `hermes-exec`, `mcode-exec` and `exec` refuse it with `read_not_enforceable`. The `augur_run` tool does not offer `none`.
 
 ## Adding a provider
 
@@ -356,6 +356,25 @@ Runs the Copilot CLI in prompt mode with all tools allowed, so a read-only job i
 | `effort` | text | Passed to the harness as its effort setting. Leave empty for its default. |
 | `envAllow` | text | Names of environment variables the harness may read, separated by commas. Nothing else from the service is passed on. |
 | `ambient` | keep, trim | Whether the harness loads its own extra instructions, tools and plugins on this route. trim turns them off, keep leaves them on, and Default follows the service's Harness context setting. |
+
+#### `claude-exec`: Claude Code on the API key
+
+Runs Claude Code with an Anthropic API key. Read jobs restrict built-in tools to Read, Grep, and Glob. Write and full jobs approve every tool.
+
+| Option | Value | What it does |
+| --- | --- | --- |
+| `model` (required) | text | The Anthropic model id. |
+| `effort` | low, medium, high, xhigh, max | The request effort overrides this route setting. Leave empty for the harness default. |
+| `command` | text | Full path to the harness, for when it is not on the search path. |
+| `maxTurns` | number | A whole number from 1 to 500. Defaults to 40 and is always passed to the harness. |
+| `maxBudgetUsd` | number | A number above 0 and at most 50. Defaults to 2 and is always passed to the harness. |
+| `keySource` | store, env | store, the default, reads the route key and falls back to the Anthropic provider key saved in Settings. env reads the variable named by apiKeyEnv. |
+| `apiKeyEnv` | text | The environment variable name, required when keySource is env. The value must be an Anthropic API key starting with sk-ant-. |
+| `ambient` | keep, trim | The route overrides the service setting. With neither set, trim adds --bare. keep loads profile instructions, hooks, plugins, and settings on every turn. |
+| `allowWeb` | false, true | A boolean, false by default. true adds WebSearch and WebFetch to read jobs. A none job still has no built-in tools. |
+| `envAllow` | text | Extra environment variable names, separated by commas. ANTHROPIC_ and CLAUDE_CODE_ names are refused; the wrapper controls Anthropic authentication. |
+
+With no route or service setting, ambient defaults to trim. Trim adds --bare, which skips hooks, plugins, auto-memory, keychain reads, and CLAUDE.md discovery. keep loads profile context and bills it on each turn. Every job sets maxTurns and maxBudgetUsd, defaulting to 40 turns and 2 dollars. The wrapper reads the key from the key store, so the stored key never reaches the service or a job file. An environment source is also available.
 
 #### `grok-exec`: Grok CLI
 
@@ -465,6 +484,14 @@ Runs any command the route names, with no checks on what it does. It is off unle
 
 <!-- adapter-reference:end -->
 
+#### Running Claude Code on the API key
+
+The `claude-exec` adapter runs `claude -p` with tools, while `anthropic-api` remains a text-only HTTP route. Set `model` and save an Anthropic API key for the route, or use the provider key saved in Settings. Every job passes a turn count and dollar cap. A job that reaches either cap fails without holding the route for a spent provider allowance.
+
+With no route or service setting, this adapter trims profile context through `--bare`. Set `ambient: trim` on the route to trim it even when the service keeps context. `ambient: keep` loads the service account's profile instructions, hooks, plugins, and settings on every turn, increasing billed input. Read jobs use Read, Grep, and Glob; `allowWeb: true` also enables WebSearch and WebFetch. The none tier disables built-in tools. A toolkit can add its named MCP servers to either tier.
+
+A named conversation uses a UUID for its first session and resumes it on later jobs. A job without a named conversation disables transcript persistence. JSON schemas remain instructions in the prompt.
+
 ### Video from fal
 
 To make a video, send a `generate_video` job to a `fal-api` route with a description of the video as the prompt. The prompt goes to fal as written, with no charter in front of it. An attached image becomes the first frame and a second image the last frame, and one audio file can go along as the target audio. Text files are refused.
@@ -497,7 +524,7 @@ charter/
   charter.json       optional rules that add packs on their own
 ```
 
-The engine files are named `codex`, `copilot`, `grok` and `mcode`. The API adapters and `exec` get `core.md` and the packs with no engine file, and Hermes gets no charter at all, since it keeps its own persona. Any of the files can be left out.
+The engine files are named `codex`, `copilot`, `grok`, `claude`, and `mcode`. The API adapters and `exec` get `core.md` and the packs with no engine file, and Hermes gets no charter at all, since it keeps its own persona. Any of the files can be left out.
 
 A caller adds packs with `augur run --pack code,review` or the `packs` argument of `augur_run`, and `--no-charter` or `no_charter` sends the prompt alone. `charter.json` adds packs by rule:
 
@@ -537,11 +564,12 @@ Each adapter carries the servers its own way:
 | Adapter | How the job gets the servers |
 | --- | --- |
 | `codex-exec` | Added for that job through `-c mcp_servers.<name>...` overrides, with `denyTools` passed as `disabled_tools`. |
+| `claude-exec` | Added for that job through `--mcp-config` and `--strict-mcp-config`. Denied tools use `--disallowedTools`; read and none jobs allow the named MCP servers through `--allowedTools`. |
 | `copilot-exec` | Added for that job through `--additional-mcp-config`, with one `--deny-tool` for each denied tool. |
 | `grok-exec` | The Grok CLI has no per-run option for servers, so register each server once with `grok mcp add`. Every Grok job still passes the denied tools with `--deny`. |
 | Any other | The API adapters, `exec`, Hermes, and `mcode-exec` cannot carry the servers. |
 
-On Codex and Copilot the servers load for no other job. A job on a route that cannot carry its toolkit runs without the tools and records the warning "Route <route> cannot carry the tools for <activity>, so the job runs without them." The pack still goes to any adapter that gets a charter.
+On Codex, Copilot, and Claude Code the servers load for no other job. A job on a route that cannot carry its toolkit runs without the tools and records the warning "Route <route> cannot carry the tools for <activity>, so the job runs without them." The pack still goes to any adapter that gets a charter.
 
 To use the example, point `args` at your own server, put the instructions in `packs/reverse-engineering.md`, and register the server with `grok mcp add` if Grok routes take reverse-engineering work. The denied tool is an example of a tool that runs the target program, which a job can be kept from using. Removing a name from `denyTools` lets jobs use that tool.
 
