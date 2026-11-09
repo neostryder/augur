@@ -1,6 +1,6 @@
 import { randomUUID, createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
-import { JOB_STATES, LEDGER_STATES, ORIGIN_KINDS, ledgerId, ledgerTerminal, summaryLine, validCursor, validLedgerGap, validLedgerJob, validNodeJobPage } from '@augur/dispatch-protocol';
+import { JOB_STATES, LEDGER_STATES, ORIGIN_KINDS, failureLine, ledgerId, ledgerTerminal, summaryLine, validCursor, validLedgerGap, validLedgerJob, validNodeJobPage } from '@augur/dispatch-protocol';
 import type { JobRecord, LedgerAlert, LedgerAlertSettings, LedgerChain, LedgerChange, LedgerGap, LedgerJob, LedgerMetadata, LedgerNode, LedgerPage, LedgerQuery, LedgerState, LedgerWatchPage, NodeJobPage } from '@augur/dispatch-protocol';
 
 export interface AlertSink { emit(event: LedgerAlert): void | Promise<void> }
@@ -74,6 +74,7 @@ export class JobLedger {
       replayOf: job.replayOf ? ledgerId(this.node, job.replayOf) : null,
       retryOf: job.retryOf ? ledgerId(this.node, job.retryOf) : null, retriedAs: job.retriedAs ? ledgerId(this.node, job.retriedAs) : null,
       usage: job.usage, exitReason: ledgerTerminal(state) ? job.state : null, compacted: meta.compacted,
+      ...(state === 'failed' && job.reason ? { failureReason: failureLine(job.reason) } : {}),
     };
   }
 

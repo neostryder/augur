@@ -4,7 +4,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { JOBHOST, ROUTES, killEverything, makeEnv, processesWith, request, sleep, submitOk, terminal, until } from './harness.js';
 import type { Env } from './harness.js';
-import { REJECTION_CATEGORIES, systemdScopes } from '../src/supervisor.js';
+import { COPY_MAX_FILES, REJECTION_CATEGORIES, systemdScopes } from '../src/supervisor.js';
 import { genericExec } from '../src/adapters/exec.js';
 import { QUICK_ADAPTERS } from '../src/slots.js';
 import { REJECTION_CODES, type Adapter } from '@augur/dispatch-protocol';
@@ -17,6 +17,26 @@ const kinds = (e: Env, id: string) => e.store.events(id).map(x => x.kind);
 
 it('classifies every rejection code as exactly one backlog result category', () => {
   for (const code of REJECTION_CODES) expect(Number(REJECTION_CATEGORIES.transient.includes(code as never)) + Number(REJECTION_CATEGORIES.permanent.includes(code as never))).toBe(1);
+});
+
+describe('sandboxed submission', () => {
+  it('rejects a cwd over the file cap before creating a job', () => {
+    const adapter: Adapter = { ...genericExec, id: 'isolated',
+      capabilities: { ...genericExec.capabilities, sandboxed: true, isolatesWorkspace: true },
+      isolation: { root: () => join(e.root, 'sandbox') } };
+    const e = setup({ adapters: ['isolated'], jobhostPath: process.execPath }, undefined, { extra: [adapter] });
+    e.writeRoutes({ copy: { ...ROUTES.raw, model: 'test/copy', adapter: 'isolated' } });
+    const cwd = join(e.root, 'project'); mkdirSync(cwd);
+    for (let i = 0; i <= COPY_MAX_FILES; i++) writeFileSync(join(cwd, `f${i}.txt`), '');
+    const plan = vi.spyOn(adapter, 'plan');
+    expect(e.sup.submit(request({ route: 'copy', output: 'patch_only', cwd }))).toMatchObject({ rejected: {
+      code: 'bad_request', reason: expect.stringContaining('pass a smaller cwd with only what the job needs'),
+    } });
+    expect(plan).not.toHaveBeenCalled();
+    expect(e.store.list()).toEqual([]);
+    expect(readdirSync(join(e.dir, 'jobs'))).toEqual([]);
+    expect(existsSync(join(e.root, 'sandbox'))).toBe(false);
+  });
 });
 
 describe('per-call options', () => {

@@ -38,6 +38,18 @@ function insert(store: Store, id = 'local') {
 }
 
 describe('the durable ledger', () => {
+  it('exposes the stored failure reason as one line capped at 300 characters', () => {
+    const { store, ledger } = fixture(); insert(store);
+    const reason = 'copying the working directory failed: permission denied';
+    store.transition('local', 'failed', { reason: reason + '\n' + 'x'.repeat(400) }, 12);
+    const failureReason = (reason + ' ' + 'x'.repeat(400)).slice(0, 300);
+    expect(ledger.get('local')?.job).toMatchObject({ state: 'failed', exitReason: 'failed', failureReason, startedAt: null });
+    expect(ledger.list().jobs[0]?.failureReason).toBe(failureReason);
+    expect(ledger.changes().changes.at(-1)?.job.failureReason).toBe(failureReason);
+    insert(store, 'without-reason'); store.transition('without-reason', 'failed', {}, 12);
+    expect(ledger.get('without-reason')?.job).not.toHaveProperty('failureReason');
+  });
+
   it('migrates and persists node gaps and stale job overlays across a restart', () => {
     const { dir, store, ledger } = fixture();
     ledger.ingest('eru', page([job()]));
