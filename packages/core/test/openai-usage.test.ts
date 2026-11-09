@@ -99,4 +99,13 @@ describe('OpenAI local usage', () => {
       expect(result.notes).toMatchObject({ openaiBillingMissing: true });
     }
   });
+
+  it('flags a signed-in account without the billing permission and keeps the ledger', async () => {
+    const host = { now: () => now, jobUsage: async () => [job(8)],
+      webSession: async () => ({ signedIn: true, forbidden: true, account: { balance: null, spend: null, promos: [] } }) } as unknown as Host;
+    const result = await openaiApi.fetch(host, { web: true });
+    expect(result.meters).toEqual([]);
+    expect(result.notes).toMatchObject({ openaiBillingForbidden: true, openaiBillingMissing: false, webSessions: { openai: true } });
+    expect(result.notes?.openaiLedger).toBeDefined();
+  });
 });
