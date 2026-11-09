@@ -26,10 +26,11 @@ describe('adapter info', () => {
 
   it('names the missing option when a required one is left out of an API or command route', () => {
     const sample: Record<string, string> = { baseUrl: 'https://api.example.com/v1', model: 'm', apiKeyEnv: 'KEY', command: 'cmd.exe' };
-    for (const id of ['openai-api', 'anthropic-api', 'exec']) {
+    for (const id of ['openai-api', 'anthropic-api', 'claude-exec', 'exec']) {
       const adapter = ALL_ADAPTERS.find(a => a.id === id)!;
       const required = adapterInfo(id)!.options.filter(o => o.required).map(o => o.key);
       const full = Object.fromEntries(required.map(k => [k, sample[k]!]));
+      if (id === 'claude-exec') full.command = process.execPath;
       expect(adapter.validate(route(id, full))).toBeNull();
       for (const key of required) {
         const { [key]: _left, ...rest } = full;

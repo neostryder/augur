@@ -1,5 +1,5 @@
 // Opt-in runs against the real harnesses, each on a cheap model with a one-word task.
-// Real harness calls cost money, so AUGUR_CONFORMANCE must opt in to hermes, copilot, grok, mcode-host or api.
+// Real harness calls cost money, so AUGUR_CONFORMANCE must opt in to hermes, copilot, grok, claude, mcode-host, or api.
 import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -19,6 +19,7 @@ interface Case { name: string; adapter: string; model: string; options: Record<s
 const CASES: Case[] = [
   { name: 'hermes', adapter: 'hermes-exec', model: 'test/fake', options: { model: 'gpt-6-luna', command: join(local, 'hermes/bin/hermes.exe') } },
   { name: 'copilot', adapter: 'copilot-exec', model: 'test/fake', options: { model: 'gpt-6-luna' } },
+  { name: 'claude', adapter: 'claude-exec', model: 'test/fake', options: { model: 'claude-haiku-5-5', ambient: 'trim' } },
   { name: 'grok', adapter: 'grok-exec', model: 'test/fake', options: { model: 'grok-4.7-fast' } },
   { name: 'mcode-host', adapter: 'mcode-exec', model: 'test/fake', options: { maxSteps: 3 } },
   { name: 'api', adapter: 'openai-api', model: 'test/text', options: { baseUrl: 'https://openrouter.ai/api/v1', model: 'deepseek/deepseek-v4.1-flash', apiKeyEnv: 'OPENROUTER_API_KEY', maxTokens: 64 } },

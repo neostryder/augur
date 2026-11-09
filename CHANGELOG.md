@@ -6,6 +6,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Added
 
+- [Visible] [Providers] The new `claude-exec` adapter runs Claude Code (`claude -p`) on an Anthropic API key, so a route can give a Claude model tools and bill the API key instead of a subscription. Read jobs get Read, Grep, and Glob only. Write and full jobs approve every tool, and the none tier disables built-in tools. A small wrapper reads the stored key when the job starts, so the key never reaches the service or a job file. Every job passes a turn cap (default 40, range 1 to 500) and a dollar cap (default $2, up to $50). A job that hits either cap fails and does not hold the route as a spent allowance. Profile context is trimmed with `--bare` unless the route's `ambient` is `keep`. Named conversations resume with a session id. The configuration reference lists the route options.
 - [Visible] [Platform] Added the "Slots kept for quick jobs" setting (`quickSlots`, default 2) to hold job slots back from long jobs such as Codex runs and web chats, so quick API jobs no longer wait up to 30 minutes behind them. Set it to 0 to turn the reservation off.
 - [Visible] [UI] The `augur-jobs` pane draws each job as a card with colored `ORIGIN:`, `JOB:`, and `ACTIVITY:` or `RESULT:` lines, starts on this session's jobs with `f` to switch to every session, lists the last 30 ended jobs in a collapsed CLOSED section that `c` opens, and opens by itself only for this session's live jobs.
 - [Visible] [UI] Live cards in the augur-jobs pane have a Cancel job button that needs a second press and writes to `cancel-requests.jsonl`, which augurd reads to cancel the job, and the pane has an Open Augur button (hotkey `a`) that starts the app.
@@ -14,6 +15,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Changed
 
+- [Visible] [Providers] The Routes form saves the Allow web tools choice as true or false, so `allowWeb` on a `claude-exec` route saves as a boolean.
 - [Visible] [Platform] With `runner.failover` on, a route whose job fails because the provider reports a spent allowance (rate, usage, or credit limits, quota, too many requests, resource exhausted) is now held for 24 hours: new jobs go straight to the first fallback that is not held, its waiting and running jobs with tools `read` or `none` move there too, and holds persist across restarts in `route-limits.json`.
 - [Visible] [Platform] A model a person asked for now runs without Augur re-checking the claim, because `verifyNamed` defaults to `off` (it was `enforce`); set it to `enforce` to keep the check. Premium models are still refused for automated callers.
 - [Visible] [Docs] The configuration reference now lists the `provider` route option of `hermes-exec` and explains that the DeepInfra host pin for the deepseek, glm, and mimo models lives in Hermes's own `provider_routing` settings and applies to read jobs only when `readMode` is set to `keep`. SECURITY.md and the engine-file list no longer mention OpenCode or sandboxed harnesses.

@@ -86,6 +86,18 @@ describe('writing a route back', () => {
     expect(out.routes.luna).toMatchObject({ extra: 1, options: { effort: 'low' }, notes: 'fast' });
   });
 
+  it('stores Claude web access choices as booleans', () => {
+    for (const allowWeb of ['false', 'true']) {
+      const d = { ...emptyDraft(), name: 'claude', model: 'test/claude', adapter: 'claude-exec', options: { model: 'fixture', allowWeb } };
+      expect(checkDraft(d, [], true)).toBeNull();
+      const out = JSON.parse(writeRoute(file(), 'claude', d));
+      expect(out.routes.claude.options.allowWeb).toBe(allowWeb === 'true');
+      const parsed = parseRoutesText(JSON.stringify(out));
+      if (!parsed.ok) throw new Error('fixture');
+      expect(draftOf(parsed.file.routes.find(r => r.name === 'claude')!).options.allowWeb).toBe(allowWeb);
+    }
+  });
+
   it('stores numbers as numbers, drops empty options, and can remove a route', () => {
     const f = file();
     const grok = { ...emptyDraft(), name: 'grok', model: 'xai/grok', adapter: 'grok-exec', options: { model: 'grok-4.7', maxTurns: '80', effort: '' }, delegation: true };
