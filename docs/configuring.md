@@ -509,7 +509,7 @@ The route has these options:
 - Image count: 1 to 4. The default is 1.
 - Image format: png, jpeg, or webp. The default is png.
 
-The default timeout is 300 seconds, and Augur accepts responses up to 128 MiB. Use the example route openai-image-fast on gpt-image-2.6-flare for quick, cheap drafts. Use openai-image-quality on gpt-image-2.6-sunburst for detailed work and precise edits.
+The default timeout is 300 seconds, and Augur accepts responses up to 128 MiB. Use the example route openai-image-fast on gpt-image-2.6-flare for quick, cheap drafts. Use openai-image-quality on gpt-image-2.6-sunburst for detailed work and precise edits. You can leave the Model option empty on the two example routes, and Augur then uses the model that matches the route's label. A Model you set always wins, and any other route or request type still needs a Model and shows "route option model is required" without one.
 
 ### Video from fal
 

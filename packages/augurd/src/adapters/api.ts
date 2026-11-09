@@ -41,7 +41,12 @@ export function cogitatorHeaders(request: JobRequest): Record<string, string> {
 }
 
 const MODES = ['chat', 'embeddings', 'transcribe', 'moderation', 'images'];
+const IMAGE_MODELS = new Map([['openai-api/image-fast', 'gpt-image-2.6-flare'], ['openai-api/image-quality', 'gpt-image-2.6-sunburst']]);
 const KINDS: Record<string, AttachmentKind[]> = { chat: ['text', 'image'], embeddings: ['text'], transcribe: ['audio'], moderation: ['text', 'image'], images: ['image'] };
+
+function apiModel(route: RouteConfig): string | undefined {
+  return optStr(route.options, 'model') ?? (optStr(route.options, 'mode') === 'images' ? IMAGE_MODELS.get(route.model) : undefined);
+}
 
 /** The gateway's `x-cogitator-*` headers as the fields a job record keeps. */
 export function servedOf(h: Record<string, string>): Served {
@@ -57,7 +62,7 @@ function make(id: string, shape: 'openai' | 'anthropic'): Adapter {
       if (!optStr(route.options, 'baseUrl')) return 'route option baseUrl is required';
       const base = optStr(route.options, 'baseUrl') as string;
       if (!keyMayGoTo(base)) return 'baseUrl must start with https://, or with http:// for this computer or a machine on the home network only, since the key is sent with every request';
-      if (!optStr(route.options, 'model')) return 'route option model is required';
+      if (!apiModel(route)) return 'route option model is required';
       const source = optStr(route.options, 'keySource') ?? 'env';
       if (source !== 'env' && source !== 'store') return 'keySource must be env or store';
       if (source === 'env' && !optStr(route.options, 'apiKeyEnv')) return 'route option apiKeyEnv (the environment variable that holds the key) is required';
@@ -98,7 +103,7 @@ function make(id: string, shape: 'openai' | 'anthropic'): Adapter {
       const baseUrl = optStr(route.options, 'baseUrl');
       if (!baseUrl || !keyMayGoTo(baseUrl)) throw new Error(`Route ${request.route} has a missing or invalid baseUrl option. Set baseUrl to a valid URL in the route's options.`);
       const o = route.options, headers = { ...(optStr(o, 'requestClass') === 'cogitator' ? cogitatorHeaders(request) : {}), ...JSON.parse(optStr(o, 'headersJson') ?? '{}') as Record<string, string> };
-      const args = [SCRIPT, '--shape', shape, '--url', optStr(o, 'baseUrl') as string, '--model', optStr(o, 'model') as string,
+      const args = [SCRIPT, '--shape', shape, '--url', optStr(o, 'baseUrl') as string, '--model', apiModel(route) as string,
         ...(optStr(o, 'keySource') === 'store'
           ? ['--key-name', routeSecretName(request.route), '--key-file', keyFilePath(), ...(keyFileOnly() ? ['--key-file-only'] : [])]
           : ['--key-env', optStr(o, 'apiKeyEnv') as string]),
