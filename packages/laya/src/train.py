@@ -8,7 +8,8 @@
                           [--sigma-start 0.4] [--sigma-end 0.1] [--legacy-temp] [--label-tag]
     python train.py eval  --data data/<file>.jsonl [--adapter <name>|base|live] [--max-len N]
     python train.py status
-    python train.py promote <adapter> --pilot <pilot> [--force]
+    python train.py promote <adapter> --pilot <pilot> [--force] [--margin 0.03] [--brier-tol 0.01] [--ece-tol 0.03]
+                            [--min-n 300] [--require-n N]
     python train.py rollback --pilot <pilot>
     python train.py set --pilot <pilot> [--max-len N] [--adapter <name>|none]
     python train.py set --hard-max-len N          # server-wide cap on any pilot's max_len (default 4096)
@@ -40,9 +41,16 @@ logits, or cross-entropy at ln K) warns on stderr and lands in the manifest with
 --label-tag trains a positive control (each state spells its answers; the name must end in -ctrl, and it is never
 promoted): if it learns while the real run does not, the task is hard and the run is fine.
 
-An adapter is promoted only when it beats the pilot's live adapter (or the base model) on that
-pilot's human test rows: higher exact accuracy, ties broken by lower negative log-likelihood.
---force skips the comparison. Every promotion and rollback is appended to the registry history,
+An adapter is promoted only when it beats the pilot's live adapter on accuracy and calibration, measured on the
+same test rows. A question wins when exact accuracy rises by at least --margin (default 0.03), or stays level while
+Brier score falls by at least --brier-tol (default 0.01). A question loses when exact accuracy or NLL falls, Brier
+rises by more than --brier-tol, ECE rises by more than --ece-tol (default 0.03), or Brier on the newest half of the
+rows rises by more than twice --brier-tol. The newest-half check runs only when that half has 40 or more rows.
+Promotion needs at least one win and no loss. A question with fewer than --min-n (default 300) test rows is
+reported as underpowered, and --require-n N makes fewer than N rows a hold. The --force flag skips the comparison.
+The printed verdict and the adapter's manifest also record Brier score, risk-coverage area, reliability by
+confidence bin, recall and mean confidence by true option, and milliseconds per row. The comparison lives in
+packages/laya/src/gate.py, which has no torch dependency and is unit tested. Every promotion and rollback is appended to the registry history,
 and the serving wrapper reloads the registry on its next request, so no restart is needed.
 """
 
@@ -59,6 +67,7 @@ import torch
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import calib  # noqa: E402
+import gate  # noqa: E402
 import lora  # noqa: E402
 from ctxutil import load_base, load_english  # noqa: E402
 
@@ -232,41 +241,26 @@ def rlcd_loss(z, t, qtype, group=4, sigma=0.25, w_sph=0.75, w_rps=1.0):
 
 @torch.no_grad()
 def evaluate(agent, rows, max_len):
-    """Per pilot/question metrics on labelled test rows: exact, within-one (score), NLL, ECE."""
+    """Per pilot/question metrics on labelled test rows: exact, within-one (score), NLL, ECE, Brier, risk-coverage,
+    reliability bins, recall by class, the newest half of the rows on their own, and milliseconds per row (gate.py)."""
     agent.model.eval()
-    acc = {}
+    acc, ordered, spent = {}, {}, {}
     human_pilots = {r["pilot"] for r in rows if r.get("source") == "human"}
     for row in rows:
         src = row.get("source")
         if not (src == "human" or (src == "teacher_test" and row["pilot"] not in human_pilots)):
             continue
         for qname in row["labels"]:
+            key = f"{row['pilot']}/{qname}"
+            started = time.perf_counter()
             item, qtype, keys = encode(agent, row, qname, max_len)
             z = forward_logits(agent, item).float() / temperature(agent, qtype, len(keys))
             p = torch.softmax(z, -1).cpu().tolist()
             truth = keys.index(int(row["labels"][qname]) if qtype == "score" else row["labels"][qname])
-            top = max(range(len(p)), key=p.__getitem__)
-            a = acc.setdefault(f"{row['pilot']}/{qname}", {"n": 0, "exact": 0, "within1": 0, "nll": 0.0, "conf": [], "ok": []})
-            a["n"] += 1
-            a["exact"] += int(top == truth)
-            a["within1"] += int(abs(top - truth) <= 1) if qtype == "score" else int(top == truth)
-            a["nll"] -= math.log(max(p[truth], 1e-9))
-            a["conf"].append(p[top])
-            a["ok"].append(top == truth)
-    out = {}
-    for key, a in acc.items():
-        out[key] = {"n": a["n"], "exact": round(a["exact"] / a["n"], 3), "within1": round(a["within1"] / a["n"], 3),
-                    "nll": round(a["nll"] / a["n"], 4), "ece": round(_ece(a["conf"], a["ok"]), 3)}
-    return out
-
-
-def _ece(conf, ok, bins=10):
-    total = 0.0
-    for b in range(bins):
-        idx = [i for i, c in enumerate(conf) if b / bins <= c < (b + 1) / bins or (b == bins - 1 and c == 1.0)]
-        if idx:
-            total += len(idx) * abs(sum(ok[i] for i in idx) / len(idx) - sum(conf[i] for i in idx) / len(idx))
-    return total / max(1, len(conf))
+            acc.setdefault(key, []).append((p, truth))
+            ordered[key] = qtype == "score"
+            spent[key] = spent.get(key, 0.0) + time.perf_counter() - started
+    return {key: gate.summarize(records, ordered=ordered[key], seconds=spent[key]) for key, records in acc.items()}
 
 
 def activate(agent, name):
@@ -471,10 +465,6 @@ def cmd_status(_args):
     print(json.dumps({"registry": reg["pilots"], "adapters": adapters, "history": reg["history"][-10:]}, indent=1))
 
 
-def _score(m):
-    return (m["exact"], -m["nll"])
-
-
 def cmd_promote(args):
     name, pilot = args[0], _opt(args, "--pilot", None)
     if not pilot:
@@ -494,16 +484,16 @@ def cmd_promote(args):
         cand = evaluate(agent, rows, m["max_len"])
         activate(agent, cfg["adapter"])
         inc = evaluate(agent, rows, _adapter_max_len(cfg["adapter"]) or cfg["max_len"])
-        verdict = {}
-        for q in cand:
-            verdict[q] = {"candidate": cand[q], "incumbent": inc.get(q)}
-        margin = float(_opt(args, "--margin", "0.03"))
-        # A win must clear the incumbent by more than noise: at least `margin` in exact match on the same rows.
-        wins = [q for q in cand if inc.get(q) is None or (_score(cand[q]) > _score(inc[q]) and cand[q]["exact"] - inc[q]["exact"] >= margin)]
-        losses = [q for q in cand if inc.get(q) is not None and _score(cand[q]) < _score(inc[q])]
-        print(json.dumps({"incumbent": cfg["adapter"] or "base", "comparison": verdict}, indent=1))
-        if losses or not wins:
-            sys.exit(f"not promoted: {name} does not beat {cfg['adapter'] or 'base'} on {pilot}'s test rows")
+        verdict = gate.decide(cand, inc, margin=float(_opt(args, "--margin", "0.03")),
+                              brier_tol=float(_opt(args, "--brier-tol", "0.01")),
+                              ece_tol=float(_opt(args, "--ece-tol", "0.03")),
+                              min_n=int(_opt(args, "--min-n", "300")),
+                              require_n=int(_opt(args, "--require-n", "0")))
+        print(json.dumps({"incumbent": cfg["adapter"] or "base", "gate": verdict,
+                          "comparison": {q: {"candidate": cand[q], "incumbent": inc.get(q)} for q in cand}}, indent=1))
+        if not verdict["promote"]:
+            held = verdict["losses"] or "no question improved"
+            sys.exit(f"not promoted: {name} does not beat {cfg['adapter'] or 'base'} on {pilot}'s test rows ({held})")
     reg["history"].append({"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "pilot": pilot, "action": "promote",
                            "from": cfg["adapter"], "to": name, "forced": "--force" in args})
     cfg["adapter"] = name
