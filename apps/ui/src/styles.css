@@ -75,6 +75,7 @@ table.outlets tr + tr th, table.outlets tr + tr td { border-top: 1px solid var(-
 header.top { display: flex; align-items: center; gap: 8px; margin: 0 2px 12px; }
 header.top h1 { font: 600 calc(16px * var(--fs)) "Segoe UI Variable Display", "Segoe UI", -apple-system, sans-serif; margin: 0; }
 header.top .sub { color: var(--muted); font-size: calc(12px * var(--fs)); }
+header.top h1 .build { margin-left: 8px; font-weight: 400; font-size: calc(11px * var(--fs)); color: var(--muted); }
 .grow { flex: 1; }
 button.icon { width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--ink-2);
   display: grid; place-items: center; cursor: pointer; padding: 0; flex: none; }
