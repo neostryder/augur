@@ -147,7 +147,7 @@ export const register: Register = (on) => {
     const seg = (s: Seg, i: number, closed: boolean) => (
       <Text key={String(i)} color={s.color} backgroundColor={s.bg} bold={s.bold} italic={s.italic} underline={s.underline} dimColor={s.dim || (closed && !s.bg && !s.bold)}>{s.text}</Text>
     )
-    // A bordered card per job: the border takes the state's color, and each of the three lines has a label color of its own.
+    // The border and line labels keep state and job details visually distinct.
     // A live card ends with a Cancel button that asks twice, because a cancel stops the work. Once asked, it gives way to a note.
     const stopper = (row: PaneRow) => (
       row.state === 'cancel_requested' || asked.includes(row.id)

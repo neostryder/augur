@@ -199,6 +199,7 @@ export async function startService(opts: ServiceOptions = {}) {
   const ledgerMaintenance = setInterval(() => { try { maintainLedger(); } catch { log('The job ledger could not refresh.'); } }, 5000);
   const ledgerRetention = setInterval(() => { try { store.ledger.compact(resolveBalance(policy.read()?.balance).ledger.retentionDays); } catch { log('The job ledger could not compact.'); } }, 3600000);
   const sessionTitles = new SessionTitles(desktopSessionsRoot());
+  store.ledger.setSessionTitleLookup(id => sessionTitles.lookup(id));
   const jobsLive = new JobsLiveWriter(home, supervisor, () => config.stallMinutes, log, Date.now, id => sessionTitles.lookup(id));
   jobsLive.tick();
   const cancelRequests = new CancelRequests(home, supervisor, log);

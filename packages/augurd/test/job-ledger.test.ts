@@ -38,6 +38,28 @@ function insert(store: Store, id = 'local') {
 }
 
 describe('the durable ledger', () => {
+  it('includes card origin and the latest endings independently of pagination', () => {
+    const { store, ledger } = fixture(); insert(store, 'active');
+    ledger.setLocalMetadata('active', { ...meta(), stamp: { sessionId: 's', origin: 'cli', host: 'desktop' } });
+    ledger.setSessionTitleLookup(id => id === 's' ? 'Review' : undefined);
+    ledger.refreshLive([{ ...store.get('active')!, stalled: true, lastActivityAt: 4, activityLine: 'PRIVATE_OUTPUT' }]);
+    for (let i = 0; i < 35; i++) {
+      insert(store, String(i)); store.transition(String(i), 'running', { startedAt: 2 }, 2);
+      store.transition(String(i), 'failed', { reason: 'Permission denied' }, 10 + i);
+    }
+    const first = ledger.list({ limit: 1 });
+    expect(first.jobs).toHaveLength(1);
+    expect(first.cards!.jobs).toHaveLength(1);
+    expect(first.cards!.jobs[0]).toMatchObject({ id: `${ledger.node}:active`, tools: 'none', dataTier: 'public', depth: 0, stalled: true, origin: { sessionId: 's', sessionTitle: 'Review', host: 'desktop' }, activityLine: 'Output activity' });
+    expect(first.cards!.recent).toHaveLength(30);
+    expect(first.cards!.recent[0]!.id).toBe(`${ledger.node}:34`);
+    expect(first.cards!.recent.at(-1)!.id).toBe(`${ledger.node}:5`);
+    expect(first.cards!.recent[0]!.reason).toBe('Permission denied');
+    expect(ledger.list({ limit: 1, page: first.next! }).cards!.recent).toEqual(first.cards!.recent);
+    expect(ledger.list({ session: 's' }).cards!.recent).toEqual([]);
+    expect(JSON.stringify(first.cards)).not.toContain('PRIVATE_OUTPUT');
+  });
+
   it('exposes the stored failure reason as one line capped at 300 characters', () => {
     const { store, ledger } = fixture(); insert(store);
     const reason = 'copying the working directory failed: permission denied';

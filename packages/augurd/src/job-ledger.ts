@@ -1,7 +1,8 @@
 import { randomUUID, createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
-import { JOB_STATES, LEDGER_STATES, ORIGIN_KINDS, failureLine, ledgerId, ledgerTerminal, summaryLine, validCursor, validLedgerGap, validLedgerJob, validNodeJobPage } from '@augur/dispatch-protocol';
+import { JOB_STATES, LEDGER_STATES, ORIGIN_KINDS, failureLine, ledgerId, ledgerJobRow, ledgerTerminal, summaryLine, validCursor, validLedgerGap, validLedgerJob, validNodeJobPage } from '@augur/dispatch-protocol';
 import type { JobRecord, LedgerAlert, LedgerAlertSettings, LedgerChain, LedgerChange, LedgerGap, LedgerJob, LedgerMetadata, LedgerNode, LedgerPage, LedgerQuery, LedgerState, LedgerWatchPage, NodeJobPage } from '@augur/dispatch-protocol';
+import { jobRow } from './jobs-live.js';
 
 export interface AlertSink { emit(event: LedgerAlert): void | Promise<void> }
 /** How long after a job ends that its failure still raises an alert. */
@@ -26,6 +27,7 @@ export class JobLedger {
   readonly node: string;
   private live = new Map<string, Pick<JobRecord, 'stalled' | 'lastActivityAt' | 'activityLine'>>();
   private remoteLines = new Map<string, string>();
+  private titleOf: (sessionId: string | undefined) => string | undefined = () => undefined;
   private sink: AlertSink = new NoopAlertSink();
   private closed = false;
   constructor(private db: DatabaseSync, private local: { get(id: string): JobRecord | null; all(): JobRecord[] }, private now = Date.now) {
@@ -49,6 +51,7 @@ export class JobLedger {
 
   close(): void { this.closed = true; this.live.clear(); this.remoteLines.clear(); }
   setSink(sink: AlertSink): void { this.sink = sink; }
+  setSessionTitleLookup(titleOf: (sessionId: string | undefined) => string | undefined): void { this.titleOf = titleOf; }
 
   private transaction<T>(run: () => T): T {
     this.db.exec('begin immediate');
@@ -153,9 +156,20 @@ export class JobLedger {
       catch { throw new Error('The ledger page is invalid.'); }
     }
     const key = (j: LedgerJob) => ({ value: j[sort] ?? -1, id: j.id });
-    const rows = this.all().filter(j => this.matches(j, q) && (!after || compare(key(j), after) > 0)).sort((a, b) => compare(key(a), key(b)));
+    const matching = this.all().filter(j => this.matches(j, q));
+    const rows = matching.filter(j => !after || compare(key(j), after) > 0).sort((a, b) => compare(key(a), key(b)));
     const jobs = rows.slice(0, limit), last = jobs.at(-1);
-    return { jobs, next: rows.length > limit && last ? Buffer.from(JSON.stringify({ ...key(last), hash })).toString('base64url') : null };
+    const cardRow = (job: LedgerJob) => {
+      const local = job.node === this.node ? this.local.get(job.localId) : null;
+      return local ? { ...jobRow({ ...local, ...this.live.get(local.id) }, this.titleOf), id: job.id, activityLine: job.activityLine ?? '' } : ledgerJobRow(job);
+    };
+    // Cards include active work and the latest endings even when pagination hides them.
+    const cards = {
+      updatedAt: this.now(),
+      jobs: matching.filter(job => !ledgerTerminal(job.state)).map(cardRow),
+      recent: matching.filter(job => ledgerTerminal(job.state)).sort((a, b) => (b.endedAt ?? b.lastActivityAt ?? b.createdAt) - (a.endedAt ?? a.lastActivityAt ?? a.createdAt)).slice(0, 30).map(cardRow),
+    };
+    return { jobs, next: rows.length > limit && last ? Buffer.from(JSON.stringify({ ...key(last), hash })).toString('base64url') : null, cards };
   }
 
   private validateQuery(q: LedgerQuery): void {

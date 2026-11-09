@@ -1,5 +1,5 @@
 import type { LedgerJob } from '@augur/dispatch-protocol';
-import { LedgerModel } from '@augur/view-model';
+import { JOBS_CARD_TEXT, LedgerModel, ledgerJobsSnapshot } from '@augur/view-model';
 import { describe, expect, it } from 'vitest';
 import { renderJobs, type JobsModel } from '../src/views/jobs';
 import { jobAlertControls } from '../src/views/settings';
@@ -26,7 +26,7 @@ describe('the ledger Jobs page', () => {
   });
 
   it('renders loading, empty, missing detail, and paging states', () => {
-    expect(renderJobs(model(null))).toContain('Loading jobs.'); expect(renderJobs(model())).toContain('No jobs match');
+    expect(renderJobs(model(null))).toContain('Loading jobs.'); expect(renderJobs(model())).toContain(JOBS_CARD_TEXT.emptyScope);
     const m = model([job()]); m.ledger.next = 'next'; m.ledger.page = 'page'; m.ledger.detailError = 'This job is no longer available.';
     const html = renderJobs(m); expect(html).toContain('data-action="jobs-next" >'); expect(html).toContain('data-action="jobs-first" >'); expect(html).toContain('This job is no longer available.');
   });
@@ -35,7 +35,7 @@ describe('the ledger Jobs page', () => {
     const j = Object.assign(job({ activityLine: 'Reading <files>', state: 'stalled', compacted: true, parentId: 'node:parent', usage: { inputTokens: 2, outputTokens: 3, costUsd: 0.1, source: 'reported', cachedReadTokens: 1 } }), { prompt: 'PRIVATE_PROMPT', answer: 'PRIVATE_ANSWER', stdout: 'PRIVATE_LOG' });
     const m = model([j]); m.ledger.selected = j.id; m.ledger.detail = { job: j, parent: job({ id: 'node:parent' }), children: [job({ id: 'node:child' })], retries: [job({ id: 'node:retry' })] };
     const html = renderJobs(m);
-    for (const text of ['Reading &lt;files&gt;', 'Stalled', 'Compacted', 'Session attribution', 'Process attribution', 'Summary source', 'Input tokens', 'Cost (USD)', 'cachedReadTokens', 'data-job="node:child"', 'data-job="node:retry"', 'data-ledger-elapsed="node:1"']) expect(html).toContain(text);
+    for (const text of ['Reading &lt;files&gt;', 'Stalled', 'Compacted', 'Session attribution', 'Process attribution', 'Input tokens', 'Cost (USD)', 'cachedReadTokens', 'data-job="node:child"', 'data-job="node:retry"', 'data-ledger-elapsed="node:1"']) expect(html).toContain(text);
     expect(html).not.toContain('PRIVATE_'); expect(html).not.toContain('job-cancel');
   });
 
@@ -51,5 +51,24 @@ describe('the ledger Jobs page', () => {
     const html = jobAlertControls({ stalled: true, failed: false, overUsualTime: true, usualMultiple: 3, minSamples: 8, stallMinutes: 10, webhookUrl: '', webhookFormat: 'cresset', webhookKeyName: 'ledger-alerts.token' });
     for (const key of ['stalled', 'failed', 'overUsualTime', 'usualMultiple', 'minSamples', 'webhookUrl', 'webhookFormat', 'webhookKeyName']) expect(html).toContain('data-job-alert="ledgerAlerts.' + key + '"');
     expect(html).toContain('data-job-alert="stallMinutes"'); expect(html).toContain('ledger-alerts.token'); expect(html).toContain('<option value="cresset" selected>cresset</option>');
+  });
+
+  it('renders labeled cards, origin filtering, and a collapsed closed section', () => {
+    const m = model([job({ activityLine: 'Reading <files>', usage: { inputTokens: 2, outputTokens: 3, source: 'reported' } })]);
+    m.ledger.setScope('all'); m.ledger.jobs = [job()];
+    m.ledger.cards = ledgerJobsSnapshot([job({ activityLine: 'Reading <files>', usage: { inputTokens: 2, outputTokens: 3, source: 'reported' } }), job({ id: 'failed', state: 'failed', failureReason: 'Permission denied', endedAt: 4000 })], Date.now());
+    const html = renderJobs(m);
+    for (const label of ['ORIGIN:', 'JOB:', 'TIMING:', 'ACTIVITY:', 'RESULT:', 'USAGE:']) expect(html).toContain(label);
+    expect(html).toContain('Notes'); expect(html).toContain('Reading &lt;files&gt;');
+    expect(html).toContain('All sessions'); expect(html).toContain('data-ledger-filter="origin"');
+    expect(html).toContain('aria-expanded="false"'); expect(html).toContain('id="jobs-closed" hidden');
+    expect(html).toContain('Closed (1)'); expect(html).toContain('Permission denied');
+    m.ledger.closedExpanded = true;
+    expect(renderJobs(m)).toContain('aria-expanded="true"');
+    expect(renderJobs(m)).not.toContain('id="jobs-closed" hidden');
+    m.ledger.cards.updatedAt = Date.now() - 60001;
+    expect(renderJobs(m)).toContain(JOBS_CARD_TEXT.empty);
+    expect(renderJobs(m)).not.toContain('ACTIVITY:');
+    expect(renderJobs(m)).toContain('Permission denied');
   });
 });

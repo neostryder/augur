@@ -1,52 +1,17 @@
 import type { ModJob, ModOrigin, ModUsage } from '../types'
+type JobsLiveRow = ModJob
 
 export const JOBS_TEXT = {
-  title: 'Augur live jobs',
-  description: 'Open the Augur live jobs pane',
-  opened: 'The live jobs pane is open.',
-  waiting: 'Waiting for a place to show the pane.',
-  empty: 'No jobs are running.',
-  emptyScope: 'No jobs from this session are running.',
-  noClosed: 'No closed jobs yet.',
-  job: 'job',
-  jobs: 'jobs',
-  stalled: 'stalled',
-  ago: 'ago',
-  labels: { origin: 'ORIGIN:', job: 'JOB:', activity: 'ACTIVITY:', result: 'RESULT:' },
-  scopeSession: 'This session',
-  scopeAll: 'All sessions',
-  elsewhere: 'Elsewhere',
-  live: 'live',
-  closed: 'closed',
-  cancel: 'Cancel job',
-  cancelSure: 'Press again to cancel this job',
-  cancelling: 'Cancelling...',
-  openApp: 'Open Augur',
-  closedHeading: 'CLOSED',
-  showAll: 'Show all sessions',
-  showSession: 'Show this session only',
-  collapse: 'Collapse',
-  expand: 'Expand',
-  session: 'session',
-  noSession: 'no session',
-  unknownOrigin: 'unknown origin',
-  thisSession: 'this session',
-  host: 'host',
-  pid: 'pid',
-  data: 'data',
-  tools: 'tools',
-  depth: 'depth',
-  child: 'child of',
-  named: 'named',
-  started: 'started',
-  queued: 'queued',
-  ended: 'ended',
-  took: 'took',
-  lastOutput: 'last output',
-  exit: 'exit',
-  tokensIn: 'in',
-  tokensOut: 'out',
-  noDetails: 'no details recorded',
+  title: 'Augur live jobs', description: 'Open the Augur live jobs pane', opened: 'The live jobs pane is open.', waiting: 'Waiting for a place to show the pane.',
+  labels: { origin: 'ORIGIN:', job: 'JOB:', timing: 'TIMING:', activity: 'ACTIVITY:', result: 'RESULT:', usage: 'USAGE:' },
+  scopeSession: 'This session', scopeAll: 'All sessions', scope: 'Job scope',
+  empty: 'No jobs are running.', emptyScope: 'No jobs from this session are running.', noClosed: 'No closed jobs yet.',
+  closed: 'closed', closedSection: 'Closed', closedHeading: 'CLOSED', session: 'session', noSession: 'no session', unknownOrigin: 'unknown origin', thisSession: 'this session',
+  host: 'host', pid: 'pid', data: 'data', tools: 'tools', depth: 'depth', child: 'child of', named: 'named',
+  started: 'started', queued: 'queued', ended: 'ended', took: 'took', elapsed: 'elapsed', ago: 'ago', stalled: 'stalled',
+  lastOutput: 'last output', exit: 'exit', tokensIn: 'in', tokensOut: 'out', noDetails: 'no details recorded',
+  job: 'job', jobs: 'jobs', elsewhere: 'Elsewhere', live: 'live', cancel: 'Cancel job', cancelSure: 'Press again to cancel this job', cancelling: 'Cancelling...',
+  openApp: 'Open Augur', showAll: 'Show all sessions', showSession: 'Show this session only', collapse: 'Collapse', expand: 'Expand',
 } as const
 
 const LIVE_STATES = ['queued', 'needs_approval', 'running', 'cancel_requested']
@@ -96,7 +61,7 @@ export function parseJobs(raw: string | null, now: number): { live: ModJob[]; re
   let feed: Record<string, unknown> | null
   try { feed = JSON.parse(raw ?? '') } catch { return none }
   if (!feed || typeof feed !== 'object') return none
-  const recent = Array.isArray(feed.recent) ? feed.recent.map((j) => cleanJob(j, CLOSED_STATES)).filter((j): j is ModJob => j !== null).slice(0, MAX_CLOSED) : []
+  const recent = Array.isArray(feed.recent) ? feed.recent.map((j) => cleanJob(j, CLOSED_STATES)).filter((j): j is ModJob => j !== null).sort((a, b) => (b.endedAt ?? b.lastActivityAt) - (a.endedAt ?? a.lastActivityAt)).slice(0, MAX_CLOSED) : []
   const at = num(feed.updatedAt), stall = num(feed.stallMinutes)
   if (at === undefined || now - at > FRESH_MS || !Array.isArray(feed.jobs) || stall === undefined || stall < 0) return { live: [], recent }
   const live = feed.jobs.map((j) => cleanJob(j, LIVE_STATES))
@@ -137,31 +102,66 @@ export function closedSummary(recent: readonly ModJob[]): string {
 }
 
 export type Seg = { text: string; color?: string; bg?: string; bold?: boolean; dim?: boolean; italic?: boolean; underline?: boolean }
-export type LineKind = 'origin' | 'job' | 'activity' | 'result'
+export type LineKind = 'origin' | 'job' | 'timing' | 'activity' | 'result' | 'usage'
 export type PaneLine = { kind: LineKind; label: string; segs: Seg[] }
 export type PaneRow = { id: string; closed: boolean; stalled: boolean; state: string; color: string; lines: PaneLine[] }
 
 /** Each line type has its own label color, so the three lines of a row read apart at a glance. */
-export const LABEL_COLORS: Record<LineKind, string> = { origin: 'suggestion', job: 'claude', activity: 'permission', result: 'merged' }
+export const LABEL_COLORS: Record<LineKind, string> = { origin: 'suggestion', job: 'claude', timing: 'subtle', activity: 'permission', result: 'merged', usage: 'warning' }
 
-const dim = (s: string): Seg[] => [{ text: s, dim: true }]
+// The standalone bundle mirrors the card text and projection; the workspace parity test checks both.
+export type JobCardLineKind = keyof typeof JOBS_TEXT.labels
+export interface JobCardLine { kind: JobCardLineKind; label: string; text: string }
+export interface JobCard {
+  id: string
+  state: string
+  stalled: boolean
+  closed: boolean
+  lines: JobCardLine[]
+  short: string
+}
 
-/** Ages: the largest whole unit, as in 8s, 2m, 3h, 2d. */
+const T = JOBS_TEXT
+const join = (parts: Array<string | null | undefined | false>): string => parts.filter(Boolean).join(' | ')
+const tokens = (n: number): string => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
+const money = (usd: number): string => `$${usd >= 1 ? usd.toFixed(2) : usd.toFixed(4)}`
+const line = (kind: JobCardLineKind, text: string): JobCardLine => ({ kind, label: T.labels[kind], text })
+
 function since(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000))
   return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m` : s < 86400 ? `${Math.floor(s / 3600)}h` : `${Math.floor(s / 86400)}d`
 }
 
-/** Run times: two units, as in 1m 20s or 2h 5m. */
 function span(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000))
   return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`
 }
 
-const tokens = (n: number): string => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
-const money = (usd: number): string => `$${usd >= 1 ? usd.toFixed(2) : usd.toFixed(4)}`
+export function jobCard(job: JobsLiveRow, now: number, closed = false, mine = ''): JobCard {
+  const o = job.origin
+  const name = o?.sessionTitle || (o?.sessionId ? `${T.session} ${o.sessionId.slice(0, 8)}` : o?.label || T.noSession)
+  const kind = o?.kind ? o.label && o.label !== o.kind ? `${o.kind} / ${o.label}` : o.kind : o?.label || T.unknownOrigin
+  const duration = span((closed ? job.endedAt ?? job.lastActivityAt : now) - (job.startedAt ?? job.createdAt ?? job.lastActivityAt))
+  const lines = [
+    line('origin', join([name, mine && o?.sessionId === mine && T.thisSession, kind !== name && kind, o?.intent,
+      o?.host && `${T.host} ${o.host}`, o?.pid != null && `${T.pid} ${o.pid}`, job.cwd])),
+    line('job', join([job.id, job.route + (job.model ? ` (${job.model})` : ''), job.activity,
+      job.tools && `${T.tools} ${job.tools}`, job.dataTier && `${T.data} ${job.dataTier}`,
+      job.depth != null && `${T.depth} ${job.depth}`, job.parentJobId && `${T.child} ${job.parentJobId.slice(0, 12)}`, job.named && T.named])),
+    line('timing', join([job.state.replace(/_/g, ' '), job.stalled && T.stalled.toUpperCase(),
+      job.startedAt != null ? `${T.started} ${since(now - job.startedAt)} ${T.ago}` : `${T.queued} ${since(now - (job.createdAt ?? job.lastActivityAt))}`,
+      closed && job.endedAt != null && `${T.ended} ${since(now - job.endedAt)} ${T.ago}`, `${closed ? T.took : T.elapsed} ${duration}`])),
+    closed ? line('result', join([job.exitCode != null && `${T.exit} ${job.exitCode}`, job.reason, job.summary]) || T.noDetails)
+      : line('activity', join([`${T.lastOutput} ${since(now - job.lastActivityAt)} ${T.ago}`, job.summary, job.activityLine])),
+  ]
+  if (job.usage) lines.push(line('usage', join([
+    `${tokens(job.usage.inputTokens)} ${T.tokensIn} / ${tokens(job.usage.outputTokens)} ${T.tokensOut}`,
+    job.usage.costUsd != null && money(job.usage.costUsd),
+  ])))
+  return { id: job.id, state: job.state, stalled: job.stalled, closed, lines, short: join([name, job.route, duration]) }
+}
 
-/** The theme color for a job's state; it tints the row's border and the state badge. */
+
 export function stateColor(job: ModJob): string {
   if (job.stalled) return 'warning'
   switch (job.state) {
@@ -175,85 +175,14 @@ export function stateColor(job: ModJob): string {
   }
 }
 
-/** A filled badge: bold light text on the state color. */
-const badge = (s: string, bg: string): Seg => ({ text: ` ${s} `, bold: true, color: 'inverseText', bg })
-
-const TIER_COLORS: Record<string, string> = { public: 'success', internal: 'suggestion', sensitive: 'warning', restricted: 'error', private: 'error' }
-
-/** Joins the parts of one line with a dim bar between them, skipping empty parts. */
-function line(kind: LineKind, label: string, parts: Array<Seg[] | null | undefined | false>): PaneLine {
-  const segs: Seg[] = []
-  for (const part of parts) {
-    if (!part || !part.length) continue
-    if (segs.length) segs.push({ text: ' | ', dim: true })
-    segs.push(...part)
-  }
-  return { kind, label, segs }
-}
-
-function originLine(job: ModJob, mine: string): PaneLine {
-  const o = job.origin ?? {}
-  const own = !!mine && o.sessionId === mine
-  const name = o.sessionTitle ?? (o.sessionId ? `${JOBS_TEXT.session} ${o.sessionId.slice(0, 8)}` : JOBS_TEXT.noSession)
-  const kind = o.kind ? (o.label && o.label !== o.kind ? `${o.kind} / ${o.label}` : o.kind) : JOBS_TEXT.unknownOrigin
-  return line('origin', JOBS_TEXT.labels.origin, [
-    [{ text: name, bold: true, underline: true, color: own ? 'success' : 'text' }, ...(own ? [badge(JOBS_TEXT.thisSession, 'success')] : [])],
-    [{ text: kind, color: 'claude' }],
-    o.intent ? [{ text: o.intent, italic: true, color: o.intent === 'automated' ? 'warning' : 'suggestion' }] : null,
-    o.host ? dim(`${JOBS_TEXT.host} ${o.host}`) : null,
-    o.pid !== undefined ? dim(`${JOBS_TEXT.pid} ${o.pid}`) : null,
-    job.cwd ? dim(job.cwd) : null,
-  ])
-}
-
-function jobLine(job: ModJob, now: number, closed: boolean): PaneLine {
-  const state = job.stalled ? JOBS_TEXT.stalled.toUpperCase() : job.state.replace(/_/g, ' ')
-  const timing: Array<Seg[] | null> = closed
-    ? [job.endedAt !== undefined ? dim(`${JOBS_TEXT.ended} ${since(now - job.endedAt)} ${JOBS_TEXT.ago}`) : null,
-      job.endedAt !== undefined && job.startedAt !== null ? dim(`${JOBS_TEXT.took} ${span(job.endedAt - job.startedAt)}`) : null]
-    : [job.startedAt !== null ? dim(`${JOBS_TEXT.started} ${since(now - job.startedAt)} ${JOBS_TEXT.ago}`) : dim(`${JOBS_TEXT.queued} ${since(now - (job.createdAt ?? job.lastActivityAt))}`)]
-  return line('job', JOBS_TEXT.labels.job, [
-    [{ text: job.id, bold: true }],
-    [{ text: job.route, bold: true, color: 'claude' }, ...(job.model ? [{ text: ` (${job.model})`, dim: true }] : [])],
-    [{ text: job.activity, italic: true }],
-    [badge(state, stateColor(job))],
-    job.dataTier ? [{ text: `${JOBS_TEXT.data} `, dim: true }, { text: job.dataTier, color: TIER_COLORS[job.dataTier] ?? 'text' }] : null,
-    job.tools ? [{ text: `${JOBS_TEXT.tools} `, dim: true }, { text: job.tools, color: job.tools === 'none' || job.tools === 'read' ? 'success' : 'warning' }] : null,
-    job.depth ? dim(`${JOBS_TEXT.depth} ${job.depth}${job.parentJobId ? `, ${JOBS_TEXT.child} ${job.parentJobId.slice(0, 12)}` : ''}`) : null,
-    job.named ? dim(JOBS_TEXT.named) : null,
-    ...timing,
-  ])
-}
-
-function activityLine(job: ModJob, now: number): PaneLine {
-  const quiet = now - job.lastActivityAt
-  return line('activity', JOBS_TEXT.labels.activity, [
-    [{ text: `${JOBS_TEXT.lastOutput} ${since(quiet)} ${JOBS_TEXT.ago}`, color: job.stalled ? 'warning' : 'subtle', bold: job.stalled }],
-    job.summary ? [{ text: job.summary, italic: true, color: 'subtle' }] : null,
-    job.activityLine ? [{ text: job.activityLine, color: 'text' }] : null,
-  ])
-}
-
-function resultLine(job: ModJob): PaneLine {
-  const u = job.usage
-  const failed = ['failed', 'artifact_validation_failed', 'lost'].includes(job.state)
-  const parts: Array<Seg[] | null> = [
-    job.exitCode !== undefined ? [{ text: `${JOBS_TEXT.exit} ${job.exitCode}`, bold: true, color: job.exitCode === 0 ? 'success' : 'error' }] : null,
-    u ? [{ text: tokens(u.inputTokens), color: 'suggestion' }, { text: ` ${JOBS_TEXT.tokensIn} / `, dim: true }, { text: tokens(u.outputTokens), color: 'permission' }, { text: ` ${JOBS_TEXT.tokensOut}`, dim: true }] : null,
-    u?.costUsd !== undefined ? [{ text: money(u.costUsd), bold: true, color: 'warning' }] : null,
-    job.reason ? [{ text: job.reason, color: failed ? 'error' : undefined }] : null,
-    job.summary ? [{ text: job.summary, italic: true, color: 'subtle' }] : null,
-  ]
-  return line('result', JOBS_TEXT.labels.result, parts.some(Boolean) ? parts : [dim(JOBS_TEXT.noDetails)])
-}
-
-/** The rows for the pane, three lines each. Live rows list stalled jobs first and then the newest; closed rows list the latest ending first. */
 export function paneRows(jobs: readonly ModJob[], now: number, closed = false, mine = ''): PaneRow[] {
   const order = closed
     ? (a: ModJob, b: ModJob) => (b.endedAt ?? b.lastActivityAt) - (a.endedAt ?? a.lastActivityAt)
     : (a: ModJob, b: ModJob) => Number(b.stalled) - Number(a.stalled) || (b.startedAt ?? b.createdAt ?? 0) - (a.startedAt ?? a.createdAt ?? 0)
   return [...jobs].sort(order).map((job) => ({
     id: job.id, closed, stalled: job.stalled, state: job.state, color: stateColor(job),
-    lines: [originLine(job, mine), jobLine(job, now, closed), closed ? resultLine(job) : activityLine(job, now)],
+    lines: jobCard(job, now, closed, mine).lines.map((l) => ({
+      kind: l.kind, label: l.label, segs: [{ text: l.text, color: l.kind === 'timing' ? stateColor(job) : l.kind === 'result' && stateColor(job) === 'error' ? 'error' : undefined }],
+    })),
   }))
 }

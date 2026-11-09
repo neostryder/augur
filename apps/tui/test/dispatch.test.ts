@@ -1,8 +1,10 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { stripTypeScriptTypes } from 'node:module';
 import { describe, expect, it } from 'vitest';
-import type { LedgerJob } from '@augur/dispatch-protocol';
+import type { JobsLiveRow, LedgerJob } from '@augur/dispatch-protocol';
+import { JOBS_CARD_TEXT, jobCard } from '@augur/view-model';
 import { DispatchPage, tail } from '../src/screens/dispatch.js';
 import { pages } from '../src/index.js';
 import { NOW, ch, k, setup, state } from './fixtures.js';
@@ -12,6 +14,21 @@ const job = (over: Partial<LedgerJob> = {}): LedgerJob => ({
   stamp: { sessionId: 's', sessionTitle: 'Review', origin: 'cli', pid: 42 }, attribution: { session: 'stamped', origin: 'stamped', process: 'stamped', host: 'unknown' },
   summary: 'Read notes', summarySource: 'caller', createdAt: NOW - 60000, startedAt: NOW - 30000, endedAt: null, durationMs: null, updatedAt: NOW, lastActivityAt: NOW - 12000,
   parentId: null, retryOf: null, retriedAs: null, usage: null, exitReason: null, compacted: false, ...over,
+});
+
+it('keeps the standalone pane text and card projection identical', () => {
+  // The standalone bundle's plugin SDK is absent in workspace test runs.
+  const source = readFileSync(new URL('../../claude-mod/hooks/jobs.ts', import.meta.url), 'utf8');
+  const { JOBS_TEXT, paneRows } = new Function(`${stripTypeScriptTypes(source).replace(/^export /gm, '')}\nreturn { JOBS_TEXT, paneRows };`)() as typeof import('../../claude-mod/hooks/jobs.js');
+  expect(JOBS_TEXT).toEqual(JOBS_CARD_TEXT);
+  const base: JobsLiveRow = { id: 'a', route: 'local', activity: 'research', state: 'running', startedAt: NOW - 1000, lastActivityAt: NOW - 1000, activityLine: 'Output activity', stalled: false };
+  const rows = [base, { ...base, stalled: true, depth: 0, tools: 'read', dataTier: 'internal', parentJobId: 'parent', origin: { sessionTitle: 'Review', sessionId: 's', host: 'desktop', pid: 42 }, usage: { inputTokens: 1, outputTokens: 0 } }, { ...base, origin: { label: 'Process' }, startedAt: null }, { ...base, state: 'failed', endedAt: NOW, exitCode: 1, reason: 'Permission denied' }];
+  for (const closed of [false, true]) {
+    for (const row of rows) {
+      const pane = paneRows([row as Parameters<typeof paneRows>[0][number]], NOW, closed, 's')[0]!;
+      expect(pane.lines.map(line => ({ kind: line.kind, label: line.label, text: line.segs.map(seg => seg.text).join('') }))).toEqual(jobCard(row, NOW, closed, 's').lines);
+    }
+  }
 });
 
 function dispatch(answers: Record<string, unknown> = {}, runJobs = true, results: Record<string, unknown> = {}) {
@@ -42,8 +59,8 @@ describe('dispatch page: jobs', () => {
   });
   it('lists ledger jobs and their state while local execution is disabled', async () => {
     const t = dispatch({ ledger_list: { jobs: [job({ summary: 'luna task' }), job({ id: 'node:failed', state: 'failed', summary: 'sol task' })], next: null } }, false);
-    await t.load(); const text = t.draw(120, 50);
-    expect(text).toMatch(/Jobs\s+Routes\s+Service/); expect(text).toContain('luna task'); expect(text).toContain('Failed'); expect(t.page.badge()).toBe('1');
+    await t.load(); await t.app.key(ch('c')); const text = t.draw(120, 70);
+    expect(text).toMatch(/Jobs\s+Routes\s+Service/); expect(text).toContain('luna task'); expect(text).toContain('sol task'); expect(t.page.badge()).toBe('1');
     expect(t.calls.some(([method]) => method === 'list' || method === 'result' || method === 'logs')).toBe(false);
   });
 
@@ -68,6 +85,22 @@ describe('dispatch page: jobs', () => {
   it('keeps the last lines of a long log for callers outside the ledger page', () => {
     const lines = Array.from({ length: 100 }, (_, i) => 'l' + i).join('\n');
     expect(tail(lines, 3)).toEqual(['...', 'l97', 'l98', 'l99']); expect(tail('a\nb', 3)).toEqual(['a', 'b']);
+  });
+
+  it('renders card lines and handles scope and closed shortcuts outside text entry', async () => {
+    const t = dispatch({ ledger_list: { jobs: [job({ usage: { inputTokens: 2, outputTokens: 3, source: 'reported' } }), job({ id: 'node:closed', state: 'failed', endedAt: NOW - 1000, failureReason: 'Permission denied' })], next: null } });
+    await t.load();
+    const text = t.draw(120, 70);
+    for (const label of ['ORIGIN:', 'JOB:', 'TIMING:', 'ACTIVITY:', 'USAGE:']) expect(text).toContain(label);
+    expect(text).toContain('Review'); expect(text).not.toContain('RESULT:');
+    await t.app.key(ch('c'));
+    expect(t.page.jobs.closedExpanded).toBe(true);
+    expect(t.draw(120, 70)).toContain('RESULT: Permission denied');
+    t.page.jobs.session = 's'; await t.app.key(ch('f'));
+    expect(t.page.jobs.scope).toBe('session');
+    expect(t.calls).toContainEqual(['ledger_list', [{ session: 's', limit: 50 }]]);
+    t.page.form.focus = 'jobs-text'; await t.app.key(k('enter')); await t.app.key(ch('c')); await t.app.key(ch('f'));
+    expect(t.page.jobs.closedExpanded).toBe(true); expect(t.page.jobs.scope).toBe('session');
   });
 });
 

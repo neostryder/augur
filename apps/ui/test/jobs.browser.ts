@@ -41,6 +41,9 @@ export async function exercise(): Promise<string> {
   check(q('.ledger-nodes').textContent!.includes('History gap since '), 'The node history gap was missing.');
   check(root.querySelectorAll('.ledger-row').length === 2, 'The session list included another session.');
   q('[data-action="jobs-scope"][data-value="all"]').click(); await settle();
+  check(q('[data-action="jobs-closed"]').getAttribute('aria-expanded') === 'false', 'The closed section started expanded.');
+  q('[data-action="jobs-closed"]').click(); await settle();
+  check(q('[data-action="jobs-closed"]').getAttribute('aria-expanded') === 'true', 'The closed section did not open.');
   check(root.querySelectorAll('.ledger-row').length === 3, 'All jobs did not include the archive.');
   const filter = async (key: string, value: string) => { const input = q('[data-ledger-filter="' + key + '"]') as HTMLInputElement; input.focus(); input.value = value; input.dispatchEvent(new Event('change', { bubbles: true })); await settle(); };
   await filter('state', 'stalled'); check(root.querySelectorAll('.ledger-row').length === 1, 'The state filter did not apply.');
@@ -48,14 +51,14 @@ export async function exercise(): Promise<string> {
   await filter('state', ''); await filter('kind', 'download'); check(root.querySelectorAll('.ledger-row').length === 1, 'The kind filter did not apply.');
   await filter('kind', ''); await filter('node', 'bilbo'); check(root.querySelectorAll('.ledger-row').length === 1, 'The node filter did not apply.');
   await filter('node', ''); await filter('origin', 'service'); check(root.querySelectorAll('.ledger-row').length === 1, 'The origin filter did not apply.');
-  await filter('origin', ''); await filter('route', 'missing'); check(root.textContent.includes('No jobs match'), 'The empty state was missing.');
+  await filter('origin', ''); await filter('route', 'missing'); check(root.textContent.includes('No jobs are running.'), 'The empty state was missing.');
   await filter('route', ''); await filter('session', 'archive'); check(root.querySelectorAll('.ledger-row').length === 1, 'The session filter did not apply.');
   await filter('session', ''); await filter('text', 'download'); check(root.querySelectorAll('.ledger-row').length === 1, 'The text filter did not apply.');
   await filter('text', ''); await filter('from', '2000-01-01T00:00'); await filter('to', '2099-01-01T00:00');
   check(queries.at(-1).from > 0 && queries.at(-1).to > queries.at(-1).from, 'The time filters were not forwarded.');
-  const before = q('[data-ledger-elapsed="eru:1"]').textContent;
+  const before = q('[data-job-timing="eru:1"]').textContent;
   await new Promise(resolve => setTimeout(resolve, 1100));
-  check(q('[data-ledger-elapsed="eru:1"]').textContent !== before, 'The elapsed time did not update.');
+  check(q('[data-job-timing="eru:1"]').textContent !== before, 'The elapsed time did not update.');
   q('[data-job="eru:1"]').click(); await settle(); check(root.textContent.includes('Session attribution'), 'The detail did not open.');
   document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await settle(); check(app.jobs.ledger.selected === null, 'Escape did not close the detail.');
   offline(true); await app.loadJobs(); await settle(); check(root.textContent.includes('offline'), 'The disconnected state was missing.');
