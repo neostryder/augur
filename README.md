@@ -76,6 +76,8 @@ To count your Claude limit resets, open Claude in settings, turn on Read resets 
 
 To see your Claude API credit, open Claude API in settings, turn on Read credit from the Console, and choose Sign in. Augur keeps that session in its own window and uses it only to read the billing page of platform.claude.com, at most every 30 minutes. Augur then shows the credit left, each promotional grant with the date it ends, and the month's spend so far. The Admin API does not report any of these figures for a personal organization.
 
+To see your OpenAI usage, open the OpenAI API card in settings or on the Usage page. It shows calls, tokens, images, and an estimated cost for jobs Augur ran on `openai-api` routes today, over the last 7 days, and this month. To see your credit as well, turn on Read OpenAI billing page and choose Sign in. Augur keeps that session in its own window and uses it only to read the billing page of platform.openai.com, at most every 30 minutes. Augur then shows prepaid credit, promotional credit with the date it ends, and the month's spend so far. If a Cloudflare check appears, open the billing page from settings and pass it.
+
 If the sign-in window closes within 90 seconds, before it reaches your identity provider and before you sign in, Augur reopens it once, one second later. Whenever the window closes without a signed-in reading, the settings and setup screens show a notice that names the site and says whether the window was reopened.
 
 ## Signing in to Claude and Codex

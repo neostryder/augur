@@ -44,6 +44,19 @@ describe('provider parsers', () => {
     expect(result.meters.find(m => m.id === 'plan_weekly')?.usedPct).toBe((await fixture('codex')).rate_limit.primary_window.used_percent);
     expect(result.meters[0]?.windowSeconds).toBe(604800);
   });
+  it('adds ChatGPT jobs to the Codex card without changing reported percentages', async () => {
+    const data = await fixture('codex'), host = fakeHost(() => data);
+    host.readHomeFile = async () => JSON.stringify({ tokens: { access_token: `a.${btoa(JSON.stringify({ exp: at.getTime() / 1000 + 99999 }))}.c` } });
+    host.secret = async () => null;
+    host.jobUsage = async since => {
+      expect(since).toBe(at.getTime() - 7 * 86400000);
+      const row = { route: 'web', model: 'chat', images: 0, costUsd: null, usage: null };
+      return [{ ...row, provider: 'chatgpt', at: at.getTime() }, { ...row, provider: 'other', at: at.getTime() }, { ...row, provider: 'chatgpt', at: at.getTime() + 1 }];
+    };
+    const result = await codex.fetch(host, {});
+    expect(result.notes?.chatgptJobsWeek).toBe(1);
+    expect(result.meters.find(m => m.id === 'plan_weekly')?.usedPct).toBe(data.rate_limit.primary_window.used_percent);
+  });
   it('parses Grok billing', async () => {
     const result = await fetchOne(grok, await fixture('grok'));
     expect(result.meters[0]?.id).toBe('supergrok');
@@ -288,7 +301,7 @@ describe('engine, pace, history and alerts', () => {
     const config = migrateConfig({ providers: [{ id: 'unknown', enabled: true }, { id: 'claude', enabled: false }] });
     expect(config.providers.some(p => p.id === 'unknown')).toBe(false);
     expect(config.providers.find(p => p.id === 'claude')?.enabled).toBe(false);
-    expect(config.providers).toHaveLength(10);
+    expect(config.providers).toHaveLength(11);
   });
   it('keeps jobs off until they are chosen, and reads only an explicit yes', () => {
     expect(migrateConfig({}).dispatch).toEqual({ runJobs: false });
