@@ -20,9 +20,11 @@ Rule changes can undo each edit, and copy and suggest each record one step in th
 
 Settings has separate switches for sheen, animation, and tick marks under Visual. The mode switch builds the complete Visual view before it replaces the page. Redraws do not replay an entrance animation, and reduced motion turns off slice animation. Models added from the catalog start unreviewed and need Confirm rules before they can run.
 
-Claude API appears in Settings with a password field and a Test key button. The key stays in the existing key store as claude-api.apiKey, and the test calls the provider's model listing without sending a prompt. Routes for claude-api models at https://api.anthropic.com keep their existing route key or environment key first and use this provider key only when that key is missing.
+Claude API appears in Settings with a password field, a Test key button, a Read credit from the Console switch, and a Claude Console sign-in (site console). The key stays in the existing key store as claude-api.apiKey, and the test calls the provider's model listing without sending a prompt. Routes for claude-api models at https://api.anthropic.com keep their existing route key or environment key first and use this provider key only when that key is missing. With the switch on and a signed-in session, usage refresh reads platform.claude.com/settings/billing and shows the credit left, each promotional grant with its end date, and the spend so far this month, and it never uses the API key for this. With the switch off, usage refresh stays offline.
 
 Use Test key to check the Claude API key. Usage refresh does not test it. A Test key result lasts for the current session.
+
+On Anthropic-style routes, a prompt may hold one `<!-- augur:cache-break -->` line, and the text above it becomes a cached system block while the text below it plus any attachments becomes the user message. A prompt with no line, or with the line at the very end, is sent as one user message. Only Anthropic-style routes act on the line, and the route option `cacheTtl` accepts `5m` (default) or `1h` and is rejected on an OpenAI-style route. Cached reads cost a small fraction of the input price, and writes cost 1.25 times the input price with `5m` or 2 times with `1h`. On Opus 5.5, Sonnet 5.5, and Haiku 5.5, nothing is cached unless the text above the line reaches 512 tokens, and usage reports list cache reads and cache writes separately.
 
 ## Where the settings live
 
@@ -425,7 +427,7 @@ Sends one prompt to a messages endpoint and returns the text. No tools. Text fil
 | `keySource` | env, store | Pick env to read the key from an environment variable you name, or store to keep it in this computer's key store. A stored key is saved on the Routes page or with `augur key set <route>`. |
 | `apiKeyEnv` (required) | text | The name of the environment variable that holds the API key, when Key kept in is set to env. The key itself is never stored in a route. |
 | `maxTokens` | number | Most tokens the answer may use. Defaults to 4096. |
-| `cacheTtl` | 5m, 1h | How long the provider keeps the cached part of a prompt that holds the line <!-- augur:cache-break -->. The text above that line is cached and read back at a small fraction of the input price by a later job that starts with the same text. 5m, the default, costs 1.25 times the input price to write and 1h costs 2 times, so pick 1h when jobs that share the text arrive more than five minutes apart. |
+| `cacheTtl` | 5m, 1h | How long the provider keeps the part of a prompt above the `<!-- augur:cache-break -->` line. 5m is the default and costs 1.25 times the input price to write, and 1h costs 2 times. Pick 1h when jobs that share that text arrive more than five minutes apart. |
 | `timeoutS` | number | Defaults to 900. |
 | `headersJson` | json | A JSON object of request headers sent with every call. Credentials do not belong here; keep keys in the key store. |
 | `requestClass` | none, cogitator | none sends nothing. cogitator sends x-cogitator-source (augur), x-augur-route, x-cogitator-activity and x-cogitator-class with every call. The class is low for background jobs, normal for a person typing at a terminal or a job marked urgent. |
