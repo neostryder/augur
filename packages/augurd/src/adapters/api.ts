@@ -40,8 +40,8 @@ export function cogitatorHeaders(request: JobRequest): Record<string, string> {
   return { ...stampHeaders(request.stamp ?? request.caller.stamp ?? {}), 'x-cogitator-source': 'augur', 'x-augur-route': request.route, 'x-cogitator-activity': request.activity, 'x-cogitator-class': requestClass(request) };
 }
 
-const MODES = ['chat', 'embeddings', 'transcribe', 'moderation'];
-const KINDS: Record<string, AttachmentKind[]> = { chat: ['text', 'image'], embeddings: ['text'], transcribe: ['audio'], moderation: ['text', 'image'] };
+const MODES = ['chat', 'embeddings', 'transcribe', 'moderation', 'images'];
+const KINDS: Record<string, AttachmentKind[]> = { chat: ['text', 'image'], embeddings: ['text'], transcribe: ['audio'], moderation: ['text', 'image'], images: ['image'] };
 
 /** The gateway's `x-cogitator-*` headers as the fields a job record keeps. */
 export function servedOf(h: Record<string, string>): Served {
@@ -62,8 +62,16 @@ function make(id: string, shape: 'openai' | 'anthropic'): Adapter {
       if (source !== 'env' && source !== 'store') return 'keySource must be env or store';
       if (source === 'env' && !optStr(route.options, 'apiKeyEnv')) return 'route option apiKeyEnv (the environment variable that holds the key) is required';
       const mode = optStr(route.options, 'mode');
-      if (mode !== undefined && !MODES.includes(mode)) return 'mode must be chat, embeddings, transcribe or moderation';
+      if (mode !== undefined && !MODES.includes(mode)) return 'mode must be chat, embeddings, transcribe, moderation or images';
       if (mode !== undefined && mode !== 'chat' && shape === 'anthropic') return 'an Anthropic-style route can only chat';
+      const size = route.options?.imageSize;
+      if (size !== undefined && !(typeof size === 'string' && /^(auto|[1-9][0-9]*x[1-9][0-9]*)$/.test(size))) return 'imageSize must be auto or WIDTHxHEIGHT';
+      const quality = route.options?.imageQuality;
+      if (quality !== undefined && !(typeof quality === 'string' && ['low', 'medium', 'high', 'xhigh', 'max', 'auto'].includes(quality))) return 'imageQuality must be low, medium, high, xhigh, max or auto';
+      const count = route.options?.imageCount;
+      if (count !== undefined && !(typeof count === 'number' && Number.isInteger(count) && count >= 1 && count <= 4)) return 'imageCount must be a whole number from 1 to 4';
+      const format = route.options?.imageFormat;
+      if (format !== undefined && !(typeof format === 'string' && ['png', 'jpeg', 'webp'].includes(format))) return 'imageFormat must be png, jpeg or webp';
       for (const k of ['maxImageMb', 'maxAudioMb']) { const v = route.options?.[k]; if (v !== undefined && !(typeof v === 'number' && v > 0)) return `${k} must be a number of megabytes above zero`; }
       const headers = optStr(route.options, 'headersJson');
       if (headers !== undefined) { const bad = headerProblem(headers); if (bad) return bad; }
@@ -77,11 +85,15 @@ function make(id: string, shape: 'openai' | 'anthropic'): Adapter {
       return null;
     },
     plan(request: JobRequest, route: RouteConfig, ctx: PlanContext): LaunchPlan {
-      if ((request.tools !== 'read' && request.tools !== 'none') || request.output !== 'text_only') throw new Error('an API route returns text only. Use tools none or read and output text_only.');
       const mode = optStr(route.options, 'mode') ?? 'chat', files = ctx.attachments ?? [];
+      if ((request.tools !== 'read' && request.tools !== 'none') || request.output !== 'text_only') throw new Error(mode === 'images' ? 'an images route returns file names. Use tools none or read and output text_only.' : 'an API route returns text only. Use tools none or read and output text_only.');
       if (request.activity === 'embed' !== (mode === 'embeddings')) throw new Error(mode === 'embeddings' ? 'an embeddings route takes only the embed activity.' : 'the embed activity needs a route whose mode is embeddings.');
       if (request.activity === 'transcribe' !== (mode === 'transcribe')) throw new Error(mode === 'transcribe' ? 'a transcribe route takes only the transcribe activity.' : 'the transcribe activity needs a route whose mode is transcribe.');
       if (request.activity === 'moderate' !== (mode === 'moderation')) throw new Error(mode === 'moderation' ? 'a moderation route takes only the moderate activity.' : 'the moderate activity needs a route whose mode is moderation.');
+      if ((request.activity === 'generate_images' || request.activity === 'image_to_image') !== (mode === 'images')) throw new Error(mode === 'images' ? 'an images route takes only the generate_images or image_to_image activities.' : 'the generate_images and image_to_image activities need a route whose mode is images.');
+      if (mode === 'images' && files.some(f => f.kind !== 'image')) throw new Error('an images route takes only image attachments.');
+      if (request.activity === 'generate_images' && files.length) throw new Error('generate_images takes no attachments.');
+      if (request.activity === 'image_to_image' && !files.length) throw new Error('image_to_image needs at least one image attachment.');
       if (mode === 'transcribe' && files.filter(f => f.kind === 'audio').length !== 1) throw new Error('transcribe takes exactly one audio file.');
       const baseUrl = optStr(route.options, 'baseUrl');
       if (!baseUrl || !keyMayGoTo(baseUrl)) throw new Error(`Route ${request.route} has a missing or invalid baseUrl option. Set baseUrl to a valid URL in the route's options.`);
@@ -94,8 +106,9 @@ function make(id: string, shape: 'openai' | 'anthropic'): Adapter {
         ...(headers ? ['--headers-json', JSON.stringify(headers)] : []),
         ...(mode !== 'chat' ? ['--mode', mode] : []), ...(files.length ? ['--attachments-json', JSON.stringify(files.map(f => ({ path: f.path, kind: f.kind })))] : []),
         ...(mode === 'embeddings' ? ['--result-file', join(ctx.jobDir, 'vectors.json')] : []),
+        ...(mode === 'images' ? ['--result-dir', ctx.jobDir, '--image-size', optStr(o, 'imageSize') ?? '1024x1024', '--image-quality', optStr(o, 'imageQuality') ?? 'auto', '--image-count', String(optNum(o, 'imageCount') ?? 1), '--image-format', optStr(o, 'imageFormat') ?? 'png'] : []),
         ...(shape === 'anthropic' && optStr(o, 'cacheTtl') ? ['--cache-ttl', optStr(o, 'cacheTtl') as string] : []),
-        '--max-tokens', String(optNum(o, 'maxTokens') ?? 4096), '--timeout-s', String(optNum(o, 'timeoutS') ?? request.timeoutS ?? 900)];
+        '--max-tokens', String(optNum(o, 'maxTokens') ?? 4096), '--timeout-s', String(optNum(o, 'timeoutS') ?? request.timeoutS ?? (mode === 'images' ? 300 : 900))];
       return { command: process.execPath, args, cwd: request.cwd, env: {}, stdin: ctx.prompt };
     },
     extract(input: ExtractInput): Extraction {
