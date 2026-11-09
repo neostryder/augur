@@ -20,6 +20,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Changed
 
+- [Visible] [UI] **The Claude API card now shows the largest credit grant that has not ended as a Monthly credit bar.** Like the subscription meters, the bar gives the share used, a detail such as "456.27 of 500 left", and the grant's end date as its renewal date, so the card no longer lists the smaller promotional grants and the Usage page drops its "promotional credit ends" note.
 - [Visible] [Providers] The Routes form saves the Allow web tools choice as true or false, so `allowWeb` on a `claude-exec` route saves as a boolean.
 - [Visible] [UI] The Codex card shows how many ChatGPT chat jobs ran through Augur in the last 7 days, since ChatGPT in the browser now draws on the same allowance as Codex. The percentages on the card still come from Codex.
 - [Visible] [Platform] With `runner.failover` on, a route whose job fails because the provider reports a spent allowance (rate, usage, or credit limits, quota, too many requests, resource exhausted) is now held for 24 hours: new jobs go straight to the first fallback that is not held, its waiting and running jobs with tools `read` or `none` move there too, and holds persist across restarts in `route-limits.json`.

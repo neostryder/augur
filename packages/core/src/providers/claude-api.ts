@@ -1,30 +1,34 @@
-import type { Money, ProviderPlugin } from '../types.js';
-import { json, obj, num, round } from '../util.js';
+import type { Meter, Money, ProviderPlugin } from '../types.js';
+import { json, obj, num, round, windowKind } from '../util.js';
 
 const major = (minor: number | null, exponent: number): number | null => minor === null ? null : round(minor / 10 ** exponent, 2);
 
-/** Money rows and notes from the accounts the Console reader found: the credit left, each promotional grant with its end date, and this month's spend. Only the first account that has credit is used. */
-export function consoleReading(value: unknown, now: Date): { meters: []; money: Money[]; notes: Record<string, unknown> } {
-  const money: Money[] = [];
-  let soonest: { at: number; amount: number; currency: string } | null = null;
+const MONTH_SECONDS = 2592000;
+
+/** The meter and money rows the Console reader's accounts give: the largest unexpired credit grant as a monthly bar (used share, and the date it renews), plus the credit left and this month's spend. Other grants are left out. Only the first account that has credit is used. */
+export function consoleReading(value: unknown, now: Date): { meters: Meter[]; money: Money[]; notes: Record<string, unknown> } {
+  const meters: Meter[] = [], money: Money[] = [];
   const account = (Array.isArray(value) ? value : []).map(obj).find(a => num(a.balanceMinor) !== null);
   if (account) {
     const exponent = num(account.exponent) ?? 2, currency = typeof account.currency === 'string' ? account.currency : 'USD';
     money.push({ id: 'credit', label: 'API credit left', amount: major(num(account.balanceMinor), exponent), currency });
+    let grant: { granted: number; left: number; end: number; start: number | null } | null = null;
     for (const raw of Array.isArray(account.promos) ? account.promos : []) {
-      const t = obj(raw), left = major(num(t.remainingMinor), exponent), end = typeof t.expiresAt === 'string' ? Date.parse(t.expiresAt) : NaN;
-      if (left === null || (Number.isFinite(end) && end <= now.getTime())) continue;
-      const id = `promo-${money.length}`, name = typeof t.name === 'string' && t.name ? t.name : 'Promotional credit';
-      money.push({ id, label: name, amount: left, currency, total: major(num(t.grantedMinor), exponent),
-        detail: Number.isFinite(end) ? `Ends ${new Date(end).toISOString().slice(0, 10)}` : null });
-      if (left > 0 && Number.isFinite(end) && (!soonest || end < soonest.at)) soonest = { at: end, amount: left, currency };
+      const t = obj(raw), granted = num(t.grantedMinor), left = num(t.remainingMinor), end = typeof t.expiresAt === 'string' ? Date.parse(t.expiresAt) : NaN;
+      if (granted === null || granted <= 0 || left === null || !Number.isFinite(end) || end <= now.getTime()) continue;
+      if (!grant || granted > grant.granted) grant = { granted, left, end, start: typeof t.grantedAt === 'string' && Number.isFinite(Date.parse(t.grantedAt)) ? Date.parse(t.grantedAt) : null };
+    }
+    if (grant) {
+      const seconds = grant.start !== null && grant.end > grant.start ? Math.round((grant.end - grant.start) / 1000) : MONTH_SECONDS;
+      meters.push({ id: 'monthly_credit', label: 'Monthly credit', usedPct: round(Math.min(100, Math.max(0, 100 * (1 - grant.left / grant.granted))), 1),
+        resetsAt: new Date(grant.end).toISOString(), windowSeconds: seconds, windowKind: windowKind(seconds),
+        detail: `${major(grant.left, exponent)} of ${major(grant.granted, exponent)} left` });
     }
     const spend = major(num(account.spendMinor), exponent);
     if (spend !== null) money.push({ id: 'spend', label: 'Spend this month', amount: spend, currency,
       detail: typeof account.spendResetsAt === 'string' ? `Resets ${account.spendResetsAt.slice(0, 10)}` : null });
   }
-  return { meters: [], money, notes: { webSessions: { console: true },
-    ...(soonest ? { creditExpiresAt: new Date(soonest.at).toISOString(), creditExpiring: soonest.amount, creditCurrency: soonest.currency } : {}) } };
+  return { meters, money, notes: { webSessions: { console: true } } };
 }
 
 export const claudeApi: ProviderPlugin = {
@@ -32,7 +36,7 @@ export const claudeApi: ProviderPlugin = {
   color: { light: '#3987e5', dark: '#5598e7' }, links: { usage: 'https://platform.claude.com/settings/billing' },
   fields: [
     { key: 'apiKey', label: 'API key', kind: 'secret', required: true },
-    { key: 'web', label: 'Read credit from the Console', kind: 'toggle', help: 'Shows prepaid and promotional credit, when promotional credit ends, and this month\'s spend, read from the Claude Console billing page. Sign in once below.' },
+    { key: 'web', label: 'Read credit from the Console', kind: 'toggle', help: 'Shows how much of the monthly credit is used and when it renews, the credit left, and this month\'s spend, read from the Claude Console billing page. Sign in once below.' },
     { key: 'signin', label: 'Claude Console', kind: 'signin', site: 'console', help: 'Sign in to platform.claude.com once so Augur can read your credit.' },
   ], modelListMode: 'catalog',
   async fetch(host, settings, options) {

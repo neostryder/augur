@@ -64,17 +64,25 @@ describe('Claude Console credit reader', () => {
 describe('Claude API credit from the Console', () => {
   const now = new Date('2026-11-08T12:00:00Z');
   const account = { currency: 'USD', exponent: 2, balanceMinor: 46055, spendMinor: 4045, spendResetsAt: '2026-12-01T00:00:00Z',
-    promos: [{ name: 'API credit (Team)', remainingMinor: 45627, grantedMinor: 50000, expiresAt: '2026-11-27T00:00:00Z' }, { name: 'Gone', remainingMinor: 100, grantedMinor: 500, expiresAt: '2026-10-01T00:00:00Z' }] };
+    promos: [{ name: 'Small', remainingMinor: 300, grantedMinor: 500, expiresAt: '2026-12-31T00:00:00Z' }, { name: 'API credit (Team)', remainingMinor: 45627, grantedMinor: 50000, grantedAt: '2026-10-29T03:20:53Z', expiresAt: '2026-11-27T00:00:00Z' }, { name: 'Gone', remainingMinor: 100, grantedMinor: 90000, expiresAt: '2026-10-01T00:00:00Z' }] };
   const host = (web: unknown | 'fail', seen: unknown[] = []) => ({ now: () => now, webSession: async (site: string, o?: { fresh?: boolean }) => { seen.push([site, o?.fresh]); if (web === 'fail') throw new Error('no window'); return web; } }) as unknown as Host;
 
-  it('turns the reading into credit rows, an end date and a spend row, leaving out grants that have ended', () => {
+  it('shows the largest unexpired grant as a monthly bar that renews on its end date, with the credit left and the spend', () => {
     const out = consoleReading([account], now);
+    expect(out.meters).toEqual([
+      { id: 'monthly_credit', label: 'Monthly credit', usedPct: 8.7, resetsAt: '2026-11-27T00:00:00.000Z', windowSeconds: 2493547, windowKind: 'monthly', detail: '456.27 of 500 left' },
+    ]);
     expect(out.money).toEqual([
       { id: 'credit', label: 'API credit left', amount: 460.55, currency: 'USD' },
-      { id: 'promo-1', label: 'API credit (Team)', amount: 456.27, currency: 'USD', total: 500, detail: 'Ends 2026-11-27' },
       { id: 'spend', label: 'Spend this month', amount: 40.45, currency: 'USD', detail: 'Resets 2026-12-01' },
     ]);
-    expect(out.notes).toEqual({ webSessions: { console: true }, creditExpiresAt: '2026-11-27T00:00:00.000Z', creditExpiring: 456.27, creditCurrency: 'USD' });
+    expect(out.notes).toEqual({ webSessions: { console: true } });
+  });
+
+  it('gives no bar when no grant is unexpired, and a 30 day bar when the grant date is missing', () => {
+    expect(consoleReading([{ ...account, promos: [account.promos[2]] }], now).meters).toEqual([]);
+    const bare = consoleReading([{ ...account, promos: [{ remainingMinor: 25000, grantedMinor: 50000, expiresAt: '2026-11-27T00:00:00Z' }] }], now).meters[0]!;
+    expect(bare).toMatchObject({ usedPct: 50, windowSeconds: 2592000, windowKind: 'monthly' });
   });
 
   it('reads only when turned on, asks to skip the cache only on a requested refresh, and names what is missing', async () => {
