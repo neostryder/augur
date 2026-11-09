@@ -32,6 +32,15 @@ describe('job activity', () => {
     expect(wasActive(base, { ...base, started: 3 }, 15000)).toBe(true);
   });
 
+  it('ignores scheduler ticks in short looks while counting sustained CPU work', () => {
+    const base = { cpuMs: 1000, io: 100, pids: new Set([1]), started: 1 };
+    for (const cpuMs of [1015, 1016, 1031, 1049]) expect(wasActive(base, { ...base, cpuMs }, 750)).toBe(false);
+    expect(wasActive(base, { ...base, cpuMs: 1050 }, 750)).toBe(true);
+    expect(wasActive(base, { ...base, cpuMs: 1050 }, 5000)).toBe(false);
+    expect(wasActive(base, { ...base, cpuMs: 1299 }, 15000)).toBe(false);
+    expect(wasActive(base, { ...base, cpuMs: 1300 }, 15000)).toBe(true);
+  });
+
   it('looks four times per limit, between half a second and fifteen seconds', () => {
     expect(lookEveryMs(1)).toBe(500);
     expect(lookEveryMs(20)).toBe(5000);
