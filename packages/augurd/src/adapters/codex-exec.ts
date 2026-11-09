@@ -1,10 +1,11 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { closeSync, existsSync, fstatSync, openSync, opendirSync, readdirSync, readSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { tierNote } from '@augur/dispatch-protocol';
 import type { Adapter, ExtractInput, Extraction, JobRequest, LaunchPlan, PlanContext, RouteConfig, UsageReport } from '@augur/dispatch-protocol';
 import { resolveAmbient } from '../charter.js';
-import { readTextIfExists, resolveExecutable } from './util.js';
+import { engineFailure, readTextIfExists, resolveExecutable } from './util.js';
 import type { Toolkit } from '@augur/dispatch-protocol';
 
 /** The OpenAI-managed install keeps itself current and ships the host binary next to codex.exe. Prefer it over whatever is on PATH. */
@@ -78,9 +79,10 @@ export const codexExec: Adapter = {
   },
   extract(input: ExtractInput): Extraction {
     const usage = codexUsage(input.stdout);
-    const sessionId = codexThreadId(input.stdout);
+    const sessionId = codexThreadId(input.stdout) ?? codexThreadFromFile(input.stdoutPath);
     const answer = readTextIfExists(join(input.jobDir, 'last-message.txt'))?.trim() || null;
     const base = { answer, usage, ...(sessionId ? { sessionId } : {}) };
+    if (input.exitCode !== null && input.exitCode !== 0) return { ...base, ...(sessionId ? codexFailure(sessionId) : {}) };
     // Codex reports a broken tool host as ordinary tool output, then answers politely and exits 0.
     if (/failed to spawn code-mode host/.test(input.stdout + input.stderr)) {
       return { ...base, failure: 'codex could not start its workspace tool host, so it answered without being able to read or write files' };
@@ -97,11 +99,63 @@ export const codexExec: Adapter = {
   },
 };
 
+function codexThreadFromFile(path: string): string | null {
+  let fd: number | undefined;
+  try {
+    fd = openSync(path, 'r');
+    if (!fstatSync(fd).isFile()) return null;
+    const buffer = Buffer.alloc(65536), count = readSync(fd, buffer, 0, buffer.length, 0);
+    return codexThreadId(buffer.toString('utf8', 0, count));
+  } catch { return null; }
+  finally { if (fd !== undefined) { try { closeSync(fd); } catch {} } }
+}
+
+function codexFailure(sessionId: string): Pick<Extraction, 'failureReason' | 'failureCode'> {
+  let remaining = 10000;
+  const find = (path: string, depth: number): string | null => {
+    const dir = opendirSync(path);
+    try {
+      while (remaining-- > 0) {
+        const entry = dir.readSync();
+        if (!entry) break;
+        if (depth === 3 && entry.isFile() && entry.name.startsWith('rollout-') && entry.name.endsWith(`-${sessionId}.jsonl`)) return join(path, entry.name);
+        if (depth < 3 && entry.isDirectory() && /^\d{2,4}$/.test(entry.name)) {
+          const found = find(join(path, entry.name), depth + 1);
+          if (found) return found;
+        }
+      }
+      return null;
+    } finally { dir.closeSync(); }
+  };
+  let fd: number | undefined;
+  try {
+    const path = find(join(process.env.CODEX_HOME ?? join(homedir(), '.codex'), 'sessions'), 0);
+    if (!path) return {};
+    fd = openSync(path, 'r');
+    const stat = fstatSync(fd);
+    if (!stat.isFile()) return {};
+    // A bounded tail keeps a long session from delaying job finalization.
+    const length = Math.min(stat.size, 1024 * 1024), start = stat.size - length, buffer = Buffer.alloc(length);
+    const count = readSync(fd, buffer, 0, length, start);
+    const lines = buffer.toString('utf8', 0, count).split('\n');
+    if (start) lines.shift();
+    let failure: Pick<Extraction, 'failureReason' | 'failureCode'> = {};
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const event = JSON.parse(line) as { type?: string; payload?: { type?: string; error?: unknown } };
+      if (event?.type === 'event_msg' && event.payload?.type === 'task_complete') failure = engineFailure(event.payload.error);
+    }
+    return failure;
+  } catch { return {}; }
+  finally { if (fd !== undefined) { try { closeSync(fd); } catch {} } }
+}
+
 function codexThreadId(stdout: string): string | null {
-  const re = /"thread_id"\s*:\s*"([0-9a-fA-F-]{8,})"/;
   for (const line of stdout.split('\n')) {
-    const found = re.exec(line);
-    if (found?.[1]) return found[1];
+    try {
+      const event = JSON.parse(line) as { type?: string; thread_id?: unknown };
+      if (event?.type === 'thread.started' && typeof event.thread_id === 'string' && /^[0-9a-fA-F-]{8,}$/.test(event.thread_id)) return event.thread_id;
+    } catch { continue; }
   }
   return null;
 }

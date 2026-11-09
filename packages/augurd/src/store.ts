@@ -9,7 +9,7 @@ import type { Conversation, JobEvent, JobRecord, JobState, PickRecord, PromptRec
 interface Row {
   ledger: string | null;
   id: string; state: string; route: string; adapter: string; activity: string; data_tier: string; tools: string; output: string; cwd: string;
-  created_at: number; started_at: number | null; ended_at: number | null; exit_code: number | null; reason: string | null;
+  created_at: number; started_at: number | null; ended_at: number | null; exit_code: number | null; reason: string | null; failure_code: string | null;
   root_job_id: string; parent_job_id: string | null; replay_of: string | null; depth: number; caller: string; named: number; harness_version: string | null;
   warnings: string | null; usage: string | null; runner_pid: number | null; child_pid: number | null; expect_file: string | null; timeout_s: number | null;
   purged: number; released: number; workspace: string | null; patch_path: string | null; changed_files: number | null; prompt_chars: number | null; answer_chars: number | null;
@@ -36,6 +36,7 @@ const toRecord = (r: Row): JobRecord => {
     exitCode: r.exit_code, reason: r.reason, rootJobId: r.root_job_id, parentJobId: r.parent_job_id, replayOf: r.replay_of, depth: r.depth, caller: JSON.parse(r.caller) as JobRecord['caller'],
     named: r.named === 1, released: r.released === 1, harnessVersion: r.harness_version, usage: r.usage ? JSON.parse(r.usage) as UsageReport : null,
     ...(stringList(r.warnings)?.length ? { warnings: stringList(r.warnings) } : {}),
+    ...(r.failure_code ? { failureCode: r.failure_code } : {}),
     promptChars: r.prompt_chars, answerChars: r.answer_chars,
     ...(charter ? { charter } : {}), ...(r.charter_chars != null ? { charterChars: r.charter_chars } : {}), ...(charterNotes?.length ? { charterNotes } : {}),
     ...(r.ambient === 'keep' || r.ambient === 'trim' ? { ambient: r.ambient } : {}), ...(servedOf(r.served) ? { served: servedOf(r.served) as Served } : {}),
@@ -61,7 +62,7 @@ export interface NewJob {
   harnessVersion: string | null; workspace: string | null; conversation?: string | null; turn?: number | null; released?: boolean; replayOf?: string | null;
 }
 
-export interface Patch { startedAt?: number; endedAt?: number; exitCode?: number | null; reason?: string; runnerPid?: number; childPid?: number }
+export interface Patch { startedAt?: number; endedAt?: number; exitCode?: number | null; reason?: string; failureCode?: string; runnerPid?: number; childPid?: number }
 
 export class Store {
   readonly db: DatabaseSync;
@@ -86,7 +87,7 @@ export class Store {
         name text not null, route text not null, adapter text not null, native_id text, cwd text not null, tools text not null,
         turns integer not null, created_at integer not null, last_used_at integer not null, primary key (name, route));`);
     const have = new Set((this.db.prepare('pragma table_info(jobs)').all() as Array<{ name: string }>).map(c => c.name));
-    for (const [name, type] of [['ledger', 'text'], ['warnings', 'text'], ['workspace', 'text'], ['patch_path', 'text'], ['changed_files', 'integer'], ['prompt_chars', 'integer'], ['answer_chars', 'integer'], ['charter', 'text'], ['charter_chars', 'integer'], ['charter_notes', 'text'], ['ambient', 'text'], ['retry_of', 'text'], ['retried_as', 'text'], ['conversation', 'text'], ['conversation_turn', 'integer'], ['served', 'text'], ['released', 'integer not null default 0']] as const) {
+    for (const [name, type] of [['failure_code', 'text'], ['ledger', 'text'], ['warnings', 'text'], ['workspace', 'text'], ['patch_path', 'text'], ['changed_files', 'integer'], ['prompt_chars', 'integer'], ['answer_chars', 'integer'], ['charter', 'text'], ['charter_chars', 'integer'], ['charter_notes', 'text'], ['ambient', 'text'], ['retry_of', 'text'], ['retried_as', 'text'], ['conversation', 'text'], ['conversation_turn', 'integer'], ['served', 'text'], ['released', 'integer not null default 0']] as const) {
       if (!have.has(name)) this.db.exec(`alter table jobs add column ${name} ${type}`);
     }
     if (!have.has('replay_of')) this.db.exec('alter table jobs add column replay_of text');
@@ -138,9 +139,9 @@ export class Store {
     const from = statesBefore(to);
     if (!from.length) return false;
     const marks = from.map(() => '?').join(',');
-    const res = this.db.prepare(`update jobs set state=?, started_at=coalesce(?,started_at), ended_at=coalesce(?,ended_at), exit_code=coalesce(?,exit_code), reason=coalesce(?,reason),
+    const res = this.db.prepare(`update jobs set state=?, started_at=coalesce(?,started_at), ended_at=coalesce(?,ended_at), exit_code=coalesce(?,exit_code), reason=coalesce(?,reason), failure_code=coalesce(?,failure_code),
       runner_pid=coalesce(?,runner_pid), child_pid=coalesce(?,child_pid) where id=? and state in (${marks})`)
-      .run(to, patch.startedAt ?? null, patch.endedAt ?? (isTerminal(to) ? at : null), patch.exitCode ?? null, patch.reason ?? null, patch.runnerPid ?? null, patch.childPid ?? null, id, ...from);
+      .run(to, patch.startedAt ?? null, patch.endedAt ?? (isTerminal(to) ? at : null), patch.exitCode ?? null, patch.reason ?? null, patch.failureCode ?? null, patch.runnerPid ?? null, patch.childPid ?? null, id, ...from);
     if (Number(res.changes) === 1) { this.event(id, to, patch.reason ?? '', at); return true; }
     return false;
   }

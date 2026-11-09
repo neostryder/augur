@@ -97,6 +97,7 @@ export interface JobRecord {
   endedAt: number | null;
   exitCode: number | null;
   reason: string | null;
+  failureCode?: string;
   rootJobId: string;
   parentJobId: string | null;
   replayOf: string | null;

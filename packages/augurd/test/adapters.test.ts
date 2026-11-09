@@ -77,6 +77,81 @@ describe('what each harness prints, read from real captured output', () => {
   });
 });
 
+describe('final engine errors', () => {
+  const sessionId = '0199abcd-1234-5678-9abc-def012345678';
+  const stdout = JSON.stringify({ type: 'thread.started', thread_id: sessionId });
+  let dir: string, rollout: string;
+  const complete = (error?: unknown) => JSON.stringify({ type: 'event_msg', payload: { type: 'task_complete', error } });
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'failure-rollout-'));
+    vi.stubEnv('CODEX_HOME', dir);
+    const day = join(dir, 'sessions', '2026', '11', '09'); mkdirSync(day, { recursive: true });
+    rollout = join(day, `rollout-2026-11-09T12-00-00-${sessionId}.jsonl`);
+  });
+  afterEach(() => { vi.unstubAllEnvs(); rmSync(dir, { recursive: true, force: true }); });
+
+  it('reads only the final completion error and keeps task and answer text out of the reason', () => {
+    writeFileSync(rollout, [JSON.stringify({ type: 'response_item', payload: { content: 'private task text' } }), complete({ message: 'old error', codex_error_info: 'other' }), complete({ message: 'Blocked by policy.\nRetry\t\u2014 later. ' + 'x'.repeat(400), codex_error_info: 'cyber_policy', prompt: 'private task text' })].join('\n') + '\n');
+    const x = codexExec.extract(input({ stdout, exitCode: 1, jobDir: dir }));
+    expect(x.failureCode).toBe('cyber_policy');
+    expect(x.failureReason).toHaveLength(300);
+    expect(x.failureReason).toMatch(/^Blocked by policy\. Retry later\./);
+    expect(x.failureReason).not.toMatch(/[^\x20-\x7e]/);
+    expect(x.failureReason).not.toContain('private task text');
+    expect(x.failureReason).not.toContain('old error');
+  });
+
+  it('recovers the thread id from the log head when it is absent from the output tail', () => {
+    const stdoutPath = join(dir, 'stdout.log'); writeFileSync(stdoutPath, stdout + '\n' + 'x'.repeat(70000));
+    writeFileSync(rollout, complete({ message: 'Policy blocked the request', codex_error_info: 'cyber_policy' }));
+    expect(codexExec.extract(input({ stdout: '', stdoutPath, jobDir: dir, exitCode: 1 }))).toMatchObject({ failureReason: 'Policy blocked the request', failureCode: 'cyber_policy', sessionId });
+  });
+
+  it.each(['missing', 'unreadable', 'malformed', 'no-error', 'last-success', 'wrong-session', 'bad-error'])('leaves the exit fallback intact for %s rollouts', kind => {
+    if (kind === 'unreadable') mkdirSync(rollout);
+    else if (kind !== 'missing') {
+      const text = kind === 'malformed' ? complete({ message: 'old error' }) + '\n{' : kind === 'last-success' ? complete({ message: 'old error' }) + '\n' + complete() : kind === 'bad-error' ? complete({ message: { prompt: 'private' }, codex_error_info: { invalid: true } }) : JSON.stringify({ type: 'response_item', error: { message: 'private' } });
+      writeFileSync(kind === 'wrong-session' ? rollout.replace(sessionId, 'other-session') : rollout, text);
+    }
+    const x = codexExec.extract(input({ stdout, exitCode: 1, jobDir: dir }));
+    expect(x).not.toHaveProperty('failureReason'); expect(x).not.toHaveProperty('failureCode');
+  });
+
+  it('leaves the exit fallback intact when the rollout read fails', () => {
+    writeFileSync(rollout, complete({ message: 'An error', codex_error_info: 'cyber_policy' }));
+    const read = vi.spyOn(fs, 'readSync').mockImplementationOnce(() => { throw new Error('read denied'); });
+    try {
+      const x = codexExec.extract(input({ stdout, exitCode: 1, jobDir: dir }));
+      expect(x).not.toHaveProperty('failureReason'); expect(x).not.toHaveProperty('failureCode');
+    } finally { read.mockRestore(); }
+  });
+
+  it('ignores a rollout error on a successful exit and rejects an invalid error code', () => {
+    writeFileSync(rollout, complete({ message: 'An error', codex_error_info: 'bad\ncode' }));
+    expect(codexExec.extract(input({ stdout, jobDir: dir }))).not.toHaveProperty('failureReason');
+    expect(codexExec.extract(input({ stdout, jobDir: dir, exitCode: 1 }))).toMatchObject({ failureReason: 'An error' });
+    expect(codexExec.extract(input({ stdout, jobDir: dir, exitCode: 1 }))).not.toHaveProperty('failureCode');
+  });
+
+  it('reads a bounded tail of a large rollout', () => {
+    writeFileSync(rollout, JSON.stringify({ type: 'response_item', payload: 'x'.repeat(2 * 1024 * 1024) }) + '\n' + complete({ message: 'Final error', codex_error_info: 'cyber_policy' }));
+    expect(codexExec.extract(input({ stdout, exitCode: 1, jobDir: dir }))).toMatchObject({ failureReason: 'Final error', failureCode: 'cyber_policy' });
+  });
+
+  it('uses the Grok error result text without inventing a code', () => {
+    const x = grokExec.extract(input({ stdout: JSON.stringify({ is_error: true, text: 'Request rejected.\nTry later.' }), exitCode: 1 }));
+    expect(x.failureReason).toBe('Request rejected. Try later.'); expect(x).not.toHaveProperty('failureCode');
+  });
+
+  it.each(['Request rejected', { message: 'Request rejected', code: 'policy_block' }])('reads the mcode result error: %j', error => {
+    const stdout = JSON.stringify({ schemaVersion: 1, type: 'exec.result', status: 'failed', error });
+    const x = mcodeExec.extract(input({ stdout, exitCode: 1 }));
+    expect(x.failureReason).toBe('Request rejected');
+    if (typeof error === 'object') expect(x.failureCode).toBe('policy_block');
+    else expect(x).not.toHaveProperty('failureCode');
+  });
+});
+
 describe('per-call options', () => {
   it('overrides effort in every supporting adapter without changing the route', () => {
     for (const [adapter, flag] of [[codexExec, 'model_reasoning_effort=high'], [grokExec, '--reasoning-effort'], [copilotExec, '--reasoning-effort'], [hermesExec, '--reasoning'], [mcodeExec, '--effort']] as const) {

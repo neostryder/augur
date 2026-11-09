@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import type { Adapter, ExtractInput, Extraction, JobRequest, LaunchPlan, PlanContext, RouteConfig, UsageReport } from '@augur/dispatch-protocol';
-import { optNum, optStr, resolveExecutable } from './util.js';
+import { engineFailure, optNum, optStr, resolveExecutable } from './util.js';
 
 interface GrokEnvelope { text?: string; usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; reasoning_tokens?: number }; total_cost_usd?: number; is_error?: boolean; sessionId?: string }
 
@@ -57,7 +57,7 @@ export const grokExec: Adapter = {
     if (env.usage?.reasoning_tokens) usage.reasoningTokens = env.usage.reasoning_tokens;
     if (typeof env.total_cost_usd === 'number') { usage.costUsd = env.total_cost_usd; usage.currency = 'USD'; }
     const sessionId = typeof env.sessionId === 'string' && env.sessionId ? env.sessionId : undefined;
-    return { answer: env.text?.trim() || null, usage, ...(env.is_error ? { failure: 'grok reported an error result' } : {}), ...(sessionId ? { sessionId } : {}) };
+    return { answer: env.text?.trim() || null, usage, ...(env.is_error ? { failure: 'grok reported an error result', ...engineFailure(env.text) } : {}), ...(sessionId ? { sessionId } : {}) };
   },
   version(route: RouteConfig) {
     const exe = command(route);

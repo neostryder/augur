@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { tierNote } from '@augur/dispatch-protocol';
 import type { Adapter, ExtractInput, Extraction, JobRequest, LaunchPlan, PlanContext, RouteConfig, UsageReport } from '@augur/dispatch-protocol';
 import { dataDir } from '../paths.js';
-import { optNum, optStr, resolveExecutable } from './util.js';
+import { engineFailure, optNum, optStr, resolveExecutable } from './util.js';
 
 interface McodeResult { type?: string; status?: string; output?: string; error?: unknown; usage?: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number; reasoningTokens?: number } }
 
@@ -48,7 +48,7 @@ export const mcodeExec: Adapter = {
       if (u.cacheWriteTokens) usage.cachedWriteTokens = u.cacheWriteTokens;
       if (u.reasoningTokens) usage.reasoningTokens = u.reasoningTokens;
     }
-    return { answer: r.output ?? null, usage, ...(r.status && r.status !== 'succeeded' ? { failure: `mcode finished with status ${r.status}` } : {}) };
+    return { answer: r.output ?? null, usage, ...(r.status && r.status !== 'succeeded' ? { failure: `mcode finished with status ${r.status}`, ...engineFailure(r.error) } : {}) };
   },
   version(route: RouteConfig) {
     const exe = command(route);

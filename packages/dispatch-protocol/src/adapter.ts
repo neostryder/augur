@@ -108,6 +108,9 @@ export interface Extraction {
   usage: UsageReport | null;
   /** A reason the job failed although the process exited cleanly. */
   failure?: string;
+  /** A final error reported by the engine, including on a nonzero exit. */
+  failureReason?: string;
+  failureCode?: string;
   /** Native session id the harness reported. The service stores it when the job completes. */
   sessionId?: string;
   /** Where the answer came from when the service in front of the model says so: the machine and link that served it, and whether it was a fallback link. */
