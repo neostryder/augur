@@ -63,6 +63,10 @@ struct Site {
     timeout_message: &'static str,
 }
 
+fn sign_in_site(id: &str) -> &str {
+    if id == "openai-usage" { "openai" } else { id }
+}
+
 fn site(id: &str) -> Option<Site> {
     match id {
         "typesafe" => Some(Site {
@@ -97,6 +101,14 @@ fn site(id: &str) -> Option<Site> {
             cache_for: CONSOLE_CACHE_FOR,
             timeout_message: OPENAI_TIMEOUT_MESSAGE,
         }),
+        "openai-usage" => Some(Site {
+            title: OPENAI_SIGN_IN_TITLE,
+            sign_in_url: OPENAI_BILLING_URL,
+            read_url: "https://platform.openai.com/usage",
+            script: OPENAI_USAGE_SCRIPT,
+            cache_for: CONSOLE_CACHE_FOR,
+            timeout_message: "Reading the OpenAI Usage page timed out; open OpenAI sign-in in Settings and check that you are still signed in.",
+        }),
         _ => None,
     }
 }
@@ -106,6 +118,7 @@ const TYPESAFE_SCRIPT: &str = include_str!("readers/typesafe.js");
 const CLAUDE_SCRIPT: &str = include_str!("readers/claude.js");
 const CONSOLE_SCRIPT: &str = include_str!("readers/console.js");
 const OPENAI_SCRIPT: &str = include_str!("readers/openai.js");
+const OPENAI_USAGE_SCRIPT: &str = include_str!("readers/openai-usage.js");
 const OPENAI_BILLING_URL: &str =
     "https://platform.openai.com/settings/organization/billing/overview";
 const OPENAI_SIGN_IN_TITLE: &str = "Sign in to OpenAI billing";
@@ -159,6 +172,7 @@ pub async fn web_session_sign_in(app: tauri::AppHandle, site: String) -> Result<
 }
 
 fn open_sign_in(app: &tauri::AppHandle, site: String, retry: bool) -> Result<(), String> {
+    let site = sign_in_site(&site).to_string();
     let spec = self::site(&site).ok_or("Unknown site")?;
     let label = format!("signin-{site}");
     if let Some(window) = app.get_webview_window(&label) {
@@ -433,7 +447,11 @@ async fn read_site(
     // A reading loads the account page in a second window on the same profile. While the sign-in window is open that
     // page redirects to the sign-in flow, and the second flow replaces the first one's cookie, so the first fails
     // with "We couldn't verify your browser". The sign-in window's own watcher is the only reader until it closes.
-    if !watching_sign_in && app.get_webview_window(&format!("signin-{site}")).is_some() {
+    if !watching_sign_in
+        && app
+            .get_webview_window(&format!("signin-{}", sign_in_site(&site)))
+            .is_some()
+    {
         trace(
             app,
             &format!("read skipped site={site} sign-in window exists"),
@@ -662,6 +680,18 @@ fn deliver(app: &tauri::AppHandle, site: &str, target: &Url) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn usage_reading_has_its_own_cache_and_reuses_billing_sign_in() {
+        let usage = site("openai-usage").unwrap();
+        let billing = site("openai").unwrap();
+        assert_eq!(usage.read_url, "https://platform.openai.com/usage");
+        assert_eq!(usage.cache_for, CONSOLE_CACHE_FOR);
+        assert_eq!(usage.sign_in_url, billing.sign_in_url);
+        assert_eq!(sign_in_site("openai-usage"), "openai");
+        assert_eq!(sign_in_site("console"), "console");
+        assert_ne!(usage.script, billing.script);
+    }
 
     #[test]
     fn trace_location_excludes_query_and_fragment() {

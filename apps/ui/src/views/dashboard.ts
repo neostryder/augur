@@ -2,9 +2,9 @@ import type { AwaitingItem } from '@augur/view-model';
 import type { AppConfig, Meter, ProviderPlugin, ProviderSnapshot, Snapshot } from '@augur/core';
 import type { UpdateState } from '../app';
 import { series, type HistoryRow } from '../core';
-import { BACKLOG_TEXT, USAGE_TEXT, errorText, localCard, paceInfo, statusLabel, tightest as tightestMeter, usageRows, windowed } from '@augur/view-model';
+import { BACKLOG_TEXT, USAGE_TEXT, errorText, localCard, paceInfo, statusLabel, tightest as tightestMeter, openaiDays, usageRows, windowed } from '@augur/view-model';
 import { ICON, ago, esc, money, sevOf, until, when } from '../util';
-import { chart } from './chart';
+import { chart, dailySpendStrip } from './chart';
 import { localCardBody } from './local';
 import { pendingCount } from './rules';
 
@@ -104,8 +104,10 @@ function cardHtml(model: DashboardModel, pid: string): string {
     const tiles = rows.money;
     if (tiles.length) {
       body += '<div class="money">' + tiles.map((x) => `<div class="tile"><div class="l">${esc(x.label)}</div>
-        <div class="v">${esc(money(x.amount, x.currency))}${x.total != null ? `<small>of ${esc(money(x.total, x.currency))}</small>` : ''}</div></div>`).join('') + '</div>';
+        <div class="v">${esc(money(x.amount, x.currency))}${x.total != null ? `<small>of ${esc(money(x.total, x.currency))}</small>` : ''}</div>${x.id === 'project_spend' && x.detail ? `<div class="l">${esc(x.detail)}</div>` : ''}</div>`).join('') + '</div>';
     }
+    const days = openaiDays(p);
+    if (days.length) body += `<div class="mfoot">${dailySpendStrip(days)}</div>`;
     const notes = rows.notes.map(esc).join(' &middot; ');
     if (rows.status && !local && !gate) body += `<div class="notes" role="status">${esc(rows.status)}</div>`;
     if (notes) body += `<div class="notes">${notes}</div>`;

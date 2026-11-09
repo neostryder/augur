@@ -62,6 +62,24 @@ describe('usage page', () => {
     expect(text).not.toContain('Jev');
   });
 
+  it('draws seven daily spend blocks with the project detail and activity note', () => {
+    const st = state();
+    st.config.providers = [{ id: 'openai-api', enabled: true, settings: {} }];
+    const days = Array.from({ length: 7 }, (_, day) => ({ date: '2026-11-' + String(day + 2).padStart(2, '0'), spend: day, requests: day }));
+    st.snapshot!.providers = { 'openai-api': { id: 'openai-api', name: 'OpenAI API', ok: true, stale: false, error: null, plan: null, fetchedAt: null,
+      meters: [], money: [{ id: 'spend', label: 'Spent this month (organization)', amount: 50, currency: 'USD' }, { id: 'project_spend', label: 'Project spend, last 7 days', amount: 21, currency: 'USD', detail: 'Personal' }],
+      notes: { openaiDays: days, openaiWeek: { requests: 21, tokens: 48200 } } } };
+    const glyphs = new Screen(1, 1).glyphs.levels;
+    const strip = [0, 1, 2, 3, 5, 6, 7].map(index => glyphs[index]).join('');
+    const out = setup(st).draw();
+    expect(out).toContain('Spent this month (organization) $50.00');
+    expect(out).toContain('Project spend, last 7 days $21.00 (Personal)');
+    expect(out).toContain(strip + '  Project spend, last 7 days');
+    expect(out).toContain('Last 7 days: 21 requests, 48,200 tokens');
+    st.snapshot!.providers['openai-api']!.notes = {};
+    expect(setup(st).draw()).not.toContain(strip);
+  });
+
   it('moves the selection, collapses a provider and reorders providers', async () => {
     const s = setup();
     s.draw();

@@ -1,8 +1,8 @@
 // The usage page: one block per provider with a bar for each limit, the most-used limit at the top, and a seven-day chart for the
 // selected limit. The arrow keys move between providers and limits; the selection follows the item, not the row, as figures change.
-import { allPlugins, type AppConfig, type HistoryRow, type Meter, type ProviderSnapshot } from '@augur/core';
+import { OPENAI_USAGE_TEXT, allPlugins, type AppConfig, type HistoryRow, type Meter, type ProviderSnapshot } from '@augur/core';
 import { bar, box, center, spans, textWidth, wrap, type Key, type Rect, type Screen, type Spans, type Style } from '@augur/terminal';
-import { BACKLOG_TEXT, USAGE_TEXT, ago, errorText, money, paceInfo, series, sevOf, statusLabel, tightest, until, usageRows, windowed, type AwaitingItem } from '@augur/view-model';
+import { BACKLOG_TEXT, USAGE_TEXT, ago, errorText, money, paceInfo, series, sevOf, statusLabel, tightest, until, openaiDays, usageRows, windowed, type AwaitingItem } from '@augur/view-model';
 import type { Ctx, Hint, Overlay, Page } from '../page.js';
 import { sevStyle, type Theme } from '../theme.js';
 
@@ -73,12 +73,22 @@ export class UsagePage implements Page {
         [gate.state === 'closed' && (gate.gap === null || gate.gap < this.gateClose) ? 'On pace' : 'Gate', { dim: true }],
         [`  ${gate.state === 'open' ? 'Open' : 'Closed'}${gate.gap === null ? '' : `, ${Math.round(gate.gap)} points behind pace`}${gate.window ? `; ${gate.window}` : ''}  ${gate.labels.join(', ')}`],
       ]) });
-      const tiles = rows.money;
+      const tiles = rows.money.filter(row => row.id !== 'project_spend');
       if (tiles.length) {
         const list: Array<readonly [string, Style?]> = tiles.flatMap((x, i) => [...(i ? [['   '] as const] : []), [`${x.label} `, { dim: true }] as const,
           [money(x.amount, x.currency), { bold: true }] as const, ...(x.total != null ? [[` of ${money(x.total, x.currency)}`, { dim: true }] as const] : [])]);
         out.push({ draw: (s, x, y, ww) => spans(s, x + 2, y, ww - 2, list) });
       }
+      for (const row of rows.money.filter(row => row.id === 'project_spend')) {
+        out.push({ draw: (s, x, y, ww) => spans(s, x + 2, y, ww - 2, [[row.label + ' ', { dim: true }],
+          [money(row.amount, row.currency), { bold: true }], [row.detail ? ` (${row.detail})` : '', { dim: true }]]) });
+      }
+      const days = openaiDays(p);
+      if (days.length) out.push({ draw: (s, x, y, ww) => {
+        const max = Math.max(0, ...days.map(day => day.spend));
+        const strip = days.map(day => s.glyphs.levels[max > 0 ? Math.max(0, Math.min(7, Math.ceil(day.spend / max * 8) - 1)) : 0]).join('');
+        spans(s, x + 2, y, ww - 2, [[strip, theme.accent], ['  ' + OPENAI_USAGE_TEXT.projectSpend, { dim: true }]]);
+      } });
       if (rows.status && !gate) out.push(text(rows.status, { dim: true }, 2));
       for (const n of rows.notes) for (const line of wrap(n, inner - 2)) out.push(text(line, { dim: true }, 2));
       if (p.error) for (const line of wrap(errorText(p, (iso) => ago(iso, now)), inner - 2)) out.push(text(line, theme.crit, 2));

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { defaultConfig, type ProviderSnapshot, type Snapshot } from '@augur/core';
-import { ago, errorText, money, notesParts, paceInfo, series, sevOf, shortAgo, span, statusLabel, tightest, until, usageRows, USAGE_TEXT } from '../src/index.js';
+import { ago, errorText, money, notesParts, openaiDays, paceInfo, series, sevOf, shortAgo, span, statusLabel, tightest, until, usageRows, USAGE_TEXT } from '../src/index.js';
 
 const NOW = Date.parse('2026-10-04T12:00:00Z');
 
@@ -56,6 +56,16 @@ describe('usage', () => {
     expect(notesParts(provider('openai-api', [], { notes: { openaiChallenge: true } }))).toEqual(['A Cloudflare check is blocking the billing page. Open the billing page from Settings and pass the check.']);
     expect(notesParts(provider('codex', [], { notes: { chatgptJobsWeek: 4 } }))).toEqual(['Includes ChatGPT chat jobs run through Augur: 4 in the last 7 days']);
     expect(notesParts(provider('openai-api', [], { notes: { chatgptJobsWeek: 4 } }))).toEqual([]);
+  });
+
+  it('exposes the daily strip and project activity only when the daily reading is present', () => {
+    const days = Array.from({ length: 7 }, (_, day) => ({ date: '2026-11-' + String(day + 2).padStart(2, '0'), spend: day, requests: day }));
+    const p = provider('openai-api', [], { notes: { openaiDays: days, openaiWeek: { requests: 21, tokens: 48200 } } });
+    expect(openaiDays(p)).toEqual(days);
+    expect(notesParts(p)).toEqual(['Last 7 days: 21 requests, 48,200 tokens']);
+    expect(openaiDays({ ...p, id: 'other' })).toEqual([]);
+    expect(notesParts(provider('openai-api', [], { notes: { openaiWeek: { requests: 21, tokens: 48200 } } }))).toEqual([]);
+    expect(openaiDays(provider('openai-api', [], { notes: { openaiDays: [null, { date: 'invalid', spend: 1, requests: 1 }, { date: '2026-11-08', spend: '1', requests: 1 }] } }))).toEqual([]);
   });
 
   it('shows weekly activity and the existing breakdown without period or promotional rows', () => {
