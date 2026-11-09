@@ -19,6 +19,19 @@ it('classifies every rejection code as exactly one backlog result category', () 
   for (const code of REJECTION_CODES) expect(Number(REJECTION_CATEGORIES.transient.includes(code as never)) + Number(REJECTION_CATEGORIES.permanent.includes(code as never))).toBe(1);
 });
 
+describe('engine failure causes', () => {
+  it.each([0, 7])('preserves the error and code on exit %i through storage and the ledger', async exitCode => {
+    const adapter: Adapter = { ...genericExec, id: 'failure-exec', extract: () => ({ answer: 'partial output', usage: null, failureReason: 'Request rejected.\n' + 'x'.repeat(400), failureCode: 'cyber_policy' }) };
+    const e = setup({ adapters: ['failure-exec'] }, undefined, { extra: [adapter] });
+    e.writeRoutes({ raw: { ...ROUTES.raw, adapter: 'failure-exec' } });
+    const id = submitOk(e.sup, request({ route: 'raw', text: `EXIT ${exitCode}`, cwd: e.root }));
+    const reason = ('Request rejected. ' + 'x'.repeat(400)).slice(0, 300);
+    expect(await terminal(e.sup, e.store, id)).toMatchObject({ state: 'failed', exitCode, reason, failureCode: 'cyber_policy' });
+    expect(e.store.ledger.get(id)?.job).toMatchObject({ failureReason: reason, failureCode: 'cyber_policy' });
+    expect(e.store.events(id).find(event => event.kind === 'failed')?.detail).toBe(reason);
+  });
+});
+
 describe('sandboxed submission', () => {
   it('rejects a cwd over the file cap before creating a job', () => {
     const adapter: Adapter = { ...genericExec, id: 'isolated',

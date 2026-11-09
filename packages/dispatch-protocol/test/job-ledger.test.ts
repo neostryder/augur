@@ -15,6 +15,14 @@ describe('the job ledger contract', () => {
     expect(validLedgerJob({ ...job(), failureReason: 'still running' })).toBe(false);
   });
 
+  it('accepts optional engine codes only as short identifiers on failed records', () => {
+    const failed = { ...job(), state: 'failed', endedAt: 12, durationMs: 10, exitReason: 'failed' };
+    expect(validLedgerJob({ ...failed, failureCode: 'cyber_policy' })).toBe(true);
+    expect(validLedgerJob({ ...failed, failureCode: 'x'.repeat(64) })).toBe(true);
+    for (const failureCode of ['', 'x'.repeat(65), 'two\nlines', 'non ascii\u2014', 'UPPER', '1code', null, 1, {}]) expect(validLedgerJob({ ...failed, failureCode })).toBe(false);
+    expect(validLedgerJob({ ...job(), failureCode: 'cyber_policy' })).toBe(false);
+  });
+
   it('accepts only advancing metadata gaps with valid times and optional retention days', () => {
     const gap = { at: 1000, from: '1', to: '10' };
     expect(validLedgerGap(gap)).toBe(true); expect(validLedgerGap({ ...gap, retentionDays: 7 })).toBe(true);

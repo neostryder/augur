@@ -1,7 +1,16 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
+import { failureLine, validFailureCode } from '@augur/dispatch-protocol';
 
 export function readTextIfExists(path: string): string | null { try { return readFileSync(path, 'utf8'); } catch { return null; } }
+
+export function engineFailure(error: unknown): { failureReason?: string; failureCode?: string } {
+  const e = typeof error === 'object' && error !== null && !Array.isArray(error) ? error as Record<string, unknown> : {};
+  const message = typeof error === 'string' ? error : e.message;
+  const failure = typeof message === 'string' ? failureLine(message) : '';
+  const code = e.codex_error_info ?? e.code;
+  return { ...(failure ? { failureReason: failure } : {}), ...(validFailureCode(code) ? { failureCode: code } : {}) };
+}
 
 type Options = Record<string, string | number | boolean> | undefined;
 export const optStr = (o: Options, k: string): string | undefined => typeof o?.[k] === 'string' ? o[k] as string : undefined;
