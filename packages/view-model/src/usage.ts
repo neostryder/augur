@@ -67,6 +67,7 @@ export function notesParts(p: ProviderSnapshot): string[] {
   if (n.openaiSignIn) out.push(OPENAI_TEXT.signInNote);
   if (n.openaiChallenge) out.push(OPENAI_TEXT.challengeNote);
   if (n.openaiBillingMissing) out.push(OPENAI_TEXT.missingNote);
+  if (n.openaiBillingForbidden) out.push(OPENAI_TEXT.forbiddenNote);
   if (n.openaiLedgerUnavailable) out.push(OPENAI_TEXT.unavailableNote);
   if (p.id === 'codex' && typeof n.chatgptJobsWeek === 'number') out.push(OPENAI_TEXT.chatgpt(n.chatgptJobsWeek));
   if (n.openaiLedger) {

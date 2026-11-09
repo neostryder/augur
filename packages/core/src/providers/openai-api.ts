@@ -35,7 +35,7 @@ export const openaiApi: ProviderPlugin = {
           detail: `$${spend.toFixed(2)} of $${budget}` });
       }
       result.money.push(...money);
-      result.notes = { ...result.notes, webSessions: { openai: true }, openaiBillingMissing: money.length === 0 };
+      result.notes = { ...result.notes, webSessions: { openai: true }, openaiBillingMissing: money.length === 0 && web.forbidden !== true, openaiBillingForbidden: web.forbidden === true };
     }
     return result;
   },

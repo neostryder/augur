@@ -39,7 +39,20 @@
       if (remaining === null) continue;
       account.promos.push({ remaining, expiresAt: iso(grant.expires_at) });
     }
-    const text = document.body && document.body.innerText || '';
+    // The page renders after load, so wait for a recognizable state before judging it.
+    const pageText = () => document.body && document.body.innerText || '';
+    const forbidden = (t) => /do not have permission|required permission/i.test(t);
+    const known = (t) => forbidden(t) || /sign in|log in|create an account|credit balance|payment method|usage this month/i.test(t);
+    if (!credits && !usage) {
+      const settle = Math.min(deadline, Date.now() + 12000);
+      while (!known(pageText()) && Date.now() < settle) await wait(500);
+    }
+    const text = pageText();
+    if (!credits && !usage && forbidden(text)) {
+      // Signed in, but the account lacks the billing permission (org members without api.billing.read).
+      report({ signedIn: true, forbidden: true, account: { balance: null, spend: null, promos: [] } });
+      return;
+    }
     const amount = (label) => {
       const match = text.match(new RegExp('(?:' + label + ')\\s*[:\\n]?\\s*(?:USD\\s*|\\$)(-?[0-9][0-9,]*(?:\\.[0-9]+)?)', 'i'));
       return match ? Number(match[1].replace(/,/g, '')) : null;

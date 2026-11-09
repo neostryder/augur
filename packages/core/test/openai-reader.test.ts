@@ -55,6 +55,18 @@ describe('OpenAI billing reader', () => {
     expect(reported).toEqual({ signedIn: true, account: { balance: null, spend: null, promos: [] } });
   });
 
+  it('reports a signed-in account that lacks the billing permission instead of a sign-in', async () => {
+    vi.useFakeTimers();
+    const { reported } = await read({}, { text: 'Not Available\nYou do not have permission to access this page in this organization (required permission: api.billing.read).' });
+    expect(reported).toEqual({ signedIn: true, forbidden: true, account: { balance: null, spend: null, promos: [] } });
+  });
+
+  it('waits for the page to render before judging a reading with no data', async () => {
+    vi.useFakeTimers();
+    const { reported } = await read({}, { text: '' });
+    expect(reported).toEqual({ signedIn: false, reason: 'signin' });
+  });
+
   it('uses the Console sign-in and challenge outcomes', async () => {
     vi.useFakeTimers();
     expect((await read({}, { hostname: 'auth.openai.com' })).reported).toEqual({ signedIn: false, reason: 'signin' });

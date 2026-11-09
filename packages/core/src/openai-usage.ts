@@ -12,6 +12,7 @@ export const OPENAI_USAGE_TEXT = {
   signInNote: 'Not signed in. Sign in to platform.openai.com in Settings to load billing figures.',
   challengeNote: 'A Cloudflare check is blocking the billing page. Open the billing page from Settings and pass the check.',
   missingNote: 'The billing page showed no spend figure. Open it from settings and check that you are signed in.',
+  forbiddenNote: 'This account cannot read organization billing, so Spent this month and the Monthly budget bar are unavailable until an organization admin grants it the api.billing.read permission.',
   unavailableNote: 'The local job ledger is not available in this view.',
   credit: 'API credit left',
   promo: 'Promotional credit',
