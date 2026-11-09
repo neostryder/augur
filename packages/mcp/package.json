@@ -16,7 +16,7 @@
     "@augur/core": "workspace:*",
     "@augur/dispatch-protocol": "workspace:*",
     "@modelcontextprotocol/sdk": "1.31.0",
-    "zod": "4.6.5"
+    "zod": "4.6.6"
   },
   "devDependencies": {
     "@types/node": "26.6.3",
