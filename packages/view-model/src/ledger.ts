@@ -1,5 +1,5 @@
 import { LEDGER_STATES, ledgerTerminal } from '@augur/dispatch-protocol';
-import type { LedgerChain, LedgerJob, LedgerNode, LedgerQuery, LedgerState, MethodName, Methods } from '@augur/dispatch-protocol';
+import type { JobsLiveSnapshot, LedgerChain, LedgerJob, LedgerNode, LedgerQuery, LedgerState, MethodName, Methods } from '@augur/dispatch-protocol';
 
 export const LEDGER_TEXT = {
   session: 'This session', all: 'All jobs', scope: 'Job scope', sessionId: 'Session id',
@@ -48,6 +48,8 @@ export function ledgerFacts(job: LedgerJob, now = Date.now()): Array<[string, st
 
 export class LedgerModel {
   jobs: LedgerJob[] | null = null;
+  cards: JobsLiveSnapshot | null = null;
+  closedExpanded = false;
   nodes: LedgerNode[] = [];
   counts = Object.fromEntries(LEDGER_STATES.map(state => [state, 0])) as Record<LedgerState, number>;
   filters: LedgerQuery = {};
@@ -85,19 +87,19 @@ export class LedgerModel {
     else Object.assign(this.filters, { [key]: value });
     this.reset();
   }
-  reset(): void { this.page = undefined; this.next = null; this.jobs = null; this.revision++; }
+  reset(): void { this.page = undefined; this.next = null; this.jobs = null; this.cards = null; this.revision++; }
   nextPage(): void { if (this.next) { this.page = this.next; this.revision++; } }
 
   async refresh(transport: LedgerTransport): Promise<void> {
     const revision = ++this.revision, query = this.query();
-    if (this.scope === 'session' && !this.session) { this.jobs = []; this.error = LEDGER_TEXT.sessionNeeded; this.loading = false; this.changed(); return; }
+    if (this.scope === 'session' && !this.session) { this.jobs = []; this.cards = null; this.error = LEDGER_TEXT.sessionNeeded; this.loading = false; this.changed(); return; }
     this.loading = true;
     try {
       const [page, counts, nodes] = await Promise.all([
         transport.call('ledger_list', query), transport.call('ledger_counts', { ...query, page: undefined }), transport.call('ledger_nodes'),
       ]);
       if (revision !== this.revision) return;
-      this.jobs = page.jobs; this.next = page.next; this.counts = counts; this.nodes = nodes; this.error = '';
+      this.jobs = page.jobs; this.cards = page.cards ?? null; this.next = page.next; this.counts = counts; this.nodes = nodes; this.error = '';
       if (this.selected) await this.open(this.selected, transport);
     } catch (e) { if (revision === this.revision) this.error = (e as Error).message; }
     finally { if (revision === this.revision) { this.loading = false; this.changed(); } }

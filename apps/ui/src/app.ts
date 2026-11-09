@@ -18,7 +18,7 @@ import { renderLocal } from './views/local';
 import { renderService, type ConfigLine, type ServiceModel } from './views/service';
 import { renderStrip } from './views/strip';
 import { PROVIDER_FORM_TEXT, ROUTES_PATH, applyProvider, checkDraft, draftOf, emptyDraft, emptyProviderForm, parseRoutesText, planOfForm, writeRoute, type ProviderFormState, type SetupCurrent } from '@augur/view-model';
-import { LedgerModel, ledgerDuration, type LedgerTransport } from '@augur/view-model';
+import { LedgerModel, jobsCards, ledgerJobsSnapshot, ledgerDuration, type LedgerTransport } from '@augur/view-model';
 import { routeSecretName } from '@augur/dispatch-protocol';
 import type { JobRecord, LedgerAlertSettings, LedgerDeliveryState, Methods, UsageSnapshot } from '@augur/dispatch-protocol';
 import { renderTrayIcon } from './trayicon';
@@ -1104,7 +1104,8 @@ export class App {
   private jobsSig = '';
   private drawJobs(): void {
     if (this.view !== 'jobs') return;
-    const sig = JSON.stringify([this.jobs.ledger.jobs, this.jobs.ledger.nodes, this.jobs.ledger.counts, this.jobs.ledger.scope, this.jobs.ledger.filters, this.jobs.ledger.error, this.jobs.ledger.detail, this.jobs.ledger.detailError, this.jobs.ledger.selected, this.jobs.ledger.page, this.jobs.ledger.next, this.jobs.service, this.jobs.serviceNote, this.jobs.busy]);
+    const stale = this.jobs.ledger.cards !== null && Date.now() - this.jobs.ledger.cards.updatedAt > 60000;
+    const sig = JSON.stringify([this.jobs.ledger.jobs, this.jobs.ledger.cards, stale, this.jobs.ledger.closedExpanded, this.jobs.ledger.nodes, this.jobs.ledger.counts, this.jobs.ledger.scope, this.jobs.ledger.filters, this.jobs.ledger.error, this.jobs.ledger.detail, this.jobs.ledger.detailError, this.jobs.ledger.selected, this.jobs.ledger.page, this.jobs.ledger.next, this.jobs.service, this.jobs.serviceNote, this.jobs.busy]);
     if (sig !== this.jobsSig) { this.jobsSig = sig; void this.render(); }
   }
 
@@ -1134,6 +1135,13 @@ export class App {
     await this.render();
     if (!this.jobsTimer) {
       this.jobsTimer = setInterval(() => {
+        const ledger = this.jobs.ledger, now = Date.now();
+        if (ledger.cards && now - ledger.cards.updatedAt > 60000) this.drawJobs();
+        const cards = jobsCards(ledger.cards ?? ledgerJobsSnapshot(ledger.jobs ?? [], now), { now, scope: ledger.scope, sessionId: ledger.session });
+        for (const element of this.root.querySelectorAll<HTMLElement>('[data-job-timing]')) {
+          const card = [...cards.live, ...cards.recent].find(card => card.id === element.dataset.jobTiming);
+          if (card) element.textContent = card.lines.find(line => line.kind === 'timing')!.text;
+        }
         for (const element of this.root.querySelectorAll<HTMLElement>('[data-ledger-elapsed]')) {
           const job = this.jobs.ledger.jobs?.find(job => job.id === element.dataset.ledgerElapsed) ?? this.jobs.ledger.detail?.job;
           if (job) element.textContent = ledgerDuration(job);
@@ -1687,6 +1695,7 @@ export class App {
       case 'route-delete': await this.deleteRoute(); break;
       case 'job-close': this.closeJob(); await this.render(); break;
       case 'jobs-scope': this.jobs.ledger.setScope(t.dataset.value === 'session' ? 'session' : 'all'); await this.jobs.ledger.refresh(this.ledgerTransport()); break;
+      case 'jobs-closed': this.jobs.ledger.closedExpanded = !this.jobs.ledger.closedExpanded; await this.render(); break;
       case 'jobs-first': this.jobs.ledger.reset(); await this.jobs.ledger.refresh(this.ledgerTransport()); break;
       case 'jobs-next': this.jobs.ledger.nextPage(); await this.jobs.ledger.refresh(this.ledgerTransport()); break;
       case 'jobs-refresh': await this.shell.ledgerCall?.('ledger_refresh'); await this.loadJobs(); break;

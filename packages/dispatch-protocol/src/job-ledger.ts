@@ -87,7 +87,27 @@ export interface LedgerQuery {
   /** Opaque keyset cursor bound to these filters and ordering. */
   page?: string;
 }
-export interface LedgerPage { jobs: LedgerJob[]; next: string | null }
+export interface JobsLiveRow {
+  id: string; route: string; activity: string; state: string; startedAt: number | null; lastActivityAt: number; activityLine: string; stalled: boolean;
+  createdAt?: number; endedAt?: number | null; exitCode?: number | null; reason?: string | null; dataTier?: string; tools?: string; depth?: number;
+  parentJobId?: string | null; cwd?: string; named?: boolean; model?: string | null; summary?: string | null;
+  origin?: { kind?: string; label?: string | null; sessionId?: string | null; sessionTitle?: string | null; host?: string | null; pid?: number | null; intent?: string | null };
+  usage?: { inputTokens: number; outputTokens: number; costUsd?: number | null } | null;
+}
+export interface JobsLiveSnapshot { updatedAt: number; stallMinutes?: number; jobs: readonly JobsLiveRow[]; recent: readonly JobsLiveRow[] }
+export interface LedgerPage { jobs: LedgerJob[]; next: string | null; cards?: JobsLiveSnapshot }
+
+/** Remote nodes and older records have no local execution fields. */
+export function ledgerJobRow(job: LedgerJob): JobsLiveRow {
+  return {
+    id: job.id, route: job.route ?? job.model ?? job.localId, activity: job.activity,
+    state: job.state, startedAt: job.startedAt, createdAt: job.createdAt, endedAt: job.endedAt,
+    lastActivityAt: job.lastActivityAt ?? job.startedAt ?? job.createdAt, activityLine: job.activityLine ?? '', stalled: job.state === 'stalled',
+    summary: job.summary, model: job.model, reason: job.failureReason ?? job.exitReason, parentJobId: job.parentId,
+    origin: { kind: job.stamp.origin, label: job.stamp.originLabel, sessionId: job.stamp.sessionId, sessionTitle: job.stamp.sessionTitle, host: job.stamp.host, pid: job.stamp.pid },
+    usage: job.usage,
+  };
+}
 export interface LedgerChain { job: LedgerJob; parent: LedgerJob | null; children: LedgerJob[]; retries: LedgerJob[] }
 export interface LedgerGap { at: number; from: string; to: string; retentionDays?: number }
 export interface LedgerNode { node: string; cursor: string; unreachableSince: number | null; lastSeenAt: number | null; lastPollAt?: number | null; gap?: LedgerGap | null }

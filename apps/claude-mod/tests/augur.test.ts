@@ -164,13 +164,14 @@ describe('live jobs', () => {
     const jobs = [liveJob(), { ...liveJob('b', true), lastActivityAt: NOW - 7200000 }, { ...liveJob('c'), lastActivityAt: NOW - 3000 }] as never[]
     const rows = paneRows(jobs, NOW, false, SESSION)
     expect(rows.map((row) => row.id)).toEqual(['b', 'a', 'c'])
-    expect(rows.map((row) => row.lines.map((l) => l.label))).toEqual(Array(3).fill(['ORIGIN:', 'JOB:', 'ACTIVITY:']))
+    expect(rows.map((row) => row.lines.map((l) => l.label))).toEqual(Array(3).fill(['ORIGIN:', 'JOB:', 'TIMING:', 'ACTIVITY:']))
     expect(flat(rows[0]!)).toEqual([
-      'ORIGIN: Augur this session  | cli',
-      'JOB: b | local | write_code |  STALLED  | started 2m ago',
+      'ORIGIN: Augur | this session | cli',
+      'JOB: b | local | write_code',
+      'TIMING: running | STALLED | started 2m ago | elapsed 2m 0s',
       'ACTIVITY: last output 2h ago | Running checks',
     ])
-    expect(flat(rows[2]!)[2]).toBe('ACTIVITY: last output 3s ago | Running checks')
+    expect(flat(rows[2]!)[3]).toBe('ACTIVITY: last output 3s ago | Running checks')
     expect(rows[0]!.color).toBe('warning')
     expect(rows[1]!.color).toBe('success')
     expect(jobs[0]).toMatchObject({ id: 'a' })
@@ -185,11 +186,13 @@ describe('live jobs', () => {
   test('draws closed rows with an origin, job and result line', () => {
     const failed = { ...closedJob('f', 'failed'), reason: 'Route refused: data tier' }
     const [done, bad] = paneRows([closedJob(), failed] as never[], NOW, true, SESSION)
-    expect(done!.lines.map((l) => l.label)).toEqual(['ORIGIN:', 'JOB:', 'RESULT:'])
-    expect(flat(done!)[1]).toBe('JOB: z | local | write_code |  completed  | ended 1m ago | took 1m 0s')
-    expect(flat(done!)[2]).toBe('RESULT: exit 0 | 12.3k in / 812 out | $0.0123')
-    expect(flat(bad!)[2]).toBe('RESULT: exit 1 | 12.3k in / 812 out | $0.0123 | Route refused: data tier')
-    expect(bad!.lines[2]!.segs.find((sg) => sg.text.startsWith('Route'))?.color).toBe('error')
+    expect(done!.lines.map((l) => l.label)).toEqual(['ORIGIN:', 'JOB:', 'TIMING:', 'RESULT:', 'USAGE:'])
+    expect(flat(done!)[1]).toBe('JOB: z | local | write_code')
+    expect(flat(done!)[2]).toBe('TIMING: completed | started 2m ago | ended 1m ago | took 1m 0s')
+    expect(flat(done!)[3]).toBe('RESULT: exit 0')
+    expect(flat(done!)[4]).toBe('USAGE: 12.3k in / 812 out | $0.0123')
+    expect(flat(bad!)[3]).toBe('RESULT: exit 1 | Route refused: data tier')
+    expect(bad!.lines[3]!.segs[0]?.color).toBe('error')
   })
 
   test('rejects missing, malformed, stale and invalid job snapshots', () => {
