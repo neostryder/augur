@@ -13,11 +13,13 @@ export const JOBS_CARD_TEXT = {
   openApp: 'Open Augur', showAll: 'Show all sessions', showSession: 'Show this session only', collapse: 'Collapse', expand: 'Expand',
 } as const;
 
+export type JobCardTone = 'run' | 'ok' | 'warn' | 'bad' | 'idle';
 export type JobCardLineKind = keyof typeof JOBS_CARD_TEXT.labels;
 export interface JobCardLine { kind: JobCardLineKind; label: string; text: string }
 export interface JobCard {
   id: string;
   state: string;
+  tone: JobCardTone;
   stalled: boolean;
   closed: boolean;
   lines: JobCardLine[];
@@ -42,6 +44,11 @@ function span(ms: number): string {
 }
 
 export function jobCard(job: JobsLiveRow, now: number, closed = false, mine = ''): JobCard {
+  const tone: JobCardTone = job.stalled ? 'warn'
+    : ['running', 'queued'].includes(job.state) ? 'run'
+    : ['completed', 'done'].includes(job.state) ? 'ok'
+    : ['needs_approval', 'cancel_requested', 'cancelled', 'canceled', 'killed'].includes(job.state) ? 'warn'
+    : ['failed', 'artifact_validation_failed', 'lost', 'node-lost'].includes(job.state) ? 'bad' : 'idle';
   const o = job.origin;
   const name = o?.sessionTitle || (o?.sessionId ? `${T.session} ${o.sessionId.slice(0, 8)}` : o?.label || T.noSession);
   const kind = o?.kind ? o.label && o.label !== o.kind ? `${o.kind} / ${o.label}` : o.kind : o?.label || T.unknownOrigin;
@@ -62,7 +69,7 @@ export function jobCard(job: JobsLiveRow, now: number, closed = false, mine = ''
     `${tokens(job.usage.inputTokens)} ${T.tokensIn} / ${tokens(job.usage.outputTokens)} ${T.tokensOut}`,
     job.usage.costUsd != null && money(job.usage.costUsd),
   ])));
-  return { id: job.id, state: job.state, stalled: job.stalled, closed, lines, short: join([name, job.route, duration]) };
+  return { id: job.id, state: job.state, tone, stalled: job.stalled, closed, lines, short: join([name, job.route, duration]) };
 }
 
 export function jobsCards(snapshot: JobsLiveSnapshot, options: JobsCardOptions) {

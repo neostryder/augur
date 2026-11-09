@@ -63,6 +63,8 @@ describe('the ledger Jobs page', () => {
     expect(html).toContain('All sessions'); expect(html).toContain('data-ledger-filter="origin"');
     expect(html).toContain('aria-expanded="false"'); expect(html).toContain('id="jobs-closed" hidden');
     expect(html).toContain('Closed (1)'); expect(html).toContain('Permission denied');
+    expect(html).toMatch(/class="ledger-row job-card tone-run [^"]*" data-job="node:1"/);
+    expect(html).toMatch(/class="ledger-row job-card tone-bad [^"]*" data-job="failed"/);
     m.ledger.closedExpanded = true;
     expect(renderJobs(m)).toContain('aria-expanded="true"');
     expect(renderJobs(m)).not.toContain('id="jobs-closed" hidden');

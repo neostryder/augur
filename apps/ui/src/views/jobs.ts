@@ -38,7 +38,7 @@ function detail(m: JobsModel): string {
 }
 
 function row(card: JobCard, selected: string | null): string {
-  return `<button class="ledger-row job-card ${selected === card.id ? 'on' : ''} ${card.stalled ? 'stalled' : ''}" data-job="${esc(card.id)}" aria-pressed="${selected === card.id}"><span class="jmain">${card.lines.map(line =>
+  return `<button class="ledger-row job-card tone-${card.tone} ${selected === card.id ? 'on' : ''} ${card.stalled ? 'stalled' : ''}" data-job="${esc(card.id)}" aria-pressed="${selected === card.id}"><span class="jmain">${card.lines.map(line =>
     `<span class="job-card-line job-card-${line.kind}"><b>${line.label}</b> <span${line.kind === 'timing' ? ` data-job-timing="${esc(card.id)}"` : ''}>${esc(line.text)}</span></span>`).join('')}</span></button>`;
 }
 
