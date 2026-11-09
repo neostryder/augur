@@ -75,6 +75,7 @@ export class JobLedger {
       retryOf: job.retryOf ? ledgerId(this.node, job.retryOf) : null, retriedAs: job.retriedAs ? ledgerId(this.node, job.retriedAs) : null,
       usage: job.usage, exitReason: ledgerTerminal(state) ? job.state : null, compacted: meta.compacted,
       ...(state === 'failed' && job.reason ? { failureReason: failureLine(job.reason) } : {}),
+      ...(state === 'failed' && job.failureCode ? { failureCode: job.failureCode } : {}),
     };
   }
 

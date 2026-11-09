@@ -50,6 +50,19 @@ describe('the durable ledger', () => {
     expect(ledger.get('without-reason')?.job).not.toHaveProperty('failureReason');
   });
 
+  it('adds the optional code to an old database and preserves it across a restart', () => {
+    const { dir, store } = fixture(); insert(store);
+    store.db.exec('alter table jobs drop column failure_code'); store.close();
+    const migrated = new Store(dir);
+    expect(migrated.get('local')).not.toHaveProperty('failureCode');
+    migrated.transition('local', 'failed', { reason: 'Policy rejected the request', failureCode: 'cyber_policy' }, 12);
+    expect(migrated.ledger.changes().changes.at(-1)?.job.failureCode).toBe('cyber_policy');
+    migrated.close();
+    const reopened = new Store(dir); cleanup.push(() => reopened.close());
+    expect(reopened.get('local')).toMatchObject({ reason: 'Policy rejected the request', failureCode: 'cyber_policy' });
+    expect(reopened.ledger.get('local')?.job).toMatchObject({ failureReason: 'Policy rejected the request', failureCode: 'cyber_policy' });
+  });
+
   it('migrates and persists node gaps and stale job overlays across a restart', () => {
     const { dir, store, ledger } = fixture();
     ledger.ingest('eru', page([job()]));

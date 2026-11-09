@@ -9,7 +9,7 @@ import { ACTIVITIES, DATA_TIERS, OUTPUT_MODES } from '@augur/core';
 import type { PolicyFile } from '@augur/core';
 import { BRIEF_RESULTS, GRADE_LABELS, STUDENT_RE, classifyDepth, classifyTask, decide as decideGrade, fitScores, grade as gradeText, gradeStats, gradeTier } from '@augur/decision';
 import type { BriefResult, DecisionBackend, GradeVerdictLabel } from '@augur/decision';
-import { BUDGET_WINDOW_MS, NAMED_PROMPT_WINDOW, PICK_WINDOW_MIN, TOOL_TIERS, account, agreement, attachmentKind, balanceReport, budgetStatus, calibrateRoutes, copilotSpend, checkLineage, routeSecretName, checkNamed, checkPick, evaluate, isTerminal, learnedShares, learnedTilt, lookup, matchNamedModels, pressure, propose, rank, resolveBalance, surplusWindowStatus, trainingKey, usageFactors, schemaPrompt, validateRunOptions, validateSchemaAnswer } from '@augur/dispatch-protocol';
+import { BUDGET_WINDOW_MS, NAMED_PROMPT_WINDOW, PICK_WINDOW_MIN, TOOL_TIERS, account, agreement, attachmentKind, balanceReport, budgetStatus, calibrateRoutes, copilotSpend, checkLineage, routeSecretName, checkNamed, checkPick, evaluate, failureLine, isTerminal, learnedShares, learnedTilt, lookup, matchNamedModels, pressure, propose, rank, resolveBalance, surplusWindowStatus, trainingKey, usageFactors, schemaPrompt, validateRunOptions, validateSchemaAnswer } from '@augur/dispatch-protocol';
 import type { Adapter, BalanceReport, BudgetStatus, Conversation, Depth, GradeAnswer, GradeParams, GradeReport, JobRecord, JobRequest, LaunchPlan, PickAnswer, PickParams, RateCard, Rejection, ResolvedAttachment, RouteCapabilities, RouteConfig, UsageSnapshot } from '@augur/dispatch-protocol';
 import { MAX_COMMAND_LINE, optNum, optStr } from './adapters/util.js';
 import { atomicWrite } from './home-files.js';
@@ -1193,12 +1193,12 @@ export class Supervisor {
     if (res.killedBy === 'cancel') store.event(rec.id, 'cancellation_acknowledged', '', at);
     this.collectPatch(rec);
 
-    let answer: string | null = null, failure: string | undefined, sessionId: string | null = null;
+    let answer: string | null = null, failure: string | undefined, engineReason: string | undefined, failureCode: string | undefined, sessionId: string | null = null;
     const stderr = this.tail(join(dir, 'stderr.log'), 1024 * 1024);
     if (adapter) {
       const stdoutPath = join(dir, 'stdout.log');
       const x = adapter.extract({ stdout: this.tail(stdoutPath, 4 * 1024 * 1024), stdoutPath, stderr, exitCode: res.exitCode, jobDir: dir, workspace: rec.workspace });
-      answer = x.answer?.trim() ? x.answer : null; failure = x.failure; sessionId = x.sessionId?.trim() ? x.sessionId.trim() : null;
+      answer = x.answer?.trim() ? x.answer : null; engineReason = x.failureReason ? failureLine(x.failureReason) || undefined : undefined; failure = engineReason ?? x.failure; failureCode = x.failureCode; sessionId = x.sessionId?.trim() ? x.sessionId.trim() : null;
       if (answer) { writeFileSync(join(dir, 'answer.txt'), answer); store.setChars(rec.id, { answer: answer.length }); }
       if (x.served && Object.keys(x.served).length) store.setServed(rec.id, x.served);
       if (x.usage) { store.setUsage(rec.id, x.usage); store.event(rec.id, 'usage_recorded', `${x.usage.inputTokens} in, ${x.usage.outputTokens} out`, at); }
@@ -1219,9 +1219,9 @@ export class Supervisor {
     if (res.killedBy === 'cancel') store.transition(rec.id, 'cancelled', { ...patch, reason: 'cancelled' }, at);
     else if (res.killedBy === 'timeout') store.transition(rec.id, 'killed', { ...patch, reason: `stopped after ${inner?.timeoutS}s of inactivity` }, at);
     else if (res.spawnError) store.transition(rec.id, 'failed', { ...patch, reason: res.spawnError }, at);
-    else if (res.exitCode !== 0) store.transition(rec.id, 'failed', { ...patch, reason: `exit ${res.exitCode}` }, at);
-    else if (!answer) store.transition(rec.id, 'failed', { ...patch, reason: failure ?? 'exited cleanly but produced no answer' }, at);
-    else if (failure) store.transition(rec.id, 'failed', { ...patch, reason: failure }, at);
+    else if (res.exitCode !== 0) store.transition(rec.id, 'failed', { ...patch, reason: engineReason ?? `exit ${res.exitCode}`, ...(failureCode ? { failureCode } : {}) }, at);
+    else if (!answer) store.transition(rec.id, 'failed', { ...patch, reason: failure ?? 'exited cleanly but produced no answer', ...(failureCode ? { failureCode } : {}) }, at);
+    else if (failure) store.transition(rec.id, 'failed', { ...patch, reason: failure, ...(failureCode ? { failureCode } : {}) }, at);
     else if (expectProblem) store.transition(rec.id, 'artifact_validation_failed', { ...patch, reason: expectProblem }, at);
     else { if (expected) store.event(rec.id, 'artifact_validated', inner!.expectFile ?? '', at); store.transition(rec.id, 'completed', patch, at); }
     store.event(rec.id, 'finalized', '', this.now());

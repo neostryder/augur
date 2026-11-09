@@ -20,6 +20,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Changed
 
+- [Visible] [Platform] **Failed Codex, Grok, and mcode jobs now report the engine's own error message as their failure reason.** A failed `codex-exec` job takes its reason from the final error in its Codex session log and keeps `exit N` only when that log is missing or unreadable, so a provider cybersecurity block no longer looks like a crash. Job and ledger records also gain an optional `failureCode`, such as `cyber_policy`, shown in `augur job`, `augur jobs --json`, and the MCP `augur_job` tool. Grok and mcode jobs use the message from their error result, and mcode adds its error code when present.
 - [Visible] [Providers] The Routes form saves the Allow web tools choice as true or false, so `allowWeb` on a `claude-exec` route saves as a boolean.
 - [Visible] [UI] The Codex card shows how many ChatGPT chat jobs ran through Augur in the last 7 days, since ChatGPT in the browser now draws on the same allowance as Codex. The percentages on the card still come from Codex.
 - [Visible] [Platform] With `runner.failover` on, a route whose job fails because the provider reports a spent allowance (rate, usage, or credit limits, quota, too many requests, resource exhausted) is now held for 24 hours: new jobs go straight to the first fallback that is not held, its waiting and running jobs with tools `read` or `none` move there too, and holds persist across restarts in `route-limits.json`.

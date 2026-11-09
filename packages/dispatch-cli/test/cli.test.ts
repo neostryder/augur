@@ -754,11 +754,13 @@ describe('ledger commands', () => {
     const { run, e } = await ledgerBoot();
     const job = e.store.get('two')!;
     const reason = 'copying the working directory failed: permission denied';
-    e.store.db.prepare('update jobs set reason=? where id=?').run(reason + '\n' + 'x'.repeat(400), job.id);
+    e.store.db.prepare('update jobs set reason=?, failure_code=? where id=?').run(reason + '\n' + 'x'.repeat(400), 'cyber_policy', job.id);
     const failureReason = (reason + ' ' + 'x'.repeat(400)).slice(0, 300);
     const detail = await run(['job', job.id]);
     expect(detail.code).toBe(0); expect(detail.out).toContain('Exit reason: failed');
     expect(detail.out.split('\n').filter(line => line.startsWith('Reason: '))).toEqual([`Reason: ${failureReason}`]);
+    expect(detail.out).toContain('Failure code: cyber_policy');
+    expect(JSON.parse((await run(['job', job.id, '--json'])).out).job.failureCode).toBe('cyber_policy');
     expect(JSON.parse((await run(['job', job.id, '--json'])).out).job.failureReason).toBe(failureReason);
     expect(JSON.parse((await run(['jobs', '--state', 'failed', '--json'])).out).jobs[0].failureReason).toBe(failureReason);
     const result = await run(['result', job.id]);
