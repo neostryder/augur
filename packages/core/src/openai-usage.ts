@@ -4,7 +4,7 @@ import { imageCost, OPENAI_IMAGE_PRICES } from './openai-prices.js';
 export const OPENAI_USAGE_TEXT = {
   name: 'OpenAI API',
   web: 'Read OpenAI billing page',
-  webHelp: "Read the platform.openai.com billing page to show your organization's spend this month and the Monthly budget bar.",
+  webHelp: "Read the platform.openai.com billing and Usage pages to show your organization's spend this month, the Monthly budget bar, and 7-day spend for the project selected on the Usage page.",
   budget: 'Monthly budget',
   budgetHelp: "Your organization's monthly spending budget in US dollars. Leave empty for $250.",
   signin: 'Sign in to platform.openai.com',
@@ -17,6 +17,8 @@ export const OPENAI_USAGE_TEXT = {
   credit: 'API credit left',
   promo: 'Promotional credit',
   spend: 'Spent this month (organization)',
+  projectSpend: 'Project spend, last 7 days',
+  projectActivity: (requests: number, tokens: number) => `Last 7 days: ${requests.toLocaleString('en-US')} requests, ${tokens.toLocaleString('en-US')} tokens`,
   activity: (calls: number, tokens: number) => `${calls.toLocaleString()} request${calls === 1 ? '' : 's'}, ${tokens.toLocaleString()} tokens, last 7 days`,
   ends: (date: string) => `Ends ${date}`,
   periods: { today: 'Today', week: 'Last 7 days', month: 'Month to date' },

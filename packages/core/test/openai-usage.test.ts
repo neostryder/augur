@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Host, JobUsage } from '../src/types.js';
 import { openaiLedger } from '../src/openai-usage.js';
 import { imageCost } from '../src/openai-prices.js';
-import { openaiApi, openaiReading } from '../src/providers/openai-api.js';
+import { openaiApi, openaiReading, openaiProjectReading } from '../src/providers/openai-api.js';
 
 const now = new Date(2026, 10, 8, 12);
 const job = (day: number, extra: Partial<JobUsage> = {}): JobUsage => ({ provider: 'openai-api', route: 'openai-api-sol', model: 'chat',
@@ -107,5 +107,57 @@ describe('OpenAI local usage', () => {
     expect(result.meters).toEqual([]);
     expect(result.notes).toMatchObject({ openaiBillingForbidden: true, openaiBillingMissing: false, webSessions: { openai: true } });
     expect(result.notes?.openaiLedger).toBeDefined();
+  });
+});
+
+
+describe('OpenAI project spend', () => {
+  const project = { name: 'Personal', id: 'proj-1', days: Array.from({ length: 9 }, (_, day) => ({
+    start: '2026-11-' + String(day + 1).padStart(2, '0'), spend: day / 4, requests: day, tokens: day * 100,
+  })) };
+
+  it('merges the latest seven project days with billing and the local ledger', async () => {
+    const webSession = vi.fn(async (site: string) => site === 'openai' ? { signedIn: true, account: { spend: 12 } }
+      : { signedIn: true, project, organization: { days: [{ start: '2026-11-08', spend: 999 }] } });
+    const result = await openaiApi.fetch({ now: () => now, jobUsage: async () => [job(8)], webSession } as unknown as Host, { web: true }, { force: true });
+    expect(result.money).toEqual([
+      { id: 'spend', label: 'Spent this month (organization)', amount: 12, currency: 'USD' },
+      { id: 'project_spend', label: 'Project spend, last 7 days', amount: 8.75, currency: 'USD', detail: 'Personal' },
+    ]);
+    expect(result.meters[0]?.detail).toBe('$12.00 of $250');
+    expect(result.notes).toMatchObject({ openaiLedger: { periods: { week: { calls: 1 } } }, webSessions: { openai: true },
+      openaiDays: project.days.slice(-7).map(({ start, spend, requests }) => ({ date: start, spend, requests })), openaiWeek: { requests: 35, tokens: 3500 } });
+    expect(webSession.mock.calls).toEqual([['openai', { fresh: true }], ['openai-usage', { fresh: true }]]);
+  });
+
+  it('preserves the existing reading when the usage window fails or reports no project', async () => {
+    const billing = { signedIn: true, account: { spend: 12 } };
+    const host = (usage: unknown) => ({ now: () => now, jobUsage: async () => [job(8)], webSession: async (site: string) => {
+      if (site === 'openai') return billing;
+      if (usage === 'fail') throw new Error('closed');
+      return usage;
+    } }) as unknown as Host;
+    const baseline = await openaiApi.fetch({ now: () => now, jobUsage: async () => [job(8)], webSession: async () => billing } as unknown as Host, { web: true });
+    for (const usage of ['fail', null, { signedIn: false, reason: 'challenge' }, { signedIn: true, project: null }, { signedIn: true, project: { ...project, days: [] } }]) {
+      expect(await openaiApi.fetch(host(usage), { web: true })).toEqual(baseline);
+    }
+  });
+
+  it('keeps project data when the billing window fails and uses the ordinary cache on an automatic read', async () => {
+    const webSession = vi.fn(async (site: string) => { if (site === 'openai') throw new Error('closed'); return { signedIn: true, project }; });
+    const result = await openaiApi.fetch({ now: () => now, webSession } as unknown as Host, { web: true });
+    expect(result.money).toHaveLength(1);
+    expect(result.money[0]?.id).toBe('project_spend');
+    expect(result.meters).toEqual([]);
+    expect(webSession.mock.calls).toEqual([['openai', { fresh: false }], ['openai-usage', { fresh: false }]]);
+  });
+
+  it('rejects malformed days and keeps zero spend with numeric totals', () => {
+    const bad = [{ start: 'invalid', spend: 1, requests: 1, tokens: 1 }, { start: '2026-11-08', spend: '3', requests: 1, tokens: 1 },
+      { start: '2026-11-08', spend: 1, requests: -1, tokens: 1 }, { start: '2026-11-08', spend: Infinity, requests: 1, tokens: 1 }];
+    expect(openaiProjectReading({ ...project, days: bad })).toEqual({ meters: [], money: [] });
+    const zero = openaiProjectReading({ ...project, days: [{ start: '2026-11-08', spend: 0, requests: 0, tokens: 0 }] });
+    expect(zero.money[0]?.amount).toBe(0);
+    expect(zero.notes).toEqual({ openaiDays: [{ date: '2026-11-08', spend: 0, requests: 0 }], openaiWeek: { requests: 0, tokens: 0 } });
   });
 });

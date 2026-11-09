@@ -46,6 +46,16 @@ export function statusLabel(p: ProviderSnapshot): { label: string; severe: boole
   return { label, severe: s.indicator !== 'minor' && s.indicator !== 'maintenance', description: s.description ?? label };
 }
 
+export interface OpenaiDay { date: string; spend: number; requests: number }
+
+export function openaiDays(p: ProviderSnapshot): OpenaiDay[] {
+  const days = p.id === 'openai-api' ? p.notes?.openaiDays : null;
+  if (!Array.isArray(days)) return [];
+  return days.filter((day): day is OpenaiDay => day && typeof day.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(day.date)
+    && Number.isFinite(Date.parse(day.date)) && new Date(day.date).toISOString().slice(0, 10) === day.date && typeof day.spend === 'number' && Number.isFinite(day.spend)
+    && typeof day.requests === 'number' && Number.isFinite(day.requests) && day.requests >= 0).slice(-7);
+}
+
 /** The extra facts some providers report (resets in hand, spend on this key, sign-in hints), one sentence each. */
 export function notesParts(p: ProviderSnapshot): string[] {
   const n = (p.notes ?? {}) as Record<string, any>;
@@ -70,6 +80,9 @@ export function notesParts(p: ProviderSnapshot): string[] {
   if (n.openaiBillingForbidden) out.push(OPENAI_TEXT.forbiddenNote);
   if (n.openaiLedgerUnavailable) out.push(OPENAI_TEXT.unavailableNote);
   if (p.id === 'codex' && typeof n.chatgptJobsWeek === 'number') out.push(OPENAI_TEXT.chatgpt(n.chatgptJobsWeek));
+  if (openaiDays(p).length && n.openaiWeek && [n.openaiWeek.requests, n.openaiWeek.tokens].every(value => typeof value === 'number' && Number.isFinite(value) && value >= 0)) {
+    out.push(OPENAI_TEXT.projectActivity(n.openaiWeek.requests, n.openaiWeek.tokens));
+  }
   if (n.openaiLedger) {
     const { periods, models } = n.openaiLedger as { periods: Record<string, UsageTotal>; models: Record<string, UsageTotal> };
     const week = periods.week;

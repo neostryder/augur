@@ -1,8 +1,19 @@
-import type { Meter } from '@augur/core';
+import { OPENAI_USAGE_TEXT, type Meter } from '@augur/core';
+import type { OpenaiDay } from '@augur/view-model';
 import { series, type HistoryRow } from '../core';
-import { esc } from '../util';
+import { esc, money } from '../util';
 
 const DAYS = 7;
+
+export function dailySpendStrip(days: OpenaiDay[]): string {
+  if (!days.length) return '';
+  const W = 64, H = 18, width = W / days.length, max = Math.max(0, ...days.map(day => day.spend));
+  const bars = days.map((day, i) => {
+    const height = max > 0 ? Math.max(1, Math.max(0, day.spend) / max * H) : 1;
+    return `<rect x="${(i * width).toFixed(1)}" y="${(H - height).toFixed(1)}" width="${(width - 2).toFixed(1)}" height="${height.toFixed(1)}" fill="${day.spend > 0 ? 'var(--accent)' : 'var(--line)'}"><title>${esc(day.date)}: ${esc(money(day.spend))}</title></rect>`;
+  }).join('');
+  return `<svg class="spark" viewBox="0 0 ${W} ${H}" role="img" aria-label="${OPENAI_USAGE_TEXT.projectSpend}">${bars}</svg>`;
+}
 
 /** Seven-day line of one meter, with the window's reset boundaries marked. */
 export function chart(rows: HistoryRow[], pid: string, m: Meter): string {
