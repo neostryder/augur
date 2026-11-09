@@ -56,54 +56,69 @@ export function openaiDays(p: ProviderSnapshot): OpenaiDay[] {
     && typeof day.requests === 'number' && Number.isFinite(day.requests) && day.requests >= 0).slice(-7);
 }
 
-/** The extra facts some providers report (resets in hand, spend on this key, sign-in hints), one sentence each. */
-export function notesParts(p: ProviderSnapshot): string[] {
+/** One extra fact, one sentence. `more` marks background (limits, rates, how a figure was made) that belongs in a tooltip. */
+export interface NotePart { text: string; more: boolean }
+
+function noteEntries(p: ProviderSnapshot): NotePart[] {
   const n = (p.notes ?? {}) as Record<string, any>;
-  const out: string[] = [];
+  const out: NotePart[] = [];
+  const add = (text: string) => { out.push({ text, more: false }); };
+  const more = (text: string) => { out.push({ text, more: true }); };
   if (typeof n.resets_available === 'number' || typeof n.resetsAvailable === 'number') {
     const k = n.resetsAvailable ?? n.resets_available;
     const ends = typeof n.resetsEndsAt === 'string' ? new Date(n.resetsEndsAt).toLocaleDateString([], { month: 'short', day: 'numeric' }) : '';
-    out.push(`${k} limit reset${k === 1 ? '' : 's'} available${ends ? `, the first ends ${ends}` : ''}`);
+    add(`${k} limit reset${k === 1 ? '' : 's'} available${ends ? `, the first ends ${ends}` : ''}`);
   }
   const ku = n.keyUsage ?? n.key_usage;
-  if (ku) out.push(`This key: ${money(ku.day)} today, ${money(ku.week)} this week, ${money(ku.month)} this month`);
+  if (ku) add(`This key: ${money(ku.day)} today, ${money(ku.week)} this week, ${money(ku.month)} this month`);
   const top = n.topEndpoints ?? n.top_endpoints;
-  if (Array.isArray(top) && top.length) out.push('Top: ' + top.slice(0, 3).map((e: any) => `${e.endpoint} ${money(Number(e.cost))}`).join(', '));
-  if (n.lastWeek) out.push(`${Number(n.lastWeek.requests).toLocaleString()} requests, ${(Number(n.lastWeek.tokens) / 1e6).toFixed(1)}M tokens in 7 days`);
-  if (typeof n.refill === 'string') out.push(n.refill);
-  if (n.signInNeeded) out.push('Sign in to the TypeSafe console in settings to see your balance');
-  if (n.resetsSignIn) out.push('Claude resets are not counted yet. Sign in to claude.ai in settings.');
-  if (n.resetsChallenge) out.push('claude.ai is showing a Cloudflare check. Open it from settings and pass it so your resets can be read.');
-  if (n.openaiSignIn) out.push(OPENAI_TEXT.signInNote);
-  if (n.openaiChallenge) out.push(OPENAI_TEXT.challengeNote);
-  if (n.openaiBillingMissing) out.push(OPENAI_TEXT.missingNote);
-  if (n.openaiBillingForbidden) out.push(OPENAI_TEXT.forbiddenNote);
-  if (n.openaiLedgerUnavailable) out.push(OPENAI_TEXT.unavailableNote);
-  if (p.id === 'codex' && typeof n.chatgptJobsWeek === 'number') out.push(OPENAI_TEXT.chatgpt(n.chatgptJobsWeek));
+  if (Array.isArray(top) && top.length) more('Top: ' + top.slice(0, 3).map((e: any) => `${e.endpoint} ${money(Number(e.cost))}`).join(', '));
+  if (n.lastWeek) add(`${Number(n.lastWeek.requests).toLocaleString()} requests, ${(Number(n.lastWeek.tokens) / 1e6).toFixed(1)}M tokens in 7 days`);
+  if (typeof n.refill === 'string') more(n.refill);
+  if (n.signInNeeded) add('Sign in to the TypeSafe console in settings to see your balance');
+  if (n.resetsSignIn) add('Claude resets are not counted yet. Sign in to claude.ai in settings.');
+  if (n.resetsChallenge) add('claude.ai is showing a Cloudflare check. Open it from settings and pass it so your resets can be read.');
+  if (n.openaiSignIn) add(OPENAI_TEXT.signInNote);
+  if (n.openaiChallenge) add(OPENAI_TEXT.challengeNote);
+  if (n.openaiBillingMissing) add(OPENAI_TEXT.missingNote);
+  if (n.openaiBillingForbidden) more(OPENAI_TEXT.forbiddenNote);
+  if (n.openaiLedgerUnavailable) more(OPENAI_TEXT.unavailableNote);
+  if (p.id === 'codex' && typeof n.chatgptJobsWeek === 'number') more(OPENAI_TEXT.chatgpt(n.chatgptJobsWeek));
   if (openaiDays(p).length && n.openaiWeek && [n.openaiWeek.requests, n.openaiWeek.tokens].every(value => typeof value === 'number' && Number.isFinite(value) && value >= 0)) {
-    out.push(OPENAI_TEXT.projectActivity(n.openaiWeek.requests, n.openaiWeek.tokens));
+    add(OPENAI_TEXT.projectActivity(n.openaiWeek.requests, n.openaiWeek.tokens));
   }
   if (n.openaiLedger) {
     const { periods, models } = n.openaiLedger as { periods: Record<string, UsageTotal>; models: Record<string, UsageTotal> };
     const week = periods.week;
-    if (week) out.push(OPENAI_TEXT.activity(week.calls, week.inputTokens + week.outputTokens));
-    for (const [model, total] of Object.entries(models)) if (total.calls > 0) out.push(OPENAI_TEXT.model(model,
+    if (week) add(OPENAI_TEXT.activity(week.calls, week.inputTokens + week.outputTokens));
+    for (const [model, total] of Object.entries(models)) if (total.calls > 0) more(OPENAI_TEXT.model(model,
       OPENAI_TEXT.counts('', total.calls, total.inputTokens, total.outputTokens, total.images), total.costUsd === null ? '' : OPENAI_TEXT.cost(total.costUsd)));
   }
-  if (n.consoleSignIn) out.push('Claude API credit is not read yet. Sign in to the Claude Console in settings.');
-  if (n.consoleChallenge) out.push('The Claude Console is showing a Cloudflare check. Open it from settings and pass it so your credit can be read.');
-  if (n.cloudflareCheck) out.push('Open the TypeSafe console in settings and pass the Cloudflare check to show your balance');
-  if (n.balanceMissing) out.push('The TypeSafe billing page opened but showed no credit balance');
-  if (typeof n.latencyMs === 'number') out.push(`Answered in ${Math.round(n.latencyMs)} ms${n.model ? `, ${n.model}` : ''}`);
+  if (n.consoleSignIn) add('Claude API credit is not read yet. Sign in to the Claude Console in settings.');
+  if (n.consoleChallenge) add('The Claude Console is showing a Cloudflare check. Open it from settings and pass it so your credit can be read.');
+  if (n.cloudflareCheck) add('Open the TypeSafe console in settings and pass the Cloudflare check to show your balance');
+  if (n.balanceMissing) add('The TypeSafe billing page opened but showed no credit balance');
+  if (typeof n.latencyMs === 'number') more(`Answered in ${Math.round(n.latencyMs)} ms${n.model ? `, ${n.model}` : ''}`);
   return out;
 }
 
-export function usageRows(p: ProviderSnapshot, layout: LayoutConfig): { meters: Meter[]; money: ProviderSnapshot['money']; notes: string[]; status: string } {
+/** The extra facts some providers report (resets in hand, spend on this key, sign-in hints), one sentence each. */
+export function notesParts(p: ProviderSnapshot): string[] {
+  return noteEntries(p).map(n => n.text);
+}
+
+/** The same facts split for a card: `shown` stays in view, `more` goes in a tooltip. */
+export function notesSplit(p: ProviderSnapshot): { shown: string[]; more: string[] } {
+  const all = noteEntries(p);
+  return { shown: all.filter(n => !n.more).map(n => n.text), more: all.filter(n => n.more).map(n => n.text) };
+}
+
+export function usageRows(p: ProviderSnapshot, layout: LayoutConfig): { meters: Meter[]; money: ProviderSnapshot['money']; notes: string[]; shown: string[]; more: string[]; status: string } {
   const hidden = layout.hiddenMeters[p.id] ?? [];
   const meters = p.meters.filter(m => !hidden.includes(m.id));
   const money = p.money.filter(row => row.amount != null && (layout.showHiddenRows === true || row.amount !== 0) && !hidden.includes('$' + row.id));
-  const notes = notesParts(p);
-  return { meters, money, notes, status: !meters.length && !money.length && !notes.length && !p.error && !statusLabel(p) ? USAGE_TEXT.noUsage : '' };
+  const notes = notesParts(p), { shown, more } = notesSplit(p);
+  return { meters, money, notes, shown, more, status: !meters.length && !money.length && !notes.length && !p.error && !statusLabel(p) ? USAGE_TEXT.noUsage : '' };
 }
 
 /** The line under a provider whose last refresh failed. */
