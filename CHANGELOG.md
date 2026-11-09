@@ -41,6 +41,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Fixed
 
+- [Internal] [Platform] **Jobs with short time limits no longer count a single scheduler tick as activity.** The job activity check now needs at least 50 ms of CPU growth between two looks in addition to 2 percent of elapsed time, so one 15 ms tick inside the 750 ms look used for a 3 second timeout no longer keeps a job running past its limit and failing two Windows supervisor timeout tests. Looks at the normal 15 second interval are unchanged because 2 percent of that is already 300 ms.
 - [Visible] [Providers] **Signing in to OpenAI now completes for accounts without billing permission.** The sign-in window used to stay open on the billing page's Not Available message. It now closes, and the OpenAI API card notes that the account cannot read organization billing.
 - [Visible] [Alerts] **A healthy job that prints nothing until it finishes, such as a Grok job, is no longer flagged as stalled.** Augur now counts a job as active while its processes use the processor, move at least 64 KB of disk or network data, or start new processes, so these jobs stop sending a stall alert on nearly every run. A job with no output and no process activity is still flagged after `stallMinutes`.
 - [Visible] [Providers] **Example image routes saved without a Model no longer stop with "route option model is required".** An `images` route with an empty Model now takes its model from the route's label, and a Model you set still wins.
