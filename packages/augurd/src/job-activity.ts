@@ -6,8 +6,10 @@ export interface TreeSample { cpuMs: number; io: number; pids: ReadonlySet<numbe
 
 export interface ProcessRow { pid: number; ppid: number; cpuMs: number; io: number }
 
-/** A tree whose CPU grew by at least this share of the time between two looks is working. Idle timers stay far below it. */
+/** The relative CPU threshold filters out idle timers during normal looks. */
 export const ACTIVE_CPU_SHARE = 0.02;
+/** Scheduler ticks can exceed the CPU share in short looks, so idle timers need an absolute floor. */
+export const ACTIVE_CPU_MS = 50;
 /** A tree that moved at least this many bytes between two looks is working. */
 export const ACTIVE_IO_BYTES = 65536;
 
@@ -24,7 +26,7 @@ export function sampleTree(rows: ProcessRow[], root: number): TreeSample {
 /** Whether the tree did work between two looks `elapsedMs` apart. A new process in the tree counts as work, since a shell loop of short commands never raises the sum. */
 export function wasActive(before: TreeSample, after: TreeSample, elapsedMs: number): boolean {
   if (after.started > before.started || [...after.pids].some(p => !before.pids.has(p))) return true;
-  return after.cpuMs - before.cpuMs >= ACTIVE_CPU_SHARE * elapsedMs || after.io - before.io >= ACTIVE_IO_BYTES;
+  return after.cpuMs - before.cpuMs >= Math.max(ACTIVE_CPU_MS, ACTIVE_CPU_SHARE * elapsedMs) || after.io - before.io >= ACTIVE_IO_BYTES;
 }
 
 /** `ps -o time=` output: `[[dd-]hh:]mm:ss`, with fractions on macOS. Returns milliseconds, or null when it is not a time. */
