@@ -84,7 +84,7 @@ Idle time counts back through usage history to the last reading at or above the 
 
 ### Stalled jobs
 
-The stall time (`stallMinutes`, 10 minutes by default, minimum 1) sets how long a live job can go without producing output before Augur flags it as stalled. A job counts as stalled only while its process is still alive, and Augur never cancels a stalled job on its own, so you decide whether to cancel it. Set it in the app's Service settings or with `augur config`. Stalled jobs carry a marker on the app's Jobs page, in the terminal app's Jobs tab, and in `augur jobs`.
+The stall time (`stallMinutes`, 10 minutes by default, minimum 1) sets how long a live job can go without activity before Augur flags it as stalled. Activity is either output (writes to stdout or stderr, or new job events) or work by the job's processes: processor use, at least 64 KB of disk or network data moved between checks, or new processes started. Augur checks the job's whole process tree about every 15 seconds, and if the process table cannot be read, the job counts as working. A job counts as stalled only while its process is still alive, and Augur never cancels a stalled job on its own, so you decide whether to cancel it. Set it in the app's Service settings or with `augur config`. Stalled jobs carry a marker on the app's Jobs page, in the terminal app's Jobs tab, and in `augur jobs`.
 
 ### Job slots
 

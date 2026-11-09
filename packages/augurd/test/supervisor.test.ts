@@ -949,6 +949,18 @@ describe('job activity', () => {
     expect(e.sup.status(id)?.stalled).toBe(true);
   });
 
+  it('counts the runner\'s record of process work, so a job that prints nothing until it exits is not flagged', () => {
+    const e = setup({ stallMinutes: 1 }), start = Date.now() - 600000, { id, dir } = activityJob(e, start);
+    let now = start + 600000;
+    vi.spyOn(e.sup as unknown as { now(): number }, 'now').mockImplementation(() => now);
+    touch(join(dir, 'heartbeat'), now);
+    expect(e.sup.status(id)).toMatchObject({ lastActivityAt: start, stalled: true });
+    touch(join(dir, 'active'), now - 5000, 'a');
+    now += 3001;
+    touch(join(dir, 'heartbeat'), now);
+    expect(e.sup.status(id)).toMatchObject({ lastActivityAt: now - 3001 - 5000, stalled: false });
+  });
+
   it('uses the newest log or event time, strips controls, and caches bounded tails', () => {
     const e = setup(), start = Date.now() - 120000, { id, dir } = activityJob(e, start);
     let now = Date.now();

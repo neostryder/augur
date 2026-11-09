@@ -197,7 +197,7 @@ Job alerts live in the Alerts area of Settings, and the terminal Settings screen
 | `ledgerAlerts.stalled` | `true` | Boolean |
 | `ledgerAlerts.failed` | `true` | Boolean |
 | `ledgerAlerts.overUsualTime` | `true` | Boolean |
-| `stallMinutes` | `10` | Whole minutes, at least 1; applies to local execution inactivity |
+| `stallMinutes` | `10` | Whole minutes, at least 1; applies to local jobs with no output and no process activity |
 | `ledgerAlerts.usualMultiple` | `3` | Whole multiplier from 1 through 1000 |
 | `ledgerAlerts.minSamples` | `8` | Whole sample count from 1 through 10000 |
 | `ledgerAlerts.webhookUrl` | Empty | Optional HTTPS URL without credentials, query, or fragment |

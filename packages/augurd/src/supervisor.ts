@@ -1370,6 +1370,8 @@ export class Supervisor {
         try { const s = statSync(path); lastActivityAt = Math.max(lastActivityAt, s.mtimeMs); if (s.size) logs.push({ path, mtime: s.mtimeMs, size: s.size }); } catch { /* no output yet */ }
       }
       try { heartbeatAt = statSync(join(dir, 'heartbeat')).mtimeMs; } catch { /* runner not started yet */ }
+      // The runner records when the job's process tree last worked, which covers a harness that prints nothing until it exits.
+      try { lastActivityAt = Math.max(lastActivityAt, statSync(join(dir, 'active')).mtimeMs); } catch { /* no look yet */ }
       let activityLine = '';
       for (const log of logs.sort((a, b) => b.mtime - a.mtime)) {
         const lines = this.tail(log.path, 8192).split(/[\r\n]/);

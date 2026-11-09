@@ -33,6 +33,7 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ### Fixed
 
+- [Visible] [Alerts] **A healthy job that prints nothing until it finishes, such as a Grok job, is no longer flagged as stalled.** Augur now counts a job as active while its processes use the processor, move at least 64 KB of disk or network data, or start new processes, so these jobs stop sending a stall alert on nearly every run. A job with no output and no process activity is still flagged after `stallMinutes`.
 - [Visible] [Providers] **Example image routes saved without a Model no longer stop with "route option model is required".** An `images` route with an empty Model now takes its model from the route's label, and a Model you set still wins.
 - [Visible] [Platform] **Sandboxed jobs no longer copy Rust or Maven build output into the workspace.** The copy skips a `target` folder that sits next to a `Cargo.toml` or `pom.xml`. Augur also checks the working directory at submit time and refuses one over 20000 files or 512 MB with a bad_request asking for a smaller `cwd`, before any job exists or the service stalls on the copy.
 - [Visible] [Platform] The prose queue no longer fails every item with "cwd may not be inside the service data folder." Each prose group now runs in an `augur-prose-scratch` folder under the operating system's temporary folder, which is deleted when the group finishes, and items that failed before can be requeued and run.
