@@ -158,6 +158,9 @@ svg.spark { width: 64px; height: 18px; flex: none; overflow: visible; }
 .err { display: flex; gap: 6px; align-items: flex-start; color: var(--ink-2); font-size: calc(12px * var(--fs)); margin-top: 4px; }
 .err svg { width: 14px; height: 14px; flex: none; color: var(--warn); margin-top: 1px; }
 .notes { color: var(--muted); font-size: calc(11.5px * var(--fs)); margin-top: 5px; }
+.notes .info { display: inline-flex; vertical-align: middle; width: 14px; height: 14px; margin-left: 2px; cursor: help; opacity: .7; }
+.notes .info:hover, .notes .info:focus-visible { opacity: 1; }
+.notes .info svg { width: 14px; height: 14px; }
 
 
 #tip.rich { white-space: normal; width: max-content; max-width: min(320px, calc(100vw - 12px)); padding: 8px 10px; line-height: 1.4; }

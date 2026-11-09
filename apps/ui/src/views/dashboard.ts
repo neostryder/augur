@@ -87,6 +87,12 @@ function statusBadge(p: ProviderSnapshot): string {
   return `<span class="status ${esc(p.status!.indicator)}" title="${esc(s.description)}">${s.severe ? ICON.crit : ICON.warn}${s.label}</span>`;
 }
 
+/** Background facts (limits, rates, how a figure was made) sit behind a small mark instead of taking card space. */
+function infoMark(lines: readonly string[]): string {
+  const text = lines.join('\n');
+  return `<span class="info" role="img" tabindex="0" title="${esc(text)}" aria-label="${esc(lines.join(' '))}">${ICON.info}</span>`;
+}
+
 function cardHtml(model: DashboardModel, pid: string): string {
   const p = model.snapshot?.providers[pid];
   const plugin = model.plugins.get(pid);
@@ -100,7 +106,11 @@ function cardHtml(model: DashboardModel, pid: string): string {
     const rows = usageRows(p, model.config.layout);
     for (const m of rows.meters) body += meterHtml(model, pid, m);
     const gate = model.gates?.find(x => x.provider === pid);
-    if (gate) body += `<div class="mfoot"><span class="grow">${gate.state === 'closed' && (gate.gap === null || gate.gap < gate.close) ? 'On pace' : 'Gate'}</span><span class="pace">${gate.state === 'open' ? 'Open' : 'Closed'}${gate.gap === null ? '' : `, ${Math.round(gate.gap)} points behind pace`}${gate.window ? `; ${esc(gate.window)}` : ''}; gated ${esc(gate.labels.join(', '))}</span></div>`;
+    if (gate) {
+      const state = `${gate.state === 'open' ? 'Open' : 'Closed'}${gate.gap === null ? '' : `, ${Math.round(gate.gap)} points behind pace`}${gate.window ? `; ${esc(gate.window)}` : ''}`;
+      const gated = `Gated: ${esc(gate.labels.join(', '))}`;
+      body += `<div class="mfoot"><span class="grow">${gate.state === 'closed' && (gate.gap === null || gate.gap < gate.close) ? 'On pace' : 'Gate'}</span><span class="pace" title="${gated}">${state}</span></div>`;
+    }
     const tiles = rows.money;
     if (tiles.length) {
       body += '<div class="money">' + tiles.map((x) => `<div class="tile"><div class="l">${esc(x.label)}</div>
@@ -108,9 +118,9 @@ function cardHtml(model: DashboardModel, pid: string): string {
     }
     const days = openaiDays(p);
     if (days.length) body += `<div class="mfoot">${dailySpendStrip(days)}</div>`;
-    const notes = rows.notes.map(esc).join(' &middot; ');
+    const notes = rows.shown.map(esc).join(' &middot; ');
     if (rows.status && !local && !gate) body += `<div class="notes" role="status">${esc(rows.status)}</div>`;
-    if (notes) body += `<div class="notes">${notes}</div>`;
+    if (notes || rows.more.length) body += `<div class="notes">${notes}${rows.more.length ? `${notes ? ' ' : ''}${infoMark(rows.more)}` : ''}</div>`;
     if (p.error) body += `<div class="err">${ICON.warn}<span>${esc(errorText(p, ago))}</span></div>`;
   } else {
     body = `<div class="notes">${USAGE_TEXT.waiting}</div>`;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { defaultConfig, type ProviderSnapshot, type Snapshot } from '@augur/core';
-import { ago, errorText, money, notesParts, openaiDays, paceInfo, series, sevOf, shortAgo, span, statusLabel, tightest, until, usageRows, USAGE_TEXT } from '../src/index.js';
+import { ago, errorText, money, notesParts, notesSplit, openaiDays, paceInfo, series, sevOf, shortAgo, span, statusLabel, tightest, until, usageRows, USAGE_TEXT } from '../src/index.js';
 
 const NOW = Date.parse('2026-10-04T12:00:00Z');
 
@@ -86,7 +86,7 @@ describe('usage', () => {
   it.each(['gemini', 'cogitator'])('hides zero money rows and gives an empty %s card one status line', (id) => {
     const p = provider(id, [], { money: [{ id: 'month', label: 'Month', amount: 0, currency: 'USD' }] });
     const layout = defaultConfig().layout;
-    expect(usageRows(p, layout)).toEqual({ meters: [], money: [], notes: [], status: USAGE_TEXT.noUsage });
+    expect(usageRows(p, layout)).toEqual({ meters: [], money: [], notes: [], shown: [], more: [], status: USAGE_TEXT.noUsage });
     const shown = usageRows(p, { ...layout, showHiddenRows: true });
     expect(shown.money).toEqual(p.money);
     expect(shown.status).toBe('');
@@ -108,6 +108,17 @@ describe('usage', () => {
     expect(usageRows(provider('gemini', [], { error: 'Failed' }), layout).status).toBe('');
     expect(usageRows(provider('gemini', [], { notes: { consoleSignIn: true } }), layout).status).toBe('');
     expect(usageRows(provider('gemini', [], { status: { indicator: 'major' } }), layout).status).toBe('');
+  });
+
+  it('keeps resets and sign-in prompts in view and moves background notes to the tooltip', () => {
+    const jev = provider('typesafe', [], { notes: { lastWeek: { requests: 402306, tokens: 855.2e6 }, refill: 'Refills to $20.00 when below $5.00', latencyMs: 200, model: 'jev-1.14.0' } });
+    expect(notesSplit(jev)).toEqual({ shown: ['402,306 requests, 855.2M tokens in 7 days'], more: ['Refills to $20.00 when below $5.00', 'Answered in 200 ms, jev-1.14.0'] });
+    const claude = provider('claude', [], { notes: { resetsAvailable: 1, resetsSignIn: true } });
+    expect(notesSplit(claude).more).toEqual([]);
+    expect(notesSplit(claude).shown).toHaveLength(2);
+    const openai = provider('openai-api', [], { notes: { openaiBillingForbidden: true } });
+    expect(notesSplit(openai)).toEqual({ shown: [], more: [expect.stringContaining('api.billing.read')] });
+    expect(notesParts(jev)).toEqual([...notesSplit(jev).shown, ...notesSplit(jev).more].sort((a, b) => notesParts(jev).indexOf(a) - notesParts(jev).indexOf(b)));
   });
 
   it('words status, notes and errors', () => {

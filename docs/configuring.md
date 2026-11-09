@@ -28,6 +28,8 @@ OpenAI API appears in Settings and on the Usage page as a card with one activity
 
 The Usage page hides money rows whose amount is zero, such as a provider's credit left or spend. Meters, errors, and sign-in notes always show. To see the hidden rows, check Show hidden rows on the Usage page or press h in the terminal screen. Augur saves the choice in the layout flag `layout.showHiddenRows` (false by default). A card with nothing left to show reads "No usage this month". To hide single rows, use Settings.
 
+On the Usage page, each provider card shows notes about usage and availability, such as reset counts and sign-in prompts, directly on the card, and keeps background notes, such as the models a gate holds back or a provider's refill rule, behind a small info mark that shows them on hover or keyboard focus. The terminal screen prints every note.
+
 On Anthropic-style routes, a prompt may hold one `<!-- augur:cache-break -->` line, and the text above it becomes a cached system block while the text below it plus any attachments becomes the user message. A prompt with no line, or with the line at the very end, is sent as one user message. Only Anthropic-style routes act on the line, and the route option `cacheTtl` accepts `5m` (default) or `1h` and is rejected on an OpenAI-style route. Cached reads cost a small fraction of the input price, and writes cost 1.25 times the input price with `5m` or 2 times with `1h`. On Opus 5.5, Sonnet 5.5, and Haiku 5.5, nothing is cached unless the text above the line reaches 512 tokens, and usage reports list cache reads and cache writes separately.
 
 ## Where the settings live
