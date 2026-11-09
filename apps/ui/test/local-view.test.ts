@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { readFleet, withCompactFleet } from '@augur/core';
+import { defaultConfig, readFleet, withCompactFleet } from '@augur/core';
 import type { Snapshot } from '@augur/core';
 import { localCard, localPage } from '@augur/view-model';
 import { localCardBody, renderLocal } from '../src/views/local';
+import { renderDashboard } from '../src/views/dashboard';
 
 const model = (id: string, state: string, idle: number | null = 12, mb = 6144) => ({ id, state, memory_mb: mb, idle_secs: idle, yielded: [] });
 const fleet = readFleet({
@@ -28,6 +29,35 @@ describe('the local card on the dashboard', () => {
     expect(html).toContain('machines up');
     expect(html).not.toContain('data-action="local"');
     expect(html).toContain('This device shows a summary.');
+  });
+});
+
+describe('usage row visibility', () => {
+  it('hides zero money rows, renders the empty status, and restores rows with the saved flag', () => {
+    const config = defaultConfig();
+    config.providers = [{ id: 'gemini', enabled: true, settings: {} }];
+    const snapshot: Snapshot = { schema: 1, generatedAt: '', providers: { gemini: { id: 'gemini', name: 'Gemini',
+      ok: true, stale: false, error: null, plan: null, fetchedAt: null, meters: [], notes: {},
+      money: [{ id: 'month', label: 'Month spend', amount: 0, currency: 'USD' }] } } };
+    const dashboard = { config, snapshot, history: [], plugins: new Map(), busy: false, twoColumns: false, expanded: null, dark: false, shellKind: 'desktop' as const };
+    const hidden = renderDashboard(dashboard);
+    expect(hidden).toContain('data-show-hidden-rows');
+    expect(hidden).toContain('No usage this month');
+    expect(hidden).not.toContain('Month spend');
+    config.layout.showHiddenRows = true;
+    const shown = renderDashboard(dashboard);
+    expect(shown).toContain('data-show-hidden-rows checked');
+    expect(shown).toContain('Month spend');
+    expect(shown).toContain('$0.00');
+    expect(shown).not.toContain('No usage this month');
+  });
+
+  it('keeps fleet details without an empty-usage status', () => {
+    const config = defaultConfig();
+    config.providers = [{ id: 'cogitator', enabled: true, settings: {} }];
+    const html = renderDashboard({ config, snapshot: snap, history: [], plugins: new Map(), busy: false, twoColumns: false, expanded: null, dark: false, shellKind: 'desktop' });
+    expect(html).toContain('1 of 2 machines up');
+    expect(html).not.toContain('No usage this month');
   });
 });
 

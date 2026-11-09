@@ -79,6 +79,26 @@ describe('usage page', () => {
     expect((s.calls[1]![1][0] as EngineState['config']).providers.map((x) => x.id)).toEqual(['codex', 'jev', 'claude']);
   });
 
+  it('hides zero money rows and saves the show-hidden choice with h', async () => {
+    const st = state();
+    st.config.providers = [{ id: 'gemini', enabled: true, settings: {} }];
+    st.snapshot!.providers = { gemini: { id: 'gemini', name: 'Gemini', ok: true, stale: false, error: null, plan: null,
+      fetchedAt: st.snapshot!.generatedAt, meters: [], money: [{ id: 'month', label: 'Month spend', amount: 0, currency: 'USD' }], notes: {} } };
+    const s = setup(st);
+    expect(s.draw()).toContain('[ ] Show hidden rows (h)');
+    expect(s.draw()).toContain('No usage this month');
+    expect(s.draw()).not.toContain('Month spend');
+    await s.app.key(ch('h'));
+    const config = s.calls[0]![1][0] as EngineState['config'];
+    expect(config.layout.showHiddenRows).toBe(true);
+    st.config = config;
+    expect(s.draw()).toContain('[x] Show hidden rows (h)');
+    expect(s.draw()).toContain('Month spend $0.00');
+    expect(s.draw()).not.toContain('No usage this month');
+    await s.app.key(ch('h'));
+    expect((s.calls[1]![1][0] as EngineState['config']).layout.showHiddenRows).toBe(false);
+  });
+
   it('adds a sparkline on a wide terminal', () => {
     expect(setup().draw(130).split('\n').find((l) => l.includes('Session'))).toMatch(/▁ +▄ +42%$/);
   });

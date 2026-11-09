@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { defaultConfig, type ProviderSnapshot, type Snapshot } from '@augur/core';
-import { ago, errorText, money, notesParts, paceInfo, series, sevOf, shortAgo, span, statusLabel, tightest, until } from '../src/index.js';
+import { ago, errorText, money, notesParts, paceInfo, series, sevOf, shortAgo, span, statusLabel, tightest, until, usageRows, USAGE_TEXT } from '../src/index.js';
 
 const NOW = Date.parse('2026-10-04T12:00:00Z');
 
@@ -58,13 +58,46 @@ describe('usage', () => {
     expect(notesParts(provider('openai-api', [], { notes: { chatgptJobsWeek: 4 } }))).toEqual([]);
   });
 
-  it('shows local periods, month breakdown and promotional expiry', () => {
+  it('shows weekly activity and the existing breakdown without period or promotional rows', () => {
     const total = { calls: 2, inputTokens: 100, outputTokens: 20, images: 1, costUsd: 0.05, costCalls: 1, estimated: true };
     const parts = notesParts(provider('openai-api', [], { notes: { openaiLedger: { periods: { today: total, week: total, month: total }, models: { example: total } }, openaiPromos: [{ amount: 5, detail: 'Ends 2026-12-01' }] } }));
-    expect(parts[0]).toBe('Today: 2 calls, 100 input tokens, 20 output tokens, 1 image');
-    expect(parts[3]).toBe('example, month to date: 2 calls, 100 input tokens, 20 output tokens, 1 image, estimated $0.05000');
-    expect(parts[4]).toBe('Calls with no cost estimate: 1. Estimates cover priced calls only.');
-    expect(parts[5]).toBe('Promotional credit: $5.00; Ends 2026-12-01');
+    expect(parts).toEqual([
+      '2 requests, 120 tokens, last 7 days',
+      'example, month to date: 2 calls, 100 input tokens, 20 output tokens, 1 image, estimated $0.05000',
+    ]);
+  });
+
+  it('keeps one activity line when the ledger has no calls', () => {
+    const total = { calls: 0, inputTokens: 0, outputTokens: 0, images: 0, costUsd: 0, costCalls: 0, estimated: true };
+    expect(notesParts(provider('openai-api', [], { notes: { openaiLedger: { periods: { week: total, month: total }, models: { example: total } } } })))
+      .toEqual(['0 requests, 0 tokens, last 7 days']);
+  });
+
+  it.each(['gemini', 'cogitator'])('hides zero money rows and gives an empty %s card one status line', (id) => {
+    const p = provider(id, [], { money: [{ id: 'month', label: 'Month', amount: 0, currency: 'USD' }] });
+    const layout = defaultConfig().layout;
+    expect(usageRows(p, layout)).toEqual({ meters: [], money: [], notes: [], status: USAGE_TEXT.noUsage });
+    const shown = usageRows(p, { ...layout, showHiddenRows: true });
+    expect(shown.money).toEqual(p.money);
+    expect(shown.status).toBe('');
+  });
+
+  it('keeps nonzero money, zero meters, notes and errors and respects explicit visibility settings', () => {
+    const p = provider('gemini', [{ id: 'meter', label: 'Meter', usedPct: 0 }], {
+      money: [0, 1, -1, null].map((amount, i) => ({ id: String(i), label: String(i), amount, currency: 'USD' })),
+      notes: { consoleSignIn: true }, error: 'Timed out.',
+    });
+    const layout = defaultConfig().layout, rows = usageRows(p, layout);
+    expect(rows.meters).toEqual(p.meters);
+    expect(rows.money.map(row => row.amount)).toEqual([1, -1]);
+    expect(rows.notes).toEqual(notesParts(p));
+    expect(rows.status).toBe('');
+    expect(p.error).toBe('Timed out.');
+    expect(usageRows(p, { ...layout, showHiddenRows: true, hiddenMeters: { gemini: ['$0', 'meter'] } }).money.map(row => row.amount)).toEqual([1, -1]);
+    expect(usageRows(p, { ...layout, hiddenMeters: { gemini: ['meter'] } }).meters).toEqual([]);
+    expect(usageRows(provider('gemini', [], { error: 'Failed' }), layout).status).toBe('');
+    expect(usageRows(provider('gemini', [], { notes: { consoleSignIn: true } }), layout).status).toBe('');
+    expect(usageRows(provider('gemini', [], { status: { indicator: 'major' } }), layout).status).toBe('');
   });
 
   it('words status, notes and errors', () => {

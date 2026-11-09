@@ -218,6 +218,7 @@ export interface LayoutConfig {
   nodeView?: { sheen: boolean; animation: boolean; ticks: boolean };
   /** Meter ids hidden per provider. */
   hiddenMeters: Record<string, string[]>;
+  showHiddenRows?: boolean;
   collapsed: string[];
 }
 
