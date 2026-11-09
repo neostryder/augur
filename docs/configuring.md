@@ -425,6 +425,7 @@ Sends one prompt to a messages endpoint and returns the text. No tools. Text fil
 | `keySource` | env, store | Pick env to read the key from an environment variable you name, or store to keep it in this computer's key store. A stored key is saved on the Routes page or with `augur key set <route>`. |
 | `apiKeyEnv` (required) | text | The name of the environment variable that holds the API key, when Key kept in is set to env. The key itself is never stored in a route. |
 | `maxTokens` | number | Most tokens the answer may use. Defaults to 4096. |
+| `cacheTtl` | 5m, 1h | How long the provider keeps the cached part of a prompt that holds the line <!-- augur:cache-break -->. The text above that line is cached and read back at a small fraction of the input price by a later job that starts with the same text. 5m, the default, costs 1.25 times the input price to write and 1h costs 2 times, so pick 1h when jobs that share the text arrive more than five minutes apart. |
 | `timeoutS` | number | Defaults to 900. |
 | `headersJson` | json | A JSON object of request headers sent with every call. Credentials do not belong here; keep keys in the key store. |
 | `requestClass` | none, cogitator | none sends nothing. cogitator sends x-cogitator-source (augur), x-augur-route, x-cogitator-activity and x-cogitator-class with every call. The class is low for background jobs, normal for a person typing at a terminal or a job marked urgent. |
