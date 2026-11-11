@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DecisionLog } from '../src/decisions.js';
 import { readGate } from '../src/balance-files.js';
+import { attestAgentRequest } from '../src/ipc.js';
 import { ROUTES, makeEnv, request, submitOk, terminal } from './harness.js';
 import type { Env } from './harness.js';
 
@@ -269,6 +270,65 @@ describe('confirming that a person named the model', () => {
     expect('id' in e.sup.submit(ask(e, 's1'))).toBe(true);
     e.sup.humanPrompt('s1', 'a very private sentence about ask');
     expect(JSON.stringify(e.store.db.prepare('select * from prompts').all())).not.toContain('private');
+  });
+});
+
+describe('premium runs named by a person', () => {
+  const premium = (verifyNamed: 'off' | 'record' | 'enforce' = 'off') => {
+    const e = setup({ requirePick: true, verifyNamed }), path = join(e.home, 'policy.json'), policy = JSON.parse(readFileSync(path, 'utf8'));
+    policy.balance = { gate: { premium: ['test/ask'] } };
+    writeFileSync(path, JSON.stringify(policy));
+    return e;
+  };
+  const ask = (e: Env, session: string | undefined = 's1', extra: object = {}) => attestAgentRequest(request({ route: 'ask', caller: { kind: 'mcp', session }, ...extra }, e.root));
+
+  it.each(['off', 'record', 'enforce'] as const)('completes a premium run named in the session with verifyNamed %s', async verifyNamed => {
+    const e = premium(verifyNamed);
+    expect(e.sup.humanPrompt('s1', 'use test/ask')).toEqual({ models: ['test/ask'] });
+    const id = submitOk(e.sup, ask(e));
+    expect(await terminal(e.sup, e.store, id)).toMatchObject({ state: 'completed', named: true });
+    expect(e.store.db.prepare("select detail from events where kind='named_claim'").all()).toEqual([{ detail: 'test/ask prompt' }]);
+  });
+
+  it('refuses a premium run without a recorded naming message', () => {
+    const e = premium();
+    e.sup.humanPrompt('s1', 'use test/fake');
+    expect(e.sup.submit(ask(e))).toMatchObject({ rejected: { code: 'ask_first', reason: expect.stringContaining('Premium models are not used for automated tasks.') } });
+  });
+
+  it('refuses a premium run with a stripped named claim', () => {
+    const e = premium(), req = ask(e, 's1', { named: true, released: true, allow: ['unpicked'] });
+    expect(req.named).toBeUndefined();
+    expect(req.released).toBeUndefined();
+    expect(req.allow).toBeUndefined();
+    expect(e.sup.submit(req)).toMatchObject({ rejected: { code: 'ask_first' } });
+  });
+
+  it('refuses a premium run when the naming message belongs to another session', () => {
+    const e = premium();
+    e.sup.humanPrompt('s2', 'use test/ask');
+    expect(e.sup.submit(ask(e))).toMatchObject({ rejected: { code: 'ask_first' } });
+  });
+
+  it('refuses a premium run without a session even after a naming message', () => {
+    const e = premium();
+    e.sup.humanPrompt('s1', 'use test/ask');
+    expect(e.sup.submit(attestAgentRequest(request({ route: 'ask', caller: { kind: 'mcp' } }, e.root)))).toMatchObject({ rejected: { code: 'ask_first' } });
+  });
+
+  it('refuses a premium run after three newer person messages', () => {
+    const e = premium();
+    e.sup.humanPrompt('s1', 'use test/ask');
+    for (const text of ['one', 'two', 'three']) e.sup.humanPrompt('s1', text);
+    expect(e.sup.submit(ask(e))).toMatchObject({ rejected: { code: 'ask_first' } });
+  });
+
+  it('refuses a premium run when the naming message is older than 360 minutes', () => {
+    const e = premium(), now = Date.now();
+    vi.spyOn(e.sup as unknown as { now(): number }, 'now').mockReturnValue(now);
+    e.sup.humanPrompt('s1', 'use test/ask');
+    vi.spyOn(e.sup as unknown as { now(): number }, 'now').mockReturnValue(now + 360 * 60000 + 1);
+    expect(e.sup.submit(ask(e))).toMatchObject({ rejected: { code: 'ask_first' } });
   });
 });
 

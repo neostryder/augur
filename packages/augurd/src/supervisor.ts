@@ -367,6 +367,9 @@ export class Supervisor {
     }
 
     const policy = this.d.policy(), usage = this.d.usage();
+    const promptNamed = !!(policy && req.caller.intent === 'automated' && req.released !== true && resolveBalance(policy.balance).gate.premium.includes(route.model) && req.caller.session &&
+      checkNamed(route.model, req.caller.session, false, this.d.store.recentPrompts(req.caller.session, NAMED_PROMPT_WINDOW), this.now()).ok);
+    if (promptNamed) req = { ...req, named: true, released: true };
     if (policy && req.caller.intent === 'automated' && req.released !== true && resolveBalance(policy.balance).gate.premium.includes(route.model)) {
       const ranked = rank(policy, usage, { activity: req.activity, dataTier: req.dataTier, caller: 'automated', gateState: this.gateRead() }, new Date(this.now()));
       const cost = (label: string) => ({ free: 0, very_cheap: 1, cheap: 2, moderate: 3, high: 4, very_high: 5 }[Object.values(policy.providers).find(p => p.models[label])?.models[label]?.cost ?? 'moderate'] ?? 3);
@@ -374,7 +377,7 @@ export class Supervisor {
       const fallbackRoute = fallback ? Object.entries(routes ?? {}).find(([, x]) => x.model === fallback)?.[0] : null;
       return reject('ask_first', `Premium models are not used for automated tasks. Use ${fallbackRoute ?? 'no permitted route'} for ${req.activity} on ${req.dataTier} data.`);
     }
-    const named = this.confirmNamed(req, route.model);
+    const named = promptNamed ? { value: true, note: null, via: 'prompt' } : this.confirmNamed(req, route.model);
     if ('rejected' in named) return named;
     if (named.note) req = { ...req, named: named.value };
     if (policy) {
