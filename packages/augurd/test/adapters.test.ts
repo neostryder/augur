@@ -529,6 +529,40 @@ describe('an API connector', () => {
     });
   });
 
+  it.each([
+    { content: [{ type: 'text', text: 'partial answer' }] },
+    { content: [{ type: 'thinking', thinking: 'private reasoning' }] },
+  ])('fails an Anthropic reply at max_tokens with content $content', async ({ content }) => {
+    const m = await mock(() => ({ json: { content, stop_reason: 'max_tokens', usage: { input_tokens: 10, output_tokens: 16000 } } }));
+    const e = setup({ adapters: ['anthropic-api'] }, { ...process.env, AUGUR_TEST_API_KEY: 'k' });
+    e.writeRoutes({ chat: { model: 'test/text', adapter: 'anthropic-api', options: { baseUrl: m.url, model: 'x', apiKeyEnv: 'AUGUR_TEST_API_KEY', maxTokens: 16000 } } });
+    const id = submitOk(e.sup, { ...textReq('chat'), cwd: e.root });
+    const reason = "output limit reached: the model stopped after 16000 output tokens, the limit this route sets (maxTokens 16000). Raise the route's maxTokens option or shorten the task.";
+    expect(await terminal(e.sup, e.store, id)).toMatchObject({ state: 'failed', exitCode: 70, reason });
+    expect(e.sup.logs(id, 'stderr')!.text.trim()).toBe(reason);
+    expect(e.sup.logs(id, 'stdout')!.text).toBe('');
+  });
+
+  it('completes an Anthropic reply at end_turn', async () => {
+    const m = await mock(() => ({ json: { content: [{ type: 'text', text: 'pong' }], stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 4 } } }));
+    const e = setup({ adapters: ['anthropic-api'] }, { ...process.env, AUGUR_TEST_API_KEY: 'k' });
+    e.writeRoutes({ chat: { model: 'test/text', adapter: 'anthropic-api', options: { baseUrl: m.url, model: 'x', apiKeyEnv: 'AUGUR_TEST_API_KEY' } } });
+    const id = submitOk(e.sup, { ...textReq('chat'), cwd: e.root });
+    expect(await terminal(e.sup, e.store, id)).toMatchObject({ state: 'completed', exitCode: 0, usage: { outputTokens: 4 } });
+    expect(e.sup.result(id)?.answer).toBe('pong');
+  });
+
+  it('fails a chat-completions reply at length', async () => {
+    const m = await mock(() => ({ json: { choices: [{ message: { content: 'partial answer' }, finish_reason: 'length' }], usage: { prompt_tokens: 10, completion_tokens: 49 } } }));
+    const e = setup({ adapters: ['openai-api'] }, { ...process.env, AUGUR_TEST_API_KEY: 'k' });
+    e.writeRoutes({ chat: { model: 'test/text', adapter: 'openai-api', options: { baseUrl: m.url, model: 'x', apiKeyEnv: 'AUGUR_TEST_API_KEY', maxTokens: 50 } } });
+    const id = submitOk(e.sup, { ...textReq('chat'), cwd: e.root });
+    const reason = "output limit reached: the model stopped after 49 output tokens, the limit this route sets (maxTokens 50). Raise the route's maxTokens option or shorten the task.";
+    expect(await terminal(e.sup, e.store, id)).toMatchObject({ state: 'failed', exitCode: 70, reason });
+    expect(e.sup.logs(id, 'stderr')!.text.trim()).toBe(reason);
+    expect(e.sup.logs(id, 'stdout')!.text).toBe('');
+  });
+
   it('calls an OpenAI-style endpoint with the key from the environment, and reports usage and cost', async () => {
     const m = await mock(() => ({ json: { choices: [{ message: { content: 'pong' } }], usage: { prompt_tokens: 100, completion_tokens: 3, prompt_tokens_details: { cached_tokens: 40 }, completion_tokens_details: { reasoning_tokens: 1 }, cost: 0.00012 } } }));
     const e = setup({ adapters: ['openai-api'] }, { ...process.env, AUGUR_TEST_API_KEY: 'sk-test-secret-value' });

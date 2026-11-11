@@ -120,7 +120,10 @@ function make(id: string, shape: 'openai' | 'anthropic'): Adapter {
       type Out = { answer?: string; usage?: Omit<UsageReport, 'source'> | null; served?: Record<string, string> };
       let r: Out | null;
       try { r = JSON.parse(input.stdout) as Out; } catch { r = null; }
-      if (!r) return { answer: null, usage: null, failure: input.stderr.trim().split(String.fromCharCode(10)).pop() || 'the API call returned no result' };
+      if (!r) {
+        const failure = input.stderr.trim().split(String.fromCharCode(10)).pop() || 'the API call returned no result';
+        return { answer: null, usage: null, failure, ...(input.exitCode === 70 ? { failureReason: failure } : {}) };
+      }
       return { answer: r.answer?.trim() || null, usage: r.usage ? { ...r.usage, source: 'reported' } : null, ...(r.served ? { served: servedOf(r.served) } : {}) };
     },
   };

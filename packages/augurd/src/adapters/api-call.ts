@@ -147,6 +147,7 @@ const obj = (v: unknown): Json => (typeof v === 'object' && v !== null ? v as Js
 
 let answer = '';
 let usage: Json | null = null;
+let outputLimitReached = false;
 if (mode === 'images') {
   const rows = (Array.isArray(data.data) ? data.data : []).map(obj);
   if (!rows.length || rows.some(r => typeof r.b64_json !== 'string' || r.b64_json.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(r.b64_json))) { console.error('the response held no valid image data'); process.exit(68); }
@@ -181,6 +182,7 @@ if (mode === 'images') {
   const u = obj(data.usage);
   const read = num(u.cache_read_input_tokens), write = num(u.cache_creation_input_tokens);
   usage = { inputTokens: num(u.input_tokens) + read + write, outputTokens: num(u.output_tokens), ...(read ? { cachedReadTokens: read } : {}), ...(write ? { cachedWriteTokens: write } : {}) };
+  outputLimitReached = data.stop_reason === 'max_tokens';
 } else {
   const choice = obj((Array.isArray(data.choices) ? data.choices : [])[0]);
   answer = String(obj(choice.message).content ?? '');
@@ -190,6 +192,11 @@ if (mode === 'images') {
     usage = { inputTokens: num(u.prompt_tokens), outputTokens: num(u.completion_tokens), ...(read ? { cachedReadTokens: read } : {}), ...(reasoning ? { reasoningTokens: reasoning, reasoningInOutput: true } : {}),
       ...(typeof u.cost === 'number' ? { costUsd: u.cost, currency: 'USD' } : {}) };
   }
+  outputLimitReached = choice.finish_reason === 'length';
+}
+if (outputLimitReached) {
+  console.error(`output limit reached: the model stopped after ${usage?.outputTokens ?? 0} output tokens, the limit this route sets (maxTokens ${maxTokens}). Raise the route's maxTokens option or shorten the task.`);
+  process.exit(70);
 }
 // What the gateway says about where the answer came from, such as the machine and the link of the chain that served it.
 const served: Record<string, string> = {};
