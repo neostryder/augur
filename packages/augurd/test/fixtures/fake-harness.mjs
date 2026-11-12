@@ -7,11 +7,13 @@ import { dirname } from 'node:path';
 
 const args = process.argv.slice(2);
 const outFile = args.includes('-o') ? args[args.indexOf('-o') + 1] : null;
+// The safety fallback allows time for prompt delivery on loaded runners.
+const STDIN_FALLBACK_MS = 10_000;
 let input = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', d => { input += d; });
 process.stdin.on('end', run);
-setTimeout(() => { if (!input) run(); }, 400).unref?.();
+setTimeout(() => { if (!input) run(); }, STDIN_FALLBACK_MS).unref?.();
 let started = false;
 
 function run() {
