@@ -52,14 +52,11 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 - [Visible] [Platform] **Sandboxed jobs no longer copy Rust or Maven build output into the workspace.** The copy skips a `target` folder that sits next to a `Cargo.toml` or `pom.xml`. Augur also checks the working directory at submit time and refuses one over 20000 files or 512 MB with a bad_request asking for a smaller `cwd`, before any job exists or the service stalls on the copy.
 - [Visible] [Platform] The prose queue no longer fails every item with "cwd may not be inside the service data folder." Each prose group now runs in an `augur-prose-scratch` folder under the operating system's temporary folder, which is deleted when the group finishes, and items that failed before can be requeued and run.
 - [Visible] [Platform] A route's parallel limit is now counted per provider and model id, so two routes whose policy labels name the same model share one limit instead of getting one each. A cap keyed by provider/id, such as caps."openai/gpt-x", now holds across every label for that model.
+- [Visible] [Platform] `augur pick --named <model>` and `augur pick-preview --named <model>` now read the model name after the flag, where before they took `--named` as a switch with no value, ignored the model, and left an ask-first model such as `xai/grok` refused even when named. `--named=<model>` works as it did before, and `augur run --named` is unchanged and stays a switch.
 
 ### Removed
 
 - [Visible] [Platform] Removed the `mcode-sbx` and `opencode-sbx` adapters, which ran a harness inside a Docker sandbox, along with the route options `sandbox`, `sbx`, `sbxPrefixJson`, the sandbox form of `workRoot`, and the OpenCode `host` pin option. A route that still names either adapter no longer loads, so point it at `mcode-exec` (MiniMax Code on the host, in a copy of the job folder) or `hermes-exec` (Hermes Agent), and drop both ids from the `adapters` list in the service config.
-
-### Fixed
-
-- [Visible] [Platform] `augur pick --named <model>` and `augur pick-preview --named <model>` now read the model name after the flag, where before they took `--named` as a switch with no value, ignored the model, and left an ask-first model such as `xai/grok` refused even when named. `--named=<model>` works as it did before, and `augur run --named` is unchanged and stays a switch.
 
 ## [1.20.0] - 2026-11-07
 
