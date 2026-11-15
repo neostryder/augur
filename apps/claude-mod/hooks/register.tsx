@@ -100,6 +100,11 @@ async function cancelJob($: EngineInterface, id: string) {
   await update($, cancelling, (ids) => [...new Set([...ids, id])])
 }
 
+async function openJobsPane($: EngineInterface) {
+  await update($, jobsOpened, () => true)
+  return await $.ui.open({ id: PANE, title: JOBS_TEXT.title })
+}
+
 async function openAugur($: EngineInterface) {
   // Starting Augur again hands over to the running copy, which shows its panel.
   const argv = /\.exe$/i.test(exe) ? ['explorer.exe', exe] : /\.app$/i.test(exe) ? ['open', exe] : [exe]
@@ -130,8 +135,7 @@ export const register: Register = (on) => {
   })
 
   on('command.run', { command: PANE }, async ($) => {
-    await update($, jobsOpened, () => true)
-    const opened = await $.ui.open({ id: PANE, title: JOBS_TEXT.title })
+    const opened = await openJobsPane($)
     return { text: opened.isPlaced ? JOBS_TEXT.opened : JOBS_TEXT.waiting }
   })
 
@@ -193,11 +197,24 @@ export const register: Register = (on) => {
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (e.props.hasSurvey) return next(e)
     const list = await currentAlerts($)
     const newest = list[0]
-    if (e.props.hasSurvey || !newest) return next(e)
     const open = (await $.state.get(CAN_OPEN)).value === true
     const { Box, Button, Text } = $.ui.resolve(e)
+    if (!newest) {
+      const liveCount = (await read($, jobs)).length
+      const closedCount = (await read($, recent)).length
+      return (
+        <Box flexDirection="row" alignItems="center">
+          <Text bold>Augur </Text>
+          <Text dimColor>{`${liveCount} ${JOBS_TEXT.live}, ${closedCount} ${JOBS_TEXT.closed}`}</Text>
+          <Box flexGrow={1} />
+          <Button key="jobs" label={JOBS_TEXT.title} hotkey="j" onPress={() => openJobsPane($)} />
+          {open ? <Button key="open" label="Open Augur" hotkey="o" onPress={() => openAugur($)} /> : null}
+        </Box>
+      )
+    }
     const color = newest.severity === 'crit' ? 'red' : newest.severity === 'warn' ? 'yellow' : undefined
     return (
       <Box flexDirection="row" alignItems="center">
@@ -205,6 +222,7 @@ export const register: Register = (on) => {
         <Box flexGrow={1} flexShrink={1}>
           <Text wrap="truncate-end">{alertText(newest)}{list.length > 1 ? ` (+${list.length - 1} more)` : ''}</Text>
         </Box>
+        <Button key="jobs" label={JOBS_TEXT.title} hotkey="j" onPress={() => openJobsPane($)} />
         <Button key="dismiss" label="Dismiss" hotkey="d" onPress={() => dismiss($, newest.id)} />
         {open ? <Button key="open" label="Open Augur" hotkey="o" onPress={() => openAugur($)} /> : null}
       </Box>
