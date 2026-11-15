@@ -312,7 +312,8 @@ export class JobLedger {
       const usualMs = durations.length >= settings.minSamples ? durations[Math.floor(durations.length / 2)]! : null;
       // A failure alerts only while it is recent. History that arrives later (a first start after an update, a node polled for the first time) is not news.
       const fresh = job.endedAt === null || this.now() - job.endedAt <= FAILURE_ALERT_WINDOW_MS;
-      const type = settings.stalled && job.state === 'stalled' ? 'job.stalled' : settings.failed && job.state === 'failed' && fresh ? 'job.failed'
+      // A failure that failover already moved to another route is not news: the retry's own outcome decides whether anyone needs to hear.
+      const type = settings.stalled && job.state === 'stalled' ? 'job.stalled' : settings.failed && job.state === 'failed' && fresh && !job.retriedAs ? 'job.failed'
         : settings.overUsualTime && job.state === 'running' && usualMs !== null && elapsedMs > Math.max(60000, usualMs * settings.usualMultiple) ? 'job.over-usual-time' : null;
       if (!type) continue;
       const alert: LedgerAlert = { version: 1, id: `${job.id}:${type}`, type, at: this.now(), jobId: job.id, node: job.node, state: job.state, route: job.route, sessionId: job.stamp.sessionId ?? null, summary: job.summary, elapsedMs, usualMs, samples: durations.length };
