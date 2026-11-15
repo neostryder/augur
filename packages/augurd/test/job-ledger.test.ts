@@ -235,6 +235,11 @@ describe('the durable ledger', () => {
     ledger.ingest('eru', page([failedAgo('old', 2 * 3600000), failedAgo('recent', 60000)]));
     expect(ledger.checkAlerts().map(a => a.jobId)).toEqual(['eru:recent']);
   });
+  it('does not alert on a failure that failover moved to another route, but does when the retry fails too', () => {
+    const { ledger } = fixture();
+    ledger.ingest('eru', page([{ ...failedAgo('first', 2000), retriedAs: 'eru:second' }, { ...failedAgo('second', 1000), retryOf: 'eru:first' }]));
+    expect(ledger.checkAlerts().map(a => a.jobId)).toEqual(['eru:second']);
+  });
   it('applies alert switches, the duration multiplier, and the minimum sample count', () => {
     const { ledger } = fixture();
     const settings = { stalled: false, failed: false, overUsualTime: false, usualMultiple: 4, minSamples: 2 };
