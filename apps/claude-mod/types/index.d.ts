@@ -22,6 +22,10 @@ declare module 'claude-code' {
       /** What the pane lists: `session` for this session's jobs or `all`. */
       scope: string
       closedOpen: boolean
+      /** The job whose Cancel button was pressed once and now asks for a second press. */
+      confirming: string
+      /** Jobs whose cancel request has been written and not yet reported by the service. */
+      cancelling: string[]
     }
   }
 }

@@ -133,12 +133,62 @@ describe('the Augur mod', () => {
     expect(ran).toEqual([['explorer.exe', 'C:/Program Files/Augur/augur.exe']])
   })
 
-  test('draws nothing above the prompt when no alert is meant for Claude Code', async ($, on) => {
-    const files = new Map([[USAGE, usage()], [FEED, feed(alert('a', ['augur'], '2026-10-03T19:00:00Z'))]])
-    world(on, files, [])
+  test('draws job counts above the prompt without an alert and leaves surveys alone', async ($, on) => {
+    const files = new Map([[USAGE, usage()], [FEED, feed(alert('a', ['augur'], '2026-10-03T19:00:00Z'))],
+      [JOBS, jobsFeed(NOW, [liveJob(), liveJob('b', false, 'other')], [closedJob('x'), closedJob('y', 'failed', 'other')])]])
+    const w = world(on, files, [])
     await $.session.start({ cwd: HOME, surface: 'terminal', isInteractive: true })
     const ui = await $.ui.mount({ plugin: 'augur', surface: 'terminal', ...BAND })
+    expect((await ui.find({ type: 'Text', text: 'Augur ' }))?.props).toMatchObject({ bold: true })
+    expect((await ui.find({ type: 'Text', text: '2 live, 2 closed' }))?.props).toMatchObject({ dimColor: true })
+    expect((await ui.find({ key: 'jobs' }))?.props).toMatchObject({ label: 'Augur live jobs', hotkey: 'j' })
     expect(await ui.find({ key: 'dismiss' })).toBeUndefined()
+    expect(await ui.find({ key: 'open' })).toBeUndefined()
+    files.set(JOBS, jobsFeed(NOW + 5000, [], [closedJob('x')]))
+    await w.clock.advance(5000)
+    expect(await ui.find({ type: 'Text', text: '0 live, 1 closed' })).toBeDefined()
+    await ui.unmount()
+    for (const alerts of [feed(), feed(alert('a', ['claude'], '2026-10-03T19:00:00Z'))]) {
+      files.set(FEED, alerts)
+      await w.clock.advance(30000)
+      const survey = await $.ui.mount({ plugin: 'augur', surface: 'terminal', ...BAND, props: { ...BAND.props, hasSurvey: true } })
+      expect((await survey.find({ type: 'Box' }))?.props).toEqual({})
+      expect(await survey.find({ key: 'jobs' })).toBeUndefined()
+      expect(await survey.find({ key: 'dismiss' })).toBeUndefined()
+      await survey.unmount()
+    }
+  })
+
+  for (const withAlert of [false, true]) {
+    test(`opens the jobs pane from the ${withAlert ? 'alert' : 'no-alert'} row without session jobs`, async ($, on) => {
+      const files = new Map([[FEED, withAlert ? feed(alert('a', ['claude'], '2026-10-03T19:00:00Z')) : feed()],
+        [JOBS, jobsFeed(NOW, [liveJob('b', false, 'other')])]])
+      const w = world(on, files, [], { exe: 'C:/Program Files/Augur/augur.exe' })
+      for (const surface of ['terminal', 'desktop'] as const) {
+        await $.session.start({ cwd: HOME, surface, isInteractive: true })
+        const count = w.opened.length
+        const ui = await $.ui.mount({ plugin: 'augur', surface, ...BAND })
+        expect(w.opened).toHaveLength(count)
+        expect((await ui.find({ key: 'jobs' }))?.props).toMatchObject({ label: 'Augur live jobs', hotkey: 'j' })
+        expect((await ui.find({ key: 'open' }))?.props).toMatchObject({ label: 'Open Augur', hotkey: 'o' })
+        await ui.press({ key: 'jobs' })
+        expect(w.opened).toEqual(Array(count + 1).fill('augur-jobs'))
+        files.set(JOBS, jobsFeed(NOW + 5000))
+        await w.clock.advance(5000)
+        expect(w.opened).toHaveLength(count + 1)
+        files.set(JOBS, jobsFeed(NOW + 5000, [liveJob('b', false, 'other')]))
+        await ui.unmount()
+      }
+    })
+  }
+
+  test('opens the jobs pane through its command without any jobs', async ($, on) => {
+    const w = world(on, new Map())
+    await $.session.start({ cwd: HOME, surface: 'terminal', isInteractive: true })
+    expect(w.opened).toEqual([])
+    const result = await $.command.run({ command: 'augur-jobs', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 80 } })
+    expect(result.text).toBe('The live jobs pane is open.')
+    expect(w.opened).toEqual(['augur-jobs'])
   })
 })
 
