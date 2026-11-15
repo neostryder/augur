@@ -31,6 +31,13 @@ describe('statusLine', () => {
     expect(r.alerts).toBe(2);
   });
 
+  it('marks Claude\'s numbers stale when its read is flagged stale, and raises the level', () => {
+    const staleClaude = provider('claude', 'Claude', claude.meters, { stale: true });
+    const r = statusLine(config(), snap([staleClaude]), [], NOW);
+    expect(r.text).toBe('Claude 5h 32% | wk 49% | stale');
+    expect(r.level).toBe('warn');
+  });
+
   it('names a stale provider, adds the age of old numbers, and skips providers that are off', () => {
     const stale = provider('grok', 'Grok', [], { stale: true });
     const off = provider('off', 'Off', [{ id: 'w', label: 'Week', usedPct: 99, windowKind: 'weekly' }]);
