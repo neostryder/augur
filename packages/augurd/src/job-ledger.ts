@@ -7,6 +7,8 @@ import { jobRow } from './jobs-live.js';
 export interface AlertSink { emit(event: LedgerAlert): void | Promise<void> }
 /** How long after a job ends that its failure still raises an alert. */
 export const FAILURE_ALERT_WINDOW_MS = 3600000;
+export const LEDGER_LAST_JOB_CHANGE_SQL = "select body from ledger_changes indexed by ledger_changes_job where channel='jobs' and job_id=? order by seq desc limit 1";
+export const LEDGER_DELETE_JOB_CHANGES_SQL = "delete from ledger_changes indexed by ledger_changes_job where channel='jobs' and job_id=?";
 
 export class NoopAlertSink implements AlertSink { emit(_event: LedgerAlert): void {} }
 export class MemoryAlertSink implements AlertSink {
@@ -87,7 +89,7 @@ export class JobLedger {
   }
 
   private append(job: LedgerJob): void {
-    const body = payload(job), last = this.db.prepare("select body from ledger_changes where channel='jobs' and job_id=? order by seq desc limit 1").get(job.id) as { body: string } | undefined;
+    const body = payload(job), last = this.db.prepare(LEDGER_LAST_JOB_CHANGE_SQL).get(job.id) as { body: string } | undefined;
     this.recordSession(job, !last || (JSON.parse(last.body) as LedgerJob).stamp.sessionTitle !== job.stamp.sessionTitle);
     if (last?.body === body) return;
     this.appendChange('jobs', job.id, body);
@@ -345,7 +347,7 @@ export class JobLedger {
           this.db.prepare('delete from events where job_id=?').run(job.localId);
           this.db.prepare('delete from ledger_dirty where id=?').run(job.localId);
         } else this.db.prepare('update ledger_remote set body=? where id=?').run(payload(row), job.id);
-        this.db.prepare("delete from ledger_changes where channel='jobs' and job_id=?").run(job.id);
+        this.db.prepare(LEDGER_DELETE_JOB_CHANGES_SQL).run(job.id);
         interrupt?.();
         this.append(row);
       });
