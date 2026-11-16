@@ -100,6 +100,8 @@ export interface LaunchPlan {
   files?: Array<{ name: string; content: string; inWorkspace?: boolean }>;
   /** Indexes of `args` that carry prompt text. The service removes them from its copy of the plan once the job has started. */
   promptArgs?: number[];
+  /** The `type` of the JSON line the harness prints on stdout when its work is done. If the harness is still running 15 seconds after that line, the runner ends the job's process tree and records a successful exit. */
+  doneMarker?: string;
 }
 
 export interface Extraction {

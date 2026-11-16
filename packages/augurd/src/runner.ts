@@ -1,12 +1,13 @@
 // One supervisor unit per job, started detached by the service and run with plain node. It owns the child's process tree,
 // sends output to files (so a dead parent cannot break it) and leaves result.json when the child ends. Erasable TypeScript only.
 import { spawn, spawnSync } from 'node:child_process';
-import { closeSync, existsSync, openSync, readFileSync, renameSync, statSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readFileSync, readSync, renameSync, statSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 import { lookEveryMs, parseJobAccounting, parsePsRows, sampleTree, wasActive, type TreeSample } from './job-activity.ts';
 
 interface JobFile { command: string; args: string[]; cwd: string; stdin: 'prompt' | 'none'; timeoutS: number | null; jobhost: string | null; files?: unknown[]; promptArgs?: number[]; redact?: boolean;
-  scope?: string | null; scopeEnv?: Record<string, string> }
+  scope?: string | null; scopeEnv?: Record<string, string>; doneMarker?: string }
 
 const dir = process.argv[2];
 if (!dir) process.exit(64);
@@ -38,6 +39,9 @@ const argv = viaHost ? [job.jobhost as string, job.command, ...job.args]
   : [job.command, ...job.args];
 const stopScope = () => { if (scope) spawnSync('systemctl', ['--user', 'kill', '--signal=SIGKILL', `${scope}.scope`], { stdio: 'ignore', timeout: 10000, env: scopeEnv }); };
 let killedBy: 'cancel' | 'timeout' | null = null;
+let endedAfterDone = false;
+const GRACE_MS = Number(process.env.AUGUR_DONE_GRACE_MS) || 15000;
+let doneGrace: ReturnType<typeof setTimeout> | null = null;
 
 // With no Job Object and no systemd scope, a descendant that starts its own process group or session would outlive its job. The runner looks at the
 // process table once a second, remembers every descendant with its start time (so a reused pid is never mistaken for it), and ends them by pid on
@@ -85,16 +89,48 @@ writeFileSync(join(dir, 'heartbeat'), 'hb');
 const heartbeat = setInterval(beat, 1000);
 const watcher = follow ? setInterval(lookAround, 1000) : null;
 
-function killTree(why: 'cancel' | 'timeout'): void {
-  if (killedBy || child.pid === undefined) return;
-  killedBy = why;
+function endTree(): void {
+  if (child.pid === undefined) return;
   lookAround();
   if (win) spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true });
   else { try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch { /* gone */ } } }
   stopScope();
   endFollowed();
 }
+function killTree(why: 'cancel' | 'timeout'): void {
+  if (killedBy || endedAfterDone || child.pid === undefined) return;
+  killedBy = why;
+  endTree();
+}
 const cancelPoll = setInterval(() => { if (existsSync(join(dir, 'cancel.request'))) killTree('cancel'); }, 300);
+
+// A completed turn can leave servers holding the harness open, so its final event starts a grace period before the tree ends.
+const doneOut = job.doneMarker ? openSync(join(dir, 'stdout.log'), 'r') : null;
+const doneBuffer = Buffer.alloc(65536), doneDecoder = new StringDecoder('utf8');
+let doneOffset = 0, doneCarry = '';
+const donePoll = job.doneMarker ? setInterval(() => {
+  if (doneOut === null || doneGrace || killedBy || endedAfterDone) return;
+  try {
+    for (;;) {
+      const count = readSync(doneOut, doneBuffer, 0, doneBuffer.length, doneOffset);
+      if (!count) break;
+      doneOffset += count;
+      const lines = (doneCarry + doneDecoder.write(doneBuffer.subarray(0, count))).split('\n');
+      doneCarry = lines.pop() ?? '';
+      for (const line of lines) {
+        if (!line.includes(job.doneMarker!)) continue;
+        try { if (JSON.parse(line.trim())?.type !== job.doneMarker) continue; } catch { continue; }
+        clearInterval(donePoll!);
+        doneGrace = setTimeout(() => {
+          if (killedBy || child.exitCode !== null || child.signalCode !== null) return;
+          endedAfterDone = true;
+          endTree();
+        }, GRACE_MS);
+        return;
+      }
+    }
+  } catch { /* the next look retries the unread bytes */ }
+}, 1000) : null;
 // The timeout is an inactivity limit, never a wall-clock one: a job that is working is left alone however long it takes. A job is working while it writes
 // output, uses CPU or I/O in its process tree, or starts new processes. When the process table cannot be read, the job counts as working.
 // Every job is looked at, with or without a limit, and the time it last worked goes to the `active` file, which the service reads for the stall flag.
@@ -132,6 +168,7 @@ const timer = setInterval(() => { void lookForWork(); }, lookEveryMs(job.timeout
 
 child.on('exit', (code, signal) => {
   clearInterval(heartbeat); clearInterval(cancelPoll); if (watcher) clearInterval(watcher); clearInterval(timer);
+  if (donePoll) clearInterval(donePoll); if (doneGrace) clearTimeout(doneGrace); if (doneOut !== null) closeSync(doneOut);
   // Whatever the job left running ends with it, as the job host's Job Object does on Windows: the rest of its process group, and its scope.
   if (!win && child.pid !== undefined) {
     try { process.kill(-child.pid, 'SIGKILL'); } catch { /* the group is already empty */ }
@@ -139,6 +176,6 @@ child.on('exit', (code, signal) => {
     endFollowed();
   }
   try { closeSync(out); closeSync(err); } catch { /* already closed */ }
-  atomic('result.json', { exitCode: code, signal, killedBy, endedAt: Date.now() });
+  atomic('result.json', { exitCode: endedAfterDone ? 0 : code, signal, killedBy, endedAt: Date.now(), ...(endedAfterDone ? { endedAfterDone: true } : {}) });
   process.exit(0);
 });

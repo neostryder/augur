@@ -65,7 +65,7 @@ export const codexExec: Adapter = {
       resumeArgs.push(...codexToolkitArgs(ctx.toolkit));
       // `-` reads the prompt from standard input, so a long one stays under the command-line limit.
       resumeArgs.push('-');
-      return { command, args: resumeArgs, cwd: request.cwd, env: {}, files, stdin: tierNote(request.tools, ctx.prompt) };
+      return { command, args: resumeArgs, cwd: request.cwd, env: {}, files, stdin: tierNote(request.tools, ctx.prompt), doneMarker: 'turn.completed' };
     }
     const sandbox = typeof o.sandbox === 'string' ? o.sandbox : 'danger-full-access';
     const args = [...prefix, 'exec', '--skip-git-repo-check', '--json', '-o', join(ctx.jobDir, 'last-message.txt'), '--sandbox', sandbox];
@@ -75,7 +75,7 @@ export const codexExec: Adapter = {
     args.push(...schemaArgs);
     args.push(...codexToolkitArgs(ctx.toolkit));
     args.push('-');
-    return { command, args, cwd: request.cwd, env: {}, files, stdin: tierNote(request.tools, ctx.prompt) };
+    return { command, args, cwd: request.cwd, env: {}, files, stdin: tierNote(request.tools, ctx.prompt), doneMarker: 'turn.completed' };
   },
   extract(input: ExtractInput): Extraction {
     const usage = codexUsage(input.stdout);
