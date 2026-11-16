@@ -260,6 +260,18 @@ describe('live jobs', () => {
     expect(liveJobs(jobsFeed(NOW - 60000), NOW)).toEqual([liveJob()])
   })
 
+  test('carries optional cursors and session metadata without changing the pane rows', () => {
+    const original = JSON.parse(jobsFeed())
+    const sessions = [{ sessionId: SESSION, title: 'Notes', firstSeenAt: 1, lastActiveAt: 2 }]
+    const withCursor = parseJobs(JSON.stringify({ ...original, cursor: '12', sessions }), NOW)
+    expect(withCursor.cursor).toBe('12')
+    expect(withCursor.sessions).toEqual(sessions)
+    expect(withCursor.live).toEqual(parseJobs(JSON.stringify(original), NOW).live)
+    expect(parseJobs(JSON.stringify(original), NOW).cursor).toBeUndefined()
+    for (const cursor of ['01', '-1', '18446744073709551616', 12, null]) expect(parseJobs(JSON.stringify({ ...original, cursor }), NOW).cursor).toBeUndefined()
+    expect(parseJobs(JSON.stringify({ ...original, sessions: [...sessions, { ...sessions[0], prompt: 'private' }] }), NOW).sessions).toEqual(sessions)
+  })
+
   test('keeps closed jobs one by one, even when the live list is stale', () => {
     const stale = jobsFeed(NOW - 120000, [liveJob()], [closedJob('x'), { id: 'bad' }, closedJob('y', 'failed')])
     const parsed = parseJobs(stale, NOW)

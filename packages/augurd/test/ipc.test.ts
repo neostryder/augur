@@ -93,6 +93,25 @@ describe('the control endpoint', () => {
     await expect(call('ledger_list', { limit: 0 }, agent)).rejects.toBeInstanceOf(ServiceError);
     await expect(watchLedger('0', { change: () => {} }, { ...o, token: 'wrong' })).rejects.toBeInstanceOf(ServiceError);
   });
+  it('reads and watches session metadata through the existing calls with the same cursor', async () => {
+    const { o, svc, e } = await boot(); svc.config.maxConcurrent = 0;
+    const agent = { ...o, role: 'agent' as const };
+    const before = await call('ledger_changes', { channel: 'sessions' }, agent);
+    const sessions: string[] = [];
+    const watch = await watchLedger(before.cursor, { change: change => sessions.push(change.session.sessionId) }, { ...agent, channel: 'sessions' });
+    cleanup.push(() => watch.close());
+    const result = await call('submit', request({ text: 'PRIVATE_SESSION_PROMPT', cwd: e.root, stamp: { sessionId: 'new-session', sessionTitle: 'Notes' } }), agent) as { id: string };
+    expect(result).toHaveProperty('id');
+    for (let i = 0; i < 30 && !sessions.length; i++) await sleep(50);
+    expect(new Set(sessions)).toEqual(new Set(['new-session']));
+    const read = await call('ledger_changes', { since: before.cursor, channel: 'sessions' }, agent);
+    expect(read.changes.length).toBeGreaterThan(0);
+    for (const change of read.changes) expect(change).toMatchObject({ channel: 'sessions', session: { sessionId: 'new-session', title: 'Notes' } });
+    expect(read.cursor).toBe(svc.store.ledger.globalCursor());
+    expect(JSON.stringify(read)).not.toContain('PRIVATE_SESSION_PROMPT');
+    expect((await call('ledger_changes', { since: before.cursor }, agent)).changes.every(change => change.channel === 'jobs')).toBe(true);
+  });
+
   it('turns away JSON that is not an object without stopping the service', async () => {
     const { o, pipe } = await boot();
     const net = await import('node:net');

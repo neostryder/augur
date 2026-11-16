@@ -15,7 +15,7 @@ import { isIP } from 'node:net';
 import { dirname, extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { callEngine, type EngineKey } from '@augur/core';
-import { resetLedger } from '@augur/dispatch-protocol';
+import { resetLedger, validCursor, type LedgerChannel, type LedgerWatchPage } from '@augur/dispatch-protocol';
 import type { TlsAuto, WebSettings } from './config.js';
 import type { EngineLink } from './ipc.js';
 import type { ChatService } from './chat/service.js';
@@ -91,6 +91,7 @@ export interface WebDeps {
   log(message: string): void;
   /** Runs one dispatch call for POST /api/dispatch. Absent when the service has no dispatch to offer. */
   dispatch?(method: string, params: unknown, peer?: { address?: string; userAgent?: string }): Promise<unknown>;
+  ledgerCursor?(): string;
   /** The service's data folder, where web.tlsAuto keeps its certificate. */
   dir?: string;
   /** The chat service behind /api/chat. Absent when this service has none. */
@@ -217,6 +218,13 @@ export class WebServer {
       this.call(req, res);
       return;
     }
+    if (path === '/api/dispatch/changes') {
+      if (req.method !== 'GET') { this.send(res, 405, 'Use GET.'); return; }
+      const proxied = ['x-forwarded-for', 'forwarded', 'x-real-ip'].some(h => req.headers[h] !== undefined);
+      if (proxied || !isLoopback(req.socket.remoteAddress)) { this.send(res, 403, 'Dispatch answers only to programs on this computer.'); return; }
+      await this.watchChanges(req, res, url);
+      return;
+    }
     if (path === '/api/dispatch') {
       if (req.method !== 'POST') { this.send(res, 405, 'Use POST.'); return; }
       if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) { this.send(res, 415, 'Send application/json.'); return; }
@@ -280,6 +288,49 @@ export class WebServer {
     res.on('close', done);
     req.on('error', () => undefined);
     write({ t: 'ready', state: engine.api.state, views: engine.views.info() });
+  }
+
+  private async watchChanges(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!this.deps.dispatch || !this.deps.ledgerCursor) { this.send(res, 503, 'The ledger service is unavailable.'); return; }
+    let cursor = url.searchParams.get('since') ?? '0';
+    const channel = url.searchParams.get('channel') ?? 'jobs';
+    if (!validCursor(cursor) || (channel !== 'jobs' && channel !== 'sessions')) { this.send(res, 400, 'The ledger cursor or channel is invalid.'); return; }
+    const connectedWith = this.deps.token();
+    const read = () => this.deps.dispatch!('ledger_changes', { since: cursor, limit: 1000, channel }, { address: req.socket.remoteAddress, userAgent: req.headers['user-agent'] }) as Promise<LedgerWatchPage<LedgerChannel>>;
+    let first: LedgerWatchPage<LedgerChannel>;
+    try { first = await read(); } catch (error) { this.json(res, 400, { error: (error as Error).message }); return; }
+    if (res.destroyed) return;
+    if (!safeEqual(connectedWith, this.deps.token())) { this.send(res, 401, 'Missing or wrong token.'); return; }
+    res.writeHead(200, this.headers({ 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' }));
+    const write = (message: unknown) => {
+      if (res.destroyed || res.writableEnded) return;
+      if (res.writableLength > MAX_STREAM_BACKLOG) { res.destroy(); return; }
+      res.write(JSON.stringify(message) + '\n');
+    };
+    let pumping = false;
+    const pump = async (initial?: LedgerWatchPage<LedgerChannel>) => {
+      if (pumping || res.destroyed || res.writableEnded) return;
+      pumping = true;
+      try {
+        for (let pages = 0; pages < 10; pages++) {
+          if (!safeEqual(connectedWith, this.deps.token())) { res.end(); return; }
+          const page = initial ?? await read();
+          initial = undefined;
+          if (!safeEqual(connectedWith, this.deps.token())) { res.end(); return; }
+          for (const change of page.changes) write({ t: 'change', change });
+          cursor = page.cursor;
+          if (!page.more || res.destroyed || res.writableEnded) break;
+        }
+      } catch { res.destroy(); }
+      finally { pumping = false; }
+    };
+    this.streams.add(res);
+    const timer = setInterval(() => { void pump(); }, 250);
+    const keepalive = setInterval(() => { if (!safeEqual(connectedWith, this.deps.token())) res.end(); else write({ t: 'ping' }); }, KEEPALIVE_MS);
+    res.on('close', () => { clearInterval(timer); clearInterval(keepalive); this.streams.delete(res); });
+    req.on('error', () => undefined);
+    write({ t: 'ready', cursor: this.deps.ledgerCursor() });
+    await pump(first);
   }
 
   private call(req: http.IncomingMessage, res: http.ServerResponse): void {

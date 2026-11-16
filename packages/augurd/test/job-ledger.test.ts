@@ -38,6 +38,78 @@ function insert(store: Store, id = 'local') {
 }
 
 describe('the durable ledger', () => {
+  it('orders session discovery, activity and title changes with jobs while keeping the default channel', () => {
+    const { ledger } = fixture();
+    ledger.ingest('eru', page([job()]));
+    const first = ledger.changes('0', 100, 'sessions');
+    expect(first.changes).toMatchObject([{ channel: 'sessions', session: { sessionId: 'session-1', title: 'Review', firstSeenAt: 1, lastActiveAt: 2 } }]);
+    const jobs = ledger.changes();
+    expect(jobs.changes).toMatchObject([{ channel: 'jobs', job: { id: 'eru:1' } }]);
+    expect(BigInt(first.changes[0]!.cursor)).toBeLessThan(BigInt(jobs.changes[0]!.cursor));
+    expect(first.cursor).toBe(jobs.cursor); expect(first.cursor).toBe(ledger.globalCursor());
+    ledger.ingest('eru', page([job()], 1));
+    expect(ledger.changes(first.cursor, 100, 'sessions').changes).toEqual([]);
+    ledger.ingest('eru', page([job('1', { stamp: { sessionId: 'session-1', sessionTitle: 'Renamed' }, lastActivityAt: 5 })], 2));
+    expect(ledger.changes(first.cursor, 100, 'sessions').changes).toMatchObject([{ session: { title: 'Renamed', firstSeenAt: 1, lastActiveAt: 5 } }]);
+    ledger.ingest('eru', page([job('2', { createdAt: 0, stamp: { sessionId: 'session-1', sessionTitle: 'Old title' } })], 3));
+    expect(ledger.sessions()).toEqual([{ sessionId: 'session-1', title: 'Renamed', firstSeenAt: 0, lastActiveAt: 5 }]);
+    expect(() => ledger.changes('0', 100, 'unknown' as never)).toThrow('channel');
+    expect(JSON.stringify(ledger.changes('0', 100, 'sessions'))).not.toMatch(/prompt|answer|host|route|model|path/);
+  });
+
+  it('records caller sessions and title lookup changes without a job update', () => {
+    const { store, ledger } = fixture(); insert(store);
+    store.db.prepare('update jobs set caller=? where id=?').run(JSON.stringify({ kind: 'cli', session: 'caller-session' }), 'local');
+    let title: string | undefined; ledger.setSessionTitleLookup(() => title);
+    expect(ledger.sessions()).toEqual([{ sessionId: 'caller-session', title: null, firstSeenAt: 1, lastActiveAt: 1 }]);
+    const before = ledger.globalCursor(); title = 'Named session';
+    expect(ledger.changes(before, 100, 'sessions').changes).toMatchObject([{ session: { title } }]);
+    expect(ledger.changes(before).changes).toEqual([]);
+    expect(BigInt(ledger.changes(before).cursor)).toBeGreaterThan(BigInt(before));
+    const current = ledger.globalCursor();
+    expect(ledger.changes(current, 100, 'sessions').changes).toEqual([]);
+  });
+
+  it('migrates old job changes and backfills durable session rows across a restart', () => {
+    const { dir, store, ledger } = fixture();
+    ledger.ingest('eru', page([job()])); insert(store);
+    ledger.setLocalMetadata('local', { ...meta(), stamp: { sessionId: 'local-session', sessionTitle: 'Local' } });
+    store.db.exec("delete from ledger_changes where channel='sessions'; delete from ledger_sessions; drop index ledger_changes_channel; alter table ledger_changes drop column channel");
+    store.close();
+    const reopened = new Store(dir); cleanup.push(() => reopened.close());
+    expect(reopened.ledger.sessions().map(row => row.sessionId)).toEqual(['local-session', 'session-1']);
+    expect(reopened.ledger.changes().changes.every(change => change.channel === 'jobs')).toBe(true);
+    expect(reopened.ledger.changes('0', 100, 'sessions').changes).toHaveLength(2);
+    const cursor = reopened.ledger.globalCursor(); cleanup.pop(); reopened.close();
+    const again = new Store(dir); cleanup.push(() => again.close());
+    expect(again.ledger.globalCursor()).toBe(cursor);
+  });
+
+  it('retains a looked-up title across a restart without replaying an older stamped title', () => {
+    const { dir, store, ledger } = fixture(); ledger.ingest('eru', page([job()]));
+    ledger.setSessionTitleLookup(() => 'Current title');
+    expect(ledger.sessions()[0]!.title).toBe('Current title');
+    const cursor = ledger.globalCursor(); store.close();
+    const reopened = new Store(dir); cleanup.push(() => reopened.close());
+    expect(reopened.ledger.sessions()[0]!.title).toBe('Current title');
+    expect(reopened.ledger.globalCursor()).toBe(cursor);
+    reopened.ledger.ingest('eru', page([job('1', { state: 'stalled' })], 1));
+    expect(reopened.ledger.sessions()[0]!.title).toBe('Current title');
+  });
+
+  it('pages each channel on the global sequence and keeps full precision cursors', () => {
+    const { store, ledger } = fixture();
+    ledger.ingest('eru', page([job(), job('2', { stamp: { sessionId: 'other' } })]));
+    const first = ledger.changes('0', 1, 'sessions'); expect(first.more).toBe(true);
+    const rest = ledger.changes(first.cursor, 1, 'sessions'); expect(rest.more).toBe(false);
+    expect([...first.changes, ...rest.changes].map(change => change.session.sessionId)).toEqual(['session-1', 'other']);
+    expect(rest.cursor).toBe(ledger.globalCursor());
+    store.db.exec("update sqlite_sequence set seq=9007199254740993 where name='ledger_changes'");
+    expect(ledger.globalCursor()).toBe('9007199254740993');
+    ledger.ingest('eru', page([job('3', { stamp: {} })], 2));
+    expect(ledger.changes('9007199254740993').changes[0]!.cursor).toBe('9007199254740994');
+  });
+
   it('includes card origin and the latest endings independently of pagination', () => {
     const { store, ledger } = fixture(); insert(store, 'active');
     ledger.setLocalMetadata('active', { ...meta(), stamp: { sessionId: 's', origin: 'cli', host: 'desktop' } });

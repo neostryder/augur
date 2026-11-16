@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { LedgerModel, type LedgerTransport } from '@augur/view-model';
 import type { ResetEvent } from '@augur/core';
 import { createBrowserShell } from '../src/shells/browser';
 import { createServedShell } from '../src/shells/served';
@@ -43,6 +44,45 @@ describe('the browser reset ledger', () => {
 });
 
 describe('the served shell', () => {
+  it('streams ledger changes from the processed cursor and ignores ready and ping lines', async () => {
+    page('', TOKEN); const s = stream();
+    const fetcher = vi.fn(async () => new Response(s.body, { status: 200 })); vi.stubGlobal('fetch', fetcher);
+    const changed = vi.fn(), closed = vi.fn();
+    const watch = await createServedShell().watchLedger!('12', changed, closed);
+    expect(fetcher.mock.calls[0]).toMatchObject(['/api/dispatch/changes?since=12', { headers: { Authorization: `Bearer ${TOKEN}` }, cache: 'no-store' }]);
+    s.push({ t: 'ready', cursor: '99' }); s.push({ t: 'ping' });
+    s.push({ t: 'change', change: { cursor: '13', channel: 'jobs' } });
+    await vi.waitFor(() => expect(changed).toHaveBeenCalledExactlyOnceWith('13'));
+    expect(closed).not.toHaveBeenCalled();
+    watch.close(); s.end();
+    await new Promise(resolve => setTimeout(resolve, 0)); expect(closed).not.toHaveBeenCalled();
+  });
+
+  it.each(['refused', 'dropped'])('falls back to polling after a %s ledger stream and resumes from its last cursor', async mode => {
+    page('', TOKEN); const s = stream(); let offline = mode === 'refused';
+    const cursors: string[] = [], openings: string[] = [];
+    vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+      if (url.startsWith('/api/dispatch/changes')) { openings.push(url); return offline ? new Response('', { status: 503 }) : new Response(s.body); }
+      const { method, params } = JSON.parse(init.body as string);
+      if (method === 'ledger_changes') { cursors.push(params.since); return Response.json({ result: { changes: [], cursor: mode === 'dropped' ? '43' : '7', more: false } }); }
+      return Response.json({ result: method === 'ledger_list' ? { jobs: [], next: null } : method === 'ledger_counts' ? {} : [] });
+    });
+    const shell = createServedShell(), model = new LedgerModel();
+    const transport = { call: shell.ledgerCall!, watch: shell.watchLedger! } as LedgerTransport;
+    await model.start(transport);
+    if (mode === 'dropped') {
+      s.push({ t: 'ready', cursor: '99' }); s.push({ t: 'change', change: { cursor: '42', channel: 'jobs' } });
+      await vi.waitFor(() => expect(model.cursor).toBe('42'));
+      s.end(); await new Promise(resolve => setTimeout(resolve, 0)); offline = true;
+      await model.poll(transport);
+      expect(cursors).toEqual(['42']); expect(openings.at(-1)).toBe('/api/dispatch/changes?since=42');
+    } else {
+      expect(cursors).toEqual(['0']); await model.poll(transport);
+      expect(cursors).toEqual(['0', '7']); expect(openings.at(-1)).toBe('/api/dispatch/changes?since=7');
+    }
+    model.stop();
+  });
+
   it('posts ledger calls with the web token and reports a failed poll', async () => {
     page('', TOKEN);
     const fetcher = vi.fn(async () => Response.json({ result: { changes: [], cursor: '12', more: false } }));
@@ -52,7 +92,7 @@ describe('the served shell', () => {
     expect(fetcher.mock.calls[0]).toMatchObject(['/api/dispatch', { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}` }, body: JSON.stringify({ method: 'ledger_changes', params: { since: '11' } }) }]);
     fetcher.mockResolvedValueOnce(Response.json({ error: 'The ledger is offline.' }, { status: 503 }));
     await expect(shell.ledgerCall!('ledger_changes', { since: '12' })).rejects.toThrow('offline');
-    expect(shell.watchLedger).toBeUndefined();
+    expect(shell.watchLedger).toBeTypeOf('function');
   });
   it('keeps the token from the link, removes it from the address, and sends it only as a header', async () => {
     const { store, replaced } = page(`#token=${TOKEN}`);

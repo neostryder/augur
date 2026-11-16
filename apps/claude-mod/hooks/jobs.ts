@@ -1,4 +1,4 @@
-import type { ModJob, ModOrigin, ModUsage } from '../types'
+import type { ModJob, ModJobsSnapshot, ModOrigin, ModUsage } from '../types'
 type JobsLiveRow = ModJob
 
 export const JOBS_TEXT = {
@@ -56,16 +56,27 @@ function cleanJob(raw: unknown, states: readonly string[]): ModJob | null {
 }
 
 /** The live jobs and the recently closed ones from jobs-live.json. Live jobs need a fresh file and all of them valid; closed jobs are kept one by one, however old the file. */
-export function parseJobs(raw: string | null, now: number): { live: ModJob[]; recent: ModJob[] } {
+export function parseJobs(raw: string | null, now: number): ModJobsSnapshot {
   const none = { live: [] as ModJob[], recent: [] as ModJob[] }
   let feed: Record<string, unknown> | null
   try { feed = JSON.parse(raw ?? '') } catch { return none }
   if (!feed || typeof feed !== 'object') return none
   const recent = Array.isArray(feed.recent) ? feed.recent.map((j) => cleanJob(j, CLOSED_STATES)).filter((j): j is ModJob => j !== null).sort((a, b) => (b.endedAt ?? b.lastActivityAt) - (a.endedAt ?? a.lastActivityAt)).slice(0, MAX_CLOSED) : []
+  const cursor = typeof feed.cursor === 'string' && /^(0|[1-9][0-9]{0,19})$/.test(feed.cursor) && BigInt(feed.cursor) <= 18446744073709551615n ? feed.cursor : undefined
+  const sessions = Array.isArray(feed.sessions) ? feed.sessions.filter((row): row is NonNullable<ModJobsSnapshot['sessions']>[number] => {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) return false
+    const session = row as Record<string, unknown>
+    return Object.keys(session).every((key) => ['sessionId', 'title', 'firstSeenAt', 'lastActiveAt'].includes(key))
+      && typeof session.sessionId === 'string' && session.sessionId.length > 0 && session.sessionId.length <= 256
+      && (session.title === null || typeof session.title === 'string' && session.title.length <= 256)
+      && num(session.firstSeenAt) !== undefined && num(session.lastActiveAt) !== undefined
+      && Number(session.firstSeenAt) >= 0 && Number(session.lastActiveAt) >= Number(session.firstSeenAt)
+  }) : undefined
+  const extra = strip({ cursor, sessions })
   const at = num(feed.updatedAt), stall = num(feed.stallMinutes)
-  if (at === undefined || now - at > FRESH_MS || !Array.isArray(feed.jobs) || stall === undefined || stall < 0) return { live: [], recent }
+  if (at === undefined || now - at > FRESH_MS || !Array.isArray(feed.jobs) || stall === undefined || stall < 0) return { ...extra, live: [], recent }
   const live = feed.jobs.map((j) => cleanJob(j, LIVE_STATES))
-  return { live: live.every((j) => j !== null) ? (live as ModJob[]).slice(0, MAX_LIVE) : [], recent }
+  return { ...extra, live: live.every((j) => j !== null) ? (live as ModJob[]).slice(0, MAX_LIVE) : [], recent }
 }
 
 export function liveJobs(raw: string | null, now: number): ModJob[] {

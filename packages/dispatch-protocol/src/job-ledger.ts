@@ -94,7 +94,8 @@ export interface JobsLiveRow {
   origin?: { kind?: string; label?: string | null; sessionId?: string | null; sessionTitle?: string | null; host?: string | null; pid?: number | null; intent?: string | null };
   usage?: { inputTokens: number; outputTokens: number; costUsd?: number | null } | null;
 }
-export interface JobsLiveSnapshot { updatedAt: number; stallMinutes?: number; jobs: readonly JobsLiveRow[]; recent: readonly JobsLiveRow[] }
+export interface LedgerSession { sessionId: string; title: string | null; firstSeenAt: number; lastActiveAt: number }
+export interface JobsLiveSnapshot { updatedAt: number; cursor?: string; stallMinutes?: number; jobs: readonly JobsLiveRow[]; recent: readonly JobsLiveRow[]; sessions?: readonly LedgerSession[] }
 export interface LedgerPage { jobs: LedgerJob[]; next: string | null; cards?: JobsLiveSnapshot }
 
 /** Remote nodes and older records have no local execution fields. */
@@ -111,9 +112,12 @@ export function ledgerJobRow(job: LedgerJob): JobsLiveRow {
 export interface LedgerChain { job: LedgerJob; parent: LedgerJob | null; children: LedgerJob[]; retries: LedgerJob[] }
 export interface LedgerGap { at: number; from: string; to: string; retentionDays?: number }
 export interface LedgerNode { node: string; cursor: string; unreachableSince: number | null; lastSeenAt: number | null; lastPollAt?: number | null; gap?: LedgerGap | null }
-export interface LedgerChange { cursor: string; at: number; job: LedgerJob }
-export interface LedgerWatchPage { changes: LedgerChange[]; cursor: string; more: boolean }
-export interface LedgerWatchEvent { event: 'ledger_change'; change: LedgerChange }
+export type LedgerChannel = 'jobs' | 'sessions';
+export type LedgerChange<C extends LedgerChannel = 'jobs'> = C extends 'sessions'
+  ? { cursor: string; at: number; channel: 'sessions'; session: LedgerSession }
+  : { cursor: string; at: number; channel?: 'jobs'; job: LedgerJob };
+export interface LedgerWatchPage<C extends LedgerChannel = 'jobs'> { changes: LedgerChange<C>[]; cursor: string; more: boolean }
+export interface LedgerWatchEvent<C extends LedgerChannel = 'jobs'> { event: 'ledger_change'; change: LedgerChange<C> }
 
 /** Sequences are durable unsigned 64-bit decimal strings, including across node restarts. */
 export interface NodeJobEvent { seq: string; at: number; job: LedgerJob }
@@ -186,6 +190,12 @@ export function validLedgerGap(v: unknown): v is LedgerGap {
 export function ledgerId(node: string, localId: string): string {
   if (!validNode(node) || !/^[A-Za-z0-9._-]{1,128}$/.test(localId)) throw new Error('The ledger identifier is invalid.');
   return `${node}:${localId}`;
+}
+
+export function validLedgerSession(v: unknown): v is LedgerSession {
+  return object(v) && keys(v, ['sessionId', 'title', 'firstSeenAt', 'lastActiveAt'])
+    && line(v.sessionId, 256) && v.sessionId.length > 0 && (v.title === null || line(v.title, 256))
+    && finite(v.firstSeenAt) && finite(v.lastActiveAt) && v.lastActiveAt >= v.firstSeenAt;
 }
 
 export function validStamp(v: unknown): v is Stamp {

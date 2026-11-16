@@ -2,6 +2,7 @@
 // provider logins and reads no provider itself. State and changes arrive on one streamed response, and commands go back as plain POSTs.
 // The token that opens the link is kept in this browser only, and travels in the Authorization header, never in an address.
 import type { Shell } from '@augur/core';
+import { validCursor, type LedgerChange, type LedgerChannel } from '@augur/dispatch-protocol';
 import { createBrowserShell } from './browser';
 
 const TOKEN_KEY = 'augur.webToken';
@@ -117,6 +118,25 @@ export function createServedShell(): Shell {
   };
 
   return { ...base, kind: 'desktop', served: true, host: { ...base.host, platform: 'browser' }, engineLink: open,
+    async watchLedger(since, change, closed) {
+      const ctrl = new AbortController();
+      const opening = setTimeout(() => ctrl.abort(), 15000);
+      let response: Response;
+      try { response = await fetch(`/api/dispatch/changes?since=${encodeURIComponent(since)}`, { headers: headers(), signal: ctrl.signal, cache: 'no-store' }); }
+      catch (error) { ctrl.abort(); throw error; }
+      finally { clearTimeout(opening); }
+      if (!response.ok || !response.body) { ctrl.abort(); throw new Error('The ledger stream is unavailable.'); }
+      let closing = false;
+      // Ready names the head of the log; only replayed changes advance the processed cursor.
+      void readLines(response.body, line => {
+        const message = JSON.parse(line) as { t: string; change?: LedgerChange<LedgerChannel> };
+        if (message.t === 'change') {
+          if (!message.change || message.change.channel === 'sessions' || !validCursor(message.change.cursor)) throw new Error('The ledger change is invalid.');
+          change(message.change.cursor);
+        }
+      }).catch(() => { ctrl.abort(); }).finally(() => { if (!closing) closed(); });
+      return { close() { closing = true; ctrl.abort(); } };
+    },
     async ledgerCall(method, params) {
       const response = await fetch('/api/dispatch', { method: 'POST', headers: headers({ 'Content-Type': 'application/json' }), body: JSON.stringify({ method, params }), cache: 'no-store', signal: AbortSignal.timeout(15000) });
       const result = await response.json() as { result?: unknown; error?: string };

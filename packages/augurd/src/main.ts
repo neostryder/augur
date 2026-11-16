@@ -152,7 +152,7 @@ export async function startService(opts: ServiceOptions = {}) {
   const chatSettings = { ...config.web, host: config.web.chatHost, port: config.web.chatPort };
   const certNames = [...new Set([...webCertNames(config.web), ...(config.web.chatPort > 0 ? webCertNames(chatSettings) : [])])];
   if (config.web.enabled) {
-    web = new WebServer({ certNames, settings: config.web, chat: chat!, users: users!, engine: () => server.engineLink(), token: () => webToken(dir), staticDir: webDir(), log, dir, dispatch: (method, params, peer) => server.dispatch(method, params, peer) });
+    web = new WebServer({ certNames, settings: config.web, chat: chat!, users: users!, engine: () => server.engineLink(), token: () => webToken(dir), staticDir: webDir(), log, dir, dispatch: (method, params, peer) => server.dispatch(method, params, peer), ledgerCursor: () => store.ledger.globalCursor() });
     try {
       const at = await web.start();
       log(`web app listening on ${at.tls ? 'https' : 'http'}://${at.host}:${at.port}`);
@@ -200,7 +200,7 @@ export async function startService(opts: ServiceOptions = {}) {
   const ledgerRetention = setInterval(() => { try { store.ledger.compact(resolveBalance(policy.read()?.balance).ledger.retentionDays); } catch { log('The job ledger could not compact.'); } }, 3600000);
   const sessionTitles = new SessionTitles(desktopSessionsRoot());
   store.ledger.setSessionTitleLookup(id => sessionTitles.lookup(id));
-  const jobsLive = new JobsLiveWriter(home, supervisor, () => config.stallMinutes, log, Date.now, id => sessionTitles.lookup(id));
+  const jobsLive = new JobsLiveWriter(home, supervisor, () => config.stallMinutes, log, Date.now, id => sessionTitles.lookup(id), store.ledger);
   jobsLive.tick();
   const cancelRequests = new CancelRequests(home, supervisor, log);
   const timer = setInterval(() => { try { supervisor.tick(); } catch (e) { log(`tick failed: ${(e as Error).message}`); } cancelRequests.tick(); jobsLive.tick(); }, 500);

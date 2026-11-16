@@ -237,9 +237,9 @@ export function createTools(d: McpDeps) {
         for (const job of matches.jobs) ids.add(job.id);
         next = matches.next;
       } while (next);
-      return { ...page, changes: page.changes.filter(c => ids.has(c.job.id)) };
+      return { ...page, changes: page.changes.filter(c => c.channel !== 'sessions' && ids.has(c.job.id)) };
     }, r => 'jobs' in r ? { text: r.jobs.map(jobLine).join('\n') || 'No jobs.', data: { ...r } }
-      : { text: r.changes.map(c => `${c.cursor}  ${jobLine(c.job)}`).join('\n') || 'No matching changes.', data: { ...r } });
+      : { text: r.changes.map(c => c.channel === 'sessions' ? '' : `${c.cursor}  ${jobLine(c.job)}`).join('\n') || 'No matching changes.', data: { ...r } });
   }
 
   async function jobCounts(a: LedgerFilters): Promise<ToolResult> {

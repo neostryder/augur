@@ -75,6 +75,19 @@ describe('the shared ledger view', () => {
     await model.start(t.api); expect(model.cursor).toBe('7'); expect(model.error).toBe(''); model.stop();
   });
 
+  it('keeps a healthy stream without polling and resumes polling from its last change after a drop', async () => {
+    const model = new LedgerModel(), t = transport();
+    let change!: (cursor: string) => void, closed!: () => void;
+    const watch = vi.fn(async (_since, onChange, onClose) => { change = onChange; closed = onClose; return { close: vi.fn() }; });
+    t.api.watch = watch; await model.start(t.api); t.call.mockClear();
+    await model.poll(t.api); expect(t.call.mock.calls.some(call => call[0] === 'ledger_changes')).toBe(false);
+    change('42'); closed(); watch.mockRejectedValueOnce(new Error('offline'));
+    await model.poll(t.api);
+    expect(watch).toHaveBeenLastCalledWith('42', expect.any(Function), expect.any(Function));
+    expect(t.call).toHaveBeenCalledWith('ledger_changes', { since: '42', limit: 1000 });
+    model.stop();
+  });
+
   it('discards an old query result after scope changes', async () => {
     const model = new LedgerModel('s'), t = transport();
     let resolve!: (value: unknown) => void;
