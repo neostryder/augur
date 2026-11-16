@@ -15,10 +15,11 @@ afterEach(() => { vi.clearAllMocks(); while (dirs.length) rmSync(dirs.pop()!, { 
 
 function fixture() {
   const home = mkdtempSync(join(tmpdir(), 'augur-jobs-live-')); dirs.push(home);
-  let now = 100000, jobs: JobRecord[] = [], closed: JobRecord[] = [];
+  let now = 100000, cursor = '0', jobs: JobRecord[] = [], closed: JobRecord[] = [];
+  const sessions = [{ sessionId: 'sid', title: 'Augur', firstSeenAt: 1, lastActiveAt: 1 }];
   const list = vi.fn((filter: { finished?: boolean }) => (filter.finished ? closed : jobs)), log = vi.fn();
-  const writer = new JobsLiveWriter(home, { list }, () => 10, log, () => now, id => (id === 'sid' ? 'Augur' : undefined));
-  return { home, writer, list, log, set: (rows: JobRecord[]) => { jobs = rows; }, setClosed: (rows: JobRecord[]) => { closed = rows; }, advance: (ms = 5000) => { now += ms; },
+  const writer = new JobsLiveWriter(home, { list }, () => 10, log, () => now, id => (id === 'sid' ? 'Augur' : undefined), { globalCursor: () => cursor, sessions: () => sessions });
+  return { home, writer, list, log, setCursor: (value: string) => { cursor = value; }, set: (rows: JobRecord[]) => { jobs = rows; }, setClosed: (rows: JobRecord[]) => { closed = rows; }, advance: (ms = 5000) => { now += ms; },
     read: () => JSON.parse(readFileSync(join(home, 'jobs-live.json'), 'utf8')) };
 }
 
@@ -27,6 +28,19 @@ const job = (id: string, createdAt = 1) => ({ id, createdAt, route: 'local', act
   parentJobId: null, named: false, endedAt: null, exitCode: null, reason: null, usage: null, caller: { kind: 'cli', session: 'sid', intent: 'automated' } }) as unknown as JobRecord;
 
 describe('the live jobs snapshot', () => {
+  it('writes the ledger cursor and sessions when only the cursor advances, including an empty live list', () => {
+    const f = fixture(); f.writer.tick();
+    expect(f.read()).toMatchObject({ cursor: '0', jobs: [], sessions: [{ sessionId: 'sid', title: 'Augur', firstSeenAt: 1, lastActiveAt: 1 }] });
+    f.setCursor('2'); f.advance(4999); f.writer.tick();
+    expect(renameSync).toHaveBeenCalledTimes(1);
+    f.advance(1); f.writer.tick();
+    expect(f.read().cursor).toBe('2'); expect(renameSync).toHaveBeenCalledTimes(2);
+    f.advance(); f.writer.tick(); expect(renameSync).toHaveBeenCalledTimes(2);
+    f.set([job('a')]); f.advance(); f.writer.tick();
+    f.setCursor('3'); f.advance(); f.writer.tick();
+    expect(f.read().cursor).toBe('3'); expect(renameSync).toHaveBeenCalledTimes(4);
+  });
+
   it('writes only changed jobs and clears the last live job once', () => {
     const f = fixture();
     f.set([job('a')]); f.writer.tick();
@@ -59,7 +73,7 @@ describe('the live jobs snapshot', () => {
     const f = fixture();
     f.set(Array.from({ length: 60 }, (_, i) => job(String(i), i))); f.writer.tick();
     const feed = f.read();
-    expect(Object.keys(feed).sort()).toEqual(['jobs', 'recent', 'stallMinutes', 'updatedAt']);
+    expect(Object.keys(feed).sort()).toEqual(['cursor', 'jobs', 'recent', 'sessions', 'stallMinutes', 'updatedAt']);
     expect(feed.jobs).toHaveLength(50);
     expect(feed.jobs.map((row: { id: string }) => row.id)).toEqual(Array.from({ length: 50 }, (_, i) => String(59 - i)));
     expect(Object.keys(feed.jobs[0]).sort()).toEqual(['activity', 'activityLine', 'createdAt', 'cwd', 'dataTier', 'depth', 'endedAt', 'exitCode', 'id', 'lastActivityAt', 'model', 'named', 'origin',

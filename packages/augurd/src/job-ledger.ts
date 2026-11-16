@@ -1,7 +1,7 @@
 import { randomUUID, createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
-import { JOB_STATES, LEDGER_STATES, ORIGIN_KINDS, failureLine, ledgerId, ledgerJobRow, ledgerTerminal, summaryLine, validCursor, validLedgerGap, validLedgerJob, validNodeJobPage } from '@augur/dispatch-protocol';
-import type { JobRecord, LedgerAlert, LedgerAlertSettings, LedgerChain, LedgerChange, LedgerGap, LedgerJob, LedgerMetadata, LedgerNode, LedgerPage, LedgerQuery, LedgerState, LedgerWatchPage, NodeJobPage } from '@augur/dispatch-protocol';
+import { JOB_STATES, LEDGER_STATES, ORIGIN_KINDS, failureLine, ledgerId, ledgerJobRow, ledgerTerminal, summaryLine, validCursor, validLedgerGap, validLedgerJob, validLedgerSession, validNodeJobPage } from '@augur/dispatch-protocol';
+import type { JobRecord, LedgerAlert, LedgerAlertSettings, LedgerChain, LedgerChannel, LedgerChange, LedgerGap, LedgerJob, LedgerMetadata, LedgerNode, LedgerPage, LedgerQuery, LedgerSession, LedgerState, LedgerWatchPage, NodeJobPage } from '@augur/dispatch-protocol';
 import { jobRow } from './jobs-live.js';
 
 export interface AlertSink { emit(event: LedgerAlert): void | Promise<void> }
@@ -37,16 +37,20 @@ export class JobLedger {
       create table if not exists ledger_nodes(node text primary key, cursor text not null default '0', unreachable_since integer, last_seen_at integer);
       create table if not exists ledger_changes(seq integer primary key autoincrement, at integer not null, job_id text not null, body text not null);
       create index if not exists ledger_changes_job on ledger_changes(job_id,seq);
+      create table if not exists ledger_sessions(session_id text primary key, body text not null);
       create table if not exists ledger_dirty(id text primary key);
       create table if not exists ledger_alerts(id text primary key, body text not null);
       create trigger if not exists ledger_job_insert after insert on jobs begin insert or ignore into ledger_dirty(id) values(new.id); end;
       create trigger if not exists ledger_job_update after update on jobs begin insert or ignore into ledger_dirty(id) values(new.id); end;`);
     if (!(db.prepare('pragma table_info(ledger_nodes)').all() as Array<{ name: string }>).some(column => column.name === 'last_poll_at')) db.exec('alter table ledger_nodes add column last_poll_at integer');
     if (!(db.prepare('pragma table_info(ledger_nodes)').all() as Array<{ name: string }>).some(column => column.name === 'gap')) db.exec('alter table ledger_nodes add column gap text');
+    if (!(db.prepare('pragma table_info(ledger_changes)').all() as Array<{ name: string }>).some(column => column.name === 'channel')) db.exec("alter table ledger_changes add column channel text not null default 'jobs'");
+    db.exec('create index if not exists ledger_changes_channel on ledger_changes(channel,seq)');
     db.prepare('insert or ignore into ledger_identity(id,node) values(1,?)').run(`augur-${randomUUID()}`);
     this.node = (db.prepare('select node from ledger_identity where id=1').get() as { node: string }).node;
     db.exec('insert or ignore into ledger_dirty(id) select id from jobs');
     this.flush();
+    for (const row of db.prepare('select body from ledger_remote').all() as Array<{ body: string }>) this.recordSession(JSON.parse(row.body) as LedgerJob, false);
   }
 
   close(): void { this.closed = true; this.live.clear(); this.remoteLines.clear(); }
@@ -83,13 +87,61 @@ export class JobLedger {
   }
 
   private append(job: LedgerJob): void {
-    const body = payload(job), last = this.db.prepare('select body from ledger_changes where job_id=? order by seq desc limit 1').get(job.id) as { body: string } | undefined;
+    const body = payload(job), last = this.db.prepare("select body from ledger_changes where channel='jobs' and job_id=? order by seq desc limit 1").get(job.id) as { body: string } | undefined;
+    this.recordSession(job, !last || (JSON.parse(last.body) as LedgerJob).stamp.sessionTitle !== job.stamp.sessionTitle);
     if (last?.body === body) return;
-    this.db.prepare('insert into ledger_changes(at,job_id,body) values(?,?,?)').run(this.now(), job.id, body);
+    this.appendChange('jobs', job.id, body);
+  }
+
+  private appendChange(channel: LedgerChannel, id: string, body: string): void {
+    const statement = this.db.prepare('insert into ledger_changes(at,job_id,body,channel) values(?,?,?,?)');
+    statement.setReadBigInts(true);
+    statement.run(this.now(), id, body, channel);
+  }
+
+  private saveSession(session: LedgerSession): void {
+    if (!validLedgerSession(session)) throw new Error('The ledger session is invalid.');
+    const body = JSON.stringify(session);
+    const previous = this.db.prepare('select body from ledger_sessions where session_id=?').get(session.sessionId) as { body: string } | undefined;
+    if (previous?.body === body) return;
+    this.db.exec('savepoint ledger_session');
+    try {
+      this.db.prepare('insert into ledger_sessions(session_id,body) values(?,?) on conflict(session_id) do update set body=excluded.body').run(session.sessionId, body);
+      this.appendChange('sessions', session.sessionId, body);
+      this.db.exec('release ledger_session');
+    } catch (error) { this.db.exec('rollback to ledger_session; release ledger_session'); throw error; }
+  }
+
+  private recordSession(job: LedgerJob, changed = true): void {
+    const sessionId = job.stamp.sessionId ?? (job.node === this.node ? this.local.get(job.localId)?.caller.session : undefined);
+    if (!sessionId) return;
+    const previous = this.db.prepare('select body from ledger_sessions where session_id=?').get(sessionId) as { body: string } | undefined;
+    const session = previous ? JSON.parse(previous.body) as LedgerSession : null;
+    const activeAt = Math.max(job.createdAt, job.updatedAt, job.lastActivityAt ?? 0, job.endedAt ?? 0);
+    const title = this.titleOf(sessionId) ?? (!session || changed && activeAt >= session.lastActiveAt ? job.stamp.sessionTitle : undefined) ?? session?.title ?? null;
+    this.saveSession({ sessionId, title, firstSeenAt: Math.min(session?.firstSeenAt ?? job.createdAt, job.createdAt), lastActiveAt: Math.max(session?.lastActiveAt ?? 0, activeAt) });
+  }
+
+  sessions(): LedgerSession[] {
+    this.flush();
+    return this.sessionRows();
+  }
+
+  private sessionRows(): LedgerSession[] {
+    return (this.db.prepare('select body from ledger_sessions order by session_id').all() as Array<{ body: string }>).map(row => JSON.parse(row.body) as LedgerSession);
+  }
+
+  globalCursor(): string {
+    this.flush();
+    return (this.db.prepare("select cast(seq as text) as seq from sqlite_sequence where name='ledger_changes'").get() as { seq: string } | undefined)?.seq ?? '0';
   }
 
   flush(): void {
     if (this.closed) return;
+    for (const session of this.sessionRows()) {
+      const title = this.titleOf(session.sessionId);
+      if (title !== undefined && title !== session.title) this.saveSession({ ...session, title });
+    }
     const dirty = this.db.prepare('select id from ledger_dirty').all() as Array<{ id: string }>;
     if (!dirty.length) return;
     this.transaction(() => {
@@ -207,13 +259,18 @@ export class JobLedger {
     return counts;
   }
 
-  changes(since = '0', limit = 100): LedgerWatchPage {
+  changes<C extends LedgerChannel = 'jobs'>(since = '0', limit = 100, channel: C = 'jobs' as C): LedgerWatchPage<C> {
     numberCursor(since);
     if (!Number.isInteger(limit) || limit < 1 || limit > 1000) throw new Error('The ledger limit is invalid.');
+    if (channel !== 'jobs' && channel !== 'sessions') throw new Error('The ledger channel is invalid.');
     this.flush();
-    const rows = this.db.prepare('select seq,at,body from ledger_changes where seq>? order by seq limit ?').all(since, limit + 1) as Array<{ seq: number; at: number; body: string }>;
-    const changes: LedgerChange[] = rows.slice(0, limit).map(r => ({ cursor: String(r.seq), at: r.at, job: JSON.parse(r.body) as LedgerJob }));
-    return { changes, cursor: changes.at(-1)?.cursor ?? since, more: rows.length > limit };
+    const current = this.globalCursor();
+    const rows = this.db.prepare('select cast(seq as text) as seq,at,body from ledger_changes where seq>? and channel=? order by ledger_changes.seq limit ?').all(since, channel, limit + 1) as Array<{ seq: string; at: number; body: string }>;
+    const changes = rows.slice(0, limit).map(r => channel === 'sessions'
+      ? { cursor: r.seq, at: r.at, channel: 'sessions' as const, session: JSON.parse(r.body) as LedgerSession }
+      : { cursor: r.seq, at: r.at, channel: 'jobs' as const, job: JSON.parse(r.body) as LedgerJob }) as LedgerChange<C>[];
+    const more = rows.length > limit;
+    return { changes, cursor: more ? changes.at(-1)!.cursor : BigInt(current) > BigInt(since) ? current : since, more };
   }
 
   nodes(): LedgerNode[] {
@@ -288,7 +345,7 @@ export class JobLedger {
           this.db.prepare('delete from events where job_id=?').run(job.localId);
           this.db.prepare('delete from ledger_dirty where id=?').run(job.localId);
         } else this.db.prepare('update ledger_remote set body=? where id=?').run(payload(row), job.id);
-        this.db.prepare('delete from ledger_changes where job_id=?').run(job.id);
+        this.db.prepare("delete from ledger_changes where channel='jobs' and job_id=?").run(job.id);
         interrupt?.();
         this.append(row);
       });

@@ -4,7 +4,7 @@ import net from 'node:net';
 import { join } from 'node:path';
 import type { EngineEvent, Methods, MethodName, RpcResponse, Stamp, ViewHello, ViewInfo } from '@augur/dispatch-protocol';
 import type { EngineKey, EngineState } from '@augur/core';
-import type { LedgerChange, LedgerWatchEvent } from '@augur/dispatch-protocol';
+import type { LedgerChannel, LedgerChange, LedgerWatchEvent } from '@augur/dispatch-protocol';
 import { dataDir, pipeName } from './paths.js';
 
 /** `agent` reads the agent token, for a tool server an agent drives; the default is the owner's token. */
@@ -89,10 +89,10 @@ export function watchEngine(hello: ViewHello, handlers: EngineWatchHandlers = {}
   });
 }
 
-export interface LedgerWatchHandlers { change(change: LedgerChange): void; closed?(error?: Error): void }
+export interface LedgerWatchHandlers<C extends LedgerChannel = 'jobs'> { change(change: LedgerChange<C>): void; closed?(error?: Error): void }
 export interface LedgerWatch { close(): void }
 
-export function watchLedger(since: string, handlers: LedgerWatchHandlers, opts: ClientOptions = {}): Promise<LedgerWatch> {
+export function watchLedger<C extends LedgerChannel = 'jobs'>(since: string, handlers: LedgerWatchHandlers<C>, opts: ClientOptions & { channel?: C } = {}): Promise<LedgerWatch> {
   return new Promise((resolve, reject) => {
     let token: string;
     try { token = opts.token ?? readToken(opts.dir ?? dataDir(), opts.role); }
@@ -101,14 +101,14 @@ export function watchLedger(since: string, handlers: LedgerWatchHandlers, opts: 
     let buffer = '', ready = false, closing = false;
     const timer = setTimeout(() => { sock.destroy(); reject(new ServiceError('timeout', 'The ledger watch did not start in time.')); }, opts.timeoutMs ?? 10000);
     sock.setEncoding('utf8');
-    sock.on('connect', () => sock.write(JSON.stringify({ id: 1, token, method: 'ledger_watch', params: { since } }) + '\n'));
+    sock.on('connect', () => sock.write(JSON.stringify({ id: 1, token, method: 'ledger_watch', params: { since, ...(opts.channel ? { channel: opts.channel } : {}) } }) + '\n'));
     sock.on('data', (chunk: string) => {
       buffer += chunk;
       if (buffer.length > 4 * 1024 * 1024) { sock.destroy(); return; }
       let end: number;
       while ((end = buffer.indexOf('\n')) >= 0) {
         const line = buffer.slice(0, end); buffer = buffer.slice(end + 1);
-        let message: RpcResponse<{ cursor: string }> | LedgerWatchEvent;
+        let message: RpcResponse<{ cursor: string }> | LedgerWatchEvent<C>;
         try { message = JSON.parse(line) as typeof message; }
         catch { sock.destroy(); return; }
         if (!ready) {

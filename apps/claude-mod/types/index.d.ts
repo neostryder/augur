@@ -13,6 +13,8 @@ export type ModJob = {
   named?: boolean; model?: string; summary?: string; origin?: ModOrigin; usage?: ModUsage
 }
 
+export type ModJobsSnapshot = { live: ModJob[]; recent: ModJob[]; cursor?: string; sessions?: { sessionId: string; title: string | null; firstSeenAt: number; lastActiveAt: number }[] }
+
 declare module 'claude-code' {
   interface PluginState {
     augur: {

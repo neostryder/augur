@@ -6,7 +6,7 @@ import { userInfo } from 'node:os';
 import net from 'node:net';
 import { dirname, join } from 'node:path';
 import { PROTOCOL_VERSION, planRouteAdd, resetLedger, routeAddShapeProblems } from '@augur/dispatch-protocol';
-import type { EngineEvent, JobRequest, MethodName, RateCard, RouteAddAnswer, RouteConfig, RpcRequest, RpcResponse, ViewHello, ViewReply } from '@augur/dispatch-protocol';
+import type { EngineEvent, JobRequest, LedgerChannel, MethodName, RateCard, RouteAddAnswer, RouteConfig, RpcRequest, RpcResponse, ViewHello, ViewReply } from '@augur/dispatch-protocol';
 import { DEFAULT_APPROVAL, RULES_ONLY_PROVIDERS, allPlugins, callEngine, cogitatorBase, fleetOf, fleetOffers, type EngineApi, type EngineKey, type EngineState, type ProviderAddition } from '@augur/core';
 import { pipePeer, readPipePeer, type PeerInfo } from './job-stamp.js';
 import { validStamp } from '@augur/dispatch-protocol';
@@ -136,7 +136,7 @@ export class IpcServer {
       case 'ledger_list': return this.store.ledger.list(params as never);
       case 'ledger_get': return this.store.ledger.get(String(p.id ?? ''));
       case 'ledger_counts': return this.store.ledger.counts(params as never);
-      case 'ledger_changes': return this.store.ledger.changes(p.since as string | undefined, p.limit as number | undefined);
+      case 'ledger_changes': return this.store.ledger.changes(p.since as string | undefined, p.limit as number | undefined, p.channel as LedgerChannel | undefined);
       case 'ledger_nodes': return this.store.ledger.nodes();
       case 'ledger_alerts': return this.store.ledger.alerts();
       case 'ledger_settings': return this.ledgerSettings();
@@ -362,12 +362,13 @@ export class IpcServer {
               try {
                 if (!role) throw new Error('Missing or wrong token.');
                 if (ledgerStop || watching) throw new Error('This connection is already watching.');
-                let cursor = ((req.params ?? {}) as { since?: string }).since ?? '0';
-                this.store.ledger.changes(cursor, 1);
+                const params = (req.params ?? {}) as { since?: string; channel?: LedgerChannel };
+                let cursor = params.since ?? '0';
+                this.store.ledger.changes(cursor, 1, params.channel);
                 sock.write(JSON.stringify({ id: req.id, result: { cursor } }) + '\n');
                 const pump = () => {
                   try {
-                    const page = this.store.ledger.changes(cursor, 100);
+                    const page = this.store.ledger.changes(cursor, 100, params.channel);
                     for (const change of page.changes) {
                       if (sock.writableLength > 4 * 1024 * 1024) { sock.destroy(); return; }
                       sock.write(JSON.stringify({ event: 'ledger_change', change }) + '\n');

@@ -1,11 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { ledgerPage, ledgerQuery, ledgerTime } from '../src/ledger-query.js';
-import { checkBalanceSetting, ledgerId, resolveBalance, stampFromEnv, stampFromHeaders, stampHeaders, summaryLine, validCursor, validLedgerGap, validLedgerJob, validNodeJobPage, validStamp } from '../src/index.js';
+import { checkBalanceSetting, ledgerId, resolveBalance, stampFromEnv, stampFromHeaders, stampHeaders, summaryLine, validCursor, validLedgerGap, validLedgerJob, validLedgerSession, validNodeJobPage, validStamp } from '../src/index.js';
 import type { LedgerJob } from '../src/index.js';
 
 const job = (): LedgerJob => ({ id: 'eru:1', node: 'eru', localId: '1', kind: 'llm-request', state: 'running', stamp: {}, attribution: { session: 'unknown', origin: 'unknown', process: 'unknown', host: 'unknown' }, summary: '', summarySource: 'none', route: null, model: 'summarize', activity: 'summarize', createdAt: 1, startedAt: 2, endedAt: null, durationMs: null, updatedAt: 2, lastActivityAt: 2, parentId: null, retryOf: null, retriedAs: null, usage: null, exitReason: null, compacted: false });
 
 describe('the job ledger contract', () => {
+  it('accepts session metadata only and rejects private and unknown fields', () => {
+    const session = { sessionId: 'session', title: 'Notes', firstSeenAt: 1, lastActiveAt: 2 };
+    expect(validLedgerSession(session)).toBe(true); expect(validLedgerSession({ ...session, title: null })).toBe(true);
+    for (const fields of [{ request: 'private' }, { prompt: 'private' }, { answer: 'private' }, { key: 'private' }, { path: '/private' }, { unknown: true }, { sessionId: '' }, { title: 'two\nlines' }, { lastActiveAt: 0 }, { firstSeenAt: NaN }]) expect(validLedgerSession({ ...session, ...fields })).toBe(false);
+  });
+
   it('accepts an optional failure reason only as a bounded line on a failed record', () => {
     const failed = { ...job(), state: 'failed', endedAt: 12, durationMs: 10, exitReason: 'failed' };
     expect(validLedgerJob(failed)).toBe(true);

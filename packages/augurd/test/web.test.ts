@@ -1,10 +1,12 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { EngineApi, EngineKey, ResetEvent } from '@augur/core';
+import type { LedgerChannel, LedgerJob } from '@augur/dispatch-protocol';
+import { Store } from '../src/store.js';
 import { ViewHub } from '../src/views.js';
 import { WebServer, hostAllowed, hostOf, originAllowed, webAddresses } from '../src/web.js';
 import { DEFAULT_CONFIG, loadConfig } from '../src/config.js';
@@ -192,6 +194,99 @@ describe('the web calls', () => {
     expect((await fetch(`${base}/api/watch`, { headers: auth, signal: AbortSignal.timeout(300) }).then(r => r.status, () => 200))).toBe(200);
     token = 'b'.repeat(64);
     expect((await fetch(`${base}/api/watch`, { headers: auth })).status).toBe(401);
+  });
+});
+
+describe('the dispatch change stream', () => {
+  async function ledgerServer() {
+    const dir = mkdtempSync(join(tmpdir(), 'augur-web-ledger-')), store = new Store(dir);
+    let token = TOKEN;
+    const dispatch = vi.fn(async (_method: string, params: unknown) => {
+      const p = params as { since?: string; limit?: number; channel?: LedgerChannel };
+      return store.ledger.changes(p.since, p.limit, p.channel);
+    });
+    const server = new WebServer({ settings: { ...DEFAULT_CONFIG.web, port: 0 }, engine: () => null, token: () => token, staticDir: null, log: () => undefined, dispatch, ledgerCursor: () => store.ledger.globalCursor() });
+    open.push(server); await server.start();
+    const base = `http://127.0.0.1:${(server as unknown as { server: { address(): { port: number } } }).server.address().port}`;
+    const job = (id: string): LedgerJob => ({ id: `remote:${id}`, node: 'remote', localId: id, kind: 'llm-request', state: 'running', stamp: { sessionId: id, sessionTitle: `Session ${id}` }, attribution: { session: 'stamped', origin: 'unknown', process: 'unknown', host: 'unknown' }, summary: '', summarySource: 'none', route: null, model: null, activity: 'research', createdAt: 1, startedAt: 2, endedAt: null, durationMs: null, updatedAt: 2, lastActivityAt: 2, parentId: null, retryOf: null, retriedAs: null, usage: null, exitReason: null, compacted: false });
+    const add = (id: string) => { const seq = String(BigInt(store.ledger.cursor('remote')) + 1n); store.ledger.ingest('remote', { version: 1, node: 'remote', events: [{ seq, at: 2, job: job(id) }], next: seq, more: false }); };
+    return { base, store, server, dispatch, add, rotate: () => { token = 'b'.repeat(64); }, dispose: async () => { await server.close(); store.close(); rmSync(dir, { recursive: true, force: true }); } };
+  }
+
+  async function lines(response: Response) {
+    const reader = response.body!.getReader(), decoder = new TextDecoder(); let buffer = '';
+    return { reader, next: async (): Promise<Record<string, unknown> | null> => {
+      for (;;) {
+        const end = buffer.indexOf('\n');
+        if (end >= 0) { const line = buffer.slice(0, end); buffer = buffer.slice(end + 1); return JSON.parse(line); }
+        const { value, done } = await reader.read(); if (done) return null; buffer += decoder.decode(value, { stream: true });
+      }
+    } };
+  }
+
+  it('replays after a cursor, streams new job changes, pings and ends on token rotation', async () => {
+    const f = await ledgerServer(), intervals = vi.spyOn(globalThis, 'setInterval');
+    try {
+      f.add('one'); const since = f.store.ledger.globalCursor(); f.add('two');
+      const response = await fetch(`${f.base}/api/dispatch/changes?since=${since}`, { headers: auth });
+      expect(response.headers.get('content-type')).toContain('application/x-ndjson');
+      const stream = await lines(response);
+      expect(await stream.next()).toEqual({ t: 'ready', cursor: f.store.ledger.globalCursor() });
+      expect(await stream.next()).toEqual({ t: 'change', change: f.store.ledger.changes(since).changes[0] });
+      f.add('three');
+      expect(await stream.next()).toMatchObject({ t: 'change', change: { channel: 'jobs', job: { id: 'remote:three' } } });
+      const keepalive = intervals.mock.calls.find(call => call[1] === 20000)![0] as () => void; keepalive();
+      expect(await stream.next()).toEqual({ t: 'ping' });
+      f.rotate(); expect(await stream.next()).toBeNull();
+      expect((await fetch(`${f.base}/api/dispatch/changes`, { headers: auth })).status).toBe(401);
+    } finally { intervals.mockRestore(); await f.dispose(); }
+  });
+
+  it('drains every replay page before continuing with live changes', async () => {
+    const f = await ledgerServer();
+    try {
+      f.add('one'); f.add('two'); f.add('three');
+      f.dispatch.mockImplementation(async (_method, params) => {
+        const p = params as { since?: string; channel?: LedgerChannel }; return f.store.ledger.changes(p.since, 1, p.channel);
+      });
+      const stream = await lines(await fetch(`${f.base}/api/dispatch/changes`, { headers: auth }));
+      expect(await stream.next()).toEqual({ t: 'ready', cursor: f.store.ledger.globalCursor() });
+      for (const id of ['one', 'two', 'three']) expect(await stream.next()).toMatchObject({ t: 'change', change: { job: { id: `remote:${id}` } } });
+      expect(f.dispatch.mock.calls.slice(0, 3).map(call => (call[1] as { since: string }).since)).toEqual(['0', '2', '4']);
+      await stream.reader.cancel();
+    } finally { await f.dispose(); }
+  });
+
+  it('filters sessions on the same ordered feed and replays only changes after the requested cursor', async () => {
+    const f = await ledgerServer();
+    try {
+      f.add('one'); const since = f.store.ledger.globalCursor(); f.add('two');
+      const response = await fetch(`${f.base}/api/dispatch/changes?since=${since}&channel=sessions`, { headers: auth });
+      const stream = await lines(response); expect(await stream.next()).toMatchObject({ t: 'ready' });
+      expect(await stream.next()).toEqual({ t: 'change', change: f.store.ledger.changes(since, 100, 'sessions').changes[0] });
+      f.add('three'); expect(await stream.next()).toMatchObject({ t: 'change', change: { channel: 'sessions', session: { sessionId: 'three' } } });
+      await stream.reader.cancel();
+    } finally { await f.dispose(); }
+  });
+
+  it('refuses unauthorized, cross-origin and forwarded requests before reading any ledger rows', async () => {
+    const f = await ledgerServer();
+    try {
+      const url = `${f.base}/api/dispatch/changes`;
+      expect((await fetch(url)).status).toBe(401);
+      expect((await fetch(url, { headers: { Authorization: 'Bearer wrong' } })).status).toBe(401);
+      expect((await fetch(`${url}?token=${TOKEN}`)).status).toBe(401);
+      expect((await fetch(url, { headers: { ...auth, Origin: 'http://evil.example' } })).status).toBe(403);
+      for (const header of ['X-Forwarded-For', 'Forwarded', 'X-Real-IP']) expect((await fetch(url, { headers: { ...auth, [header]: '203.0.113.9' } })).status).toBe(403);
+      expect((await fetch(url, { method: 'POST', headers: auth })).status).toBe(405);
+      for (const query of ['since=bad', 'since=01', 'channel=unknown']) expect((await fetch(`${url}?${query}`, { headers: auth })).status).toBe(400);
+      expect(f.dispatch).not.toHaveBeenCalled();
+    } finally { await f.dispose(); }
+  });
+
+  it('reports an unavailable ledger without opening a stream', async () => {
+    const { base } = await serve();
+    expect((await fetch(`${base}/api/dispatch/changes`, { headers: auth })).status).toBe(503);
   });
 });
 

@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import type { JobRecord } from '@augur/dispatch-protocol';
 import { atomicWrite } from './home-files.js';
 import type { Supervisor } from './supervisor.js';
+import type { JobLedger } from './job-ledger.js';
 
 export const JOBS_LIVE_TEXT = { writeFailed: 'Could not write jobs-live.json; the service keeps running.' } as const;
 
@@ -39,7 +40,8 @@ export class JobsLiveWriter {
   private writtenAt = -Infinity;
 
   constructor(private home: string, private supervisor: Pick<Supervisor, 'list'>, private stallMinutes: () => number,
-    private log: (message: string) => void, private now = Date.now, private titleOf?: (sessionId: string | undefined) => string | undefined) {}
+    private log: (message: string) => void, private now = Date.now, private titleOf?: (sessionId: string | undefined) => string | undefined,
+    private ledger?: Pick<JobLedger, 'globalCursor' | 'sessions'>) {}
 
   tick(): void {
     const now = this.now();
@@ -49,10 +51,11 @@ export class JobsLiveWriter {
       const jobs = this.supervisor.list({ running: true, limit: LIVE_LIMIT })
         .sort((a, b) => b.createdAt - a.createdAt).slice(0, LIVE_LIMIT).map((job: JobRecord) => jobRow(job, this.titleOf));
       const recent = this.supervisor.list({ finished: true, limit: RECENT_LIMIT }).slice(0, RECENT_LIMIT).map((job: JobRecord) => jobRow(job, this.titleOf));
-      const text = JSON.stringify({ jobs, recent });
+      const sessions = this.ledger?.sessions(), cursor = this.ledger?.globalCursor();
+      const text = JSON.stringify({ cursor, jobs, recent, sessions });
       // The mod ignores a live list older than 60 seconds, so a live list is rewritten every 30 seconds even when nothing in it changed.
       if (text === this.written && (jobs.length === 0 || now - this.writtenAt < REFRESH_MS)) return;
-      atomicWrite(join(this.home, 'jobs-live.json'), JSON.stringify({ updatedAt: now, stallMinutes: this.stallMinutes(), jobs, recent }) + '\n');
+      atomicWrite(join(this.home, 'jobs-live.json'), JSON.stringify({ updatedAt: now, cursor, stallMinutes: this.stallMinutes(), jobs, recent, sessions }) + '\n');
       this.written = text; this.writtenAt = now;
     } catch { this.log(JOBS_LIVE_TEXT.writeFailed); }
   }
