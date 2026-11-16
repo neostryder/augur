@@ -64,9 +64,13 @@ const endsAt = (host: Host, a: AccessGrant): number => a.expiresAtMs ?? clock(ho
 
 // ------------------------------------------------------------------ the stored session
 
+const unsaved = new WeakMap<Host, Map<SignInProvider, OwnSession>>();
+
 /** The session Augur holds for a provider, or null. A provider with no flow registered has none, so its CLI login is read instead. */
 export async function ownSession(host: Host, provider: SignInProvider): Promise<OwnSession | null> {
   if (!flows.has(provider)) return null;
+  const newer = unsaved.get(host)?.get(provider);
+  if (newer) return newer;
   let text: string | null = null;
   try { text = await host.secret(sessionSecretName(provider)); } catch { return null; }
   if (!text) return null;
@@ -76,6 +80,7 @@ export async function ownSession(host: Host, provider: SignInProvider): Promise<
 async function saveSession(host: Host, provider: SignInProvider, session: OwnSession): Promise<void> {
   if (!host.saveSecret) throw new Error('Could not save the sign-in: Augur has no key store to write to here.');
   await host.saveSecret(sessionSecretName(provider), JSON.stringify(session));
+  unsaved.get(host)?.delete(provider);
 }
 
 // ------------------------------------------------------------------ the access token in use
@@ -84,8 +89,8 @@ const access = new WeakMap<Host, Map<SignInProvider, { token: string; expiresAt:
 const renewing = new WeakMap<Host, Map<SignInProvider, Promise<string>>>();
 const slot = <T>(store: WeakMap<Host, Map<SignInProvider, T>>, host: Host): Map<SignInProvider, T> => { let m = store.get(host); if (!m) { m = new Map(); store.set(host, m); } return m; };
 
-/** Drops the remembered access token, so the next reading renews. A sign-in or sign-out calls this. */
-export function forgetAccess(host: Host, provider: SignInProvider): void { slot(access, host).delete(provider); }
+/** Drops the remembered access token and unsaved session, so a sign-out cannot leave a renewable session in memory. */
+export function forgetAccess(host: Host, provider: SignInProvider): void { slot(access, host).delete(provider); unsaved.get(host)?.delete(provider); }
 
 async function renew(host: Host, provider: SignInProvider): Promise<string> {
   const flow = flows.get(provider), session = await ownSession(host, provider);
@@ -97,11 +102,14 @@ async function renew(host: Host, provider: SignInProvider): Promise<string> {
     throw error;
   }
   if (!result?.access?.token) throw new Error(`Could not renew the ${NAMES[provider]} sign-in. Sign in again from Augur.`);
-  // A renewal spends the old refresh token, so the new one is saved before anything else can fail.
+  // A renewal spends the old refresh token, so a failed save must keep the new session in memory until a later renewal can save it.
   const rotated = !!result.refreshToken && result.refreshToken !== session.refreshToken;
   const next: OwnSession = { ...session, ...(rotated ? { refreshToken: result.refreshToken! } : {}),
     ...(result.accountId ? { accountId: result.accountId } : {}), savedAt: new Date(clock(host)).toISOString() };
-  if (rotated || next.accountId !== session.accountId) await saveSession(host, provider, next);
+  if (rotated || next.accountId !== session.accountId || unsaved.get(host)?.has(provider)) {
+    try { await saveSession(host, provider, next); }
+    catch { slot(unsaved, host).set(provider, next); }
+  }
   slot(access, host).set(provider, { token: result.access.token, expiresAt: endsAt(host, result.access) });
   return result.access.token;
 }

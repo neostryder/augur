@@ -120,32 +120,47 @@ function keychainStore(run: typeof runHelper): KeyStore {
 }
 
 /**
- * secret-tool talks to whatever Secret Service is running (GNOME Keyring, KeePassXC, KWallet's bridge). When none answers, it prints an error and
- * exits 1, the same code as "not found" with nothing printed, so the first call tells the two apart and later calls use the file instead.
+ * secret-tool talks to whatever Secret Service is running (GNOME Keyring, KeePassXC, KWallet's bridge), and the first call probes reads and a throwaway write that is read back and cleared.
+ * When the service can be read but cannot save, reads prefer the file because it holds newer values written while the service refused writes. When no service answers, all calls use the file.
  */
 function linuxStore(run: typeof runHelper, file: KeyStore): KeyStore {
-  let usable: Promise<boolean> | null = null;
-  const probe = () => usable ??= run('secret-tool', ['lookup', 'service', SERVICE, 'username', 'augur.probe']).then(r => r.code === 0 || (r.code === 1 && r.stderr.trim() === ''));
+  let capabilities: Promise<{ readable: boolean; writable: boolean }> | null = null;
   const attrs = (name: string) => ['service', SERVICE, 'username', name];
+  const probe = () => capabilities ??= (async () => {
+    const r = await run('secret-tool', ['lookup', ...attrs('augur.probe')]);
+    const readable = r.code === 0 || (r.code === 1 && r.stderr.trim() === '');
+    if (!readable) return { readable, writable: false };
+    const value = crypto.randomUUID();
+    try {
+      const saved = await run('secret-tool', ['store', '--label=Augur augur.probe', ...attrs('augur.probe')], value);
+      if (saved.code !== 0) return { readable, writable: false };
+      const found = await run('secret-tool', ['lookup', ...attrs('augur.probe')]);
+      return { readable, writable: found.code === 0 && found.stdout === value };
+    } finally { await run('secret-tool', ['clear', ...attrs('augur.probe')]); }
+  })();
   const store: KeyStore = {
     get kind(): KeyStoreKind { return 'secret-service'; },
     async get(name) {
       checkSecretName(name);
-      if (!(await probe())) return file.get(name);
+      const available = await probe();
+      if (!available.readable) return file.get(name);
+      if (!available.writable) { const value = await file.get(name); if (value !== null) return value; }
       const r = await run('secret-tool', ['lookup', ...attrs(name)]);
       if (r.code === 0) return r.stdout || null;
       return file.get(name);
     },
     async set(name, value) {
       checkSecretName(name);
-      if (!(await probe())) return file.set(name, value);
+      const available = await probe();
+      if (!available.writable) return file.set(name, value);
       const r = await run('secret-tool', ['store', `--label=Augur ${name}`, ...attrs(name)], value);
-      if (r.code !== 0) throw new Error('The key could not be saved in the Secret Service');
+      // A service that stops accepting writes leaves older entries behind, so later reads must prefer the file too.
+      if (r.code !== 0) { available.writable = false; return file.set(name, value); }
       await file.delete(name);
     },
     async delete(name) {
       checkSecretName(name);
-      if (await probe()) await run('secret-tool', ['clear', ...attrs(name)]);
+      if ((await probe()).readable) await run('secret-tool', ['clear', ...attrs(name)]);
       await file.delete(name);
     },
     async has(name) { return (await store.get(name)) !== null; },

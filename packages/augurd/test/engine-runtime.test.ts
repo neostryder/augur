@@ -69,18 +69,78 @@ describe('the key store', () => {
     expect(calls[1]!.input).toBe('add-generic-password -U -s augur -a "openai.apiKey" -w "sk-\\"q\\""\n');
   });
 
-  it('on Linux uses the Secret Service when one answers, and the file when none does', async () => {
-    const live = fakeRun(c => (c.args[0] === 'lookup' ? { code: 1 } : { code: 0 }));
-    const withService = createKeyStore({ platform: 'linux', dir: temp(), run: live.run });
-    await withService.set('openai.apiKey', 'sk-1');
-    expect(live.calls.find(c => c.args[0] === 'store')).toMatchObject({ args: ['store', '--label=Augur openai.apiKey', 'service', 'augur', 'username', 'openai.apiKey'], input: 'sk-1' });
+  it('on Linux probes a write once, clears the probe key, and prefers a writable service', async () => {
+    const values = new Map<string, string>();
+    const live = fakeRun(c => {
+      const name = c.args.at(-1)!;
+      if (c.args[0] === 'store') { values.set(name, c.input!); return { code: 0 }; }
+      if (c.args[0] === 'clear') { values.delete(name); return { code: 0 }; }
+      return values.has(name) ? { code: 0, stdout: values.get(name)! } : { code: 1 };
+    });
+    const dir = temp(), file = fileStore(join(dir, 'secrets.json'));
+    await file.set('openai.apiKey', 'older-file');
+    await file.set('xai.apiKey', 'file-only');
+    const keys = createKeyStore({ platform: 'linux', dir, run: live.run });
+    await keys.set('openai.apiKey', 'sk-1');
+    expect(live.calls.find(c => c.args.at(-1) === 'openai.apiKey')).toMatchObject({ args: ['store', '--label=Augur openai.apiKey', 'service', 'augur', 'username', 'openai.apiKey'], input: 'sk-1' });
+    expect(await file.get('openai.apiKey')).toBeNull();
+    await file.set('openai.apiKey', 'older-file');
+    expect(await keys.get('openai.apiKey')).toBe('sk-1');
+    expect(await keys.get('xai.apiKey')).toBe('file-only');
+    await keys.delete('openai.apiKey');
+    expect(await keys.get('openai.apiKey')).toBeNull();
+    expect(live.calls.filter(c => c.args.at(-1) === 'augur.probe').map(c => c.args[0])).toEqual(['lookup', 'store', 'lookup', 'clear']);
+    expect(values.has('augur.probe')).toBe(false);
+  });
 
+  it('on Linux prefers the file when a readable service refuses writes, while still reading and clearing service entries', async () => {
+    const live = fakeRun(c => c.args[0] === 'lookup' ? { code: 0, stdout: 'older-service' } : { code: 1, stderr: 'locked' });
+    const dir = temp(), keys = createKeyStore({ platform: 'linux', dir, run: live.run });
+    expect(await keys.get('openai.apiKey')).toBe('older-service');
+    await keys.set('openai.apiKey', 'newer-file');
+    expect(await keys.get('openai.apiKey')).toBe('newer-file');
+    expect(JSON.parse(readFileSync(join(dir, 'secrets.json'), 'utf8'))).toEqual({ 'openai.apiKey': 'newer-file' });
+    await keys.delete('openai.apiKey');
+    expect(await fileStore(join(dir, 'secrets.json')).get('openai.apiKey')).toBeNull();
+    expect(live.calls.at(-1)!.args).toEqual(['clear', 'service', 'augur', 'username', 'openai.apiKey']);
+    expect(live.calls.filter(c => c.args[0] === 'store').map(c => c.args.at(-1))).toEqual(['augur.probe']);
+    expect(live.calls.filter(c => c.args.at(-1) === 'augur.probe').map(c => c.args[0])).toEqual(['lookup', 'store', 'clear']);
+  });
+
+  it.each([{ code: 0, stdout: 'different' }, { code: 1 }])('on Linux clears a probe whose read-back fails with %j', async result => {
+    let lookups = 0;
+    const live = fakeRun(c => c.args[0] === 'lookup' ? (++lookups === 1 ? { code: 1 } : result) : { code: 0 });
+    const dir = temp(), keys = createKeyStore({ platform: 'linux', dir, run: live.run });
+    await keys.set('openai.apiKey', 'file-value');
+    expect(await keys.get('openai.apiKey')).toBe('file-value');
+    expect(live.calls.map(c => c.args[0])).toEqual(['lookup', 'store', 'lookup', 'clear']);
+    expect(live.calls.at(-1)!.args).toEqual(['clear', 'service', 'augur', 'username', 'augur.probe']);
+  });
+
+  it('on Linux falls back to the file without throwing when a store fails after the write probe passed', async () => {
+    let probe: string | undefined;
+    const live = fakeRun(c => {
+      if (c.args.at(-1) !== 'augur.probe') return c.args[0] === 'lookup' ? { code: 0, stdout: 'older-service' } : { code: 1, stderr: 'locked' };
+      if (c.args[0] === 'store') { probe = c.input; return { code: 0 }; }
+      if (c.args[0] === 'clear') { probe = undefined; return { code: 0 }; }
+      return probe === undefined ? { code: 1 } : { code: 0, stdout: probe };
+    });
+    const dir = temp(), keys = createKeyStore({ platform: 'linux', dir, run: live.run });
+    await expect(keys.set('openai.apiKey', 'newer-file')).resolves.toBeUndefined();
+    expect(await keys.get('openai.apiKey')).toBe('newer-file');
+    expect(await fileStore(join(dir, 'secrets.json')).get('openai.apiKey')).toBe('newer-file');
+  });
+
+  it('on Linux uses the file when no Secret Service answers', async () => {
     const dead = fakeRun(() => ({ code: 1, stderr: 'secret-tool: Cannot autolaunch D-Bus without X11 $DISPLAY' }));
     const dir = temp(), noService = createKeyStore({ platform: 'linux', dir, run: dead.run });
     await noService.set('openai.apiKey', 'sk-2');
     expect(await noService.get('openai.apiKey')).toBe('sk-2');
     expect(dead.calls).toHaveLength(1);
     expect(JSON.parse(readFileSync(join(dir, 'secrets.json'), 'utf8'))).toEqual({ 'openai.apiKey': 'sk-2' });
+    await noService.delete('openai.apiKey');
+    expect(await noService.get('openai.apiKey')).toBeNull();
+    expect(dead.calls).toHaveLength(1);
   });
 });
 

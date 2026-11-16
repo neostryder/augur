@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import type { Host, HttpRequest, HttpResponse } from '../src/types.js';
-import { beginLogin, completeLogin, isSignInProvider, ownAccessToken, ownSession, registerSignInFlow, sessionSecretName, signInProviders, type SignInFlow } from '../src/signin.js';
+import { beginLogin, completeLogin, forgetAccess, isSignInProvider, ownAccessToken, ownSession, registerSignInFlow, sessionSecretName, signInProviders, type SignInFlow } from '../src/signin.js';
 import { claude } from '../src/providers/index.js';
 import { codex } from '../src/providers/index.js';
 
@@ -179,6 +179,45 @@ describe('renewing an own session', () => {
     expect(await ownAccessToken(f.host, 'claude')).toBe('access-2');
     expect(order).toEqual(['http', 'save']);
     expect(JSON.parse(f.secrets.get(sessionSecretName('claude'))!).refreshToken).toBe('refresh-2');
+  });
+
+  it.each(['claude', 'codex'] as const)('keeps an unsaved rotated %s session and retries saving on the next renewal', async provider => {
+    const f = fake((req, n) => {
+      expect(JSON.parse(req.body!).refresh_token).toBe(n === 1 ? 'refresh-1' : 'refresh-2');
+      return reply(200, { access_token: `access-${n + 1}`, ...(n === 1 ? { refresh_token: 'refresh-2' } : {}), expires_in: 3600 });
+    });
+    f.secrets.set(sessionSecretName(provider), session(provider, 'refresh-1'));
+    const save = f.host.saveSecret!;
+    let saves = 0;
+    f.host.saveSecret = async (n, v) => { if (++saves === 1) throw new Error('The key could not be saved'); await save(n, v); };
+    await expect(ownAccessToken(f.host, provider)).resolves.toBe('access-2');
+    expect(await ownAccessToken(f.host, provider)).toBe('access-2');
+    expect(f.calls).toHaveLength(1);
+    expect(JSON.parse(f.secrets.get(sessionSecretName(provider))!).refreshToken).toBe('refresh-1');
+    expect(await ownSession(f.host, provider)).toMatchObject({ refreshToken: 'refresh-2' });
+    await expect(ownAccessToken(f.host, provider, true)).resolves.toBe('access-3');
+    expect(saves).toBe(2);
+    expect(JSON.parse(f.secrets.get(sessionSecretName(provider))!).refreshToken).toBe('refresh-2');
+    f.secrets.delete(sessionSecretName(provider));
+    expect(await ownSession(f.host, provider)).toBeNull();
+  });
+
+  it('drops an unsaved session when a new sign-in replaces it or the owner signs out', async () => {
+    const f = fake(() => reply(200, { access_token: 'access-new', refresh_token: 'refresh-new', expires_in: 3600 }));
+    f.secrets.set(sessionSecretName('claude'), session('claude', 'refresh-1'));
+    const save = f.host.saveSecret!;
+    f.host.saveSecret = async () => { throw new Error('The key could not be saved'); };
+    await ownAccessToken(f.host, 'claude');
+    f.host.saveSecret = save;
+    const { pending } = await beginLogin(f.host, 'claude');
+    await completeLogin(f.host, pending, 'code#s1');
+    f.secrets.set(sessionSecretName('claude'), session('claude', 'refresh-2'));
+    expect(await ownSession(f.host, 'claude')).toMatchObject({ refreshToken: 'refresh-2' });
+    f.host.saveSecret = async () => { throw new Error('The key could not be saved'); };
+    await ownAccessToken(f.host, 'claude', true);
+    f.secrets.delete(sessionSecretName('claude'));
+    forgetAccess(f.host, 'claude');
+    expect(await ownSession(f.host, 'claude')).toBeNull();
   });
 
   it('runs one renewal for many concurrent readers, so a refresh token is spent once', async () => {
