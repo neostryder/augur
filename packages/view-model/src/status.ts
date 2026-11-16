@@ -48,6 +48,8 @@ export function statusLine(config: AppConfig, snapshot: Snapshot | null, alerts:
       const session = meters.find((m) => m.windowKind === 'session');
       const weekly = meters.find((m) => m.id === 'weekly_all') ?? meters.find((m) => m.windowKind === 'weekly');
       const bits = [session && `${windowName(session)} ${pct(session)}`, weekly && `wk ${pct(weekly)}`].filter(Boolean);
+      // Old figures read as current unless they say so, so a stale Claude read is marked like any other provider's.
+      if (bits.length && p.stale) { bits.push('stale'); raise('warn'); }
       if (bits.length) parts.push(`Claude ${bits.join(' | ')}`);
       if (top && top.usedPct! >= HOT_PCT) raise(top.usedPct! >= 90 ? 'crit' : 'warn');
       continue;

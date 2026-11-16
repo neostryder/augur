@@ -64,6 +64,8 @@ export function statusLine(usage: Usage | null, alerts: number, now: number, ban
     const session = claude.meters.find((m) => m.windowKind === 'session')
     const weekly = claude.meters.find((m) => m.id === 'weekly_all') ?? claude.meters.find((m) => m.windowKind === 'weekly')
     const bits = [session && `${windowName(session)} ${pct(session)}`, weekly && `wk ${pct(weekly)}`].filter(Boolean)
+    // Old figures read as current unless they say so, so a stale Claude read is marked like any other provider's.
+    if (bits.length && claude.stale) bits.push('stale')
     if (bits.length) parts.push(`Claude ${bits.join(' | ')}`)
     const pace = claudePace(usage, now, band)
     if (pace) parts.push(paceText(pace))

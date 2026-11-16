@@ -201,6 +201,14 @@ const flat = (row: PaneRow) => row.lines.map((l) => `${l.label} ${l.segs.map((s)
 const PANE = { plugin: 'augur', component: 'Pane', requestId: 'augur-jobs', props: { title: 'Augur jobs', isFocused: false,
   bodyColumns: 80, placement: 'dock', scroll: { offset: 0, bodyRows: 20 }, view: {} } } as const
 
+describe('stale Claude usage', () => {
+  test('marks Claude\'s numbers stale in the status line when its read is flagged stale', () => {
+    const data = JSON.parse(usage())
+    data.providers.claude.stale = true
+    expect(statusLine(data, 0, NOW, 5)).toBe('Claude 5h 27% | wk 48% | stale | Grok wk 81%')
+  })
+})
+
 describe('live jobs', () => {
   test('adds job counts to the existing status and omits an empty job list', () => {
     expect(jobStatus([])).toBeUndefined()
