@@ -132,9 +132,9 @@ function removeWorkspaceLinks(path: string): number {
 
 const CONVERSATION_NAME = /^[A-Za-z0-9._-]{1,64}$/;
 
-interface RunnerResult { exitCode: number | null; signal?: string | null; killedBy: 'cancel' | 'timeout' | null; endedAt: number; spawnError?: string }
+interface RunnerResult { exitCode: number | null; signal?: string | null; killedBy: 'cancel' | 'timeout' | null; endedAt: number; spawnError?: string; endedAfterDone?: boolean }
 interface JobFile { command: string; args: string[]; cwd: string; stdin: 'prompt' | 'none'; timeoutS: number | null; jobhost: string | null; env: Record<string, string>;
-  files: NonNullable<LaunchPlan['files']>; promptArgs: number[]; redact: boolean; replayInputs?: string[]; inputFiles?: string[]; scope?: string | null; scopeEnv?: Record<string, string> }
+  files: NonNullable<LaunchPlan['files']>; promptArgs: number[]; redact: boolean; replayInputs?: string[]; inputFiles?: string[]; scope?: string | null; scopeEnv?: Record<string, string>; doneMarker?: string }
 
 /** What systemd-run and systemctl need to reach the user's systemd. A job's own environment leaves these out, so the runner is handed them. */
 export const SCOPE_ENV = ['XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS'] as const;
@@ -445,6 +445,7 @@ export class Supervisor {
     for (let i = 0; i < inputFiles.length; i++) cpSync(attached.items[i]!.path, join(dir, inputFiles[i]!));
     const file: JobFile = { command: plan.command, args: plan.args, cwd: plan.cwd, stdin: plan.stdin === null ? 'none' : 'prompt', timeoutS: req.timeoutS ?? null,
       jobhost: this.d.config.jobhostPath, env: plan.env, files: plan.files ?? [], promptArgs: plan.promptArgs ?? [], redact: !req.persistPrompt, inputFiles,
+      ...(plan.doneMarker ? { doneMarker: plan.doneMarker } : {}),
       replayInputs: attached.items.map(a => REPLAY_TEXT.inputFile(basename(a.path))),
       ...((this.d.scopes ?? systemdScopes)()
         ? { scope: `augur-job-${id}`, scopeEnv: Object.fromEntries(SCOPE_ENV.flatMap(k => process.env[k] ? [[k, process.env[k] as string]] : [])) }
@@ -1192,7 +1193,7 @@ export class Supervisor {
     // submitTo ticks again while a retry is launched, and that tick may already have finalized this job.
     if (isTerminal(store.get(rec.id)?.state ?? rec.state)) return;
     if (this.adopted.delete(rec.id)) store.event(rec.id, 'reconciled', 'finished while the service was not watching', at);
-    store.event(rec.id, 'process_exited', `exit ${res.exitCode}${res.killedBy ? ` after ${res.killedBy}` : ''}`, at);
+    store.event(rec.id, 'process_exited', `exit ${res.exitCode}${res.killedBy ? ` after ${res.killedBy}` : ''}${res.endedAfterDone ? ' after the harness reported its turn complete, ending leftover processes' : ''}`, at);
     if (res.killedBy === 'cancel') store.event(rec.id, 'cancellation_acknowledged', '', at);
     this.collectPatch(rec);
 

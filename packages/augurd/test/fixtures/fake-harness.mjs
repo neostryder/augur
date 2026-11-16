@@ -36,7 +36,7 @@ function run() {
   }
   if (/^READ-ONLY TASK\./.test(input)) echo.push('TIER read');
   for (const e of echo) console.log(e);
-  if (args.includes('--json')) console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1200, cached_input_tokens: 1000, output_tokens: 34, reasoning_output_tokens: 5 } }));
+  if (args.includes('--json') && !hang) console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1200, cached_input_tokens: 1000, output_tokens: 34, reasoning_output_tokens: 5 } }));
   if (outFile) writeFileSync(outFile, 'final message');
   if (hang) { setInterval(() => {}, 1000); return; }
   setTimeout(() => process.exit(code), sleep * 1000);

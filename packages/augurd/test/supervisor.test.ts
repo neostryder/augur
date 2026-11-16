@@ -239,6 +239,66 @@ describe('surplus window status text', () => {
   });
 });
 
+describe('turn completion', () => {
+  const setupDone = (doneMarker?: string) => {
+    const adapter: Adapter = { ...genericExec, id: 'done-exec', plan(req, route, ctx) {
+      return { ...genericExec.plan(req, route, ctx), env: { AUGUR_DONE_GRACE_MS: '500' }, ...(doneMarker ? { doneMarker } : {}) };
+    } };
+    return setup({ adapters: [adapter.id] }, undefined, { extra: [adapter], scopes: () => false });
+  };
+  const run = (e: Env, code: string) => {
+    e.writeRoutes({ raw: { ...ROUTES.raw, adapter: 'done-exec', options: { command: process.execPath, argsJson: JSON.stringify(['-e', code]), stdin: 'none' } } });
+    return submitOk(e.sup, request({ route: 'raw', cwd: e.root }));
+  };
+
+  it.each([true, false])('ends leftover processes only with a done marker (marker: %s)', async marked => {
+    const e = setupDone(marked ? 'turn.completed' : undefined), pidFile = join(e.root, 'grandchild.pid');
+    const code = `console.log('{"type":"turn.completed","usage":{}}'); const child = require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)', ${JSON.stringify(e.root)}], { detached: true, windowsHide: true, stdio: 'ignore' }); require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(child.pid)); setTimeout(() => {}, 60000);`;
+    const started = Date.now(), id = run(e, code), dir = join(e.dir, 'jobs', id);
+    await until(e.sup, () => existsSync(pidFile), 10000);
+    const pid = Number(readFileSync(pidFile, 'utf8'));
+    expect(() => process.kill(pid, 0)).not.toThrow();
+    if (marked) {
+      const job = await until(e.sup, () => { const j = e.store.get(id); return j && j.state !== 'running' && j.state !== 'queued' ? j : null; }, 10000);
+      expect(job).toMatchObject({ state: 'completed', exitCode: 0 });
+      expect(Date.now() - started).toBeLessThan(10000);
+      expect(JSON.parse(readFileSync(join(dir, 'result.json'), 'utf8'))).toMatchObject({ exitCode: 0, killedBy: null, endedAfterDone: true });
+      expect(e.store.events(id).find(event => event.kind === 'process_exited')?.detail).toContain('after the harness reported its turn complete, ending leftover processes');
+    } else {
+      await sleep(2500); e.sup.tick();
+      expect(e.store.get(id)?.state).toBe('running');
+      expect(existsSync(join(dir, 'result.json'))).toBe(false);
+      expect(e.sup.cancel(id)).toMatchObject({ ok: true });
+      expect(await terminal(e.sup, e.store, id)).toMatchObject({ state: 'cancelled' });
+    }
+    await until(e.sup, () => {
+      try { process.kill(pid, 0); } catch { return true; }
+      if (process.platform !== 'win32') return /^Z/.test(spawnSync('ps', ['-p', String(pid), '-o', 'stat='], { encoding: 'utf8', windowsHide: true }).stdout.trim());
+      return false;
+    }, 5000);
+  });
+
+  it('ignores marker text in other events and waits for a complete JSON line', async () => {
+    const e = setupDone('turn.completed'), ready = join(e.root, 'ready');
+    const noise = ['turn.completed', null, JSON.stringify({ type: 'item.completed', text: '{"type":"turn.completed"}' }), '{broken turn.completed'];
+    const id = run(e, `for (const line of ${JSON.stringify(noise)}) console.log(line); process.stdout.write('{"type":"turn.'); require('node:fs').writeFileSync(${JSON.stringify(ready)}, 'ready'); setInterval(() => {}, 1000);`);
+    await until(e.sup, () => existsSync(ready));
+    await sleep(2500); e.sup.tick();
+    expect(e.store.get(id)?.state).toBe('running');
+    const dir = join(e.dir, 'jobs', id);
+    writeFileSync(join(dir, 'stdout.log'), 'completed","usage":{}}\n', { flag: 'a' });
+    expect(await terminal(e.sup, e.store, id)).toMatchObject({ state: 'completed', exitCode: 0 });
+  });
+
+  it.each([0, 7])('keeps the normal result when the child exits during the grace period (exit: %s)', async exitCode => {
+    const e = setupDone('turn.completed');
+    const id = run(e, `setTimeout(() => { console.log('{"type":"turn.completed","usage":{}}'); setTimeout(() => process.exit(${exitCode}), 1200); }, 100);`);
+    const job = await terminal(e.sup, e.store, id);
+    expect(job).toMatchObject({ state: exitCode ? 'failed' : 'completed', exitCode });
+    expect(JSON.parse(readFileSync(join(e.dir, 'jobs', id, 'result.json'), 'utf8'))).not.toHaveProperty('endedAfterDone');
+  });
+});
+
 describe('cancel', () => {
   it('ends the whole process tree', async () => {
     const e = setup();
