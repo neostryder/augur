@@ -314,7 +314,7 @@ An API route never holds its key. It either names an environment variable or rea
 
 ### Where keys are kept
 
-The key store is the operating system's: the Windows credential store, the macOS Keychain, or the Secret Service on Linux. Where none of those answers, the key falls back to a file only your own user can read.
+The key store is the operating system's: the Windows credential store, the macOS Keychain, or the Secret Service on Linux. Where none of those answers, the key falls back to a file only your own user can read. On Linux, Augur tests the Secret Service by saving, reading back, and removing a throwaway value, and if the service refuses that save or a later one, Augur saves the key to the file and reads the file first until the Secret Service accepts saves.
 
 | | |
 | --- | --- |
