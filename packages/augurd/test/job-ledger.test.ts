@@ -5,7 +5,7 @@ import net from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { LedgerJob, LedgerMetadata, NodeJobPage } from '@augur/dispatch-protocol';
 import { Store } from '../src/store.js';
-import { JobLedger, MemoryAlertSink } from '../src/job-ledger.js';
+import { JobLedger, LEDGER_DELETE_JOB_CHANGES_SQL, LEDGER_LAST_JOB_CHANGE_SQL, MemoryAlertSink } from '../src/job-ledger.js';
 import { JobPoller } from '../src/job-poller.js';
 import { inferStamp, pipePeer, readPipePeer, readProcess } from '../src/job-stamp.js';
 import { fillJobSummary, LocalJobSummarizer } from '../src/job-summary.js';
@@ -38,6 +38,19 @@ function insert(store: Store, id = 'local') {
 }
 
 describe('the durable ledger', () => {
+  it('uses the per-job index for job change lookups and deletions across both channels', () => {
+    const { store } = fixture();
+    store.db.exec(`with recursive rows(i) as (values(1) union all select i+1 from rows where i<10000)
+      insert into ledger_changes(at,job_id,body,channel)
+      select i,'eru:' || i,'{}',channel from rows cross join (select 'jobs' as channel union all select 'sessions')`);
+    for (const sql of [LEDGER_LAST_JOB_CHANGE_SQL, LEDGER_DELETE_JOB_CHANGES_SQL]) {
+      const plan = store.db.prepare(`explain query plan ${sql}`).all('eru:1') as Array<{ detail: string }>;
+      const detail = plan.map(row => row.detail).join('\n');
+      expect(detail).toContain('ledger_changes_job');
+      expect(detail).not.toContain('ledger_changes_channel');
+    }
+  });
+
   it('orders session discovery, activity and title changes with jobs while keeping the default channel', () => {
     const { ledger } = fixture();
     ledger.ingest('eru', page([job()]));
