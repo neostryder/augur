@@ -749,7 +749,7 @@ describe.runIf(process.platform !== 'win32')('without a job host or a systemd sc
 });
 
 describe('runtime failover', () => {
-  const runnerOn = { charterDir: '', ambient: 'keep' as const, failover: 'on' as const };
+  const runnerOn = { charterDir: '', ambient: 'keep' as const, failover: 'on' as const, networkRetries: 0 };
   const limit = (fallback: string[]) => ({
     model: 'test/fake', adapter: 'exec', fallback,
     options: { command: process.execPath, argsJson: JSON.stringify(['-e', 'process.stderr.write("rate limit\\n");process.exit(1)']) },

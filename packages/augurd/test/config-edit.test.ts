@@ -76,13 +76,13 @@ describe('config editing', () => {
     expect(configLines(dir).find(l => l.key === 'runner.ambient')).toMatchObject({ value: 'keep', default: 'keep', kind: 'choice', choices: ['keep', 'trim'] });
     expect(setConfigValue(dir, 'runner.charterDir', 'C:/charter')).toEqual({ ok: true, value: 'C:/charter' });
     expect(setConfigValue(dir, 'runner.ambient', 'trim')).toEqual({ ok: true, value: 'trim' });
-    expect(loadConfig(dir).runner).toEqual({ charterDir: 'C:/charter', ambient: 'trim', failover: 'off' });
+    expect(loadConfig(dir).runner).toEqual({ charterDir: 'C:/charter', ambient: 'trim', failover: 'off', networkRetries: 10 });
     expect(setConfigValue(dir, 'runner.ambient', 'loud')).toMatchObject({ ok: false });
     expect(loadConfig(dir).runner.ambient).toBe('trim');
     expect(setConfigValue(dir, 'runner.charterDir', '  ')).toEqual({ ok: true, value: '' });
     expect(loadConfig(dir).runner.charterDir).toBe('');
     writeFileSync(join(dir, 'config.json'), JSON.stringify({ runner: { ambient: 'nope', charterDir: 4 }, retentionDays: 9 }));
-    expect(loadConfig(dir).runner).toEqual({ charterDir: '', ambient: 'keep', failover: 'off' });
+    expect(loadConfig(dir).runner).toEqual({ charterDir: '', ambient: 'keep', failover: 'off', networkRetries: 10 });
     expect(loadConfig(dir).retentionDays).toBe(9);
   });
 
@@ -94,7 +94,16 @@ describe('config editing', () => {
     expect(setConfigValue(dir, 'runner.failover', 'sometimes')).toMatchObject({ ok: false });
     expect(loadConfig(dir).runner.failover).toBe('on');
     writeFileSync(join(dir, 'config.json'), JSON.stringify({ runner: { failover: 'yes', ambient: 'trim' } }));
-    expect(loadConfig(dir).runner).toEqual({ charterDir: '', ambient: 'trim', failover: 'off' });
+    expect(loadConfig(dir).runner).toEqual({ charterDir: '', ambient: 'trim', failover: 'off', networkRetries: 10 });
+  });
+
+  it('lists and edits runner.networkRetries between 0 and 50', () => {
+    const dir = fresh();
+    expect(configLines(dir).find(l => l.key === 'runner.networkRetries')).toMatchObject({ value: '10', default: '10', kind: 'number', min: 0, max: 50 });
+    expect(setConfigValue(dir, 'runner.networkRetries', '0')).toEqual({ ok: true, value: '0' });
+    expect(loadConfig(dir).runner.networkRetries).toBe(0);
+    expect(setConfigValue(dir, 'runner.networkRetries', '51')).toMatchObject({ ok: false });
+    expect(loadConfig(dir).runner.networkRetries).toBe(0);
   });
 
   it('takes a list of adapters once each', () => {

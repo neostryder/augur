@@ -40,6 +40,43 @@ export interface FailureInput {
 
 const limited = (text: string): boolean => LIMIT_PATTERNS.some(p => p === '429' ? /(?:^|\D)429(?:\D|$)/.test(text) : text.toLowerCase().includes(p));
 
+/**
+ * Phrases a lost connection leaves in an error: Node's socket codes, the harnesses' own connection messages, and the system resolver's.
+ * Matching is case-insensitive.
+ */
+export const NETWORK_PATTERNS: readonly string[] = [
+  'enotfound', 'eai_again', 'econnrefused', 'econnreset', 'etimedout', 'enetunreach', 'ehostunreach', 'enetdown',
+  'und_err_connect_timeout', 'und_err_socket', 'fetch failed', 'getaddrinfo', 'socket hang up', 'network is unreachable',
+  'network error', 'connection error', 'connection reset', 'connection refused', 'connection closed', 'unable to connect',
+  'failedtoopensocket', 'stream disconnected', 'error sending request', 'could not resolve host', 'dns error',
+  'temporary failure in name resolution', 'tls handshake',
+];
+
+/** A retry that ran out of attempts says so with this phrase, and is not run again by another layer. */
+const GAVE_UP = /after \d+ attempts/i;
+
+/** True when the text reads like a lost connection and does not say that a retry already gave up. */
+export function isNetworkFailure(text: string): boolean {
+  const t = text.toLowerCase();
+  return !GAVE_UP.test(t) && NETWORK_PATTERNS.some(p => t.includes(p));
+}
+
+/** Seconds to wait before network retry `attempt` (1 is the first): 10, 20, 40, then 60 each. */
+export function networkBackoffS(attempt: number): number { return Math.min(60, 10 * 2 ** Math.max(0, attempt - 1)); }
+
+/**
+ * Whether a job that a network outage interrupted can run again on the same route. `offline` says the computer could not reach the internet when the job
+ * was stopped for inactivity, which is what an outage looks like to a harness that waits in silence. A read or none tier job always runs again; a write
+ * or full tier job runs again only when it left no answer and no recorded change.
+ */
+export function classifyNetworkFailure(input: FailureInput & { offline?: boolean }): { retry: boolean; why: string } {
+  if (input.killedBy === 'cancel') return { retry: false, why: 'cancelled' };
+  const text = `${input.failure ?? ''}\n${input.stderrTail ?? ''}`;
+  if (!isNetworkFailure(text) && !(input.killedBy === 'timeout' && input.offline)) return { retry: false, why: 'not a network failure' };
+  if ((input.tools === 'write' || input.tools === 'full') && (input.changed || input.answer?.trim())) return { retry: false, why: 'network failure after work began' };
+  return { retry: true, why: 'network failure' };
+}
+
 /** A spawn error, a preemption by a person's request, a provider limit, or a timeout of a read-only job can be retried. A cancel, a write timeout, and an ordinary failure cannot. */
 export function classifyFailure(input: FailureInput): { retry: boolean; why: string } {
   if (input.killedBy === 'cancel') return { retry: false, why: 'cancelled' };

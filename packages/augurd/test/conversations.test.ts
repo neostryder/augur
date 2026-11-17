@@ -45,7 +45,7 @@ function charter(home: string): void {
   writeFileSync(join(dir, 'packs', 'code.md'), 'Code body.\n');
 }
 
-function open(id = 'sess', runner?: { charterDir: string; ambient: 'keep' | 'trim'; failover: 'off' | 'on' }): Env {
+function open(id = 'sess', runner?: { charterDir: string; ambient: 'keep' | 'trim'; failover: 'off' | 'on'; networkRetries: number }): Env {
   const adapters = id === 'grok-exec' ? ['grok-exec', 'codex-exec', 'exec'] : [id, 'codex-exec', 'exec'];
   const e = makeEnv({ adapters, ...(runner ? { runner } : {}) }, process.env, { extra: [probe(id)] });
   envs.push(e);
@@ -188,7 +188,7 @@ describe('a named conversation', () => {
   });
 
   it('does not retry a conversation on a fallback route', async () => {
-    const e = open('sess', { charterDir: '', ambient: 'keep', failover: 'on' });
+    const e = open('sess', { charterDir: '', ambient: 'keep', failover: 'on', networkRetries: 0 });
     e.writeRoutes({
       ...ROUTES,
       limited: { model: 'test/fake', adapter: 'sess', fallback: ['fake'], options: {} },
