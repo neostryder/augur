@@ -10,6 +10,7 @@ import type { Adapter } from '@augur/dispatch-protocol';
 import { codexExec, copilotExec, falApi, grokExec } from '../src/adapters/index.js';
 import { codexToolkitArgs } from '../src/adapters/codex-exec.js';
 import { copilotToolkitArgs } from '../src/adapters/copilot-exec.js';
+import { isNetworkFailure } from '../src/failover.js';
 import { loadToolkits } from '../src/toolkits.js';
 import { makeEnv, request, submitOk, terminal } from './harness.js';
 import type { Env } from './harness.js';
@@ -234,6 +235,68 @@ describe('fal-call', () => {
     expect(r.code).toBe(2);
     expect(r.err).toMatch(/HTTP 401/);
     expect(r.err).not.toContain('secret-fal-key');
+  }, 30000);
+
+  // A queue that answers like fal, and drops the connection on the first `drops[path]` requests to a path.
+  const flakyQueue = async (drops: Record<string, number>, hits: string[]): Promise<number> => {
+    let port = 0;
+    const base = (): string => `http://127.0.0.1:${port}/`;
+    port = await listen((req, res) => {
+      const key = `${req.method} ${req.url}`;
+      hits.push(key);
+      req.resume();
+      req.on('end', () => {
+        if ((drops[key] ?? 0) > 0) { drops[key]!--; req.socket.destroy(); return; }
+        const json = (o: unknown) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(o)); };
+        if (req.method === 'POST') return json({ status_url: `${base()}req/r1/status`, response_url: `${base()}req/r1` });
+        if (req.url === '/req/r1/status') return json({ status: 'COMPLETED' });
+        if (req.url === '/req/r1') return json({ video: { url: `${base()}files/v.mp4`, file_name: 'v.mp4' } });
+        if (req.url === '/files/v.mp4') { res.writeHead(200); return res.end('VIDEO-BYTES'); }
+        res.writeHead(404); res.end();
+      });
+    });
+    return port;
+  };
+
+  it('asks again for a status, a result or a download that a dropped connection cut off, and finishes the job', async () => {
+    const hits: string[] = [];
+    const port = await flakyQueue({ 'GET /req/r1/status': 1, 'GET /files/v.mp4': 1 }, hits);
+    const r = await runCall(port, ['--resolution', '768P', '--duration', '5', '--max-usd', '1']);
+    expect(r.err).toBe('');
+    expect(r.code).toBe(0);
+    expect(hits.filter(h => h === 'POST /minimax/h3-max-turbo/image-to-video')).toHaveLength(1);
+    expect(hits.filter(h => h === 'GET /req/r1/status')).toHaveLength(2);
+    expect(hits.filter(h => h === 'GET /files/v.mp4')).toHaveLength(2);
+  }, 60000);
+
+  it('never sends a submit again after it was cut off, and says so without a phrase that starts another run', async () => {
+    const hits: string[] = [];
+    const port = await flakyQueue({ 'POST /minimax/h3-max-turbo/image-to-video': 1 }, hits);
+    const r = await runCall(port, ['--max-usd', '1']);
+    expect(r.code).toBe(66);
+    expect(r.err).toMatch(/not sent again/);
+    expect(hits.filter(h => h.startsWith('POST'))).toHaveLength(1);
+    expect(isNetworkFailure(r.err)).toBe(false);
+  }, 30000);
+
+  it('asks again when the connection never opened, and leaves a spent retry to the service', async () => {
+    const dead = await listen((_req, res) => res.end('{}'));
+    servers.splice(0).forEach(s => s.close());
+    const r = await runCall(dead, ['--max-usd', '1', '--timeout-s', '5']);
+    expect(r.code).toBe(66);
+    expect(r.err).toMatch(/^request failed: .*ECONNREFUSED/);
+    expect(r.err).not.toMatch(/after \d+ attempts/);
+    expect(isNetworkFailure(r.err)).toBe(true);
+  }, 30000);
+
+  it('says how many requests it made when polling never gets through, so the job is not submitted again', async () => {
+    const hits: string[] = [];
+    const port = await flakyQueue({ 'GET /req/r1/status': 99 }, hits);
+    const r = await runCall(port, ['--max-usd', '1', '--timeout-s', '8']);
+    expect(r.code).toBe(66);
+    expect(r.err).toMatch(/request failed after \d+ attempts/);
+    expect(isNetworkFailure(r.err)).toBe(false);
+    expect(hits.filter(h => h.startsWith('POST'))).toHaveLength(1);
   }, 30000);
 
 });

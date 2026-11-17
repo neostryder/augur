@@ -72,14 +72,38 @@ async function cancelled(): Promise<void> {
   try { await fetch(cancelUrl, { method: 'PUT', headers: { authorization: authValue }, redirect: 'manual', signal: AbortSignal.timeout(10000) }); } catch { /* the job is ending either way */ }
 }
 
+// A dropped connection is asked for again, up to 10 requests, waiting 2, 4, 8, 16, 32, then 60 seconds, within the job's time limit. Only a request that costs nothing to repeat is
+// asked for again after it was sent: polling, the result, and the download. The submit is repeated only when the connection never opened, since a submit that left may have been
+// accepted and billed. A spent retry says "after N attempts", so the service does not run the whole job again, which would submit it a second time.
+const NET_TRIES = 10, NET_WAIT_MAX_S = 60, deadline = Date.now() + timeoutS * 1000;
+const causeText = (e: unknown): string => { const err = e as { message?: string; cause?: { code?: string; message?: string } }; return `${err.message ?? ''} ${err.cause?.code ?? ''} ${err.cause?.message ?? ''}`; };
+const lostConnection = (e: unknown): boolean => !abort.signal.aborted && /fetch failed|econn|enotfound|eai_again|etimedout|enetunreach|ehostunreach|enetdown|und_err_(?:socket|connect)|socket hang up|terminated|other side closed/i.test(causeText(e));
+const neverConnected = (e: unknown): boolean => /econnrefused|enotfound|eai_again|enetunreach|ehostunreach|enetdown|und_err_connect_timeout/i.test(causeText(e));
+const detail = (e: unknown): string => { const err = e as Error & { cause?: { code?: string } }; return `${err.message}${err.cause?.code ? ` (${err.cause.code})` : ''}`; };
+/** The seconds to wait before another request after `tries` failures, or null when the retries or the time are spent. */
+const pauseS = (tries: number): number | null => { const s = Math.min(NET_WAIT_MAX_S, 2 ** tries); return tries >= NET_TRIES || Date.now() + s * 1000 >= deadline ? null : s; };
+const sleep = (s: number): Promise<void> => new Promise(done => setTimeout(done, s * 1000));
+
 /** A request to fal's queue. A redirect is never followed, since the key rides in a header, and an address fal returns is used only when it is on the queue host. */
 async function queue(url: string, method: string, body?: string): Promise<Json> {
   if (!url.startsWith(QUEUE)) { console.error('fal returned an address outside its queue, so it was not used'); process.exit(66); }
   // X-Fal-No-Retry keeps fal from running a failed request again, which would bill it again.
   const headers: Record<string, string> = { authorization: authValue, ...(body ? { 'content-type': 'application/json', 'x-fal-no-retry': '1' } : {}) };
-  let res: Response;
-  try { res = await fetch(url, { method, headers, ...(body ? { body } : {}), signal: abort.signal, redirect: 'manual' }); }
-  catch (e) { const timedOut = abort.signal.aborted; console.error(timedOut ? 'the job timed out' : `request failed: ${(e as Error).message}`); await cancelled(); process.exit(timedOut ? 5 : 66); }
+  let res!: Response, tries = 0;
+  for (;;) {
+    try { res = await fetch(url, { method, headers, ...(body ? { body } : {}), signal: abort.signal, redirect: 'manual' }); break; }
+    catch (e) {
+      if (abort.signal.aborted) { console.error('the job timed out'); await cancelled(); process.exit(5); }
+      const message = detail(e);
+      if (!lostConnection(e)) { console.error(`request failed: ${message}`); await cancelled(); process.exit(66); }
+      if (body && !neverConnected(e)) { console.error('the submit was cut off after it left, so fal may have accepted it. It was not sent again, to avoid a second charge.'); process.exit(66); }
+      tries++;
+      const pause = pauseS(tries);
+      // A submit that never connected cost nothing, so the service may run the job again; every other spent retry says so and stops here.
+      if (pause === null) { console.error(body ? `request failed: ${message}` : `request failed after ${tries} attempts: ${message}`); await cancelled(); process.exit(66); }
+      await sleep(pause);
+    }
+  }
   const text = await res.text();
   if (res.status >= 300 && res.status < 400) { console.error(`HTTP ${res.status}: fal redirected the request, and Augur does not follow a redirect with a key attached.`); process.exit(2); }
   if (!res.ok) { console.error(`HTTP ${res.status}: ${text.slice(0, 300)}`); process.exit(2); }
@@ -102,8 +126,16 @@ for (let wait = 2000; ; wait = Math.min(wait + 1000, 8000)) {
 
 const result = await queue(responseUrl, 'GET'), video = obj(result.video), videoUrl = String(video.url ?? '');
 if (!/^https:\/\//.test(videoUrl) && !videoUrl.startsWith(QUEUE)) { console.error('the result held no video address'); process.exit(68); }
-let file: Response;
-try { file = await fetch(videoUrl, { signal: abort.signal, redirect: 'follow' }); } catch (e) { console.error(`the video could not be downloaded: ${(e as Error).message}`); process.exit(66); }
+let file!: Response, downloadTries = 0;
+for (;;) {
+  try { file = await fetch(videoUrl, { signal: abort.signal, redirect: 'follow' }); break; }
+  catch (e) {
+    if (abort.signal.aborted) { console.error('the job timed out'); process.exit(5); }
+    const pause = lostConnection(e) ? pauseS(++downloadTries) : null;
+    if (pause === null) { console.error(`the video could not be downloaded${downloadTries ? ` after ${downloadTries} attempts` : ''}: ${detail(e)}`); process.exit(66); }
+    await sleep(pause);
+  }
+}
 if (!file.ok) { console.error(`the video download returned HTTP ${file.status}`); process.exit(2); }
 const bytes = Buffer.from(await file.arrayBuffer());
 clearTimeout(timer);
