@@ -46,14 +46,14 @@ export const ROUTES = {
   ghost: { model: 'test/none', adapter: 'codex-exec', options: nodeRoute() },
 };
 
-export function makeEnv(over: Partial<ServiceConfig> = {}, env: NodeJS.ProcessEnv = { ...process.env }, deps: { scopes?: SupervisorDeps['scopes']; extra?: readonly Adapter[] } = {}): Env {
+export function makeEnv(over: Partial<ServiceConfig> = {}, env: NodeJS.ProcessEnv = { ...process.env }, deps: { scopes?: SupervisorDeps['scopes']; extra?: readonly Adapter[]; offline?: SupervisorDeps['offline']; networkBackoffS?: SupervisorDeps['networkBackoffS'] } = {}): Env {
   const root = mkdtempSync(join(tmpdir(), 'augurd-')), dir = join(root, 'data'), home = join(root, 'home');
   mkdirSync(dir, { recursive: true }); mkdirSync(join(home, 'dispatch'), { recursive: true });
   const routesPath = join(home, 'dispatch', 'routes.json');
   const config: ServiceConfig = { ...DEFAULT_CONFIG, requirePick: false, verifyNamed: 'record', adapters: ['codex-exec', 'exec'], jobhostPath: existsSync(JOBHOST) ? JOBHOST : null, ...over };
   const store = new Store(dir), policy = policySource(join(home, 'policy.json')), usage = usageSource(join(home, 'usage.json')), routes = routeSource(routesPath);
   const stores: Store[] = [store];
-  const build = (st: Store, cfg: ServiceConfig, e: NodeJS.ProcessEnv) => new Supervisor({ store: st, config: cfg, dir, home, adapters: enabledAdapters(cfg.adapters, deps.extra ?? []), routes: () => routes.read(), policy: () => policy.read(), usage: () => usage.read(), env: e, ...(deps.scopes ? { scopes: deps.scopes } : {}) });
+  const build = (st: Store, cfg: ServiceConfig, e: NodeJS.ProcessEnv) => new Supervisor({ store: st, config: cfg, dir, home, adapters: enabledAdapters(cfg.adapters, deps.extra ?? []), routes: () => routes.read(), policy: () => policy.read(), usage: () => usage.read(), env: e, ...(deps.scopes ? { scopes: deps.scopes } : {}), ...(deps.offline ? { offline: deps.offline } : {}), ...(deps.networkBackoffS ? { networkBackoffS: deps.networkBackoffS } : {}) });
   const e: Env = {
     root, dir, home, store, config, routesPath, sup: build(store, config, env),
     writePolicy(confirm = true) {

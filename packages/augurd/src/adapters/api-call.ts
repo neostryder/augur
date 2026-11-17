@@ -125,14 +125,32 @@ const deadline = Date.now() + timeoutS * 1000;
 const PREEMPT_TRIES = 3, PREEMPT_WAIT_S = 20, PREEMPT_WAIT_MAX_S = 120;
 const preempted = (r: Response, t: string): boolean => r.status === 503 && (r.headers.get('x-cogitator-retry') === 'elsewhere' || /"preempted"/.test(t));
 const waitS = (r: Response): number => { const v = Number(r.headers.get('retry-after')); return Number.isFinite(v) && v > 0 ? Math.min(v, PREEMPT_WAIT_MAX_S) : PREEMPT_WAIT_S; };
-let res!: Response, text = '';
-for (let attempt = 1; ; attempt++) {
+// A connection that drops (the internet goes down, a router restarts) is not a failure of the route either: ask again, up to NET_TRIES requests in all,
+// waiting 2, 4, 8, 16, 32 and then 60 seconds between them, within the job's time limit. The last failure says how many requests were made, so the service
+// does not run the whole job again on top of these.
+const NET_TRIES = 10, NET_WAIT_MAX_S = 60;
+const lostConnection = (e: unknown): boolean => {
+  if (abort.signal.aborted) return false;
+  const err = e as { message?: string; cause?: { code?: string; message?: string } };
+  return /fetch failed|econn|enotfound|eai_again|etimedout|enetunreach|ehostunreach|enetdown|und_err_(?:socket|connect)|socket hang up|terminated|other side closed/i.test(`${err.message ?? ''} ${err.cause?.code ?? ''} ${err.cause?.message ?? ''}`);
+};
+let res!: Response, text = '', preemptTries = 0, netTries = 0;
+for (;;) {
   // A redirect is never followed: the key rides in a header that a cross-origin redirect would carry to the new host.
   try { res = await fetch(endpoint, { method: 'POST', headers, body, signal: abort.signal, redirect: 'manual' }); text = await readCapped(res, MAX_RESPONSE_BYTES); }
-  catch (e) { console.error(`request failed: ${(e as Error).message}`); process.exit(66); }
+  catch (e) {
+    const err = e as Error & { cause?: { code?: string } }, message = `${err.message}${err.cause?.code ? ` (${err.cause.code})` : ''}`;
+    if (!lostConnection(e)) { console.error(`request failed: ${message}`); process.exit(66); }
+    netTries++;
+    const pause = Math.min(NET_WAIT_MAX_S, 2 ** netTries);
+    if (netTries >= NET_TRIES || Date.now() + pause * 1000 >= deadline) { console.error(`request failed after ${netTries} attempts: ${message}`); process.exit(66); }
+    await new Promise(done => setTimeout(done, pause * 1000));
+    continue;
+  }
   if (!preempted(res, text)) break;
   const wait = waitS(res);
-  if (attempt >= PREEMPT_TRIES || Date.now() + wait * 1000 >= deadline) { console.error(`preempted: the gateway gave the model to another request and asked for a retry elsewhere. ${mode === 'images' ? '' : text.slice(0, 200)}`); process.exit(69); }
+  preemptTries++;
+  if (preemptTries >= PREEMPT_TRIES || Date.now() + wait * 1000 >= deadline) { console.error(`preempted: the gateway gave the model to another request and asked for a retry elsewhere. ${mode === 'images' ? '' : text.slice(0, 200)}`); process.exit(69); }
   await new Promise(done => setTimeout(done, wait * 1000));
 }
 clearTimeout(timer);

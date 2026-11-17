@@ -447,6 +447,8 @@ Sends one prompt to a chat completions, embeddings, or transcription endpoint an
 
 A local gateway such as Cogitator answers HTTP 503 with the error code `preempted` when it hands its model to a person's request. The API call then waits for the number of seconds in the `Retry-After` header (20 if the header is missing, 120 at most) and sends the request again, for up to three tries in all while the job's `timeoutS` still has time left. If every try comes back preempted, the call fails with an error message starting `preempted:`. Augur treats that error like a provider limit and moves the job to the route's fallback whatever its tool tier, since none of the job ran.
 
+An API job that loses its connection retries inside the same job. The retry logic lives in the `api-call` runner, which handles routes in the OpenAI and Anthropic request formats. The claude-api routes run on that runner too, so they get the same behavior. When the connection is refused or reset, the DNS lookup fails, or the response is cut off partway, the runner sends the request again, up to 10 requests in all. It waits 2, 4, 8, 16, 32, then 60 seconds between requests, and stops retrying once the job's `timeoutS` runs out (900 seconds by default, 300 for images). If every request fails, the job fails with `request failed after N attempts: <reason>`, and the service adds no retry of its own on top. A response that arrives with an HTTP error status gets no retry. A request that was sent and then cut off may already have been billed by the provider, so the retry can bill it twice. The fal runner has no such retry.
+
 #### `anthropic-api`: Anthropic-style API
 
 Sends one prompt to a messages endpoint and returns the text. No tools. Text files and images can go with the prompt.

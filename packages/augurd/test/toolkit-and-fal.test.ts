@@ -254,7 +254,7 @@ describe('the supervisor and toolkits', () => {
     const charter = temp();
     mkdirSync(join(charter, 'packs'), { recursive: true });
     writeFileSync(join(charter, 'core.md'), 'Core.'); writeFileSync(join(charter, 'packs', 'rea.md'), 'REA rules.');
-    const e = makeEnv({ adapters: ['can', 'cannot'], runner: { charterDir: charter, ambient: 'keep', failover: 'off' } } as never, process.env, { extra: [probe('can', 'inject'), probe('cannot')] });
+    const e = makeEnv({ adapters: ['can', 'cannot'], runner: { charterDir: charter, ambient: 'keep', failover: 'off', networkRetries: 0 } } as never, process.env, { extra: [probe('can', 'inject'), probe('cannot')] });
     envs.push(e);
     e.writeRoutes({ can: { model: 'test/fake', adapter: 'can', options: {} }, cannot: { model: 'test/fake', adapter: 'cannot', options: {} } });
     writeFileSync(join(e.home, 'toolkits.json'), JSON.stringify({ reverse_engineering: kit }));

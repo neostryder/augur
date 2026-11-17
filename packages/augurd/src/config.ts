@@ -22,6 +22,8 @@ export interface RunnerSettings {
   ambient: 'keep' | 'trim';
   /** `off` leaves a job that failed after it started. `on` retries it on the route's fallback list when the failure can be retried. */
   failover: 'off' | 'on';
+  /** How many times a job that a network outage interrupted runs again on its own route. 0 turns it off. */
+  networkRetries: number;
 }
 
 /** auto makes the self-signed certificate on a network bind only, on always makes it, off never does. */
@@ -89,7 +91,7 @@ export const DEFAULT_CONFIG: ServiceConfig = { retentionDays: 30, aliasRefreshHo
   ledgerAlerts: { stalled: true, failed: true, overUsualTime: true, usualMultiple: 3, minSamples: 8, webhookUrl: '', webhookFormat: 'augur', webhookKeyName: '' },
   jobhostPath: null, adapters: ['codex-exec'], requirePick: true, promptRoots: [], verifyNamed: 'off', decision: { backend: 'none' }, learn: { recordTasks: false }, runnerStaleS: 20, stallMinutes: 10, engine: true,
   web: { enabled: false, host: '127.0.0.1', port: 7420, chatPort: 0, chatHost: '0.0.0.0', accessTeam: '', accessAud: '', allowedHosts: [], tlsCert: '', tlsKey: '', tlsAuto: 'auto' },
-  runner: { charterDir: '', ambient: 'keep', failover: 'off' } };
+  runner: { charterDir: '', ambient: 'keep', failover: 'off', networkRetries: 10 } };
 
 /** The launcher built by `pnpm build:jobhost` sits beside the package's sources, and a packaged install places it next to the service. */
 export function defaultJobhost(): string | null {
@@ -107,6 +109,7 @@ function runnerSettings(v: unknown): RunnerSettings {
     charterDir: typeof d.charterDir === 'string' ? d.charterDir.trim() : '',
     ambient: d.ambient === 'trim' ? 'trim' : 'keep',
     failover: d.failover === 'on' ? 'on' : 'off',
+    networkRetries: num(d.networkRetries, 10, 0, 50),
   };
 }
 

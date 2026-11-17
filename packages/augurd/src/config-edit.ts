@@ -33,6 +33,7 @@ export const CONFIG_KEYS: readonly ConfigKey[] = [
   { key: 'runner.charterDir', label: 'Charter folder', help: "Folder of standing instructions put in front of every job's prompt. Empty uses the charter folder in the Augur home when there is one. With no folder, jobs get no charter.", kind: 'text' },
   { key: 'runner.ambient', label: 'Harness context', help: "keep, the default, leaves each harness's own instructions, tools and plugins on. trim turns them off for Codex and Copilot. A route's ambient option overrides this.", kind: 'choice', choices: ['keep', 'trim'] },
   { key: 'runner.failover', label: 'Retry on failure', help: "on runs a failed job again on its route's next fallback when a spawn error or a provider limit, including a used-up free allowance, stopped it, or when a read-only job timed out or lost its browser connection. off, the default, leaves the failure as it is.", kind: 'choice', choices: ['off', 'on'] },
+  { key: 'runner.networkRetries', label: 'Network outage retries', help: "When a job fails because the network connection dropped, augurd runs the same request again on the same route, waiting 10, 20, 40, then 60 seconds before each retry, up to this many times. Jobs with `write` or `full` tools retry only if they left no answer and no recorded change. The default is 10, and 0 turns it off.", kind: 'number', min: 0, max: 50 },
   { key: 'proseBatchSize', label: 'Prose batch size', help: 'Maximum normal requests in one batch. 10 by default.', kind: 'number', min: 1, max: 1000 },
   { key: 'proseBatchHours', label: 'Prose batch age', help: 'Hours before a normal batch is due. 24 by default.', kind: 'number', min: 1, max: 720 },
   { key: 'proseRoute', label: 'Prose route', help: 'Route label used for prose batches. claude/opus by default.', kind: 'text', check: t => t.trim() ? null : 'proseRoute must not be empty.' },
@@ -90,6 +91,7 @@ function valueOf(config: ServiceConfig, key: string): string {
     case 'runner.charterDir': return config.runner.charterDir;
     case 'runner.ambient': return config.runner.ambient;
     case 'runner.failover': return config.runner.failover;
+    case 'runner.networkRetries': return String(config.runner.networkRetries);
     case 'adapters': return config.adapters.join(',');
     case 'web.enabled': return String(config.web.enabled);
     case 'web.host': return config.web.host;

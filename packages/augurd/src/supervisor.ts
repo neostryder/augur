@@ -29,7 +29,7 @@ import { loadToolkits } from './toolkits.js';
 import { fillJobSummary, type JobSummarizer } from './job-summary.js';
 import { inferStamp, type PeerInfo } from './job-stamp.js';
 import { validStamp } from '@augur/dispatch-protocol';
-import { MAX_HOPS, classifyFailure } from './failover.js';
+import { MAX_HOPS, classifyFailure, classifyNetworkFailure, networkBackoffS } from './failover.js';
 import { RouteLimits, isUsageLimit } from './route-limits.js';
 import { augurHome, scriptPath } from './paths.js';
 import { hasStoredKey } from './secrets.js';
@@ -70,6 +70,17 @@ export interface SupervisorDeps {
   scopes?: () => boolean;
   /** Why jobs are refused right now (Augur set to usage only), or null when they run. */
   jobsOff?: () => string | null;
+  /** Whether this computer cannot reach the internet right now. Defaults to a short connection test; tests stand in for it. */
+  offline?: () => boolean;
+  /** Seconds to wait before network retry `attempt`. Defaults to 10, 20, 40, then 60; tests shorten it. */
+  networkBackoffS?: (attempt: number) => number;
+}
+
+/** True when a connection to a public address on port 443 fails within three seconds. A probe that cannot run counts as online. */
+export function internetDown(): boolean {
+  const probe = "const s=require('net').connect({host:'1.1.1.1',port:443});s.setTimeout(3000);s.on('connect',()=>process.exit(0));s.on('error',()=>process.exit(1));s.on('timeout',()=>process.exit(1));";
+  const r = spawnSync(process.execPath, ['-e', probe], { stdio: 'ignore', timeout: 6000, windowsHide: true, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } });
+  return r.status === 1;
 }
 
 let scopeProbe: boolean | undefined;
@@ -163,7 +174,7 @@ export class Supervisor {
   private outputSeen = new Set<string>();
   private readonly activityCache = new Map<string, { at: number; lastActivityAt: number; activityLine: string; heartbeatAt: number }>();
   /** The request and the routes already used for each job this process launched. A restart drops the map, and then that job is not retried. */
-  private readonly submitted = new Map<string, { req: JobRequest; hops: string[]; resumes?: number }>();
+  private readonly submitted = new Map<string, { req: JobRequest; hops: string[]; resumes?: number; netTries?: number }>();
   private releasingBacklog = false;
   private lastBacklogEvaluation = 0;
   private readonly gateFallbackJobs = new Set<string>();
@@ -326,7 +337,7 @@ export class Supervisor {
     }, undefined, job);
   }
 
-  private submitTo(input: JobRequest, chain?: { req: JobRequest; hops: string[]; resumes?: number }, routeOverride?: RouteConfig, replayOf: string | null = null): SubmitResult {
+  private submitTo(input: JobRequest, chain?: { req: JobRequest; hops: string[]; resumes?: number; netTries?: number }, routeOverride?: RouteConfig, replayOf: string | null = null): SubmitResult {
     let req = input;
     const bad = this.validate(req);
     if (bad) return reject('bad_request', bad);
@@ -1243,8 +1254,42 @@ export class Supervisor {
     if (done) this.d.decisions?.outcome(rec.id, model, done.state, done.reason, done.endedAt && done.startedAt ? done.endedAt - done.startedAt : null);
     this.resumeUnfinished(rec, sessionId);
     if (rec.conversation?.startsWith(RESUME_PREFIX) && done && isTerminal(done.state)) this.d.store.forgetConversation(rec.conversation);
-    this.retryFailed(rec, res, failure, answer, stderr);
+    if (!this.retryNetwork(rec, res, failure, answer, stderr)) this.retryFailed(rec, res, failure, answer, stderr);
     this.cleanup(rec.id);
+  }
+
+  /**
+   * A job that a network outage interrupted runs again, as a new job linked to the first, on the same route after a wait that grows with each attempt, up to
+   * runner.networkRetries times. A fallback route is no help when the whole connection is down, so this never moves the job. Returns true when a retry is
+   * scheduled, so the failover that would otherwise run is skipped.
+   */
+  private retryNetwork(rec: JobRecord, res: RunnerResult, failure: string | undefined, answer: string | null, stderrTail: string): boolean {
+    const max = this.d.config.runner.networkRetries;
+    const held = this.submitted.get(rec.id), done = this.d.store.get(rec.id);
+    // A conversation turn is bound to its session, so it is not run again here.
+    if (max < 1 || !held || held.req.conversation || !done || (done.state !== 'failed' && done.state !== 'killed')) return false;
+    // Only a job stopped for inactivity needs the connection test: a harness that waits in silence while the network is down never prints an error.
+    const offline = res.killedBy === 'timeout' && (this.d.offline ?? internetDown)();
+    const verdict = classifyNetworkFailure({
+      ...(res.spawnError ? { spawnError: res.spawnError } : {}), killedBy: res.killedBy, exitCode: res.exitCode,
+      ...(failure ? { failure } : {}), stderrTail, tools: rec.tools, answer, changed: (done.patch?.files ?? 0) > 0, offline,
+    });
+    if (!verdict.retry) return false;
+    const tries = held.netTries ?? 0, at = this.now();
+    if (tries >= max) { this.d.store.event(rec.id, 'network_retry_exhausted', `network failure after ${tries} ${tries === 1 ? 'retry' : 'retries'} on ${rec.route}`, at); return false; }
+    const attempt = tries + 1, wait = (this.d.networkBackoffS ?? networkBackoffS)(attempt);
+    this.d.store.event(rec.id, 'network_retry_waiting', `network failure on ${rec.route}: retry ${attempt} of ${max} in ${wait}s`, at);
+    const timer = setTimeout(() => {
+      const req = { ...held.req, allow: [...new Set([...(held.req.allow ?? []), 'unpicked' as const])] };
+      const submitted = this.submitTo(req, { req: held.req, hops: held.hops, ...(held.resumes ? { resumes: held.resumes } : {}), netTries: attempt });
+      const now = this.now();
+      if ('rejected' in submitted) { this.d.store.event(rec.id, 'network_retry_refused', submitted.rejected.reason, now); return; }
+      this.d.store.linkRetry(rec.id, submitted.id);
+      this.d.store.event(rec.id, 'network_retry', `${rec.route} again, retry ${attempt} of ${max}, as ${submitted.id}`, now);
+      this.d.store.event(submitted.id, 'network_retry', `retry ${attempt} of ${max} after a network failure on ${rec.route}`, now);
+    }, wait * 1000);
+    timer.unref();
+    return true;
   }
 
   /**
