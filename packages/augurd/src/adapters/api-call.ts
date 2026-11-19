@@ -95,7 +95,8 @@ if (mode === 'images') {
   body = JSON.stringify({ model, max_tokens: maxTokens, ...(system ? { system } : {}), messages: [{ role: 'user', content: userContent }] });
 } else {
   const content = images.length ? [{ type: 'text', text: withTexts }, ...images.map(i => ({ type: 'image_url', image_url: { url: `data:${i.media};base64,${i.data}` } }))] : withTexts;
-  body = JSON.stringify({ model, messages: [{ role: 'user', content }], ...(maxTokens > 0 ? { max_tokens: maxTokens } : {}) });
+  const limitField = URL.parse(base)?.hostname === 'api.openai.com' ? 'max_completion_tokens' : 'max_tokens';
+  body = JSON.stringify({ model, messages: [{ role: 'user', content }], ...(maxTokens > 0 ? { [limitField]: maxTokens } : {}) });
 }
 
 // A chat answer is text and an embedding batch is a few thousand numbers per input; 64 MiB covers the largest real batch and stops a runaway reply.
