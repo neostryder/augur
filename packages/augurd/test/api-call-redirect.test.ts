@@ -16,13 +16,15 @@ const listen = (handler: http.RequestListener): Promise<number> => new Promise(r
   s.listen(0, '127.0.0.1', () => resolve((s.address() as { port: number }).port));
 });
 
-function runCall(port: number, shape: string): Promise<{ code: number | null; err: string }> {
-  return new Promise(resolve => {
-    const child = spawn(process.execPath, [SCRIPT, '--shape', shape, '--url', `http://127.0.0.1:${port}`, '--model', 'm', '--key-env', 'TEST_API_KEY', '--timeout-s', '20'],
+function runCall(url: string, shape: string, args: string[] = [], nodeArgs: string[] = []): Promise<{ code: number | null; out: string; err: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [...nodeArgs, SCRIPT, '--shape', shape, '--url', url, '--model', 'm', '--key-env', 'TEST_API_KEY', '--timeout-s', '20', ...args],
       { env: { ...process.env, TEST_API_KEY: 'secret-key-value' }, windowsHide: true });
-    let err = '';
+    let out = '', err = '';
+    child.stdout.on('data', d => { out += String(d); });
     child.stderr.on('data', d => { err += String(d); });
-    child.on('close', code => resolve({ code, err }));
+    child.on('error', reject);
+    child.on('close', code => resolve({ code, out, err }));
     child.stdin.end('hello');
   });
 }
@@ -51,12 +53,29 @@ describe('api-call', () => {
     let elsewhere = 0;
     const other = await listen((_req, res) => { elsewhere++; res.end('{}'); });
     const first = await listen((_req, res) => { res.writeHead(307, { Location: `http://127.0.0.1:${other}/v1/messages` }); res.end(); });
-    const r = await runCall(first, 'anthropic');
+    const r = await runCall(`http://127.0.0.1:${first}`, 'anthropic');
     expect(r.code).toBe(2);
     expect(r.err).toMatch(/redirect/);
     expect(r.err).not.toContain('secret-key-value');
     expect(elsewhere).toBe(0);
   }, 30000);
+});
+
+describe('api-call chat token limit', () => {
+  const echoBody = `data:text/javascript,${encodeURIComponent(
+    'globalThis.fetch = async (_url, { body }) => new Response(JSON.stringify({ choices: [{ message: { content: body } }] }));',
+  )}`;
+
+  it.each([
+    ['https://api.openai.com/v1/', 128, { max_completion_tokens: 128 }],
+    ['https://api.openai.com.example.test/v1', 128, { max_tokens: 128 }],
+    ['https://api.openai.com/v1', 0, {}],
+    ['https://api.openai.com.example.test/v1', 0, {}],
+  ])('sends the expected limit to %s with maxTokens %i', async (url, maxTokens, limit) => {
+    const r = await runCall(url, 'openai', ['--max-tokens', String(maxTokens)], ['--import', echoBody]);
+    expect(r.code, r.err).toBe(0);
+    expect(JSON.parse(JSON.parse(r.out).answer)).toEqual({ model: 'm', messages: [{ role: 'user', content: 'hello' }], ...limit });
+  });
 });
 
 describe('api-call when the gateway preempts the request', () => {
@@ -70,7 +89,7 @@ describe('api-call when the gateway preempts the request', () => {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ choices: [{ message: { content: 'done' } }], usage: { prompt_tokens: 1, completion_tokens: 1 } }));
     });
-    const r = await runCall(port, 'openai');
+    const r = await runCall(`http://127.0.0.1:${port}`, 'openai');
     expect(r.code).toBe(0);
     expect(calls).toBe(2);
   }, 30000);
@@ -78,7 +97,7 @@ describe('api-call when the gateway preempts the request', () => {
   it('gives up after three tries with a preempted message the failover can read', async () => {
     let calls = 0;
     const port = await listen((_req, res) => { calls++; preempt(res); });
-    const r = await runCall(port, 'openai');
+    const r = await runCall(`http://127.0.0.1:${port}`, 'openai');
     expect(r.code).toBe(69);
     expect(r.err).toMatch(/^preempted:/);
     expect(calls).toBe(3);
