@@ -26,5 +26,5 @@ package() {
   echo pacman > "${pkgdir}/usr/lib/Augur/package-manager"
   install -Dm644 "${srcdir}/LICENSE-${pkgver}" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
 }
-sha256sums=('5ebf9172a89776af322487293b56219c2623875ae168db26a91d5406e5964c25'
+sha256sums=('a062071c13a794bafdf07c7fab773509b7f530719fddf1bc67fadcd28be05014'
             'ce1dd14135d1822bf50c38f91709f5ca866dc6ce5510eaa954b617a29de8718c')
