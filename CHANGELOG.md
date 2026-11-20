@@ -4,6 +4,8 @@ All notable changes to Augur are listed here. Each entry starts with `[Visible]`
 
 ## [Unreleased]
 
+## [1.21.0] - 2026-11-20
+
 ### Added
 
 - [Visible] [Platform] **Ledger changes stream over HTTP, and the ledger records sessions.** `GET /api/dispatch/changes` sends ledger changes as newline-delimited JSON to local programs that hold the owner token, and the browser app now refreshes when a change arrives instead of polling every three seconds. It polls only while the stream is down. A new `sessions` channel records when the service first sees a session id on a job and when that session's title changes, and `ledger_changes` takes a `channel` argument that defaults to `jobs`. `jobs-live.json` adds the ledger's `cursor` and the `sessions` rows, which the Claude Code pane does not draw.
